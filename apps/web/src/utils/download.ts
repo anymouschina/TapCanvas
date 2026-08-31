@@ -1,16 +1,27 @@
+import { fetchAssetDownloadBlob } from '../api/server'
+
 type DownloadOptions = {
   url: string
   filename?: string
   /**
    * Try fetching as Blob first to avoid opening/navigating tabs for cross-origin media links.
-   * Falls back to a normal <a download> click when CORS/streaming prevents blob download.
+   * Set false only for same-origin / blob: URLs where a plain <a download> click is guaranteed
+   * to download directly (e.g. cached object URLs).
    */
   preferBlob?: boolean
   /**
-   * Target for the fallback <a> click if blob download fails.
-   * Defaults to opening a new tab to avoid losing unsaved work.
+   * Target for the <a> click when preferBlob=false. The blob path never opens tabs:
+   * it downloads via blob: URL or throws so callers can surface the error.
    */
   fallbackTarget?: '_blank' | '_self'
+  /**
+   * Same-origin proxy that fetches the asset bytes server-side and returns them as a Blob.
+   * Used when the direct cross-origin blob fetch fails (e.g. the asset host lacks CORS headers,
+   * which would otherwise make <a download> open a new preview tab instead of downloading).
+   * The proxy response is same-origin, so the resulting blob: download is guaranteed to be direct.
+   * Defaults to the /public/asset-download proxy so every download button stays in-tab.
+   */
+  proxyBlob?: (url: string) => Promise<Blob>
 }
 
 export function appendDownloadSuffix(filename: string, suffix: string | number): string {
@@ -51,13 +62,50 @@ function clickDownload(href: string, filename: string, target: '_blank' | '_self
   a.remove()
 }
 
+/**
+ * Aliyun OSS object URLs used by the business API are returned with
+ * `Content-Disposition: attachment`. Navigating to such a URL is the native
+ * download path and does not require CORS permission. Trying to fetch the
+ * bytes first is both unnecessary and unreliable when the API-side proxy is
+ * not deployed on an older business-api instance.
+ */
+function isAliyunObjectAttachmentUrl(rawUrl: string): boolean {
+  try {
+    const hostname = new URL(rawUrl).hostname.toLowerCase()
+    return hostname.endsWith('.oss-accelerate.aliyuncs.com')
+      || /\.oss-cn-[a-z0-9-]+\.aliyuncs\.com$/.test(hostname)
+  } catch {
+    return false
+  }
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob)
+  try {
+    clickDownload(objectUrl, filename, '_self')
+  } finally {
+    // Defer revoke so the browser has grabbed the blob before we release it.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+  }
+}
+
 export async function downloadUrl({
   url,
   filename,
   preferBlob = true,
-  fallbackTarget = '_blank',
+  fallbackTarget = '_self',
+  proxyBlob = fetchAssetDownloadBlob,
 }: DownloadOptions) {
   const fallbackName = filename || guessFilenameFromUrl(url) || `tapcanvas-${Date.now()}`
+
+  // The production business API currently returns OSS URLs directly and does
+  // not expose the newer same-origin asset proxy route. These objects carry
+  // `Content-Disposition: attachment`, so navigate directly and let OSS
+  // perform the download instead of issuing a CORS-protected fetch first.
+  if (preferBlob && isAliyunObjectAttachmentUrl(url)) {
+    clickDownload(url, fallbackName, fallbackTarget)
+    return
+  }
 
   if (!preferBlob) {
     clickDownload(url, fallbackName, fallbackTarget)
@@ -67,16 +115,22 @@ export async function downloadUrl({
   try {
     const res = await fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit' })
     if (!res.ok) throw new Error(`download failed: ${res.status}`)
-    const blob = await res.blob()
-    const objectUrl = URL.createObjectURL(blob)
-    try {
-      clickDownload(objectUrl, fallbackName, '_self')
-    } finally {
-      URL.revokeObjectURL(objectUrl)
-    }
+    downloadBlob(await res.blob(), fallbackName)
+    return
   } catch {
-    // Fallback: best-effort direct download. If browser ignores download attr for cross-origin,
-    // it may navigate; open a new tab by default to preserve the current page.
-    clickDownload(url, fallbackName, fallbackTarget)
+    // Direct cross-origin fetch failed — most often the asset host lacks CORS headers.
   }
+
+  // Route through the same-origin proxy (guaranteed CORS + bytes) so the download stays a
+  // real download instead of degrading to a new-tab preview.
+  try {
+    downloadBlob(await proxyBlob(url), fallbackName)
+    return
+  } catch {
+    // Proxy unavailable/failed as well — nothing left that can download in-tab.
+  }
+
+  // Both the direct fetch and the same-origin proxy failed (API down / offline). Opening the
+  // raw URL would just show a preview tab, so surface the failure to the caller instead.
+  throw new Error('下载失败，请稍后重试')
 }

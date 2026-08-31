@@ -74,12 +74,10 @@ type creation struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	ChannelType int
-	baseURL     string
+	baseURL string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
-	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 }
 
@@ -96,13 +94,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		action, _ = meatAction.(string)
 	} else if req.HasImage() {
 		action = constant.TaskActionGenerate
-		if info.ChannelType == constant.ChannelTypeVidu {
-			// vidu 增加 首尾帧生视频和参考图生视频
-			if len(req.Images) == 2 {
-				action = constant.TaskActionFirstTailGenerate
-			} else if len(req.Images) > 2 {
-				action = constant.TaskActionReferenceGenerate
-			}
+		// The Vidu adaptor is selected by the explicit task protocol, so its
+		// first/tail-frame and multi-reference semantics must not depend on the
+		// commercial channel type.
+		if len(req.Images) == 2 {
+			action = constant.TaskActionFirstTailGenerate
+		} else if len(req.Images) > 2 {
+			action = constant.TaskActionReferenceGenerate
 		}
 	}
 	info.Action = action

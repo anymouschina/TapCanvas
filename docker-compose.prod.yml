@@ -1,0 +1,703 @@
+# 生产编排：app 层(api / worker / agents-bridge)全部跑「烤好的镜像」，不挂宿主源码、不开机编译。
+# 与 docker-compose.yml(开发) 的关键差异：
+#   1. api/bridge/worker 用 registry 镜像(TAPCANVAS_*_IMAGE)，command 直接跑 dist，无 `.:/app`、无 node_modules 卷。
+#   2. DB schema/migrate/seed/sync 抽到一次性 `api-init`（多副本只跑一次），api 仅 `node dist/main.js`。
+#   3. 只保留「真数据」挂载：project-data(资产/原文)、sql(seed-patch 读)、backups。
+#
+# 这是独立完整 stack（不是 override）——因为 compose 对 volumes 是合并而非替换，
+# 用 override 去不掉开发的 `.:/app`。用法：
+#   docker compose --env-file apps/hono-api/.env -f docker-compose.prod.yml up -d
+# 镜像先在仓库根构建并推到 registry：见 scripts/build-images.sh。
+#
+# 跨机部署：保持仓库目录结构并提供 apps/hono-api/.env，随后 pull && up -d；
+# 进一步拆机器(postgres/redis 独立节点、bridge 独立算力机)时，把对应服务删掉、
+# 改用环境变量里的内网地址指过去即可（DATABASE_URL / REDIS_URL / AGENTS_BRIDGE_BASE_URL ...）。
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/pgvector/pgvector:pg16}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tapcanvas}
+      POSTGRES_USER: ${POSTGRES_USER:-tapcanvas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tapcanvas} -d ${POSTGRES_DB:-tapcanvas}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - hono_api_postgres:/var/lib/postgresql/data
+      - ./apps/hono-api/docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  redis:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    expose:
+      - "6379"
+    volumes:
+      - hono_api_redis:/data
+    deploy:
+      resources:
+        limits:
+          # 线上 AOF/RDB 已达到约 237 MiB；256 MiB cgroup 上限会在载入后触发 OOM，
+          # 让 Agent API worker 永久失去 redis DNS。保留足够增长与后台持久化余量。
+          memory: 1g
+
+  new-api-db-init:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/postgres:16-alpine
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      NEW_API_PATCH_DB_HOST: postgres
+      NEW_API_PATCH_DB_PORT: 5432
+      NEW_API_PATCH_DB_NAME: ${NEW_API_POSTGRES_DB:-tapcanvas_new_api}
+      NEW_API_PATCH_DB_USER: ${POSTGRES_USER:-tapcanvas}
+    command: ["/bin/sh", "/opt/tapcanvas/ensure-new-api-database.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./apps/hono-api/docker/ensure-new-api-database.sh:/opt/tapcanvas/ensure-new-api-database.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  # new-api 的 GORM schema 初始化必须是可退出的一次性任务。它只连接
+  # PostgreSQL，不启动 Redis、后台任务或 HTTP 服务；数据 patch 以它成功完成为前置条件。
+  new-api-schema-init:
+    image: ${NEW_API_IMAGE:-tapcanvas/new-api:local}
+    restart: "no"
+    command: ["--migrate-only"]
+    environment:
+      SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
+      TZ: ${NEW_API_TZ:-Asia/Shanghai}
+      TAPCANVAS_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:?NEW_API_INTERNAL_TOKEN is required}
+      TAPCANVAS_INTERNAL_TOKEN_REQUIRED: "true"
+      TAPCANVAS_ROOT_USERNAME: ${NEW_API_ROOT_USERNAME:-admin}
+      TAPCANVAS_ROOT_PASSWORD: ${NEW_API_ROOT_PASSWORD:-123456}
+      SESSION_SECRET: ${NEW_API_SESSION_SECRET:?NEW_API_SESSION_SECRET is required}
+      CRYPTO_SECRET: ${NEW_API_CRYPTO_SECRET:?NEW_API_CRYPTO_SECRET is required}
+    depends_on:
+      new-api-db-init:
+        condition: service_completed_successfully
+    volumes:
+      - ${TAPCANVAS_NEW_API_DATA_ROOT:-./apps/new-api/data}:/data
+      - ${TAPCANVAS_NEW_API_LOG_ROOT:-./apps/new-api/logs}:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  new-api:
+    image: ${NEW_API_IMAGE:-tapcanvas/new-api:local}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${NEW_API_PORT:-4455}:4455"
+    environment:
+      PORT: ${NEW_API_INTERNAL_PORT:-4455}
+      SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
+      REDIS_CONN_STRING: ${NEW_API_REDIS_CONN_STRING:-redis://redis:6379}
+      TZ: ${NEW_API_TZ:-Asia/Shanghai}
+      TAPCANVAS_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:?NEW_API_INTERNAL_TOKEN is required}
+      TAPCANVAS_INTERNAL_TOKEN_REQUIRED: "true"
+      TAPCANVAS_ROOT_USERNAME: ${NEW_API_ROOT_USERNAME:-admin}
+      TAPCANVAS_ROOT_PASSWORD: ${NEW_API_ROOT_PASSWORD:-123456}
+      GLOBAL_API_RATE_LIMIT_ENABLE: ${NEW_API_GLOBAL_API_RATE_LIMIT_ENABLE:-true}
+      GLOBAL_WEB_RATE_LIMIT_ENABLE: ${NEW_API_GLOBAL_WEB_RATE_LIMIT_ENABLE:-true}
+      CRITICAL_RATE_LIMIT_ENABLE: ${NEW_API_CRITICAL_RATE_LIMIT_ENABLE:-true}
+      SEARCH_RATE_LIMIT_ENABLE: ${NEW_API_SEARCH_RATE_LIMIT_ENABLE:-true}
+      NODE_NAME: ${NEW_API_NODE_NAME:-new-api-node-1}
+      # 不设 WEB_DIST_DIR：前端已 go:embed 进二进制，走内嵌资源（自包含镜像，无需挂载 web/dist）
+      RELAY_TIMEOUT: ${NEW_API_RELAY_TIMEOUT:-1200}
+      SERVER_ADDRESS: ${SERVER_ADDRESS:-}
+      # Gemini 账号刷新/发现走已验证的 beqlee.icu Worker；userinfo 当前未配置已验证的代理，仍直连官方地址。
+      GEMINI_BASE_URL: ${NEW_API_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}
+      GEMINI_CODE_ASSIST_BASE_URL: ${NEW_API_GEMINI_CODE_ASSIST_BASE_URL:-https://cloudcode-pa.beqlee.icu}
+      GEMINI_CODE_ASSIST_DAILY_BASE_URL: ${NEW_API_GEMINI_CODE_ASSIST_DAILY_BASE_URL:-https://daily-cloudcode-pa.beqlee.icu}
+      GEMINI_OAUTH_CLIENT_ID: ${NEW_API_GEMINI_OAUTH_CLIENT_ID:-}
+      GEMINI_OAUTH_CLIENT_SECRET: ${NEW_API_GEMINI_OAUTH_CLIENT_SECRET:-}
+      GEMINI_AI_STUDIO_OAUTH_CLIENT_ID: ${NEW_API_GEMINI_AI_STUDIO_OAUTH_CLIENT_ID:-}
+      GEMINI_AI_STUDIO_OAUTH_CLIENT_SECRET: ${NEW_API_GEMINI_AI_STUDIO_OAUTH_CLIENT_SECRET:-}
+      GEMINI_CODE_ASSIST_OAUTH_CLIENT_ID: ${NEW_API_GEMINI_CODE_ASSIST_OAUTH_CLIENT_ID:-}
+      GEMINI_CODE_ASSIST_OAUTH_CLIENT_SECRET: ${NEW_API_GEMINI_CODE_ASSIST_OAUTH_CLIENT_SECRET:-}
+      GEMINI_ANTIGRAVITY_OAUTH_CLIENT_ID: ${NEW_API_GEMINI_ANTIGRAVITY_OAUTH_CLIENT_ID:-}
+      GEMINI_ANTIGRAVITY_OAUTH_CLIENT_SECRET: ${NEW_API_GEMINI_ANTIGRAVITY_OAUTH_CLIENT_SECRET:-}
+      GEMINI_OAUTH_AUTHORIZE_URL: ${NEW_API_GEMINI_OAUTH_AUTHORIZE_URL:-https://accounts.google.com/o/oauth2/v2/auth}
+      GEMINI_OAUTH_TOKEN_URL: ${NEW_API_GEMINI_OAUTH_TOKEN_URL:-https://oauth2.beqlee.icu/token}
+      GEMINI_OAUTH_USERINFO_URL: ${NEW_API_GEMINI_OAUTH_USERINFO_URL:-https://www.googleapis.com/oauth2/v3/userinfo}
+      GEMINI_OAUTH_AI_STUDIO_REDIRECT_URI: ${NEW_API_GEMINI_OAUTH_AI_STUDIO_REDIRECT_URI:-http://localhost:1455/auth/callback}
+      GEMINI_OAUTH_CODE_ASSIST_REDIRECT_URI: ${NEW_API_GEMINI_OAUTH_CODE_ASSIST_REDIRECT_URI:-https://codeassist.google.com/authcode}
+      SESSION_SECRET: ${NEW_API_SESSION_SECRET:?NEW_API_SESSION_SECRET is required}
+      CRYPTO_SECRET: ${NEW_API_CRYPTO_SECRET:?NEW_API_CRYPTO_SECRET is required}
+      VOLC_ARK_ACCESS_KEY: ${VOLC_ARK_ACCESS_KEY:-}
+      VOLC_ARK_SECRET_KEY: ${VOLC_ARK_SECRET_KEY:-}
+      VOLC_ARK_REGION: ${VOLC_ARK_REGION:-cn-beijing}
+      VOLC_ARK_API_HOST: ${VOLC_ARK_API_HOST:-open.volcengineapi.com}
+      VOLC_ARK_PROJECT_NAME: ${VOLC_ARK_PROJECT_NAME:-default}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      new-api-channel-audit:
+        condition: service_completed_successfully
+    volumes:
+      - ${TAPCANVAS_NEW_API_DATA_ROOT:-./apps/new-api/data}:/data
+      - ${TAPCANVAS_NEW_API_LOG_ROOT:-./apps/new-api/logs}:/app/logs
+    networks:
+      default:
+      xiangyu-new-api-shared:
+        aliases:
+          - tapcanvas-new-api
+    healthcheck:
+      test: ["CMD-SHELL", "http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= wget -q -O - http://127.0.0.1:4455/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  # new-api 数据 patch：schema 初始化后执行。可选渠道缺凭据时由 SQL 显式输出
+  # PATCH_DEFERRED，运行器持久化原因并继续；其他 SQL 错误仍然原地失败。
+  new-api-patch:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      new-api-schema-init:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      NEW_API_PATCH_ENABLED: ${NEW_API_PATCH_ENABLED:-1}
+      NEW_API_PATCH_DB_HOST: postgres
+      NEW_API_PATCH_DB_PORT: 5432
+      NEW_API_PATCH_DB_NAME: ${NEW_API_POSTGRES_DB:-tapcanvas_new_api}
+      NEW_API_PATCH_DB_USER: ${POSTGRES_USER:-tapcanvas}
+      NEW_API_GEMINI_BASE_URL: ${NEW_API_GEMINI_BASE_URL:-}
+      NVTOKENS_API_KEY: ${NVTOKENS_API_KEY:-}
+      FUNAI_API_KEY: ${FUNAI_API_KEY:-}
+      METASO_MINIMAX_API_KEY: ${METASO_MINIMAX_API_KEY:-}
+      KLONG_API_KEY: ${KLONG_API_KEY:-}
+      ARK_DEEPSEEK_API_KEY: ${ARK_DEEPSEEK_API_KEY:-}
+      GOOGLE_GEMINI_API_KEY: ${GOOGLE_GEMINI_API_KEY:-}
+      MEGABY_API_KEY: ${MEGABY_API_KEY:-}
+      G_AISC_IMAGE_API_KEY: ${G_AISC_IMAGE_API_KEY:-}
+      NEWAPIAI_334_API_KEY: ${NEWAPIAI_334_API_KEY:-}
+      NEWAPIAI_334_ENABLED: ${NEWAPIAI_334_ENABLED:-0}
+    command: ["/bin/sh", "/opt/tapcanvas/run-new-api-patches.sh"]
+    volumes:
+      - ./apps/new-api/patches:/patches:ro
+      - ./apps/hono-api/docker/run-new-api-patches.sh:/opt/tapcanvas/run-new-api-patches.sh:ro
+
+  # ── 一次性迁移/seed/sync：多副本只跑一次，跑完退出。api 依赖它 completed_successfully ──
+  api-init:
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: "no"
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      NEW_API_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:?NEW_API_INTERNAL_TOKEN is required}
+      NEW_API_USD_EXCHANGE_RATE: ${NEW_API_USD_EXCHANGE_RATE:?NEW_API_USD_EXCHANGE_RATE is required}
+      NEW_API_SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
+      PRISMA_BASELINE_RESUME_TARGET: ${PRISMA_BASELINE_RESUME_TARGET:-}
+      PG_BACKUP_DIR: /app/backups
+      PG_BACKUP_KEEP_LATEST: "30"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      new-api-patch:
+        condition: service_completed_successfully
+    # prisma client 已在镜像构建期 generate；这里只做需要 DB 在线的步骤。
+    command: sh -lc "pnpm db:pg:backup && pnpm db:pg:schema && pnpm db:pg:migrate && pnpm db:pg:seed-patches && pnpm sync:skill-marketplace:apply && pnpm sync:new-api:catalog"
+    volumes:
+      - ${TAPCANVAS_SHARED_ROOT:-.}/sql:/app/sql:ro
+      - hono_api_db_backups:/app/backups
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  # 渠道仅由 new-api 的常驻 SQL 引导；api-init 只同步可读模型目录。
+  new-api-channel-audit:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/postgres:16-alpine
+    restart: "no"
+    depends_on:
+      api-init:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      NEW_API_PATCH_MODE: reconcile
+      NEW_API_PATCH_DB_HOST: postgres
+      NEW_API_PATCH_DB_PORT: 5432
+      NEW_API_PATCH_DB_NAME: ${NEW_API_POSTGRES_DB:-tapcanvas_new_api}
+      NEW_API_PATCH_DB_USER: ${POSTGRES_USER:-tapcanvas}
+    command: ["/bin/sh", "/opt/tapcanvas/run-new-api-patches.sh"]
+    volumes:
+      - ./apps/new-api/patches:/patches:ro
+      - ./apps/hono-api/docker/run-new-api-patches.sh:/opt/tapcanvas/run-new-api-patches.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  api:
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: unless-stopped
+    init: true
+    command: ["node", "dist/main.js"]
+    healthcheck:
+      # 进程内硬超时避免服务阻塞时健康探针自身堆积。
+      test: ["CMD", "node", "-e", "const t=setTimeout(()=>process.exit(1),2000);fetch('http://127.0.0.1:8788/health/version').then((r)=>{clearTimeout(t);process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN:?INTERNAL_WORKER_TOKEN is required}
+      PORT: ${PORT:-8788}
+      # API 只代理控制请求；持久恢复、ExecutionDO 与节点执行由单一 Worker 持有。
+      WORKFLOW_RUNTIME_REMOTE_BASE_URL: http://workflow-runtime-worker:8790
+      TAP_CREDITS_PER_CNY: ${TAP_CREDITS_PER_CNY:-100}
+      NODE_OPTIONS: "--max-old-space-size=3500"
+      CANVAS_YJS_WS: ${CANVAS_YJS_WS:-off}
+      STORYBOARD_ANCHOR_GATE: ${STORYBOARD_ANCHOR_GATE:-1}
+      VIDEO_PACING_CARPET_WARN: ${VIDEO_PACING_CARPET_WARN:-1}
+      VIDEO_ORPHAN_RECOVERY: ${VIDEO_ORPHAN_RECOVERY:-1}
+      VIDEO_PROMPT_SANITIZE: ${VIDEO_PROMPT_SANITIZE:-1}
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      PG_BACKUP_DIR: /app/backups
+      REDIS_URL: redis://redis:6379
+      AGENTS_BRIDGE_AUTOSTART: "0"
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      NEW_API_PUBLIC_BASE_URL: ${NEW_API_PUBLIC_BASE_URL:?NEW_API_PUBLIC_BASE_URL is required}
+      NEW_API_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:?NEW_API_INTERNAL_TOKEN is required}
+      NEW_API_USD_EXCHANGE_RATE: ${NEW_API_USD_EXCHANGE_RATE:?NEW_API_USD_EXCHANGE_RATE is required}
+      NEW_API_SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      AGENTS_BRIDGE_TOKEN: ${AGENTS_BRIDGE_TOKEN:?AGENTS_BRIDGE_TOKEN is required}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      VIDEO_SYNC_WAIT_TIMEOUT_MS: ${VIDEO_SYNC_WAIT_TIMEOUT_MS:-1200000}
+      VIDEO_SYNC_POLL_INTERVAL_MS: ${VIDEO_SYNC_POLL_INTERVAL_MS:-5000}
+      VIDEO_RUN_RECOVERY: ${VIDEO_RUN_RECOVERY:-true}
+      VIDEO_RUN_RECOVERY_STALE_MS: ${VIDEO_RUN_RECOVERY_STALE_MS:-1800000}
+      VIDEO_AUTHORING_DRIVE_STALE_MS: ${VIDEO_AUTHORING_DRIVE_STALE_MS:-5000}
+      # ⚠️ 多副本前必读：这是「单进程内」并发计数器。api 一旦 >1 副本，每副本各算各的，
+      # 全局闸失效——届时需改成 redis 分布式计数（见交付说明的「跨机拦路石」）。当前按单 api 副本配置。
+      AGENTS_BRIDGE_MAX_CONCURRENCY: ${AGENTS_BRIDGE_MAX_CONCURRENCY:-24}
+      AGENTS_BRIDGE_MAX_QUEUE_DEPTH: ${AGENTS_BRIDGE_MAX_QUEUE_DEPTH:-50}
+      # Ultra 账户当前提供 100 路并发；超过单进程容量的请求排队，不投影为任务失败。
+      AGENTS_BRIDGE_MAX_PER_USER: ${AGENTS_BRIDGE_MAX_PER_USER:-100}
+      CONSULT_AGENTS_DOCS_ROOT: /app/project-data/docs
+      DEBUG_HTTP_LOG: "${DEBUG_HTTP_LOG:-0}"
+      PG_BACKUP_KEEP_LATEST: "30"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+    ports:
+      - "127.0.0.1:${PORT:-8788}:8788"
+    depends_on:
+      api-init:
+        condition: service_completed_successfully
+      agents-bridge-lb:
+        condition: service_healthy
+      new-api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      # 仅「真数据」挂载（资产/原文/备份）。无 `.:/app`、无 node_modules 卷——代码在镜像里。
+      - ./assets/public:/app/assets/public
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+      - ${TAPCANVAS_SHARED_ROOT:-.}/sql:/app/sql:ro
+      - hono_api_db_backups:/app/backups
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  # 单副本远程构建控制面：用户项目命令只在 Vercel Sandbox 内执行。
+  # 本服务不挂载 project-data、宿主源码目录或 Docker socket；完整配置 .env 后通过
+  # `docker compose -f docker-compose.prod.yml --profile codex-remote-build up -d`
+  # 显式启用。
+  codex-remote-builder:
+    profiles: ["codex-remote-build"]
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: unless-stopped
+    init: true
+    command: ["node", "dist/codex-remote-builder.js"]
+    healthcheck:
+      test: ["CMD", "node", "dist/codex-remote-builder.js", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      REDIS_URL: redis://redis:6379
+      NODE_OPTIONS: "--max-old-space-size=768"
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 1g
+
+  credit-finalizer-worker:
+    # 历史服务名作为原位切换槽位保留；唯一运行时是直连 DB/Redis 的
+    # dist/inprocess-worker.js。生产拓扑不再启动 HTTP 回调式 legacy worker。
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 10m
+    depends_on:
+      api:
+        condition: service_healthy
+      new-api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      agents-bridge-lb:
+        condition: service_healthy
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: production
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN:?INTERNAL_WORKER_TOKEN is required}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
+      AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}
+      AGENTS_BRIDGE_REPLICA_PORT: ${AGENTS_BRIDGE_REPLICA_PORT:-8799}
+      AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
+      AGENTS_BRIDGE_TOKEN: ${AGENTS_BRIDGE_TOKEN:?AGENTS_BRIDGE_TOKEN is required}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      NEW_API_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:?NEW_API_INTERNAL_TOKEN is required}
+      TAP_CREDITS_PER_CNY: ${TAP_CREDITS_PER_CNY:-100}
+      NEW_API_USD_EXCHANGE_RATE: ${NEW_API_USD_EXCHANGE_RATE:?NEW_API_USD_EXCHANGE_RATE is required}
+      VIDEO_RUN_RECOVERY: ${VIDEO_RUN_RECOVERY:-true}
+      VIDEO_RUN_RECOVERY_STALE_MS: ${VIDEO_RUN_RECOVERY_STALE_MS:-1800000}
+      VIDEO_AUTHORING_DRIVE_STALE_MS: ${VIDEO_AUTHORING_DRIVE_STALE_MS:-5000}
+      INPROCESS_MEDIA_RECOVERY_EVERY_MS: ${INPROCESS_MEDIA_RECOVERY_EVERY_MS:-60000}
+      INPROCESS_ASYNC_CONTINUATION_SWEEP_EVERY_MS: ${INPROCESS_ASYNC_CONTINUATION_SWEEP_EVERY_MS:-5000}
+      INPROCESS_HEALTH_MAX_AGE_MS: ${INPROCESS_HEALTH_MAX_AGE_MS:-180000}
+    command: ["pnpm", "inprocess:worker"]
+    healthcheck:
+      test: ["CMD", "node", "dist/inprocess-worker-healthcheck.js"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 120s
+    volumes:
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2g
+
+  workflow-runtime-worker:
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30m
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      agents-bridge-lb:
+        condition: service_healthy
+      media-worker:
+        condition: service_healthy
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=3500"
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN:?INTERNAL_WORKER_TOKEN is required}
+      AGENTS_BRIDGE_TOKEN: ${AGENTS_BRIDGE_TOKEN:?AGENTS_BRIDGE_TOKEN is required}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
+      AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}
+      AGENTS_BRIDGE_REPLICA_PORT: ${AGENTS_BRIDGE_REPLICA_PORT:-8799}
+      AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      MEDIA_WORKER_GRPC_ADDR: ${MEDIA_WORKER_GRPC_ADDR:-media-worker:9090}
+      NEW_API_USD_EXCHANGE_RATE: ${NEW_API_USD_EXCHANGE_RATE:?NEW_API_USD_EXCHANGE_RATE is required}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      WORKFLOW_NODE_WORKER_CONCURRENCY: ${WORKFLOW_NODE_WORKER_CONCURRENCY:-8}
+      WORKFLOW_RUNTIME_PORT: "8790"
+      WORKFLOW_RUNTIME_REMOTE_BASE_URL: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+    command: ["pnpm", "workflow-runtime:worker"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /tmp/tapcanvas-workflow-runtime-ready.json"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    expose:
+      - "8790"
+    volumes:
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 4g
+
+  media-worker:
+    image: ${TAPCANVAS_MEDIA_WORKER_IMAGE:-tapcanvas/media-worker:local}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      MEDIA_WORKER_PORT: "9090"
+      MEDIA_WORKER_MAX_FFMPEG: ${MEDIA_WORKER_MAX_FFMPEG:-4}
+      FFMPEG_SUBPROCESS_TIMEOUT_MS: ${FFMPEG_SUBPROCESS_TIMEOUT_MS:-900000}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+    expose:
+      - "9090"
+    healthcheck:
+      test: ["CMD", "media-worker", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    deploy:
+      replicas: ${MEDIA_WORKER_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 2g
+
+  async-image-worker:
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      agents-bridge-lb:
+        condition: service_healthy
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: production
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN:?INTERNAL_WORKER_TOKEN is required}
+      AGENTS_BRIDGE_TOKEN: ${AGENTS_BRIDGE_TOKEN:?AGENTS_BRIDGE_TOKEN is required}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
+      AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}
+      AGENTS_BRIDGE_REPLICA_PORT: ${AGENTS_BRIDGE_REPLICA_PORT:-8799}
+      AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      NEW_API_USD_EXCHANGE_RATE: ${NEW_API_USD_EXCHANGE_RATE:?NEW_API_USD_EXCHANGE_RATE is required}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+    command: ["pnpm", "async-image:worker"]
+    volumes:
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+    healthcheck:
+      test: ["CMD", "pnpm", "async-image:worker:health"]
+      interval: 10s
+      timeout: 8s
+      retries: 12
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  agents-bridge:
+    image: ${TAPCANVAS_AGENTS_BRIDGE_IMAGE:-tapcanvas/agents-bridge:local}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      AGENTS_PROFILE: code
+      AGENTS_STREAM: "true"
+      AGENTS_AUTO_APPROVE: ${AGENTS_AUTO_APPROVE:-0}
+      CONTENT_BLOCKS: ${CONTENT_BLOCKS:-true}
+      # `knowledge/` is a read-only archive and explicit vector-sync source.
+      # Runtime knowledge_search/read/catalog always query pgvector and never scan this mount.
+      # Embedding traffic is isolated from AGENTS_API_BASE_URL so Headroom remains an LLM-only choice.
+      AGENTS_EMBEDDING_BASE_URL: ${AGENTS_EMBEDDING_BASE_URL:-http://new-api:4455/v1}
+      AGENTS_EMBEDDING_MODEL: ${AGENTS_EMBEDDING_MODEL:-doubao-embedding-vision-251215}
+      AGENTS_EMBEDDING_DIMENSIONS: ${AGENTS_EMBEDDING_DIMENSIONS:-2048}
+      # Optional override; when empty, agents-cli reuses AGENTS_API_KEY.
+      AGENTS_EMBEDDING_API_KEY: ${AGENTS_EMBEDDING_API_KEY:-}
+      AGENTS_API_BASE_URL: ${AGENTS_API_BASE_URL:-http://new-api:4455/v1}
+      # Durable Workflow Agent 物理续跑不会重新经过最初的 HTTP 请求装配，
+      # 因此 bridge 自身必须持有可回调 Hono 的稳定内网基址。
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      # agents-cli 调 new-api LLM 用的令牌（config.ts 读 AGENTS_API_KEY）。
+      # 默认复用 relay 令牌 NEW_API_INTERNAL_TOKEN——它必须是 new-api tokens 表里
+      # 真实存在的令牌（见 project 记忆：NEW_API_INTERNAL_TOKEN 必须=tokens表令牌）。
+      # 缺这一行会导致 bridge LLM 令牌为空 → 聊天全部 "Invalid token"。
+      AGENTS_API_KEY: ${AGENTS_API_KEY:-${NEW_API_INTERNAL_TOKEN:-}}
+      # 每轮模型由前端动态目录显式传入；生产部署不保存历史默认模型。
+      AGENTS_MODEL: ${AGENTS_MODEL:-}
+      AGENTS_CAPABILITY_ANALYSIS_MODEL: ${AGENTS_CAPABILITY_ANALYSIS_MODEL:-gpt-5.6-luna}
+      AGENTS_API_STYLE: ${AGENTS_API_STYLE:-chat}
+      AGENTS_BRIDGE_TOKEN: ${AGENTS_BRIDGE_TOKEN:?AGENTS_BRIDGE_TOKEN is required}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      AGENTS_REMOTE_TOOL_TIMEOUT_MS: "1500000"
+      AGENTS_BRIDGE_BODY_LIMIT_BYTES: "8000000"
+      AGENTS_REQUEST_TIMEOUT_MS: "420000"
+      AGENTS_POST_TOOL_CONTINUATION_TIMEOUT_MS: "180000"
+      AGENTS_REASONING_EFFORT: ${AGENTS_REASONING_EFFORT:-high}
+      AGENTS_SLIM_TOOLS: "true"
+      AGENTS_PENDING_TEAM_WAIT_MAX_TOTAL_MS: "480000"
+      AGENTS_AUTONOMOUS_IDLE_TIMEOUT_MS: "900000"
+      AGENTS_BRIDGE_MAX_CONCURRENCY: "8"
+      AGENTS_DNS_RESULT_ORDER: "ipv4first"
+      AGENTS_REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      AGENTS_SESSION_CACHE_TTL_SECONDS: "86400"
+      AGENTS_WORKSPACE_ROOT: /runtime/workspace
+      # 逻辑任务、结构化输出候选、恢复检查点与 goal/task ledger 必须落在共享持久卷。
+      # 显式路径禁止因 cwd / workspaceRoot 漂移重新落回容器 overlay fs。
+      AGENTS_RUNTIME_DB_PATH: /runtime/workspace/.agents/runtime/runtime.sqlite
+      AGENTS_SKILLS_DIR: skills
+      NODE_OPTIONS: --max-old-space-size=${AGENTS_BRIDGE_NODE_HEAP_MB:-1536}
+    depends_on:
+      new-api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      # skills/knowledge/代码都在镜像里。运行期可写记忆 + 资产数据靠卷；docs 走 project-data。
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/runtime/workspace/project-data
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+      # 会话记忆与任务运行库分别持久化：前者按 memoryDir 写入 bootstrap，后者按
+      # AGENTS_RUNTIME_DB_PATH / workspaceRoot 写入 workspace。二者缺一都会造成容器
+      # 重建后失忆，或 LB 续跑落到另一副本时重新从头执行。
+      - agents_memory:/runtime/bootstrap/apps/agents-cli/.agents
+      - agents_runtime:/runtime/workspace/.agents
+    healthcheck:
+      # 探针必须先于 Docker health timeout 自行退出，禁止残留 node 子进程。
+      test: ["CMD", "node", "-e", "const t=setTimeout(()=>process.exit(1),2000);fetch('http://127.0.0.1:8799/health').then((r)=>{clearTimeout(t);process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      # 首次冷启不再有「往共享卷装依赖」的竞态（依赖已 bake），可直接多副本。
+      replicas: ${AGENTS_BRIDGE_REPLICAS:-2}
+      resources:
+        limits:
+          memory: 2g
+
+  # 无状态请求分散；同一 chat session 依据 Hono 的 opaque affinity key 一致性绑定同一副本。
+  agents-bridge-lb:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/haproxy:3.0-alpine
+    restart: unless-stopped
+    depends_on:
+      agents-bridge:
+        condition: service_healthy
+    volumes:
+      - ./apps/hono-api/docker/agents-bridge-lb.haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "127.0.0.1:8799:8799"
+    healthcheck:
+      test: ["CMD-SHELL", "http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= wget -qO- http://127.0.0.1:8799/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  # 主前端：nginx serve 预构建 SPA + 同源反代 /api、/public 到 api 容器。
+  web:
+    image: ${TAPCANVAS_WEB_IMAGE:-tapcanvas/web:local}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-80}:80"
+    healthcheck:
+      # 必须 127.0.0.1：nginx 只监听 IPv4，busybox wget 打 localhost 先试 ::1 被拒 → 恒 unhealthy
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+volumes:
+  hono_api_postgres:
+    driver: local
+  hono_api_db_backups:
+    driver: local
+  hono_api_redis:
+    driver: local
+  agents_memory:
+    driver: local
+  agents_runtime:
+    driver: local
+
+networks:
+  xiangyu-new-api-shared:
+    name: ${NEW_API_SHARED_NETWORK:-xiangyu-new-api-shared}
+    driver: bridge

@@ -187,7 +187,6 @@ type DemoTask = {
 
 \`\`\`json
 {
-  "vendor": "auto",
   "prompt": "一张电影感海报…",
   "kind": "text_to_image",
   "extras": { "modelAlias": "nano-banana-pro", "aspectRatio": "1:1" }
@@ -195,15 +194,13 @@ type DemoTask = {
 \`\`\`
 
 说明：
-- \`vendor=auto\` 会在系统级已启用且已配置的厂商列表中依次尝试，直到成功或候选耗尽（可用厂商来自 \`/model-catalog/vendors\`；顺序可能基于近期成功率动态排序）。
-- \`extras.modelAlias\` 用于选择模型（Public 统一别名；推荐；默认=同 modelKey）。不同厂商可以配置同一个别名，从而让外部调用不用关心具体厂商的 modelKey。
-- 兼容：仍支持 \`extras.modelKey\`（厂商内 modelKey），但不建议对外暴露。
-- 当 \`vendor=auto\` 且未传 \`extras.modelAlias\` 时，服务端会优先按 \`extras.modelKey\` 做真实 \`model_key\` 匹配；只有在找不到可用 \`model_key\` 时，才会把它当作别名做兼容解析。
-- 当调用方把真实 \`model_key\` 误传进 \`extras.modelAlias\` 时，服务端也会先按 alias 查找；若 alias 不存在，再按精确 \`model_key\` 做兼容解析。
+- \`/public/draw\` 固定请求 new-api；外部传入 \`vendor\` / \`vendorCandidates\` 会被忽略，不再做多渠道尝试或自动降级。
+- \`extras.modelAlias\` 用于选择模型；进入 new-api 前会转换为 \`extras.modelKey\`（若已显式传 \`modelKey\` 则保持显式值）。
+- 兼容：仍支持直接传 \`extras.modelKey\`。
 
 请求体（完整字段，按需填写）：
-- \`vendor?: string\`（默认 \`auto\`）
-- \`vendorCandidates?: string[]\`（可选；仅当 \`vendor=auto\` 时生效：限制候选厂商范围，例如 \`["apimart"]\`）
+- \`vendor?: string\`（可选；已废弃，会被忽略）
+- \`vendorCandidates?: string[]\`（可选；已废弃，会被忽略）
 - \`kind?: "text_to_image" | "image_edit"\`（默认 \`text_to_image\`）
 - \`prompt: string\`（必填）
 - \`negativePrompt?: string\`（可选；不同厂商可能忽略）
@@ -216,11 +213,10 @@ type DemoTask = {
 
 尺寸/分辨率示例：
 
-- 严格像素宽高（推荐：显式指定 \`vendor=qwen\`）：
+- 严格像素宽高：
 
 \`\`\`json
 {
-  "vendor": "qwen",
   "kind": "text_to_image",
   "prompt": "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
   "width": 1328,
@@ -229,11 +225,10 @@ type DemoTask = {
 }
 \`\`\`
 
-- 仅控制构图比例（\`vendor=auto\` 常用；不同通道支持不一）：
+- 仅控制构图比例：
 
 \`\`\`json
 {
-  "vendor": "auto",
   "kind": "text_to_image",
   "prompt": "一张电影感海报，中文“TapCanvas”，高细节，干净背景",
   "extras": { "modelAlias": "nano-banana-pro", "aspectRatio": "16:9" }
@@ -248,26 +243,24 @@ type DemoTask = {
 
 \`\`\`json
 {
-  "vendor": "auto",
   "imageUrl": "https://github.com/dianping/cat/raw/master/cat-home/src/main/webapp/images/logo/cat_logo03.png",
   "prompt": "请详细分析我提供的图片，推测可用于复现它的英文提示词，包含主体、环境、镜头、光线和风格。输出必须是纯英文提示词，不要添加中文备注或翻译。",
-  "modelAlias": "gemini-3.1-flash-image-preview",
+  "modelAlias": "gpt-5.6-luna",
   "temperature": 0.2
 }
 \`\`\`
 
 说明：
 - 图片输入二选一：\`imageUrl\`（http(s)）或 \`imageData\`（\`data:image/*;base64,...\`）。
-- \`vendor=auto\` 会在系统级已启用且已配置的厂商列表中依次尝试，直到成功或候选耗尽（顺序可能基于近期成功率动态排序）。
-- \`modelAlias\`（推荐）/ \`modelKey\`（兼容）用于选模；只有两者都未传时，才会默认使用 \`gemini-3.1-flash-image-preview\`。
-- 若 \`modelAlias\` 本身就是一个真实 \`model_key\`，服务端会在 alias 查找失败后自动切到精确 \`model_key\` 匹配。
+- 图像理解固定请求 new-api；外部传入 \`vendor\` / \`vendorCandidates\` 会被忽略。
+- 图片理解固定使用 \`gpt-5.6-luna\`；历史 \`modelAlias\` / \`modelKey\` 字段不再允许调用方覆盖该策略。
 
 参考响应（200）：
 
 \`\`\`json
 {
   "id": "task_01HXYZ...",
-  "vendor": "yunwu",
+  "vendor": "newapi",
   "text": "A clean minimal logo of a cat..."
 }
 \`\`\`
@@ -280,7 +273,6 @@ type DemoTask = {
 
 \`\`\`json
 {
-  "vendor": "auto",
   "prompt": "雨夜霓虹街头，一只白猫缓慢走过…",
   "durationSeconds": 10,
   "extras": { "modelAlias": "<YOUR_VIDEO_MODEL_ALIAS>" }
@@ -288,12 +280,12 @@ type DemoTask = {
 \`\`\`
 
 说明：
-- \`vendor=auto\` 会在系统级已启用且已配置的厂商列表中依次尝试，直到成功或候选耗尽（顺序可能基于近期成功率动态排序）。
+- \`/public/video\` 固定请求 new-api；外部传入 \`vendor\` / \`vendorCandidates\` 会被忽略，不再做多渠道尝试或自动降级。
 - 视频任务如果需要“参考图/首帧图”，推荐传 \`extras.firstFrameUrl\`；也兼容简写 \`extras.url\`（单图）或 \`extras.urls\` / \`extras.referenceImages\`（多图）。
 
 请求体（完整字段，按需填写）：
-- \`vendor?: string\`（默认 \`auto\`）
-- \`vendorCandidates?: string[]\`（可选；仅当 \`vendor=auto\` 时生效：限制候选厂商范围，例如 \`["apimart"]\`）
+- \`vendor?: string\`（可选；已废弃，会被忽略）
+- \`vendorCandidates?: string[]\`（可选；已废弃，会被忽略）
 - \`prompt: string\`（必填）
 - \`durationSeconds?: number\`（可选；会写入 \`extras.durationSeconds\`；不同厂商会做归一化/截断）
 - \`extras?: object\`（可选；透传给模型/网关，常用字段：\`modelKey\` / \`durationSeconds\` / \`firstFrameUrl\` / \`firstFrameImage\` / \`first_frame_image\` / \`url\` / \`lastFrameUrl\` / \`urls\` / \`referenceImages\` / \`orientation\` / \`size\` / \`resolution\` / \`promptOptimizer\`）
@@ -304,7 +296,7 @@ type DemoTask = {
 
 \`\`\`json
 {
-  "vendor": "veo",
+  "vendor": "newapi",
   "result": {
     "id": "task_01HXYZ...",
     "kind": "text_to_video",

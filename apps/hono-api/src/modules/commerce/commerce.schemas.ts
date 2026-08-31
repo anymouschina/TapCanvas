@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CommerceEntitlementTypeSchema = z.enum(["none", "points_topup", "monthly_quota", "openclaw_subscription"]);
+export const CommerceEntitlementTypeSchema = z.enum(["none", "membership", "team_plan", "skill_license"]);
 export type CommerceEntitlementType = z.infer<typeof CommerceEntitlementTypeSchema>;
 
 export const DictionaryItemSchema = z.object({
@@ -27,18 +27,6 @@ export const UpsertDictionaryItemRequestSchema = z.object({
 	sortOrder: z.number().int().min(-9999).max(9999).optional(),
 });
 
-export const RechargePackageSchema = z.object({
-	productId: z.string(),
-	title: z.string(),
-	subtitle: z.string().nullable(),
-	currency: z.string(),
-	priceCents: z.number().int().nonnegative(),
-	points: z.number().int().positive(),
-	bonusPoints: z.number().int().nonnegative(),
-	totalPoints: z.number().int().positive(),
-});
-export type RechargePackageDto = z.infer<typeof RechargePackageSchema>;
-
 export const ProductEntitlementSchema = z.object({
 	productId: z.string(),
 	entitlementType: CommerceEntitlementTypeSchema,
@@ -48,130 +36,83 @@ export const ProductEntitlementSchema = z.object({
 });
 export type ProductEntitlementDto = z.infer<typeof ProductEntitlementSchema>;
 
-const PointsTopupConfigSchema = z.object({
-	points: z.number().int().positive(),
-});
+function isValidTimeZone(value: string): boolean {
+	try {
+		new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+		return true;
+	} catch {
+		return false;
+	}
+}
 
-const MonthlyQuotaConfigSchema = z.object({
+const TimeZoneSchema = z.string().trim().min(1).max(64).refine(isValidTimeZone, "无效的 IANA 时区");
+
+export const MembershipBillingCycleSchema = z.enum(["monthly", "annual"]);
+export type MembershipBillingCycle = z.infer<typeof MembershipBillingCycleSchema>;
+
+const MembershipSkuConfigSchema = z.object({
+	billingCycle: MembershipBillingCycleSchema,
 	durationDays: z.number().int().min(1).max(365),
-	dailyLimit: z.number().int().positive(),
-	timezone: z.string().trim().min(1).max(64).default("Asia/Shanghai"),
-});
+	monthlyCredits: z.number().int().min(1).max(100_000_000),
+	dailyGiftCredits: z.number().int().min(1).max(10_000_000),
+	concurrencyLimit: z.number().int().min(1).max(1_000),
+	capacityLabel: z.string().trim().max(40),
+	timezone: TimeZoneSchema,
+	compareAtPriceCents: z.number().int().nonnegative().optional(),
+}).strict();
 
-const OpenClawSubscriptionConfigSchema = z.object({
+export const MembershipPlanPresentationSchema = z.object({
+	badge: z.string().trim().max(40).optional(),
+	compareAtPriceCents: z.number().int().nonnegative().optional(),
+	accent: z.enum(["graphite", "violet", "blue", "cyan"]).default("graphite"),
+	featured: z.boolean().default(false),
+	sortOrder: z.number().int().min(-9999).max(9999).default(0),
+	campaignBenefits: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
+	features: z.array(z.string().trim().min(1).max(160)).max(24).default([]),
+}).strict();
+export type MembershipPlanPresentation = z.infer<typeof MembershipPlanPresentationSchema>;
+
+export const MembershipConfigSchema = z.object({
+	billingCycle: MembershipBillingCycleSchema,
 	durationDays: z.number().int().min(1).max(365),
-	dailyLimit: z.number().int().positive(),
-	timezone: z.string().trim().min(1).max(64).default("Asia/Shanghai"),
-	descriptionText: z.string().trim().max(500).optional(),
-	externalName: z.string().trim().min(1).max(120).default("openclaw"),
-	allowWallet: z.boolean().default(true),
-	allowedItemIds: z.array(z.string().trim().min(1).max(120)).max(100).nullable().optional(),
-});
+	monthlyCredits: z.number().int().min(1).max(100_000_000),
+	dailyGiftCredits: z.number().int().min(1).max(10_000_000),
+	concurrencyLimit: z.number().int().min(1).max(1_000),
+	capacityLabel: z.string().trim().max(40),
+	timezone: TimeZoneSchema,
+	skuConfigs: z.record(MembershipSkuConfigSchema).optional(),
+	presentation: MembershipPlanPresentationSchema.optional(),
+}).strict();
 
-export const OpenClawAuthorizationAdminSchema = z.object({
-	id: z.string(),
-	ownerId: z.string(),
-	subscriptionId: z.string().nullable(),
-	sourceOrderId: z.string().nullable(),
-	productId: z.string().nullable(),
-	skuId: z.string().nullable(),
-	externalKeyMasked: z.string().nullable(),
-	externalName: z.string(),
-	quotaLimit: z.number().int().nonnegative(),
-	descriptionText: z.string().nullable(),
-	allowWallet: z.boolean(),
-	allowedItemIds: z.array(z.string()).nullable(),
-	expiredAt: z.string().nullable(),
-	status: z.enum(["pending", "active", "inactive", "error"]),
-	upstreamKeyId: z.string().nullable(),
-	lastSyncedAt: z.string().nullable(),
-	lastError: z.string().nullable(),
-	createdAt: z.string(),
-	updatedAt: z.string(),
-	disabledAt: z.string().nullable(),
-});
-export type OpenClawAuthorizationAdminDto = z.infer<typeof OpenClawAuthorizationAdminSchema>;
+export type MembershipConfig = z.infer<typeof MembershipConfigSchema>;
 
-export const OpenClawAuthorizationAdminListResponseSchema = z.object({
-	items: z.array(OpenClawAuthorizationAdminSchema),
-});
-
-export const OpenClawSelfAuthorizationSchema = z.object({
-	id: z.string(),
-	ownerId: z.string(),
-	subscriptionId: z.string().nullable(),
-	sourceOrderId: z.string().nullable(),
-	productId: z.string().nullable(),
-	skuId: z.string().nullable(),
-	externalKeyMasked: z.string().nullable(),
-	externalName: z.string(),
-	quotaLimit: z.number().int().nonnegative(),
-	descriptionText: z.string().nullable(),
-	allowWallet: z.boolean(),
-	allowedItemIds: z.array(z.string()).nullable(),
-	expiredAt: z.string().nullable(),
-	status: z.enum(["pending", "active", "inactive", "error"]),
-	upstreamKeyId: z.string().nullable(),
-	lastSyncedAt: z.string().nullable(),
-	lastError: z.string().nullable(),
-	createdAt: z.string(),
-	updatedAt: z.string(),
-	disabledAt: z.string().nullable(),
-});
-export type OpenClawSelfAuthorizationDto = z.infer<typeof OpenClawSelfAuthorizationSchema>;
-
-export const OpenClawSelfKeySchema = z.object({
-	key: z.string(),
-	keyMasked: z.string(),
-	externalName: z.string(),
-	status: z.enum(["pending", "active", "inactive", "error"]),
-	expiredAt: z.string().nullable(),
-	quotaLimit: z.number().int().nonnegative(),
-	allowWallet: z.boolean(),
-	allowedItemIds: z.array(z.string()).nullable(),
-	upstreamKeyId: z.string().nullable(),
-	updatedAt: z.string(),
-});
-export type OpenClawSelfKeyDto = z.infer<typeof OpenClawSelfKeySchema>;
-
-export const OpenClawAuthorizationResyncRequestSchema = z.object({
-	quotaLimit: z.number().int().positive().optional(),
-	descriptionText: z.string().trim().max(500).nullable().optional(),
-	desiredStatus: z.enum(["active", "inactive"]).optional(),
-});
-
-export const OpenClawAuthorizationResetUsageRequestSchema = z.object({});
-
-export const OpenClawAuthorizationResetAllUsageResponseSchema = z.object({
-	total: z.number().int().nonnegative(),
-	succeeded: z.number().int().nonnegative(),
-	failed: z.number().int().nonnegative(),
-});
-
-export const OpenClawAuthorizationDeleteResponseSchema = z.object({
-	id: z.string(),
-	ownerId: z.string(),
-	upstreamKeyId: z.string().nullable(),
-	upstreamDeleted: z.boolean(),
-	upstreamDeleteStatus: z.enum(["deleted", "not_found"]),
-});
-export type OpenClawAuthorizationDeleteResponseDto = z.infer<typeof OpenClawAuthorizationDeleteResponseSchema>;
-
-export const UpsertProductEntitlementRequestSchema = z.object({
-	entitlementType: CommerceEntitlementTypeSchema,
-	config: z.record(z.unknown()),
-});
+export const UpsertProductEntitlementRequestSchema = z.discriminatedUnion("entitlementType", [
+	z.object({
+		entitlementType: z.literal("membership"),
+		config: MembershipConfigSchema,
+	}),
+	z.object({
+		entitlementType: CommerceEntitlementTypeSchema.exclude(["membership"]),
+		config: z.record(z.unknown()),
+	}),
+]);
 
 export const SubscriptionSchema = z.object({
 	id: z.string(),
 	ownerId: z.string(),
 	planCode: z.string(),
-	sourceOrderId: z.string().nullable(),
 	status: z.enum(["active", "expired", "canceled"]),
 	startAt: z.string(),
 	endAt: z.string(),
+	billingCycle: MembershipBillingCycleSchema,
 	durationDays: z.number().int().positive(),
-	dailyLimit: z.number().int().positive(),
+	monthlyCredits: z.number().int().positive(),
+	dailyGiftCredits: z.number().int().positive(),
+	concurrencyLimit: z.number().int().positive(),
+	capacityLabel: z.string(),
+	creditGrantCount: z.number().int().positive(),
+	creditGrantsIssued: z.number().int().nonnegative(),
+	nextCreditGrantAt: z.string().nullable(),
 	timezone: z.string(),
 	createdAt: z.string(),
 	updatedAt: z.string(),

@@ -155,13 +155,27 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			imageRequest.Extra = make(map[string]json.RawMessage)
+			for _, key := range []string{"resolution", "imageSize", "image_size", "metadata"} {
+				if value := formData.Get(key); value != "" {
+					if key == "metadata" {
+						imageRequest.Extra[key] = json.RawMessage(value)
+						continue
+					}
+					encoded, marshalErr := json.Marshal(value)
+					if marshalErr != nil {
+						return nil, fmt.Errorf("failed to parse image edit field %s: %w", key, marshalErr)
+					}
+					imageRequest.Extra[key] = encoded
+				}
+			}
 			if imageValue := formData.Get("image"); imageValue != "" {
 				imageRequest.Image, _ = json.Marshal(imageValue)
 			}
 
-			if imageRequest.Model == "gpt-image-2" {
+			if strings.HasPrefix(imageRequest.Model, "gpt-image-2") {
 				if imageRequest.Quality == "" {
-					imageRequest.Quality = "standard"
+					imageRequest.Quality = "auto"
 				}
 			}
 			if imageRequest.N == nil || *imageRequest.N == 0 {
@@ -187,6 +201,21 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			return nil, errors.New("model is required")
 		}
 
+		if relayMode == relayconstant.RelayModeImagesEdits &&
+			!strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+			if len(imageRequest.Images) == 0 {
+				return nil, errors.New("images is required for JSON image edits")
+			}
+			for index, image := range imageRequest.Images {
+				if strings.TrimSpace(image.ImageURL) == "" {
+					return nil, fmt.Errorf("images[%d].image_url is required for JSON image edits", index)
+				}
+			}
+			if imageRequest.Mask != nil && strings.TrimSpace(imageRequest.Mask.ImageURL) == "" {
+				return nil, errors.New("mask.image_url must not be empty when mask is provided")
+			}
+		}
+
 		if strings.Contains(imageRequest.Size, "×") {
 			return nil, errors.New("size an unexpected error occurred in the parameter, please use 'x' instead of the multiplication sign '×'")
 		}
@@ -209,9 +238,14 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			if imageRequest.Size == "" {
 				imageRequest.Size = "1024x1024"
 			}
-		} else if imageRequest.Model == "gpt-image-2" {
+		} else if strings.HasPrefix(imageRequest.Model, "gpt-image-2") {
 			if imageRequest.Quality == "" {
 				imageRequest.Quality = "auto"
+			}
+		}
+		if strings.HasPrefix(imageRequest.Model, "gpt-image-2") {
+			if err := dto.ValidateGptImage2Size(imageRequest.Size); err != nil {
+				return nil, err
 			}
 		}
 

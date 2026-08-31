@@ -1,0 +1,237 @@
+[
+  {
+    "id": "s136",
+    "title": "清新水彩花仙漫",
+    "description": "轻薄水彩晕染、花朵仙气，适合少女系/唯美仙子国漫风。",
+    "styleDirective": "中国国漫风格，清新水彩少女仙子题材，轻薄透明水彩晕染，樱花与牡丹花瓣装饰，淡雅粉青色调，仙气飘飘少女，国漫少女唯美风，柔和光感，半身正面像",
+    "categories": [
+      "chinese_anime",
+      "xianxia",
+      "romance",
+      "female_lead"
+    ],
+    "subStyle": "水彩花仙",
+    "tags": [
+      "国漫",
+      "水彩",
+      "少女",
+      "仙子",
+      "唯美"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫风格，清新水彩少女仙子题材，轻薄透明水彩晕染，樱花与牡丹花瓣装饰，淡雅粉青色调，仙气飘飘少女，国漫少女唯美风，柔和光感，半身正面像",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s137",
+    "title": "黑金至尊霸道漫",
+    "description": "黑底金色特效、霸主气场，适合至尊反派/霸道男主国漫风。",
+    "styleDirective": "中国国漫风格，黑金至尊题材，黑色背景金色光效，霸道强势男主，黑金战甲或长袍，金色龙纹光芒，俯视威压构图，极致奢华，顶级国漫大反派或至尊气质，半身正面像",
+    "categories": [
+      "chinese_anime",
+      "xuanhuan"
+    ],
+    "subStyle": "黑金至尊",
+    "tags": [
+      "国漫",
+      "黑金",
+      "至尊",
+      "霸道",
+      "反派"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫风格，黑金至尊题材，黑色背景金色光效，霸道强势男主，黑金战甲或长袍，金色龙纹光芒，俯视威压构图，极致奢华，顶级国漫大反派或至尊气质，半身正面像",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s138",
+    "title": "赛博修仙霓虹漫",
+    "description": "霓虹科技与仙符结合、未来修仙美学，适合赛博仙侠题材。",
+    "styleDirective": "中国国漫风格，赛博朋克修仙融合题材，霓虹紫青光效，身着科技与道袍融合服装，仙符电路图腾，雨夜霓虹都市背景，未来修真感，赛博仙侠美学，精绘细节，半身正面像",
+    "categories": [
+      "chinese_anime",
+      "scifi",
+      "xianxia"
+    ],
+    "subStyle": "赛博修仙",
+    "tags": [
+      "国漫",
+      "赛博",
+      "修仙",
+      "霓虹",
+      "科技"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫风格，赛博朋克修仙融合题材，霓虹紫青光效，身着科技与道袍融合服装，仙符电路图腾，雨夜霓虹都市背景，未来修真感，赛博仙侠美学，精绘细节，半身正面像",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s139",
+    "title": "Q版萌系国漫风",
+    "description": "2-3头身Q版萌化、圆润可爱，适合轻松萌系/国漫周边题材。",
+    "styleDirective": "中国国漫Q版萌系风格，2到3头身可爱比例，超大圆眼，圆润肉嘟嘟造型，华丽仙侠服饰萌化版，表情夸张生动，糖果色调，超级可爱国漫角色，全身Q版立绘",
+    "categories": [
+      "chinese_anime",
+      "chibi"
+    ],
+    "subStyle": "Q版萌系",
+    "tags": [
+      "国漫",
+      "Q版",
+      "萌系",
+      "可爱",
+      "chibi"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫Q版萌系风格，2到3头身可爱比例，超大圆眼，圆润肉嘟嘟造型，华丽仙侠服饰萌化版，表情夸张生动，糖果色调，超级可爱国漫角色，全身Q版立绘",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s140",
+    "title": "暗黑魔道反派漫",
+    "description": "暗紫黑色调、邪魅反派美学，适合魔道修士/大反派题材。",
+    "styleDirective": "中国国漫风格，暗黑魔道反派题材，邪魅俊美男主，暗紫黑配色，魔道纹路光效，骷髅或黑莲花装饰，阴森华丽背景，反派至尊气质，精绘细腻，国漫高端反派美学，半身正面像",
+    "categories": [
+      "chinese_anime",
+      "dark"
+    ],
+    "subStyle": "魔道暗黑",
+    "tags": [
+      "国漫",
+      "魔道",
+      "反派",
+      "暗黑",
+      "邪魅"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫风格，暗黑魔道反派题材，邪魅俊美男主，暗紫黑配色，魔道纹路光效，骷髅或黑莲花装饰，阴森华丽背景，反派至尊气质，精绘细腻，国漫高端反派美学，半身正面像",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s141",
+    "title": "国潮扁平几何漫",
+    "description": "现代扁平设计+国潮色彩，适合国潮都市/现代国漫题材。",
+    "styleDirective": "中国国漫国潮扁平设计风格，几何形状简化，传统纹样现代化，朱红藏青国潮配色，汉字图形设计元素，都市青年国风角色，现代与传统融合，扁平插画感，国潮时尚国漫，全身立绘",
+    "categories": [
+      "chinese_anime",
+      "flat_design",
+      "modern"
+    ],
+    "subStyle": "国潮扁平",
+    "tags": [
+      "国漫",
+      "国潮",
+      "扁平",
+      "几何",
+      "现代"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫国潮扁平设计风格，几何形状简化，传统纹样现代化，朱红藏青国潮配色，汉字图形设计元素，都市青年国风角色，现代与传统融合，扁平插画感，国潮时尚国漫，全身立绘",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s142",
+    "title": "热血战神爆发漫",
+    "description": "极限爆发能量、肌肉张力冲击，适合战神/热血格斗国漫题材。",
+    "styleDirective": "中国国漫风格，热血战神极限爆发题材，肌肉张力爆发，全身能量冲击波，碎石尘埃特效，战神怒吼爆发构图，高饱和橙红色能量，动态感极强，硬核热血国漫风，半身正面像",
+    "categories": [
+      "chinese_anime",
+      "xuanhuan"
+    ],
+    "subStyle": "热血战神",
+    "tags": [
+      "国漫",
+      "热血",
+      "战神",
+      "爆发",
+      "格斗"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫风格，热血战神极限爆发题材，肌肉张力爆发，全身能量冲击波，碎石尘埃特效，战神怒吼爆发构图，高饱和橙红色能量，动态感极强，硬核热血国漫风，半身正面像",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s143",
+    "title": "龙族血脉觉醒漫",
+    "description": "东方神龙金红龙纹、血脉觉醒，适合龙族传承题材国漫。",
+    "styleDirective": "中国国漫风格，龙族血脉觉醒题材，少年身后东方神龙虚影，金红龙纹覆盖皮肤，龙角血脉觉醒，云海腾龙背景，威严宏大，古老神龙气势，精绘细节，国漫东方龙族，半身正面像",
+    "categories": [
+      "chinese_anime",
+      "mythology"
+    ],
+    "subStyle": "龙族神话",
+    "tags": [
+      "国漫",
+      "龙族",
+      "血脉",
+      "觉醒",
+      "神龙"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫风格，龙族血脉觉醒题材，少年身后东方神龙虚影，金红龙纹覆盖皮肤，龙角血脉觉醒，云海腾龙背景，威严宏大，古老神龙气势，精绘细节，国漫东方龙族，半身正面像",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s144",
+    "title": "深海妖族水灵漫",
+    "description": "深蓝海洋水系妖族、异域美人，适合海族/水系妖异题材国漫。",
+    "styleDirective": "中国国漫风格，深海妖族水系题材，蓝紫深海美人角色，鱼鳞纹服饰，水系能量光效，深海珊瑚水草背景，异域妖异气质，半透明水晶感，精绘国漫深海妖族，半身正面像",
+    "categories": [
+      "chinese_anime",
+      "xuanhuan"
+    ],
+    "subStyle": "海族妖异",
+    "tags": [
+      "国漫",
+      "深海",
+      "妖族",
+      "水系",
+      "异域"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫风格，深海妖族水系题材，蓝紫深海美人角色，鱼鳞纹服饰，水系能量光效，深海珊瑚水草背景，异域妖异气质，半透明水晶感，精绘国漫深海妖族，半身正面像",
+    "status": "error",
+    "error": "fetch failed"
+  },
+  {
+    "id": "s145",
+    "title": "地府鬼差阎殿漫",
+    "description": "地府阎殿美学、黑白红配色，适合鬼差判官/阴间题材国漫。",
+    "styleDirective": "中国国漫风格，地府鬼差阎殿题材，英俊鬼差判官角色，黑白红三色阎殿配色，地府判官服饰，幽火灵魂特效，阎王殿庄严背景，阴间审判气氛，精绘国漫阴间美学，半身正面像",
+    "categories": [
+      "chinese_anime",
+      "mythology",
+      "dark"
+    ],
+    "subStyle": "地府鬼差",
+    "tags": [
+      "国漫",
+      "地府",
+      "鬼差",
+      "阎殿",
+      "幽冥"
+    ],
+    "medium": "chinese donghua animation",
+    "imageUrl": null,
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国国漫风格，地府鬼差阎殿题材，英俊鬼差判官角色，黑白红三色阎殿配色，地府判官服饰，幽火灵魂特效，阎王殿庄严背景，阴间审判气氛，精绘国漫阴间美学，半身正面像",
+    "status": "error",
+    "error": "fetch failed"
+  }
+]

@@ -26,6 +26,8 @@ import TaskLogsFilters from './TaskLogsFilters';
 import ColumnSelectorModal from './modals/ColumnSelectorModal';
 import ContentModal from './modals/ContentModal';
 import AudioPreviewModal from './modals/AudioPreviewModal';
+import InputPreviewModal from './modals/InputPreviewModal';
+import RequestTraceModal from '../usage-logs/modals/RequestTraceModal';
 import { useTaskLogsData } from '../../../hooks/task-logs/useTaskLogsData';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { createCardProPagination } from '../../../helpers/utils';
@@ -51,6 +53,14 @@ const TaskLogsPage = () => {
         setIsModalOpen={taskLogsData.setIsAudioModalOpen}
         audioClips={taskLogsData.audioClips}
       />
+      {/* 新增：入参预览弹窗（参考图 + 提示词） */}
+      <InputPreviewModal
+        isModalOpen={taskLogsData.isInputModalOpen}
+        setIsModalOpen={taskLogsData.setIsInputModalOpen}
+        inputData={taskLogsData.inputModalData}
+      />
+      {/* 新增：请求链路弹窗（复用普通日志组件，原始请求体里参考图为真实 https 可预览） */}
+      <RequestTraceModal {...taskLogsData} />
 
       <Layout>
         <CardPro

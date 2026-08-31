@@ -149,6 +149,19 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
 		return
 	}
+	user.Email = strings.TrimSpace(user.Email)
+	if !verifyCaptcha(user.CaptchaToken, user.CaptchaCode) {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "图形验证码错误或已过期"})
+		return
+	}
+	if user.Email == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "请输入邮箱地址"})
+		return
+	}
+	if err := common.Validate.Var(user.Email, "required,email,max=50"); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "请输入有效的邮箱地址"})
+		return
+	}
 	if common.EmailVerificationEnabled {
 		if user.Email == "" || user.VerificationCode == "" {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailVerificationRequired)
@@ -175,11 +188,9 @@ func Register(c *gin.Context) {
 		Username:    user.Username,
 		Password:    user.Password,
 		DisplayName: user.Username,
+		Email:       user.Email,
 		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
-	}
-	if common.EmailVerificationEnabled {
-		cleanUser.Email = user.Email
 	}
 	if err := cleanUser.Insert(inviterId); err != nil {
 		common.ApiError(c, err)
@@ -191,125 +202,6 @@ func Register(c *gin.Context) {
 		"message": "",
 	})
 	return
-}
-
-type PhoneLoginRequest struct {
-	Phone   string `json:"phone"`
-	Code    string `json:"code"`
-	AffCode string `json:"aff_code"`
-}
-
-// PhoneSmsLogin logs in an existing user via SMS verification code.
-func PhoneSmsLogin(c *gin.Context) {
-	if !common.AliyunSMSEnabled {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "手机号登录未启用"})
-		return
-	}
-
-	var req PhoneLoginRequest
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-		return
-	}
-	req.Phone = strings.TrimSpace(req.Phone)
-	req.Code = strings.TrimSpace(req.Code)
-	if req.Phone == "" || req.Code == "" {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-		return
-	}
-	if !common.VerifyCodeWithKey(req.Phone, req.Code, common.PhoneVerificationPurpose) {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "验证码错误或已过期"})
-		return
-	}
-	common.DeleteKey(req.Phone, common.PhoneVerificationPurpose)
-
-	user, err := model.GetUserByPhone(req.Phone)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "该手机号未注册，请先注册"})
-		return
-	}
-	if user.Status != common.UserStatusEnabled {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "用户已被封禁"})
-		return
-	}
-	setupLogin(user, c)
-}
-
-type PhoneRegisterRequest struct {
-	Phone    string `json:"phone"`
-	Code     string `json:"code"`
-	Password string `json:"password"`
-	AffCode  string `json:"aff_code"`
-}
-
-// PhoneRegister registers a new account with phone + password + SMS code.
-func PhoneRegister(c *gin.Context) {
-	if !common.RegisterEnabled {
-		common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
-		return
-	}
-	if !common.AliyunSMSEnabled {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "手机号注册未启用"})
-		return
-	}
-
-	var req PhoneRegisterRequest
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-		return
-	}
-	req.Phone = strings.TrimSpace(req.Phone)
-	req.Code = strings.TrimSpace(req.Code)
-	req.Password = strings.TrimSpace(req.Password)
-	if req.Phone == "" || req.Code == "" || req.Password == "" {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-		return
-	}
-	if len(req.Password) < 8 {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "密码长度不能少于 8 位"})
-		return
-	}
-	if !common.VerifyCodeWithKey(req.Phone, req.Code, common.PhoneVerificationPurpose) {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "验证码错误或已过期"})
-		return
-	}
-	common.DeleteKey(req.Phone, common.PhoneVerificationPurpose)
-
-	if model.IsPhoneAlreadyTaken(req.Phone) {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "该手机号已被注册"})
-		return
-	}
-	username := generatePhoneUsername(req.Phone)
-	if exist, _ := model.CheckUserExistOrDeleted(username, ""); exist {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "该手机号已被注册"})
-		return
-	}
-
-	inviterId, _ := model.GetUserIdByAffCode(req.AffCode)
-	newUser := model.User{
-		Username:    username,
-		Password:    req.Password,
-		DisplayName: req.Phone[:3] + "****" + req.Phone[7:11],
-		Phone:       req.Phone,
-		InviterId:   inviterId,
-		Role:        common.RoleCommonUser,
-	}
-	if err := newUser.Insert(inviterId); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	registered, err := model.GetUserByPhone(req.Phone)
-	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserRegisterFailed)
-		return
-	}
-
-	setupLogin(registered, c)
-}
-
-// generatePhoneUsername uses the phone number directly as the username.
-func generatePhoneUsername(phone string) string {
-	return phone
 }
 
 func GetAllUsers(c *gin.Context) {
@@ -492,7 +384,6 @@ func GetSelf(c *gin.Context) {
 		"inviter_id":        user.InviterId,
 		"linux_do_id":       user.LinuxDOId,
 		"setting":           user.Setting,
-		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,                // 新增权限字段
 	}
@@ -1205,7 +1096,7 @@ func TopUp(c *gin.Context) {
 	id := c.GetInt("id")
 	lock := getTopUpLock(id)
 	if !lock.TryLock() {
-		common.ApiErrorI18n(c, i18n.MsgUserTopUpProcessing)
+		common.ApiErrorI18n(c, i18n.MsgUserRedemptionProcessing)
 		return
 	}
 	defer lock.Unlock()

@@ -297,8 +297,12 @@ const renderAllowIps = (text, t) => {
 // Render separate quota usage column
 const renderQuotaUsage = (text, record, t) => {
   const { Paragraph } = Typography;
-  const used = parseInt(record.used_quota) || 0;
-  const remain = parseInt(record.remain_quota) || 0;
+  const displayRatio =
+    Number(record.display_ratio) > 0 ? Number(record.display_ratio) : 1;
+  const used = Math.round((parseInt(record.used_quota) || 0) * displayRatio);
+  const remain = Math.round(
+    (parseInt(record.remain_quota) || 0) * displayRatio,
+  );
   const total = used + remain;
   if (record.unlimited_quota) {
     const popoverContent = (

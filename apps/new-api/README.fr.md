@@ -189,12 +189,12 @@ docker run --name new-api -d --restart always \
 | 📈 Tableau de bord des données | Console visuelle et analyse statistique |
 | 🔒 Gestion des permissions | Regroupement de jetons, restrictions de modèles, gestion des utilisateurs |
 
-### 💰 Paiement et facturation
+### 📊 Mesure des quotas
 
-- ✅ Recharge en ligne (EPay, Stripe)
 - ✅ Tarification des modèles de paiement à l'utilisation
 - ✅ Prise en charge de la facturation du cache (OpenAI, Azure, DeepSeek, Claude, Qwen et tous les modèles pris en charge)
 - ✅ Configuration flexible des politiques de facturation
+- ✅ Le déploiement communautaire TapCanvas conserve les codes d'échange et l'allocation de quota par l'administrateur, sans paiement en ligne
 
 ### 🔐 Autorisation et sécurité
 

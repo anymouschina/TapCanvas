@@ -6,6 +6,8 @@ export type AdminProjectRow = {
 	name: string;
 	is_public: number;
 	owner_id: string | null;
+	clone_count?: number | null;
+	sort_weight?: number | null;
 	created_at: string;
 	updated_at: string;
 	owner_login?: string | null;
@@ -112,6 +114,8 @@ export async function listProjectsForAdmin(
 			name: row.name,
 			is_public: row.is_public,
 			owner_id: row.owner_id,
+			clone_count: row.clone_count ?? 0,
+			sort_weight: row.sort_weight ?? 0,
 			created_at: row.created_at,
 			updated_at: row.updated_at,
 			owner_login: row.users?.login ?? null,
@@ -144,6 +148,8 @@ export async function getProjectForAdmin(
 		name: row.name,
 		is_public: row.is_public,
 		owner_id: row.owner_id,
+		clone_count: row.clone_count ?? 0,
+		sort_weight: row.sort_weight ?? 0,
 		created_at: row.created_at,
 		updated_at: row.updated_at,
 		owner_login: row.users?.login ?? null,

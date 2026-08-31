@@ -6,7 +6,25 @@ import { AppError, errorMiddleware } from "../../middleware/error";
 import type { AppContext, AppEnv } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
 import { authMiddleware } from "../../middleware/auth";
-import { apiKeyAuthMiddleware } from "./apiKey.middleware";
+import { apiKeyAuthMiddleware, apiKeyScopeMiddleware } from "./apiKey.middleware";
+import { concatVideosFromUrls, muxAudioOntoVideo } from "./video-concat";
+import {
+	computeDoubaoSpeechCredits,
+	computeSpeechCredits,
+	doubaoSpeechReserveCeiling,
+	generateMusicToStorage,
+	isDoubaoSpeechModel,
+	synthesizeDoubaoSpeechToStorage,
+	synthesizeSpeechToStorage,
+} from "./audio-speech";
+import { requireSelectableAudioModel } from "../new-api-models/new-api-audio-model";
+import { listDoubaoSeedAudioVoices } from "./seed-audio-voices";
+import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
+import {
+	releaseTeamCreditsOnFailure,
+	requireSufficientTeamCredits,
+	settleTeamCreditsOnSuccess,
+} from "../team/team.service";
 import {
 } from "../../middleware/devPublicBypass";
 import { isHttpDebugLogEnabled } from "../../httpDebugLog";
@@ -31,23 +49,58 @@ import {
 	PublicOssUploadResponseSchema,
 	PublicVideoUnderstandRequestSchema,
 	PublicVideoUnderstandResponseSchema,
+	ApiKeyBillingOptionsResponseSchema,
 } from "./apiKey.schemas";
 import { registerPublicFlowRoutes } from "../flow/flow.public.routes";
 import { registerPublicAgentsToolBridgeRoutes } from "../task/agents-tool-bridge.routes";
-import { createApiKey, deleteApiKey, listApiKeys, updateApiKey } from "./apiKey.service";
+import { registerPublicAgentsEvalWorkspaceRoutes } from "../task/agents-eval-workspace.routes";
+import { registerStoryboardRecipeRoutes } from "../storyboard/storyboard-recipes.routes";
+import { registerStoryboardProfileRoutes } from "../storyboard/storyboard-profiles.routes";
+import {
+	createApiKey,
+	deleteApiKey,
+	listApiKeyBillingOptions,
+	listApiKeys,
+	rotateApiKey,
+	updateApiKey,
+} from "./apiKey.service";
+import { getApiKeyByIdForOwner } from "./apiKey.repo";
+import {
+	listRequestLogsByApiKey,
+	sumCreditsByApiKey,
+	listCreditLedgerByApiKey,
+	getApiKeyPrefixById,
+} from "./apiKey.usage.repo";
 import {
 	runGenericTaskForVendor,
-	enqueueStoredTaskForVendor,
+	resolveExecutableNewApiTaskModel,
 	resolveVendorContext,
 } from "../task/task.service";
+import { TaskRequestSchema, type TaskRequestDto } from "../task/task.schemas";
 import { isAgentsBridgeEnabled, runAgentsBridgeChatTask } from "../task/task.agents-bridge";
-import { handlePublicAgentsChatRoute } from "../task/public-agents-chat";
+import {
+	handlePublicAgentsChatRoute,
+	handlePublicAgentsChatInterruptRoute,
+	handlePublicAgentsChatResumeRoute,
+	handlePublicAgentsChatStatusRoute,
+} from "../task/public-agents-chat";
 import {
 	ensureModelCatalogSchema,
 	listCatalogModelsByModelAlias,
 	listCatalogModelsByModelKey,
 } from "../model-catalog/model-catalog.repo";
-import { upsertTaskResult } from "../task/task-result.repo";
+import {
+	upsertTaskResult,
+} from "../task/task-result.repo";
+import {
+	AsyncImageQueueReadinessError,
+	ensureAsyncImageQueueReady,
+	type AsyncImageQueueJob,
+} from "../task/async-image.queue";
+import {
+	dispatchAsyncImageTask,
+	registerAsyncImageTask,
+} from "../task/async-image.processor";
 import {
 	ensureVendorCallLogsSchema,
 	upsertVendorCallLogFinal,
@@ -56,10 +109,12 @@ import {
 import { fetchTaskResultForPolling } from "../task/task.polling";
 import { NEW_API_AUTO_VENDOR, normalizeDispatchVendor } from "../task/task.vendor";
 import { maybeWrapSyncImageResultAsStoredTask } from "../task/task.task-store-wrap";
+import { resolveAuthorizedGenerationAssetContext } from "../task/generation-asset-context";
+import { IMAGE_UNDERSTANDING_MODEL_KEY } from "../task/media-understanding-model";
 import { setTraceStage } from "../../trace";
 import { createAssetRow } from "../asset/asset.repo";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
-import { createRustfsClient, resolveRustfsConfig } from "../asset/rustfs.client";
+import { createObjectStorageClient, resolveObjectStorageConfig } from "../asset/rustfs.client";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import {
 	PublicChatAssetInputNormalizer,
@@ -69,8 +124,11 @@ import {
 	appendPublicChatTurnRun,
 	type PublicChatRunOutcome,
 } from "./public-chat-session.repo";
+import { handleMcpRoute } from "./public-mcp";
 import { persistUserConversationTurn } from "../memory/memory.service";
 import { loadGenerationContractModule } from "../../platform/node/shared-schema-loader";
+import { registerPublicCodexWorkerRoutes } from "../codex/codex.routes";
+import { isSafePublicHttpUrl } from "../asset/public-http-url";
 
 const generationContractModule = loadGenerationContractModule();
 const { parseGenerationContract } = generationContractModule;
@@ -136,12 +194,16 @@ export function resolvePublicChatStreamSessionId(input: {
 	sessionKey?: string;
 	canvasProjectId?: string;
 	canvasFlowId?: string;
+	chapterId?: string;
 }): string {
 	const sessionKey = typeof input.sessionKey === "string" ? input.sessionKey.trim() : "";
 	if (sessionKey) return sessionKey;
 	const canvasProjectId =
 		typeof input.canvasProjectId === "string" ? input.canvasProjectId.trim() : "";
 	if (!canvasProjectId) return "";
+	// 章节画布按 project+chapter 隔离（与前端会话 key 对齐），不落 flow。
+	const chapterId = typeof input.chapterId === "string" ? input.chapterId.trim() : "";
+	if (chapterId) return `project:${canvasProjectId}:chapter:${chapterId}`;
 	const canvasFlowId =
 		typeof input.canvasFlowId === "string" && input.canvasFlowId.trim()
 			? input.canvasFlowId.trim()
@@ -153,6 +215,11 @@ export function normalizePublicChatAgentStreamEvent(input: {
 	event?: string;
 	data?: Record<string, unknown>;
 }): PublicChatForwardedStreamEvent | null {
+	if (input.event === "text.delta") {
+		const delta =
+			input.data && typeof input.data.delta === "string" ? input.data.delta : "";
+		return delta ? { event: "content", data: { delta } } : null;
+	}
 	if (input.event === "content") {
 		const delta =
 			input.data && typeof input.data.delta === "string" ? input.data.delta : "";
@@ -233,6 +300,10 @@ function extractStructuredAgentsMetadata(result: unknown): {
 			canvasPlan: meta.canvasPlan,
 			todoList: meta.todoList,
 			turnVerdict: meta.turnVerdict,
+			requestTerminal: meta.requestTerminal,
+			expectedDelivery: meta.expectedDelivery,
+			deliveryEvidence: meta.deliveryEvidence,
+			deliveryVerification: meta.deliveryVerification,
 		},
 	};
 	const parsed = AgentsChatResponseSchema.pick({
@@ -341,15 +412,19 @@ async function persistStructuredPublicChatTurn(input: {
 	const sessionKey =
 		typeof input.requestInput.sessionKey === "string" ? input.requestInput.sessionKey.trim() : "";
 	if (!sessionKey) return;
+	const trace = input.structuredMetadata.trace;
+	const publicTurnId = trace?.requestId?.trim();
+	if (!publicTurnId) throw new Error("structured public chat publication requires trace.requestId");
 
 	const persisted = await persistUserConversationTurn(input.c, {
 		userId: input.userId,
 		sessionKey,
+		turnId: publicTurnId,
 		userText: input.conversationUserText,
 		assistantText: input.assistantText,
 		assistantAssets: input.assistantAssets,
+		assistantExecutionProvenance: input.structuredMetadata.trace?.executionProvenance,
 	});
-	const trace = input.structuredMetadata.trace;
 	if (!persisted || !trace?.turnVerdict) return;
 
 	const assetCount = Array.isArray(input.assistantAssets) ? input.assistantAssets.length : 0;
@@ -419,7 +494,7 @@ export async function normalizeTaskAssetBackedVideoRequest(
 	if (!isPlainRecord(request)) return request;
 	const kind =
 		typeof request.kind === "string" ? request.kind.trim() : "";
-	if (kind !== "text_to_video" && kind !== "image_to_video") return request;
+	if (kind !== "text_to_video" && kind !== "image_to_video" && kind !== "video_edit") return request;
 
 	const extras = isPlainRecord(request.extras)
 		? { ...request.extras }
@@ -879,6 +954,15 @@ apiKeyRouter.get("/", async (c) => {
 	return c.json(ApiKeySchema.array().parse(keys));
 });
 
+// 计费归属可选项：当前用户可分配的个人账户 + 企业团队（各带名称与可用余额）。
+// 供前端「计费归属」下拉「名称（余额分）」。放在 :id 路由之前，避免被参数路由吞掉。
+apiKeyRouter.get("/billing-options", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const options = await listApiKeyBillingOptions(c, userId);
+	return c.json(ApiKeyBillingOptionsResponseSchema.parse({ options }));
+});
+
 apiKeyRouter.post("/", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
@@ -910,12 +994,64 @@ apiKeyRouter.patch("/:id", async (c) => {
 	return c.json(ApiKeySchema.parse(result));
 });
 
+apiKeyRouter.post("/:id/rotate", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const result = await rotateApiKey(c, userId, c.req.param("id"));
+	return c.json(CreateApiKeyResponseSchema.parse(result));
+});
+
 apiKeyRouter.delete("/:id", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const id = c.req.param("id");
 	await deleteApiKey(c, userId, id);
 	return c.body(null, 204);
+});
+
+// ---- Consumption dashboard (read-only, owner-scoped) ----
+
+apiKeyRouter.get("/:id/usage", async (c: AppContext) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const id = c.req.param("id");
+	const owned = await getApiKeyByIdForOwner(c.env.DB, id, userId);
+	if (!owned) return c.json({ error: "Not found" }, 404);
+	const parsedLimit = Number(c.req.query("limit") || "50");
+	const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50;
+	const before = c.req.query("before") || undefined;
+	const since = c.req.query("since") || undefined;
+	const until = c.req.query("until") || undefined;
+	const logs = await listRequestLogsByApiKey(id, {
+		limit,
+		...(before ? { before } : {}),
+		...(since ? { since } : {}),
+		...(until ? { until } : {}),
+	});
+	return c.json({ items: logs });
+});
+
+apiKeyRouter.get("/:id/credits", async (c: AppContext) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const id = c.req.param("id");
+	const owned = await getApiKeyByIdForOwner(c.env.DB, id, userId);
+	if (!owned) return c.json({ error: "Not found" }, 404);
+	const parsedLimit = Number(c.req.query("limit") || "50");
+	const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50;
+	const before = c.req.query("before") || undefined;
+	const since = c.req.query("since") || undefined;
+	const until = c.req.query("until") || undefined;
+	const [summary, ledger] = await Promise.all([
+		sumCreditsByApiKey(id),
+		listCreditLedgerByApiKey(id, {
+			limit,
+			...(before ? { before } : {}),
+			...(since ? { since } : {}),
+			...(until ? { until } : {}),
+		}),
+	]);
+	return c.json({ summary, items: ledger });
 });
 
 // ---- Public (API key + Origin allowlist) ----
@@ -928,8 +1064,106 @@ publicApiRouter.use("*", async (c, next) => {
 	return next();
 });
 publicApiRouter.use("*", apiKeyAuthMiddleware);
+publicApiRouter.use("*", apiKeyScopeMiddleware);
 registerPublicFlowRoutes(publicApiRouter);
+registerPublicAgentsEvalWorkspaceRoutes(publicApiRouter);
 registerPublicAgentsToolBridgeRoutes(publicApiRouter);
+registerStoryboardRecipeRoutes(publicApiRouter);
+registerStoryboardProfileRoutes(publicApiRouter);
+registerPublicCodexWorkerRoutes(publicApiRouter);
+
+// 用量自查：第三方持 tc_sk_* 即可查询「这把 key」自己的用量（作用域严格限于当前 key）。
+// 账户级总余额 / 跨 key 汇总 / key 的创建吊销仍只在网页端。
+publicApiRouter.get("/usage", async (c) => {
+	const apiKeyId = c.get("apiKeyId");
+	if (!apiKeyId) return c.json({ error: "Unauthorized" }, 401);
+	const parsedLimit = Number(c.req.query("limit") || "50");
+	const limit = Math.min(
+		Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 50, 1),
+		200,
+	);
+	const before = c.req.query("before") || undefined;
+	const [keyPrefix, summary, recentRequests, recentCredits] = await Promise.all([
+		getApiKeyPrefixById(apiKeyId),
+		sumCreditsByApiKey(apiKeyId),
+		listRequestLogsByApiKey(apiKeyId, {
+			limit,
+			...(before ? { before } : {}),
+		}),
+		listCreditLedgerByApiKey(apiKeyId, { limit }),
+	]);
+	return c.json({ keyPrefix, summary, recentRequests, recentCredits });
+});
+
+// 代理级(owner) skill/knowledge 写入：持 tc_sk 的 key 拥有者把自建 skill / 知识卡写进「自己的」
+// 代理层目录（agents-cli agentSkillsDir/agentKnowledgeDir，读侧三层已接）。owner 由 key 决定
+// （c.get("userId") 即 apiKeyRow.owner_id），不接受 body 自报 ownerId——防越权写他人代理层。
+// hono 只鉴权 + 转发；真正落盘在 agents-cli 内部端点 POST /agent-memory/write（内存文件在其
+// 容器文件系统上，hono 跨容器写不到）。透传 { ownerId, type, name, content }。
+publicApiRouter.post("/v1/agent-memory", async (c) => {
+	const ownerId = String(c.get("userId") || c.get("apiKeyOwnerId") || "").trim();
+	if (!ownerId) {
+		return c.json(
+			{ error: { message: "Unauthorized", type: "invalid_request_error", code: "unauthorized" } },
+			401,
+		);
+	}
+	const baseUrl = (c.env.AGENTS_BRIDGE_BASE_URL || "").trim().replace(/\/+$/, "");
+	if (!baseUrl) {
+		return c.json(
+			{
+				error: {
+					message: "agents bridge 未配置（缺少 AGENTS_BRIDGE_BASE_URL）",
+					type: "server_error",
+					code: "agents_bridge_not_configured",
+				},
+			},
+			500,
+		);
+	}
+	const token = (c.env.AGENTS_BRIDGE_TOKEN || "").trim();
+	const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+	const type = typeof body.type === "string" ? body.type.trim() : "";
+	const name = typeof body.name === "string" ? body.name : "";
+	const content = typeof body.content === "string" ? body.content : "";
+	if (type !== "skill" && type !== "knowledge") {
+		return c.json(
+			{ error: { message: "type 必须是 skill 或 knowledge", type: "invalid_request_error", code: "invalid_type" } },
+			400,
+		);
+	}
+	if (!name.trim()) {
+		return c.json(
+			{ error: { message: "name 必填", type: "invalid_request_error", code: "invalid_name" } },
+			400,
+		);
+	}
+	if (!content.trim()) {
+		return c.json(
+			{ error: { message: "content 必填", type: "invalid_request_error", code: "invalid_content" } },
+			400,
+		);
+	}
+	const upstream = await fetch(`${baseUrl}/agent-memory/write`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+		},
+		// owner 强制取自 key，忽略 body.ownerId（防越权）。
+		body: JSON.stringify({ ownerId, type, name, content }),
+	});
+	const text = await upstream.text();
+	return new Response(text, {
+		status: upstream.status,
+		headers: { "content-type": upstream.headers.get("content-type") || "application/json" },
+	});
+});
+
+// MCP 远程 server（Streamable HTTP·JSON 模式）：原生 MCP 客户端一行接入小T。
+// 复用 /public/* 的 apiKeyAuthMiddleware 鉴权；详见 public-mcp.ts。
+publicApiRouter.post("/mcp", (c) => handleMcpRoute(c as AppContext));
+publicApiRouter.get("/mcp", (c) => handleMcpRoute(c as AppContext));
 
 const PublicAgentsChatOpenApiRoute = createRoute({
 	method: "post",
@@ -949,6 +1183,20 @@ const PublicAgentsChatOpenApiRoute = createRoute({
 		},
 	},
 	responses: {
+		202: {
+			description: "Durable steering/follow-up message accepted",
+			content: {
+				"application/json": {
+					schema: z.object({
+						accepted: z.literal(true),
+						queueId: z.string(),
+						mode: z.enum(["steering", "follow_up"]),
+						sessionId: z.string(),
+						activeTurn: z.boolean(),
+					}),
+				},
+			},
+		},
 		200: {
 			description: "OK",
 			content: {
@@ -1564,17 +1812,29 @@ const handlePublicAgentsChat = async (c: AppContext) => {
 	return handlePublicAgentsChatRoute(c);
 };
 
-publicApiRouter.openapi(PublicAgentsChatOpenApiRoute, handlePublicAgentsChat);
+publicApiRouter.openapi(PublicAgentsChatOpenApiRoute, handlePublicAgentsChat as any);
+
+// 当前/最近回合的 durable checkpoint。刷新页面后由前端先查询，再决定展示、排队或允许新回合。
+publicApiRouter.post("/agents/chat/status", (c) =>
+	handlePublicAgentsChatStatusRoute(c as unknown as AppContext),
+);
+
+// 仅认领服务端已持久化的物理预算续跑合同；不会把自然语言消息解释成续跑。
+publicApiRouter.post("/agents/chat/resume", (c) =>
+	handlePublicAgentsChatResumeRoute(c as unknown as AppContext),
+);
+
+// 显式中断在飞聊天回合：按 (userId, sessionKey, turnId) 精确 abort，避免迟到操作误杀后来回合。
+publicApiRouter.post("/agents/chat/interrupt", (c) =>
+	handlePublicAgentsChatInterruptRoute(c as unknown as AppContext),
+);
 
 const DEFAULT_PUBLIC_VISION_PROMPT =
 	"请详细分析我提供的图片，推测可用于复现它的英文提示词，包含主体、环境、镜头、光线和风格。输出必须是纯英文提示词，不要添加中文备注或翻译。";
 
-const DEFAULT_PUBLIC_VISION_MODEL_KEY = "gpt-5.5";
-
 type PublicVisionTaskExtras = {
 	imageUrl?: string;
 	imageData?: string;
-	modelAlias?: string;
 	modelKey?: string;
 	systemPrompt?: string;
 	temperature?: number;
@@ -1594,19 +1854,10 @@ export function buildPublicVisionTaskRequest(
 		prompt: string;
 	},
 ): PublicVisionTaskRequest {
-	const modelAlias =
-		typeof input.modelAlias === "string" && input.modelAlias.trim()
-			? input.modelAlias.trim()
-			: "";
-	const modelKey =
-		typeof input.modelKey === "string" && input.modelKey.trim()
-			? input.modelKey.trim()
-			: "";
 	const extras: PublicVisionTaskExtras = {
 		...(params.imageUrl ? { imageUrl: params.imageUrl } : {}),
 		...(params.imageData ? { imageData: params.imageData } : {}),
-		...(modelAlias ? { modelAlias } : {}),
-		...(modelKey ? { modelKey } : {}),
+		modelKey: IMAGE_UNDERSTANDING_MODEL_KEY,
 		...(typeof input.systemPrompt === "string" && input.systemPrompt.trim()
 			? { systemPrompt: input.systemPrompt.trim() }
 			: {}),
@@ -1614,10 +1865,6 @@ export function buildPublicVisionTaskRequest(
 			? { temperature: input.temperature }
 			: {}),
 	};
-
-	if (!modelAlias && !modelKey) {
-		extras.modelKey = DEFAULT_PUBLIC_VISION_MODEL_KEY;
-	}
 
 	return {
 		kind: "image_to_prompt",
@@ -1642,7 +1889,7 @@ const PublicVisionOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "图像理解 /public/vision",
 	description:
-		"便捷图像理解接口：创建 image_to_prompt 任务并直接返回文本（常见用法：根据图片反推可复现的英文提示词）。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略。默认使用 gpt-5.5；支持外部 prompt 透传；图片输入支持 imageUrl 或 imageData（二选一）。失败会显式返回错误，不做 draw 降级。",
+		"便捷图像理解接口：创建 image_to_prompt 任务并直接返回文本（常见用法：根据图片反推可复现的英文提示词）。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略。默认使用 gpt-5.6-luna；支持外部 prompt 透传；图片输入支持 imageUrl 或 imageData（二选一）。失败会显式返回错误，不做 draw 降级。",
 	request: {
 		body: {
 			required: true,
@@ -1653,7 +1900,7 @@ const PublicVisionOpenApiRoute = createRoute({
 						imageUrl:
 							"https://github.com/dianping/cat/raw/master/cat-home/src/main/webapp/images/logo/cat_logo03.png",
 						prompt: DEFAULT_PUBLIC_VISION_PROMPT,
-						modelKey: DEFAULT_PUBLIC_VISION_MODEL_KEY,
+						modelKey: IMAGE_UNDERSTANDING_MODEL_KEY,
 						temperature: 0.2,
 					},
 				},
@@ -1758,7 +2005,7 @@ const PublicOssUploadOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "上传到对象存储 /public/oss/upload",
 	description:
-		"JSON 方式上传文件到对象存储（兼容 RustFS / Cloudflare R2）。支持 sourceUrl（远端 URL）或 dataUrl（base64）。会自动落库为当前用户资产并返回可访问 URL。",
+		"JSON 方式上传文件到火山 TOS。支持 sourceUrl（远端 URL）或 dataUrl（base64）。会自动落库为当前用户资产并返回可访问 URL。",
 	request: {
 		body: {
 			required: true,
@@ -1812,11 +2059,11 @@ const PublicOssUploadOpenApiRoute = createRoute({
 publicApiRouter.openapi(PublicOssUploadOpenApiRoute, async (c) => {
 	const userId = requirePublicUserId(c);
 	const input = c.req.valid("json");
-	const rustfsConfig = resolveRustfsConfig(c.env);
-	if (!rustfsConfig) {
+	const storageConfig = resolveObjectStorageConfig(c.env);
+	if (!storageConfig) {
 		throw new AppError("Object storage is not configured", {
 			status: 500,
-			code: "rustfs_not_configured",
+			code: "object_storage_not_configured",
 		});
 	}
 
@@ -1860,10 +2107,10 @@ publicApiRouter.openapi(PublicOssUploadOpenApiRoute, async (c) => {
 	const ext = detectUploadExtension({ contentType, fileName: fileName || undefined });
 	const key = buildPublicUploadKey(userId, ext);
 
-	const client = createRustfsClient(c.env);
+	const client = createObjectStorageClient(c.env);
 	await client.send(
 		new PutObjectCommand({
-			Bucket: rustfsConfig.bucket,
+			Bucket: storageConfig.bucket,
 			Key: key,
 			Body: bodyBytes,
 			ContentType: contentType,
@@ -2094,7 +2341,8 @@ function isPublicTaskKindSupported(kind: string): boolean {
 		k === "text_to_image" ||
 		k === "image_edit" ||
 		k === "text_to_video" ||
-		k === "image_to_video" ||
+			 k === "image_to_video" ||
+			 k === "video_edit" ||
 		k === "chat" ||
 		k === "prompt_refine" ||
 		k === "image_to_prompt"
@@ -2462,7 +2710,7 @@ function resolveCatalogKindForTaskKind(
 	if (!k) return null;
 	if (k === "chat" || k === "prompt_refine" || k === "image_to_prompt") return "text";
 	if (k === "text_to_image" || k === "image_edit") return "image";
-	if (k === "text_to_video" || k === "image_to_video") return "video";
+	if (k === "text_to_video" || k === "image_to_video" || k === "video_edit") return "video";
 	return null;
 }
 
@@ -2491,7 +2739,7 @@ async function rankVendorsByRecentPerformance(
 
 	const taskKindFilter = typeof taskKind === "string" && taskKind.trim() ? taskKind.trim() : null;
 	const isVideoTaskKind =
-		taskKindFilter === "text_to_video" || taskKindFilter === "image_to_video";
+		taskKindFilter === "text_to_video" || taskKindFilter === "image_to_video" || taskKindFilter === "video_edit";
 
 	try {
 		await ensureVendorCallLogsSchema(c.env.DB);
@@ -3031,11 +3279,11 @@ export async function runPublicTask(
 ): Promise<{ vendor: string; result: any }> {
 	const abortSignal = isAbortSignalLike(input?.abortSignal) ? input.abortSignal : null;
 	throwIfAbortSignalAborted(abortSignal);
-	const request = await normalizeTaskAssetBackedVideoRequest(
+	const request = (await normalizeTaskAssetBackedVideoRequest(
 		c as AppContext,
 		userId,
 		normalizeImageEditRequestKind(input.request),
-	);
+	)) as Record<string, any>;
 	const extras = (request?.extras || {}) as Record<string, any>;
 	const externalVendor =
 		typeof input?.vendor === "string" && input.vendor.trim() ? input.vendor.trim() : null;
@@ -3078,7 +3326,7 @@ export async function runPublicTask(
 		if (modelAliasRaw && !String(cleanExtras.modelKey || "").trim()) {
 			cleanExtras.modelKey = modelAliasRaw;
 		}
-		return { ...request, extras: cleanExtras };
+		return { ...request, extras: cleanExtras } as Record<string, any>;
 	})();
 
 	debugLog("newapi_task_resolved", {
@@ -3097,11 +3345,69 @@ export async function runPublicTask(
 		externalVendorIgnored: externalVendor,
 	});
 
+	// 图片任务异步路径：立刻返回 task_UUID，后台跑 new-api，避免前端等待长达数十秒
+	const isAsyncImageKind =
+		requestForNewApi.kind === "text_to_image" ||
+		requestForNewApi.kind === "image_edit";
+	if (isAsyncImageKind) {
+		// Deterministic validation and queue readiness both finish before a task is
+		// accepted. Provider execution is owned by the durable worker, never by a
+		// detached Promise in this request process.
+		const asyncRequest = TaskRequestSchema.parse(requestForNewApi);
+		await resolveAuthorizedGenerationAssetContext(
+			c as AppContext,
+			userId,
+			asyncRequest,
+		);
+		await resolveExecutableNewApiTaskModel(
+			c as AppContext,
+			NEW_API_AUTO_VENDOR,
+			asyncRequest,
+		);
+		try {
+			await ensureAsyncImageQueueReady();
+		} catch (error) {
+			if (error instanceof AsyncImageQueueReadinessError) {
+				throw new AppError(error.message, {
+					status: 503,
+					code: error.code,
+				});
+			}
+			throw error;
+		}
+		const asyncTaskId = `task_${crypto.randomUUID()}`;
+		const asyncNowIso = new Date().toISOString();
+		const optionalContextString = (value: unknown): string | null => {
+			return typeof value === "string" && value.trim() ? value.trim() : null;
+		};
+		const queueJob: AsyncImageQueueJob = {
+			taskId: asyncTaskId,
+			userId,
+			request: asyncRequest,
+			activeTeamId: optionalContextString(c.get("activeTeamId")),
+			apiKeyBillingTeamId: optionalContextString(c.get("apiKeyBillingTeamId")),
+			apiKeyId: optionalContextString(c.get("apiKeyId")),
+			enqueuedAt: asyncNowIso,
+		};
+		const registered = await registerAsyncImageTask(c.env, queueJob);
+		const dispatchOutcome = await dispatchAsyncImageTask(c.env, registered.contract);
+		if (dispatchOutcome === "waiting" || dispatchOutcome === "failed") {
+			console.warn("[async-image] durable dispatch deferred", {
+				taskId: asyncTaskId,
+				outcome: dispatchOutcome,
+			});
+		}
+		return {
+			vendor: NEW_API_AUTO_VENDOR,
+			result: registered.result,
+		};
+	}
+
 	let result = await runGenericTaskForVendor(
 		c,
 		userId,
 		NEW_API_AUTO_VENDOR,
-		requestForNewApi,
+		requestForNewApi as any,
 	);
 
 	if (result?.status === "failed") {
@@ -3181,50 +3487,58 @@ export async function runPublicTask(
 		});
 	}
 
-	try {
-		const taskId =
-			typeof sanitizedResult === "object" &&
-			sanitizedResult &&
-			typeof (sanitizedResult as Record<string, unknown>)?.id === "string"
-				? String((sanitizedResult as Record<string, unknown>).id).trim()
-				: String(result?.id || "").trim();
-		const status =
-			typeof sanitizedResult === "object" &&
-			sanitizedResult &&
-			typeof (sanitizedResult as Record<string, unknown>)?.status === "string"
-				? String((sanitizedResult as Record<string, unknown>).status).trim()
-				: typeof result?.status === "string"
-					? result.status.trim()
-					: "";
-		const kind =
-			typeof sanitizedResult === "object" &&
-			sanitizedResult &&
-			typeof (sanitizedResult as Record<string, unknown>)?.kind === "string"
-				? String((sanitizedResult as Record<string, unknown>).kind).trim()
-				: String(requestForNewApi.kind || "").trim();
-		if (
-			taskId &&
-			kind &&
-			(status === "queued" ||
-				status === "running" ||
-				status === "succeeded" ||
-				status === "failed")
-		) {
-			const nowIso = new Date().toISOString();
-			const completedAt = status === "succeeded" || status === "failed" ? nowIso : null;
-			await upsertTaskResult(c.env.DB, {
-				userId,
-				taskId,
-				vendor: NEW_API_AUTO_VENDOR,
-				kind,
-				status,
-				result: sanitizedResult,
-				completedAt,
-				nowIso,
-			});
+	// storedResultReady=true 时结果已由 maybeWrapSyncImageResultAsStoredTask 写入 DB，无需再覆盖
+	const isStoredResultReady =
+		typeof (result as any)?.raw === "object" &&
+		(result as any).raw !== null &&
+		(result as any).raw.storedResultReady === true;
+
+	if (!isStoredResultReady) {
+		try {
+			const taskId =
+				typeof sanitizedResult === "object" &&
+				sanitizedResult &&
+				typeof (sanitizedResult as Record<string, unknown>)?.id === "string"
+					? String((sanitizedResult as Record<string, unknown>).id).trim()
+					: String(result?.id || "").trim();
+			const status =
+				typeof sanitizedResult === "object" &&
+				sanitizedResult &&
+				typeof (sanitizedResult as Record<string, unknown>)?.status === "string"
+					? String((sanitizedResult as Record<string, unknown>).status).trim()
+					: typeof result?.status === "string"
+						? result.status.trim()
+						: "";
+			const kind =
+				typeof sanitizedResult === "object" &&
+				sanitizedResult &&
+				typeof (sanitizedResult as Record<string, unknown>)?.kind === "string"
+					? String((sanitizedResult as Record<string, unknown>).kind).trim()
+					: String(requestForNewApi.kind || "").trim();
+			if (
+				taskId &&
+				kind &&
+				(status === "queued" ||
+					status === "running" ||
+					status === "succeeded" ||
+					status === "failed")
+			) {
+				const nowIso = new Date().toISOString();
+				const completedAt = status === "succeeded" || status === "failed" ? nowIso : null;
+				await upsertTaskResult(c.env.DB, {
+					userId,
+					taskId,
+					vendor: NEW_API_AUTO_VENDOR,
+					kind,
+					status,
+					result: sanitizedResult,
+					completedAt,
+					nowIso,
+				});
+			}
+		} catch (err: any) {
+			console.warn("[task-store] persist public result failed", err?.message || err);
 		}
-	} catch (err: any) {
-		console.warn("[task-store] persist public result failed", err?.message || err);
 	}
 
 	return { vendor: NEW_API_AUTO_VENDOR, result: sanitizedResult };
@@ -3411,39 +3725,8 @@ publicApiRouter.openapi(PublicDrawOpenApiRoute, async (c) => {
 		typeof extras?.modelAlias === "string" && extras.modelAlias.trim()
 			? extras.modelAlias.trim()
 			: "";
-	const looksLikeNanoBananaAlias = /^nano-banana/i.test(modelAliasRaw);
-
-	const preferAsync =
-		input.async === true || (input.async !== false && looksLikeNanoBananaAlias);
-
-	if (preferAsync) {
-		try {
-			// Hint proxy selector: prefer higher-success channels for this task kind.
-			if (normalizedRequest?.kind) c.set("routingTaskKind", normalizedRequest.kind);
-		} catch {
-			// ignore
-		}
-
-		const cleanExtras = { ...(extras || {}) } as Record<string, any>;
-		delete (cleanExtras as any).modelAlias;
-		if (modelAliasRaw && !String(cleanExtras.modelKey || "").trim()) {
-			cleanExtras.modelKey = modelAliasRaw;
-		}
-		const requestForNewApi = { ...normalizedRequest, extras: cleanExtras };
-		const result = await enqueueStoredTaskForVendor(
-			c as any,
-			userId,
-			NEW_API_AUTO_VENDOR,
-			requestForNewApi,
-		);
-
-		return c.json(
-			PublicRunTaskResponseSchema.parse({
-				vendor: NEW_API_AUTO_VENDOR,
-				result,
-			}),
-			200,
-		);
+	if (modelAliasRaw && !String(extras.modelKey || "").trim()) {
+		extras.modelKey = modelAliasRaw;
 	}
 
 	const { vendor, result } = await runPublicTask(c, userId, {
@@ -3542,6 +3825,313 @@ publicApiRouter.openapi(PublicVideoOpenApiRoute, async (c) => {
 		}),
 		200,
 	);
+});
+
+// Concatenate multiple finished video clips into a single mp4 and host it.
+// Body: { clipUrls: string[], fileName?: string }
+//   or  { clips: Array<string | { url: string, inSec?: number, outSec?: number }> }
+// clips[].inSec/outSec = 逐段内切（只取源素材该区间；同一 url 可多区间复用——
+// 亚秒冲击簇/打击帧插帧的基建）。clips 提供时优先于 clipUrls。
+// Requires ffmpeg/ffprobe on the api image PATH.
+publicApiRouter.post("/video/concat", async (c) => {
+	const userId = requirePublicUserId(c);
+	let body: any;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON body" }, 400);
+	}
+	const richClips = Array.isArray(body?.clips)
+		? body.clips.filter(
+				(x: unknown) =>
+					(typeof x === "string" && x.trim()) ||
+					(!!x &&
+						typeof x === "object" &&
+						typeof (x as { url?: unknown }).url === "string" &&
+						((x as { url: string }).url || "").trim()),
+			)
+		: [];
+	const clipUrls =
+		richClips.length > 0
+			? richClips
+			: Array.isArray(body?.clipUrls)
+				? body.clipUrls.filter((x: unknown) => typeof x === "string" && (x as string).trim())
+				: [];
+	if (clipUrls.length < 2) {
+		return c.json({ error: "clips/clipUrls must contain at least 2 video clips" }, 400);
+	}
+	try {
+		const targetAspect =
+			typeof body?.aspect === "string"
+				? body.aspect
+				: typeof body?.aspectRatio === "string"
+					? body.aspectRatio
+					: undefined;
+		const result = await concatVideosFromUrls(
+			c,
+			userId,
+			clipUrls,
+			typeof body?.fileName === "string" ? body.fileName : undefined,
+			targetAspect,
+			{
+				xfadeSeconds:
+					typeof body?.xfadeSeconds === "number" ? body.xfadeSeconds : undefined,
+				colorMatch:
+					typeof body?.colorMatch === "boolean" ? body.colorMatch : undefined,
+			},
+		);
+		return c.json(result, 200);
+	} catch (err) {
+		const detail = String((err as Error)?.message || err);
+		// clips[i] 前缀 = 入参校验错误（trim 区间非法等），是调用方问题返 400。
+		if (/^clips\[\d+\]/.test(detail)) {
+			return c.json({ error: "invalid clips", detail }, 400);
+		}
+		return c.json({ error: "video concat failed", detail }, 500);
+	}
+});
+
+// 同源下载代理：浏览器点「下载」时，跨域资产域名若不返回 CORS 头，会让 <a download> 退化成
+// 新标签预览（浏览器对跨域链接忽略 download 属性）。TOS 公开域名带 CORS 可直下，但新生成、尚未
+// 转存 TOS 的图/视频常挂在上游 relay 域名（无 CORS）→ 前端 blob fetch 失败 → 回退新标签。
+// 这里在服务端取回字节、以同源响应流回（前端 fetch→blob→下载），保证任何公开资产 host 都能直接下载。
+publicApiRouter.get("/asset-download", async (c) => {
+	const rawUrl = (c.req.query("url") || "").trim();
+	if (!rawUrl) return c.json({ error: "missing url" }, 400);
+	let target: URL;
+	try {
+		target = new URL(rawUrl);
+	} catch {
+		return c.json({ error: "invalid url" }, 400);
+	}
+	if (!isSafePublicHttpUrl(target)) return c.json({ error: "url not allowed" }, 403);
+
+	let upstream: Response;
+	try {
+		upstream = await fetch(target.toString(), {
+			method: "GET",
+			redirect: "follow",
+			headers: { accept: "*/*" },
+		});
+	} catch (err) {
+		return c.json(
+			{ error: "fetch failed", detail: String((err as Error)?.message || err) },
+			502,
+		);
+	}
+	if (!upstream.ok || !upstream.body) {
+		return c.json({ error: `upstream ${upstream.status}` }, 502);
+	}
+
+	const contentType =
+		upstream.headers.get("content-type") || "application/octet-stream";
+	const fallbackName = (c.req.query("filename") || "").trim() || "download";
+	const headers: Record<string, string> = {
+		"content-type": contentType,
+		"cache-control": "no-store",
+		"content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fallbackName)}`,
+	};
+	const len = upstream.headers.get("content-length");
+	if (len) headers["content-length"] = len;
+	return new Response(upstream.body, { status: 200, headers });
+});
+
+// MiniMax 语音合成（经 new-api relay），转存对象存储后返回公开 URL。
+// 同步端点：TTS 数秒内完成，沿用 video/concat 的同步形态；计费走团队积分
+// 预留-结算模式（与 agents-llm-proxy 一致）。
+publicApiRouter.post("/audio/speech", async (c) => {
+	const userId = requirePublicUserId(c);
+	let body: any;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON body" }, 400);
+	}
+	const text = typeof body?.text === "string" ? body.text.trim() : "";
+	if (!text) return c.json({ error: "text is required" }, 400);
+	const catalogModel = await requireSelectableAudioModel(c, body?.model, "speech");
+	const model = catalogModel.requestModelKey;
+
+	const isDoubao = isDoubaoSpeechModel(model);
+
+	// MiniMax：按实际计费字符动态计价；豆包语音：按秒计费（预留封顶，结算实际时长）。
+	const required = isDoubao ? doubaoSpeechReserveCeiling() : computeSpeechCredits(model, text);
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: "text_to_audio",
+		vendor: "new_api",
+		modelKey: model,
+	});
+
+	try {
+		if (isDoubao) {
+			const result = await synthesizeDoubaoSpeechToStorage(c, userId, {
+				text,
+				model,
+				voiceId: typeof body?.voiceId === "string" ? body.voiceId : null,
+				speechRate: typeof body?.speechRate === "number" ? body.speechRate : null,
+				pitchRate: typeof body?.pitchRate === "number" ? body.pitchRate : null,
+				loudnessRate: typeof body?.loudnessRate === "number" ? body.loudnessRate : null,
+				sampleRate: typeof body?.sampleRate === "number" ? body.sampleRate : null,
+				responseFormat:
+					typeof body?.responseFormat === "string" ? body.responseFormat : null,
+				referenceAudioUrls: Array.isArray(body?.referenceAudioUrls)
+					? body.referenceAudioUrls
+					: null,
+				referenceImageUrl:
+					typeof body?.referenceImageUrl === "string" ? body.referenceImageUrl : null,
+			});
+			if (reservation) {
+				// 按实际时长结算（不足封顶部分自动释放）；时长缺失则保守按封顶。
+				const actual =
+					typeof result.durationSec === "number" && result.durationSec > 0
+						? computeDoubaoSpeechCredits(result.durationSec)
+						: reservation.amount;
+				await settleTeamCreditsOnSuccess(c, userId, {
+					taskId: reservation.reservationTaskId,
+					taskKind: "text_to_audio",
+					amount: actual,
+					vendor: "new_api",
+					modelKey: model,
+				});
+			}
+			return c.json(result, 200);
+		}
+
+		const result = await synthesizeSpeechToStorage(c, userId, {
+			text,
+			model,
+			voiceId: typeof body?.voiceId === "string" ? body.voiceId : null,
+			emotion: typeof body?.emotion === "string" ? body.emotion : null,
+			speed: typeof body?.speed === "number" ? body.speed : null,
+			soundEffects: Array.isArray(body?.soundEffects) ? body.soundEffects : null,
+		});
+		if (reservation) {
+			await settleTeamCreditsOnSuccess(c, userId, {
+				taskId: reservation.reservationTaskId,
+				taskKind: "text_to_audio",
+				amount: reservation.amount,
+				vendor: "new_api",
+				modelKey: model,
+			});
+		}
+		return c.json(result, 200);
+	} catch (err) {
+		if (reservation) {
+			await releaseTeamCreditsOnFailure(c, userId, {
+				taskId: reservation.reservationTaskId,
+				taskKind: "text_to_audio",
+				vendor: "new_api",
+				modelKey: model,
+			});
+		}
+		return c.json(
+			{ error: "speech synthesis failed", detail: String((err as Error)?.message || err) },
+			502,
+		);
+	}
+});
+
+// 豆包语音富音色目录（火山 ListSpeakers，含头像+试听）；未配 AK/SK 返回空数组，
+// 前端回落静态音色库。供画布富音色选择器渲染。
+publicApiRouter.get("/audio/doubao-voices", async (c) => {
+	const voices = await listDoubaoSeedAudioVoices(c);
+	return c.json({ voices }, 200);
+});
+
+// MiniMax 音乐生成（new-api 透传 → api.minimaxi.com），同步 1-3 分钟。
+publicApiRouter.post("/audio/music", async (c) => {
+	const userId = requirePublicUserId(c);
+	let body: any;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON body" }, 400);
+	}
+	const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+	const lyrics = typeof body?.lyrics === "string" ? body.lyrics.trim() : "";
+	if (!prompt && !lyrics) return c.json({ error: "prompt or lyrics is required" }, 400);
+	const catalogModel = await requireSelectableAudioModel(c, body?.model, "music");
+	const model = catalogModel.requestModelKey;
+
+	// 音乐按次计价只接受 new-api /api/pricing 的实时价格；缺价显式失败。
+	const required = await resolveTeamCreditsCostForTask(c, {
+		taskKind: "text_to_audio",
+		modelKey: model,
+	});
+	const reservation = await requireSufficientTeamCredits(c, userId, {
+		required,
+		taskKind: "text_to_audio",
+		vendor: "new_api",
+		modelKey: model,
+	});
+
+	try {
+		const result = await generateMusicToStorage(c, userId, {
+			prompt,
+			lyrics: lyrics || null,
+			lyricsMode:
+				body?.lyricsMode === "custom" || body?.lyricsMode === "auto"
+					? body.lyricsMode
+					: "instrumental",
+			model,
+		});
+		if (reservation) {
+			await settleTeamCreditsOnSuccess(c, userId, {
+				taskId: reservation.reservationTaskId,
+				taskKind: "text_to_audio",
+				amount: reservation.amount,
+				vendor: "new_api",
+				modelKey: model,
+			});
+		}
+		return c.json(result, 200);
+	} catch (err) {
+		if (reservation) {
+			await releaseTeamCreditsOnFailure(c, userId, {
+				taskId: reservation.reservationTaskId,
+				taskKind: "text_to_audio",
+				vendor: "new_api",
+				modelKey: model,
+			});
+		}
+		return c.json(
+			{ error: "music generation failed", detail: String((err as Error)?.message || err) },
+			502,
+		);
+	}
+});
+
+// 把外部音轨（配音/旁白/BGM）合到视频上；视频流不转码，时长钉视频。
+publicApiRouter.post("/video/mux-audio", async (c) => {
+	const userId = requirePublicUserId(c);
+	let body: any;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON body" }, 400);
+	}
+	const videoUrl = typeof body?.videoUrl === "string" ? body.videoUrl.trim() : "";
+	const audioUrl = typeof body?.audioUrl === "string" ? body.audioUrl.trim() : "";
+	if (!videoUrl || !audioUrl) {
+		return c.json({ error: "videoUrl and audioUrl are required" }, 400);
+	}
+	try {
+		const result = await muxAudioOntoVideo(c, userId, {
+			videoUrl,
+			audioUrl,
+			mode: body?.mode === "mix" ? "mix" : "replace",
+			originalVolume:
+				typeof body?.originalVolume === "number" ? body.originalVolume : undefined,
+			audioVolume: typeof body?.audioVolume === "number" ? body.audioVolume : undefined,
+		});
+		return c.json(result, 200);
+	} catch (err) {
+		return c.json(
+			{ error: "video mux-audio failed", detail: String((err as Error)?.message || err) },
+			500,
+		);
+	}
 });
 
 // Unified public polling API: resolve vendor via vendor_task_refs when possible.

@@ -30,6 +30,10 @@ const (
 	contextKeyResponseFormat = "response_format"
 )
 
+func isVisionEmbeddingModel(modelName string) bool {
+	return strings.EqualFold(strings.TrimSpace(modelName), "doubao-embedding-vision-251215")
+}
+
 type Adaptor struct {
 }
 
@@ -50,6 +54,13 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
 	if info.RelayMode != constant.RelayModeAudioSpeech {
 		return nil, errors.New("unsupported audio relay mode")
+	}
+
+	// doubao-seed-audio：同步 HTTP（openspeech /api/v3/tts/create），不走 volcano_tts WS。
+	if isSeedAudioModel(info.OriginModelName) {
+		c.Set(contextKeyResponseFormat, request.ResponseFormat)
+		info.IsStream = false
+		return convertSeedAudioRequest(request)
 	}
 
 	appID, token, err := parseVolcengineAuth(info.ApiKey)
@@ -107,8 +118,11 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 // seedreamNamedSizes is the set of named tier values accepted by doubao-seedream.
-// "1k" is listed in docs but marked 暂不支持; only 2k/3k/4k are active.
+// Per https://www.volcengine.com/docs/82379/1824121: 5.0 Pro=1K/2K, 5.0 Lite=2K/3K/4K,
+// 4.5=2K/4K, 4.0=1K/2K/4K. Pass named tiers through as-is; ARK validates per-model
+// support itself (silently coercing here would desync billing from the actual output).
 var seedreamNamedSizes = map[string]struct{}{
+	"1k": {},
 	"2k": {},
 	"3k": {},
 	"4k": {},
@@ -202,13 +216,24 @@ func isSeedreamModel(modelName string) bool {
 	return strings.Contains(strings.ToLower(modelName), "seedream")
 }
 
+// isSeedream5ProModel reports whether the model is seedream 5.0 Pro, which does
+// NOT support 组图 (sequential_image_generation) — ARK returns InvalidParameter
+// if the param is present. 文档「组图输出」一节：Seedream 5.0 Pro 不支持该能力。
+// https://www.volcengine.com/docs/82379/1824121
+func isSeedream5ProModel(modelName string) bool {
+	lower := strings.ToLower(modelName)
+	return strings.Contains(lower, "seedream-5-0-pro") || strings.Contains(lower, "seedream-5.0-pro")
+}
+
 // normSeedreamImageField remaps reference images to the ARK API field "image"
-// (singular array) and injects sequential_image_generation params for n > 1.
+// (singular array) and, when supportsSequential, injects sequential_image_generation
+// params for n > 1.
 //
 // Input field aliases handled (all deleted from Extra after remapping):
-//   "images"     – set by hono-api task service (body.images = referenceImages)
-//   "image_urls" – set by other callers (e.g. doubao video-to-image path)
-func normSeedreamImageField(request *dto.ImageRequest) {
+//
+//	"images"     – set by hono-api task service (body.images = referenceImages)
+//	"image_urls" – set by other callers (e.g. doubao video-to-image path)
+func normSeedreamImageField(request *dto.ImageRequest, supportsSequential bool) {
 	var imagesRaw json.RawMessage
 	for _, key := range []string{"images", "image_urls"} {
 		if raw, ok := request.Extra[key]; ok && len(raw) > 0 {
@@ -225,6 +250,10 @@ func normSeedreamImageField(request *dto.ImageRequest) {
 		return
 	}
 	request.Image = imagesRaw
+
+	if !supportsSequential {
+		return
+	}
 
 	if _, has := request.Extra["sequential_image_generation"]; !has {
 		if v, err := json.Marshal("auto"); err == nil {
@@ -247,7 +276,13 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	case constant.RelayModeImagesGenerations:
 		if isSeedreamModel(info.UpstreamModelName) || isSeedreamModel(info.OriginModelName) {
 			request.Size = resolveSeedreamSize(request.Size, request.Extra)
-			normSeedreamImageField(&request)
+			isPro := isSeedream5ProModel(info.UpstreamModelName) || isSeedream5ProModel(info.OriginModelName)
+			if isPro {
+				// 5.0 Pro 不支持组图，客户端透传也要清掉，否则 ARK 400。
+				delete(request.Extra, "sequential_image_generation")
+				delete(request.Extra, "sequential_image_generation_options")
+			}
+			normSeedreamImageField(&request, !isPro)
 		}
 		return request, nil
 	// 根据官方文档,并没有发现豆包生图支持表单请求:https://www.volcengine.com/docs/82379/1824121
@@ -404,6 +439,9 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			}
 			return fmt.Sprintf("%s/api/v3/chat/completions", baseUrl), nil
 		case constant.RelayModeEmbeddings:
+			if isVisionEmbeddingModel(info.OriginModelName) || isVisionEmbeddingModel(info.UpstreamModelName) {
+				return fmt.Sprintf("%s/api/v3/embeddings/multimodal", baseUrl), nil
+			}
 			return fmt.Sprintf("%s/api/v3/embeddings", baseUrl), nil
 		//豆包的图生图也走generations接口: https://www.volcengine.com/docs/82379/1824121
 		case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
@@ -415,6 +453,10 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		case constant.RelayModeResponses:
 			return fmt.Sprintf("%s/api/v3/responses", baseUrl), nil
 		case constant.RelayModeAudioSpeech:
+			// doubao-seed-audio：同步 HTTP 端点，与 baseUrl 无关。
+			if isSeedAudioModel(info.OriginModelName) {
+				return seedAudioCreateURL, nil
+			}
 			if baseUrl == channelconstant.ChannelBaseURLs[channelconstant.ChannelTypeVolcEngine] {
 				return "wss://openspeech.bytedance.com/api/v1/tts/ws_binary", nil
 			}
@@ -429,6 +471,12 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	channel.SetupApiRequestHeader(info, c, req)
 
 	if info.RelayMode == constant.RelayModeAudioSpeech {
+		// doubao-seed-audio：新版语音控制台 X-Api-Key 单头鉴权（渠道 key 即 X-Api-Key）。
+		if isSeedAudioModel(info.OriginModelName) {
+			req.Set("X-Api-Key", info.ApiKey)
+			req.Set("Content-Type", "application/json")
+			return nil
+		}
 		parts := strings.Split(info.ApiKey, "|")
 		if len(parts) == 2 {
 			req.Set("Authorization", "Bearer;"+parts[1])
@@ -463,6 +511,20 @@ func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dt
 }
 
 func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
+	if isVisionEmbeddingModel(info.OriginModelName) || isVisionEmbeddingModel(info.UpstreamModelName) {
+		return map[string]interface{}{
+			"model": request.Model,
+			"input": func() []map[string]string {
+				inputs := request.ParseInput()
+				converted := make([]map[string]string, 0, len(inputs))
+				for _, text := range inputs {
+					converted = append(converted, map[string]string{"type": "text", "text": text})
+				}
+				return converted
+			}(),
+			"encoding_format": "float",
+		}, nil
+	}
 	return request, nil
 }
 
@@ -495,6 +557,10 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	}
 
 	if info.RelayMode == constant.RelayModeAudioSpeech {
+		// doubao-seed-audio：同步 JSON 响应，解码 base64 音频字节回写。
+		if isSeedAudioModel(info.OriginModelName) {
+			return handleSeedAudioResponse(c, resp, info)
+		}
 		encoding := mapEncoding(c.GetString(contextKeyResponseFormat))
 		if info.IsStream {
 			volcRequestInterface, exists := c.Get(contextKeyTTSRequest)

@@ -72,11 +72,27 @@ async function main() {
 	const statements = normalizeSqliteSchemaForPostgres(readSchemaSql());
 	validateStatements(statements);
 	try {
-		await prisma.$transaction(async (tx) => {
-			for (const stmt of statements) {
-				await tx.$executeRawUnsafe(stmt);
-			}
-		});
+		// Prisma's interactive-transaction default is 5s, which this DDL batch
+		// overruns on slower/loaded databases (observed 5060ms) — the transaction
+		// expires mid-run and startup fails. DDL here is append-only and
+		// idempotent (CREATE/ADD COLUMN IF NOT EXISTS), so a generous ceiling is
+		// safe; maxWait covers waiting for a free connection under load.
+		await prisma.$transaction(
+			async (tx) => {
+				for (const [index, stmt] of statements.entries()) {
+					try {
+						await tx.$executeRawUnsafe(stmt);
+					} catch (error) {
+						const statementPreview = stmt.replace(/\s+/g, " ").trim().slice(0, 240);
+						throw new Error(
+							`schema statement ${index + 1}/${statements.length} failed: ${statementPreview}`,
+							{ cause: error },
+						);
+					}
+				}
+			},
+			{ timeout: 120_000, maxWait: 30_000 },
+		);
 		console.log(`[db] postgres schema ready, statements=${statements.length}`);
 	} finally {
 		await prisma.$disconnect();

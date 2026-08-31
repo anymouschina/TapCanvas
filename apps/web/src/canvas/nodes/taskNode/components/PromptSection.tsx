@@ -1,6 +1,17 @@
 import React from 'react'
-import { ActionIcon, Textarea, Text, Group, Button, TextInput, Badge, Select, Portal } from '@mantine/core'
-import { IconBrain, IconBulb } from '@tabler/icons-react'
+import { ActionIcon, Text } from '@mantine/core'
+import { IconBrain, IconBulb, IconPhoto } from '@tabler/icons-react'
+import type { PromptMediaKind } from '../../../../api/promptLibrary'
+import { AssetMentionPanel } from './AssetMentionPanel'
+import { CanvasPromptLibraryPicker } from './CanvasPromptLibraryPicker'
+import {
+  buildPromptMentionAliasMap,
+  collectPromptMentionAliases,
+  getPromptMentionTokenCore,
+  normalizePromptMentionAlias,
+} from '../../../../runner/promptMentionAliases'
+
+// ── types ────────────────────────────────────────────────────────────────────
 
 type MentionMenuPosition = {
   left: number
@@ -13,110 +24,200 @@ export type MentionSuggestionItem = {
   display_name: string
   profile_picture_url?: string | null
   source: 'character' | 'asset'
+  nodeId?: string | null
+  mentionAliases?: readonly string[]
+  isConnected?: boolean
   assetBinding?: {
     url: string
     assetId?: string | null
     assetRefId?: string | null
     assetName?: string | null
+    role?: 'style' | 'reference'
   }
 }
 
-type CaretMetrics = {
-  left: number
-  top: number
-  lineHeight: number
+// ── rich-text helpers ─────────────────────────────────────────────────────────
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function getTextareaCaretMetrics(textarea: HTMLTextAreaElement, caret: number): CaretMetrics {
-  const styles = window.getComputedStyle(textarea)
-  const mirror = document.createElement('div')
-  const marker = document.createElement('span')
-  const textareaRect = textarea.getBoundingClientRect()
+function escAttr(s: string): string {
+  return s.replace(/"/g, '&quot;')
+}
 
-  mirror.setAttribute('data-role', 'prompt-caret-mirror')
-  mirror.style.position = 'fixed'
-  mirror.style.visibility = 'hidden'
-  mirror.style.pointerEvents = 'none'
-  mirror.style.left = `${textareaRect.left}px`
-  mirror.style.top = `${textareaRect.top}px`
-  mirror.style.whiteSpace = 'pre-wrap'
-  mirror.style.wordWrap = 'break-word'
-  mirror.style.overflowWrap = 'break-word'
-  mirror.style.boxSizing = styles.boxSizing
-  mirror.style.width = `${textarea.clientWidth}px`
-  mirror.style.font = styles.font
-  mirror.style.fontFamily = styles.fontFamily
-  mirror.style.fontSize = styles.fontSize
-  mirror.style.fontWeight = styles.fontWeight
-  mirror.style.fontStyle = styles.fontStyle
-  mirror.style.letterSpacing = styles.letterSpacing
-  mirror.style.textTransform = styles.textTransform
-  mirror.style.textIndent = styles.textIndent
-  mirror.style.padding = styles.padding
-  mirror.style.border = styles.border
-  mirror.style.lineHeight = styles.lineHeight
-  mirror.style.tabSize = styles.tabSize
-  mirror.style.textAlign = styles.textAlign
+type ChipEntry = {
+  username: string
+  displayName?: string
+  avatarUrl: string | null
+  aliases?: readonly string[]
+}
 
-  const valueBeforeCaret = textarea.value.slice(0, caret)
-  mirror.textContent = valueBeforeCaret
-  if (valueBeforeCaret.endsWith('\n')) {
-    mirror.textContent += ' '
+function buildChipHtml(entry: ChipEntry, sourceToken = entry.username): string {
+  const img = entry.avatarUrl
+    ? `<img src="${escAttr(entry.avatarUrl)}" class="task-node-prompt__chip-thumb" alt="" crossorigin="anonymous" referrerpolicy="no-referrer" />`
+    : `<span class="task-node-prompt__chip-thumb task-node-prompt__chip-thumb--placeholder">@</span>`
+  const displayName = entry.displayName?.trim() || entry.username
+  return (
+    `<span class="task-node-prompt__chip" contenteditable="false" data-mention="${escAttr(sourceToken)}">` +
+    img +
+    `<span class="task-node-prompt__chip-text">@${escHtml(displayName)}</span>` +
+    `</span>`
+  )
+}
+
+function textToHtml(text: string, chips: readonly ChipEntry[]): string {
+  if (!text) return ''
+  if (!chips.length) return escHtml(text).replace(/\n/g, '<br>')
+  const aliasMap = buildPromptMentionAliasMap(chips)
+  if (!aliasMap.size) return escHtml(text).replace(/\n/g, '<br>')
+
+  const matcher = /@[^\s@]+/g
+  let html = ''
+  let cursor = 0
+  for (const match of text.matchAll(matcher)) {
+    const rawMention = match[0]
+    const start = match.index ?? cursor
+    html += escHtml(text.slice(cursor, start)).replace(/\n/g, '<br>')
+    const tokenCore = getPromptMentionTokenCore(rawMention)
+    const entry = aliasMap.get(normalizePromptMentionAlias(tokenCore))
+    if (!entry) {
+      html += escHtml(rawMention)
+    } else {
+      const suffix = rawMention.slice(tokenCore.length + 1)
+      html += buildChipHtml(entry, tokenCore)
+      html += escHtml(suffix)
+    }
+    cursor = start + rawMention.length
   }
+  html += escHtml(text.slice(cursor)).replace(/\n/g, '<br>')
+  return html
+}
 
-  marker.textContent = '\u200b'
-  mirror.appendChild(marker)
-  document.body.appendChild(mirror)
+function htmlToText(el: HTMLElement): string {
+  let out = ''
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      out += node.textContent ?? ''
+    } else if (node instanceof HTMLElement) {
+      const mention = node.dataset.mention
+      if (mention != null) {
+        out += `@${mention}`
+      } else if (node.tagName === 'BR') {
+        out += '\n'
+      } else {
+        out += htmlToText(node)
+        if (node.tagName === 'DIV' || node.tagName === 'P') out += '\n'
+      }
+    }
+  }
+  return out
+}
 
-  const mirrorRect = mirror.getBoundingClientRect()
-  const markerRect = marker.getBoundingClientRect()
-  const lineHeightValue = Number.parseFloat(styles.lineHeight)
-  const fontSizeValue = Number.parseFloat(styles.fontSize)
-  const lineHeight = Number.isFinite(lineHeightValue)
-    ? lineHeightValue
-    : (Number.isFinite(fontSizeValue) ? fontSizeValue * 1.4 : 20)
+function getPlainCaret(editor: HTMLElement): number {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return 0
+  const range = sel.getRangeAt(0)
+  const pre = document.createRange()
+  pre.selectNodeContents(editor)
+  pre.setEnd(range.startContainer, range.startOffset)
+  const tmp = document.createElement('div')
+  tmp.appendChild(pre.cloneContents())
+  return htmlToText(tmp).length
+}
 
-  const left = markerRect.left - textarea.scrollLeft
-  const top = markerRect.top - textarea.scrollTop
-
-  document.body.removeChild(mirror)
-
-  return {
-    left,
-    top,
-    lineHeight,
+function setCaretAt(editor: HTMLElement, offset: number): void {
+  let rem = offset
+  function walk(node: Node): boolean {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const len = (node.textContent ?? '').length
+      if (rem <= len) {
+        const r = document.createRange()
+        r.setStart(node, rem)
+        r.collapse(true)
+        const s = window.getSelection()
+        if (s) { s.removeAllRanges(); s.addRange(r) }
+        return true
+      }
+      rem -= len
+      return false
+    }
+    if (node instanceof HTMLElement) {
+      if (node.dataset.mention != null) {
+        const len = `@${node.dataset.mention}`.length
+        if (rem <= len) {
+          const r = document.createRange()
+          r.setStartAfter(node)
+          r.collapse(true)
+          const s = window.getSelection()
+          if (s) { s.removeAllRanges(); s.addRange(r) }
+          return true
+        }
+        rem -= len
+        return false
+      }
+      if (node.tagName === 'BR') {
+        if (rem === 0) {
+          const r = document.createRange()
+          r.setStartBefore(node)
+          r.collapse(true)
+          const s = window.getSelection()
+          if (s) { s.removeAllRanges(); s.addRange(r) }
+          return true
+        }
+        rem -= 1
+        return false
+      }
+      for (const child of Array.from(node.childNodes)) {
+        if (walk(child)) return true
+      }
+    }
+    return false
+  }
+  if (!walk(editor)) {
+    const r = document.createRange()
+    r.selectNodeContents(editor)
+    r.collapse(false)
+    const s = window.getSelection()
+    if (s) { s.removeAllRanges(); s.addRange(r) }
   }
 }
+
+function getCaretViewportRect(editor: HTMLElement): { left: number; top: number; height: number } | null {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return null
+  const range = sel.getRangeAt(0)
+  const { startContainer, startOffset } = range
+  if (startContainer.nodeType === Node.TEXT_NODE && startOffset > 0) {
+    const charRange = document.createRange()
+    charRange.setStart(startContainer, startOffset - 1)
+    charRange.setEnd(startContainer, startOffset)
+    const rects = charRange.getClientRects()
+    if (rects.length > 0) {
+      const r = rects[rects.length - 1]
+      if (r.height > 0) return { left: r.right, top: r.top, height: r.height }
+    }
+  }
+  const editorRect = editor.getBoundingClientRect()
+  if (!editorRect.height) return null
+  return { left: editorRect.left + 16, top: editorRect.top + 14, height: 22 }
+}
+
+// ── props ─────────────────────────────────────────────────────────────────────
 
 type PromptSectionProps = {
-  isCharacterNode: boolean
-  isComposerNode: boolean
-  isStoryboardNode: boolean
   layout?: 'default' | 'media-focus'
   toolbarLead?: React.ReactNode
   hideBrainButton?: boolean
-  hidePresetSection?: boolean
-  hideAnchorBindingSection?: boolean
   readOnly?: boolean
   readOnlyHint?: string
   prompt: string
   setPrompt: (value: string) => void
-  onUpdateNodeData: (patch: any) => void
+  onUpdateNodeData: (patch: Record<string, unknown>) => void
   placeholder?: string
   minRows?: number
-  maxRows?: number
-  suggestionsAllowed: boolean
-  suggestionsEnabled: boolean
-  setSuggestionsEnabled: (value: boolean) => void
-  promptSuggestions: string[]
-  activeSuggestion: number
-  setActiveSuggestion: React.Dispatch<React.SetStateAction<number>>
-  setPromptSuggestions: (value: string[]) => void
-  markPromptUsed: (value: string) => void
   mentionOpen: boolean
   mentionItems: MentionSuggestionItem[]
-  mentionLoading: boolean
-  mentionFilter: string
   setMentionFilter: (value: string) => void
   setMentionOpen: (value: boolean) => void
   mentionMetaRef: React.MutableRefObject<{
@@ -125,162 +226,268 @@ type PromptSectionProps = {
     target?: 'prompt' | 'storyboard_scene' | 'storyboard_notes'
     sceneId?: string
   } | null>
-  showAssetBinding: boolean
-  assetBindingId: string
-  setAssetBindingId: (value: string) => void
-  onBindPrimaryAssetReference: () => void
-  bindAssetDisabled: boolean
-  bindAssetStatusText?: string
-  showAnchorBinding: boolean
-  anchorBindingKind: string
-  setAnchorBindingKind: (value: string | null) => void
-  anchorBindingLabel: string
-  setAnchorBindingLabel: (value: string) => void
-  onBindPrimaryAnchor: () => void
-  bindAnchorLoading: boolean
-  bindAnchorDisabled: boolean
-  bindAnchorStatusText?: string
   isDarkUi: boolean
   nodeShellText: string
   onOpenPromptSamples?: () => void
-  presetOptions?: Array<{ value: string; label: string }>
-  presetValue?: string | null
-  presetDisabled?: boolean
-  onPresetChange?: (value: string | null) => void
-  onOpenCreatePresetModal?: () => void
+  promptLibraryMediaType?: PromptMediaKind
+  onSelectPromptLibraryPrompt?: (promptText: string) => void
+  onPickFromLibrary?: () => void
   onGenerateStoryboardScript?: () => void
   generateStoryboardScriptLoading?: boolean
   generateStoryboardScriptDisabled?: boolean
   onMentionApplied?: (item: MentionSuggestionItem) => void
+  promptInputMinHeight?: number
+  canvasScale?: number
+  projectId?: string
 }
 
-export function PromptSection({
-  isCharacterNode,
-  isComposerNode,
-  isStoryboardNode,
+// ── component ─────────────────────────────────────────────────────────────────
+
+function PromptSection({
   layout = 'default',
   toolbarLead,
   hideBrainButton = false,
-  hidePresetSection = false,
-  hideAnchorBindingSection = false,
   readOnly = false,
   readOnlyHint,
   prompt,
   setPrompt,
   onUpdateNodeData,
-  suggestionsAllowed,
-  suggestionsEnabled,
-  setSuggestionsEnabled,
-  promptSuggestions,
-  activeSuggestion,
-  setActiveSuggestion,
-  setPromptSuggestions,
-  markPromptUsed,
   mentionOpen,
   mentionItems,
-  mentionLoading,
-  mentionFilter,
   setMentionFilter,
   setMentionOpen,
   mentionMetaRef,
-  showAssetBinding,
-  assetBindingId,
-  setAssetBindingId,
-  onBindPrimaryAssetReference,
-  bindAssetDisabled,
-  bindAssetStatusText,
-  showAnchorBinding,
-  anchorBindingKind,
-  setAnchorBindingKind,
-  anchorBindingLabel,
-  setAnchorBindingLabel,
-  onBindPrimaryAnchor,
-  bindAnchorLoading,
-  bindAnchorDisabled,
-  bindAnchorStatusText,
   isDarkUi,
   nodeShellText,
   onOpenPromptSamples,
-  presetOptions,
-  presetValue,
-  presetDisabled,
-  onPresetChange,
-  onOpenCreatePresetModal,
+  promptLibraryMediaType,
+  onSelectPromptLibraryPrompt,
+  onPickFromLibrary,
   onGenerateStoryboardScript,
   generateStoryboardScriptLoading,
   generateStoryboardScriptDisabled,
   onMentionApplied,
   placeholder,
   minRows,
-  maxRows,
+  promptInputMinHeight,
+  canvasScale = 1,
+  projectId,
 }: PromptSectionProps) {
   const hasStoryboardScriptGenerator = typeof onGenerateStoryboardScript === 'function'
-  const brainActive = hasStoryboardScriptGenerator ? true : suggestionsEnabled
-  const brainTitle = hasStoryboardScriptGenerator
-    ? 'AI 生成分镜脚本'
-    : suggestionsEnabled
-      ? '智能建议已启用 (Ctrl/Cmd+Space 切换)'
-      : '智能建议已禁用 (Ctrl/Cmd+Space 启用)'
-  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
+
+  const editorRef = React.useRef<HTMLDivElement | null>(null)
   const inputWrapRef = React.useRef<HTMLDivElement | null>(null)
+  const lastValueRef = React.useRef<string | null>(null)
+  const isComposingRef = React.useRef(false)
+  // Registry of inserted chips: username → avatarUrl (for re-rendering on external updates)
+  const chipDataRef = React.useRef<Map<string, string | null>>(new Map())
+  const applyingMentionRef = React.useRef(false)
+  const mentionPanelActiveRef = React.useRef(false)
+  const mentionTriggerArmedRef = React.useRef(false)
+  const mentionOpenRef = React.useRef(mentionOpen)
+  React.useEffect(() => { mentionOpenRef.current = mentionOpen }, [mentionOpen])
+
+  const [dragMinHeight, setDragMinHeight] = React.useState<number | null>(
+    typeof promptInputMinHeight === 'number' && promptInputMinHeight > 0
+      ? promptInputMinHeight
+      : null
+  )
+  const resizeDragAbortRef = React.useRef<AbortController | null>(null)
   const [activeMention, setActiveMention] = React.useState(0)
   const [mentionMenuPosition, setMentionMenuPosition] = React.useState<MentionMenuPosition | null>(null)
 
-  const updateMentionMenuPosition = React.useCallback(() => {
-    const textarea = textareaRef.current
-    const inputWrap = inputWrapRef.current
-    const meta = mentionMetaRef.current
-    if (!textarea || !inputWrap || !meta) {
-      setMentionMenuPosition(null)
-      return
+  const getChipEntries = React.useCallback((): ChipEntry[] => {
+    const entriesByAlias = new Map<string, ChipEntry>()
+    const addEntry = (entry: ChipEntry) => {
+      const key = normalizePromptMentionAlias(entry.username)
+      if (!key) return
+      const existing = entriesByAlias.get(key)
+      if (!existing) {
+        entriesByAlias.set(key, entry)
+        return
+      }
+      entriesByAlias.set(key, {
+        ...existing,
+        displayName: existing.displayName || entry.displayName,
+        avatarUrl: existing.avatarUrl || entry.avatarUrl,
+        aliases: Array.from(new Set([...(existing.aliases || []), ...(entry.aliases || [])])),
+      })
     }
 
-    const textareaRect = textarea.getBoundingClientRect()
-    const caretMetrics = getTextareaCaretMetrics(textarea, meta.caret)
-    const preferredWidth = Math.min(320, Math.max(220, textareaRect.width - 16))
+    chipDataRef.current.forEach((avatarUrl, username) => {
+      addEntry({ username, avatarUrl })
+    })
+    for (const item of mentionItems) {
+      const username = String(item.username || '').replace(/^@+/, '').trim()
+      if (!username) continue
+      const displayName = String(item.display_name || '').trim() || username
+      const aliases = collectPromptMentionAliases({
+        nodeId: item.nodeId,
+        assetId: item.assetBinding?.assetId,
+        assetRefId: item.assetBinding?.assetRefId,
+        aliases: [username, ...(item.mentionAliases || [])],
+        displayName,
+      })
+      addEntry({
+        username,
+        displayName,
+        avatarUrl: String(item.profile_picture_url || '').trim() || null,
+        aliases,
+      })
+    }
+    return Array.from(entriesByAlias.values())
+  }, [mentionItems])
+
+  // Mount: render initial value
+  React.useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.innerHTML = textToHtml(prompt, getChipEntries())
+    lastValueRef.current = prompt
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentionally mount-only
+
+  // External value update
+  React.useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    if (prompt === lastValueRef.current) return
+    if (isComposingRef.current) return
+    const hasFocus = document.activeElement === editor
+    const editorValue = htmlToText(editor)
+    // `onUpdateNodeData` refreshes the TaskNode while this editable field has
+    // focus. While the editor owns focus, its live DOM is the authoritative
+    // draft — even immediately after compositionend, when React/store/SSE
+    // updates may still arrive out of order. Rebuilding innerHTML at that point
+    // destroys the native IME range and can erase the just-confirmed CJK text.
+    if (hasFocus) {
+      if (prompt === editorValue) lastValueRef.current = prompt
+      return
+    }
+    if (prompt === editorValue) {
+      lastValueRef.current = prompt
+      return
+    }
+    lastValueRef.current = prompt
+    editor.innerHTML = textToHtml(prompt, getChipEntries())
+  }, [prompt, getChipEntries])
+
+  // AI updates can arrive before the asynchronous mention catalogue. Rebuild
+  // the current value when aliases become available so an existing @UUID is
+  // upgraded to a chip without changing the persisted prompt text.
+  React.useEffect(() => {
+    const editor = editorRef.current
+    if (!editor || prompt !== lastValueRef.current) return
+    if (isComposingRef.current || document.activeElement === editor) return
+    editor.innerHTML = textToHtml(prompt, getChipEntries())
+  }, [mentionItems, prompt, getChipEntries])
+
+  React.useEffect(() => {
+    return () => {
+      resizeDragAbortRef.current?.abort()
+    }
+  }, [])
+
+  React.useEffect(() => {
+    if (typeof promptInputMinHeight === 'number' && promptInputMinHeight > 0) {
+      setDragMinHeight(promptInputMinHeight)
+    }
+  }, [promptInputMinHeight])
+
+  const handleResizeMouseDown = React.useCallback((e: React.MouseEvent) => {
+    if (readOnly) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startY = e.clientY
+    const startHeight = editorRef.current ? editorRef.current.offsetHeight : 80
+    const scale = canvasScale > 0 ? canvasScale : 1
+
+    const handleEl = (e.currentTarget as HTMLElement)
+    handleEl.classList.add('task-node-prompt__resize-handle--dragging')
+
+    resizeDragAbortRef.current?.abort()
+    const ac = new AbortController()
+    resizeDragAbortRef.current = ac
+    const { signal } = ac
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = (moveEvent.clientY - startY) / scale
+      const next = Math.max(52, Math.min(400, startHeight + delta))
+      setDragMinHeight(next)
+    }
+
+    const onMouseUp = (upEvent: MouseEvent) => {
+      ac.abort()
+      handleEl.classList.remove('task-node-prompt__resize-handle--dragging')
+      const delta = (upEvent.clientY - startY) / scale
+      const finalHeight = Math.max(52, Math.min(400, startHeight + delta))
+      setDragMinHeight(finalHeight)
+      onUpdateNodeData({ promptInputMinHeight: finalHeight })
+    }
+
+    document.addEventListener('mousemove', onMouseMove, { signal })
+    document.addEventListener('mouseup', onMouseUp, { signal })
+  }, [readOnly, canvasScale, onUpdateNodeData])
+
+  const updateMentionMenuPosition = React.useCallback(() => {
+    const editor = editorRef.current
+    if (!editor) { setMentionMenuPosition(null); return }
+    const caretRect = getCaretViewportRect(editor)
+    if (!caretRect) { setMentionMenuPosition(null); return }
+    const editorRect = editor.getBoundingClientRect()
+    const preferredWidth = Math.min(320, Math.max(220, editorRect.width - 16))
     const minLeft = 8
     const maxLeft = Math.max(minLeft, window.innerWidth - preferredWidth - 8)
-    const rawLeft = caretMetrics.left
-    const left = Math.min(Math.max(rawLeft, minLeft), maxLeft)
-    const top = Math.min(
-      Math.max(caretMetrics.top + caretMetrics.lineHeight + 6, textareaRect.top + 8),
-      Math.max(8, window.innerHeight - 16),
-    )
+    const left = Math.min(Math.max(caretRect.left, minLeft), maxLeft)
+    const top = caretRect.top + caretRect.height + 6
+    setMentionMenuPosition({ left, top, width: preferredWidth })
+  }, [])
 
-    setMentionMenuPosition({
-      left,
-      top,
-      width: preferredWidth,
-    })
-  }, [mentionMetaRef])
-
-  const syncMentionState = React.useCallback((input: {
-    textarea: HTMLTextAreaElement
-    value: string
-  }) => {
-    const caret = typeof input.textarea.selectionStart === 'number'
-      ? input.textarea.selectionStart
-      : input.value.length
-    const before = input.value.slice(0, caret)
+  const syncMentionState = React.useCallback((value: string, caretOffset: number) => {
+    const before = value.slice(0, caretOffset)
     const lastAt = before.lastIndexOf('@')
     const lastSpace = Math.max(before.lastIndexOf(' '), before.lastIndexOf('\n'))
 
     if (lastAt >= 0 && lastAt >= lastSpace) {
       const filter = before.slice(lastAt + 1)
-      setMentionFilter(filter)
-      setMentionOpen(true)
-      mentionMetaRef.current = { at: lastAt, caret }
-      window.requestAnimationFrame(() => {
-        updateMentionMenuPosition()
-      })
-      return
+      if (!/\s/.test(filter)) {
+        // Only open the panel if the user just typed '@' or it's already open.
+        // Backspace / arrow key drifting onto an existing '@token' must not auto-open.
+        if (!mentionOpenRef.current && !mentionTriggerArmedRef.current) {
+          return
+        }
+        mentionTriggerArmedRef.current = false
+        setMentionFilter(filter)
+        mentionMetaRef.current = { at: lastAt, caret: caretOffset }
+        // Compute position synchronously before opening so Portal renders at correct place immediately
+        const editor = editorRef.current
+        if (editor) {
+          const caretRect = getCaretViewportRect(editor)
+          if (caretRect) {
+            const editorRect = editor.getBoundingClientRect()
+            const preferredWidth = Math.min(320, Math.max(220, editorRect.width - 16))
+            const minLeft = 8
+            const maxLeft = Math.max(minLeft, window.innerWidth - preferredWidth - 8)
+            setMentionMenuPosition({
+              left: Math.min(Math.max(caretRect.left, minLeft), maxLeft),
+              top: caretRect.top + caretRect.height + 6,
+              width: preferredWidth,
+            })
+          }
+        }
+        mentionOpenRef.current = true
+        setMentionOpen(true)
+        return
+      }
     }
 
+    mentionTriggerArmedRef.current = false
+    mentionOpenRef.current = false
     setMentionOpen(false)
     setMentionFilter('')
     mentionMetaRef.current = null
     setMentionMenuPosition(null)
-  }, [mentionMetaRef, setMentionFilter, setMentionOpen, updateMentionMenuPosition])
+  }, [mentionMetaRef, setMentionFilter, setMentionOpen])
 
   React.useEffect(() => {
     if (!mentionOpen) {
@@ -305,81 +512,253 @@ export function PromptSection({
   const applyMention = React.useCallback((item: MentionSuggestionItem) => {
     const usernameRaw = String(item?.username || '').replace(/^@/, '').trim()
     if (!usernameRaw) return
-    const mention = `@${usernameRaw}`
+    const editor = editorRef.current
     const meta = mentionMetaRef.current
-    if (!meta) return
-    const before = prompt.slice(0, meta.at)
-    const after = prompt.slice(meta.caret)
+    if (!editor || !meta) return
+
+    const currentText = htmlToText(editor)
+    const before = currentText.slice(0, meta.at)
+    const after = currentText.slice(meta.caret)
     const needsSpace = after.length === 0 || !/^\s/.test(after)
     const suffix = needsSpace ? ' ' : ''
-    const next = `${before}${mention}${suffix}${after}`
-    const nextCaret = before.length + mention.length + suffix.length
+    const next = `${before}@${usernameRaw}${suffix}${after}`
+    const nextCaret = before.length + `@${usernameRaw}`.length + suffix.length
+
+    // Register chip data so future re-renders can rebuild it
+    const avatarUrl = String(item.profile_picture_url || '').trim() || null
+    chipDataRef.current.set(usernameRaw, avatarUrl)
+
+    lastValueRef.current = next
+    editor.innerHTML = textToHtml(next, getChipEntries())
     setPrompt(next)
     onUpdateNodeData({ prompt: next })
     onMentionApplied?.(item)
     setMentionOpen(false)
     setMentionFilter('')
     mentionMetaRef.current = null
+    applyingMentionRef.current = true
     window.requestAnimationFrame(() => {
-      const el = textareaRef.current
-      if (!el) return
-      try {
-        el.focus()
-        el.setSelectionRange(nextCaret, nextCaret)
-      } catch {
-        // ignore
-      }
+      const ed = editorRef.current
+      if (ed) { ed.focus(); setCaretAt(ed, nextCaret) }
+      applyingMentionRef.current = false
     })
-  }, [mentionMetaRef, onMentionApplied, onUpdateNodeData, prompt, setMentionFilter, setMentionOpen, setPrompt])
+  }, [mentionMetaRef, onMentionApplied, onUpdateNodeData, setMentionFilter, setMentionOpen, setPrompt, getChipEntries])
 
-  const hasPresetModule = typeof onPresetChange === 'function' || typeof onOpenCreatePresetModal === 'function'
-  const hasPresetOptions = Array.isArray(presetOptions) && presetOptions.length > 0
+  const handleBeforeInput = React.useCallback((e: React.FormEvent<HTMLDivElement>) => {
+    if (readOnly) return
+    const evt = e.nativeEvent as InputEvent
+    if (evt.inputType === 'insertText' && evt.data === '@') {
+      mentionTriggerArmedRef.current = true
+    }
+  }, [readOnly])
+
+  const commitEditorValue = React.useCallback(() => {
+    const editor = editorRef.current
+    if (!editor || readOnly) return
+    const text = htmlToText(editor)
+    lastValueRef.current = text
+    setPrompt(text)
+    onUpdateNodeData({ prompt: text })
+    syncMentionState(text, getPlainCaret(editor))
+  }, [readOnly, setPrompt, onUpdateNodeData, syncMentionState])
+
+  const handleInput = React.useCallback(() => {
+    if (isComposingRef.current) return
+    commitEditorValue()
+  }, [commitEditorValue])
+
+  const handleCompositionStart = React.useCallback(() => {
+    isComposingRef.current = true
+  }, [])
+
+  const handleCompositionEnd = React.useCallback(() => {
+    isComposingRef.current = false
+    commitEditorValue()
+  }, [commitEditorValue])
+
+  const handleFocus = React.useCallback(() => {
+    const editor = editorRef.current
+    if (!editor || isComposingRef.current) return
+    const editorValue = htmlToText(editor)
+    // A late project-asset catalog may arrive while the editor is already
+    // focused. Upgrade persisted @tokens on the next focus only when the DOM
+    // still equals the saved prompt, so an unsaved user draft is never rebuilt.
+    if (editorValue !== prompt) return
+    const caretOffset = getPlainCaret(editor)
+    editor.innerHTML = textToHtml(editorValue, getChipEntries())
+    setCaretAt(editor, caretOffset)
+  }, [getChipEntries, prompt])
+
+  const handleSelect = React.useCallback(() => {
+    if (applyingMentionRef.current) return
+    const editor = editorRef.current
+    if (!editor || readOnly) return
+    syncMentionState(htmlToText(editor), getPlainCaret(editor))
+  }, [readOnly, syncMentionState])
+
+  const handleBlur = React.useCallback(() => {
+    if (readOnly) return
+    // A focused editor owns the user's live draft. Commit once more on blur so
+    // a delayed external prompt echo cannot become authoritative merely because
+    // it arrived between the last input/composition event and focus leaving.
+    commitEditorValue()
+    // Delay so onMouseDown on the mention menu can fire applyMention before we close
+    window.setTimeout(() => {
+      if (mentionPanelActiveRef.current) return
+      setMentionOpen(false)
+      setMentionFilter('')
+      setMentionMenuPosition(null)
+    }, 120)
+  }, [commitEditorValue, readOnly, setMentionFilter, setMentionOpen])
+
+  const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (readOnly) return
+    // IMEs use Enter/Space/Backspace to edit or confirm their composition. Those
+    // keys must remain entirely native; treating a candidate-confirming Enter as
+    // our manual line break inserts stray punctuation/newlines and terminates the
+    // composition. keyCode 229 covers Safari/WebKit's legacy composition event.
+    if (isComposingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+    if (e.key === '@') {
+      mentionTriggerArmedRef.current = true
+    }
+
+    if (e.key === 'Backspace' && !mentionOpen) {
+      const editor = editorRef.current
+      const sel = window.getSelection()
+      if (editor && sel && sel.rangeCount && sel.isCollapsed) {
+        const range = sel.getRangeAt(0)
+        const { startContainer, startOffset } = range
+        let chip: HTMLElement | null = null
+        if (startContainer.nodeType === Node.ELEMENT_NODE) {
+          const beforeNode = (startContainer as Element).childNodes[startOffset - 1]
+          if (beforeNode instanceof HTMLElement && beforeNode.dataset.mention != null) {
+            chip = beforeNode
+          }
+        } else if (startContainer.nodeType === Node.TEXT_NODE && startOffset === 0) {
+          const prev = startContainer.previousSibling
+          if (prev instanceof HTMLElement && prev.dataset.mention != null) {
+            chip = prev
+          }
+        }
+        if (chip && editor.contains(chip)) {
+          e.preventDefault()
+          const removedUsername = chip.dataset.mention || ''
+          const anchor = document.createTextNode('')
+          chip.parentNode?.insertBefore(anchor, chip)
+          chip.remove()
+          const r = document.createRange()
+          r.setStart(anchor, 0)
+          r.collapse(true)
+          sel.removeAllRanges()
+          sel.addRange(r)
+          const text = htmlToText(editor)
+          lastValueRef.current = text
+          setPrompt(text)
+          onUpdateNodeData({ prompt: text })
+          if (removedUsername && !text.includes(`@${removedUsername}`)) {
+            chipDataRef.current.delete(removedUsername)
+          }
+          return
+        }
+      }
+    }
+
+    if (e.key === 'Enter') {
+      if (mentionOpen) {
+        const active = mentionItems[activeMention]
+        if (active) { e.preventDefault(); applyMention(active) }
+        return
+      }
+      // Insert <br> instead of letting the browser create a <div>
+      e.preventDefault()
+      const sel = window.getSelection()
+      if (sel && sel.rangeCount) {
+        const range = sel.getRangeAt(0)
+        range.deleteContents()
+        const br = document.createElement('br')
+        range.insertNode(br)
+        // After <br>, insert a zero-width text node to position the cursor
+        const after = document.createTextNode('')
+        range.setStartAfter(br)
+        range.insertNode(after)
+        range.setStart(after, 0)
+        range.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+      const editor = editorRef.current
+      if (editor) {
+        const text = htmlToText(editor)
+        lastValueRef.current = text
+        setPrompt(text)
+        onUpdateNodeData({ prompt: text })
+      }
+      return
+    }
+
+    if (e.key === 'Escape') {
+      if (mentionOpen) {
+        e.stopPropagation()
+        setMentionOpen(false)
+        setMentionFilter('')
+        mentionMetaRef.current = null
+        return
+      }
+    }
+
+    if (mentionOpen) {
+      if (e.key === 'ArrowDown') {
+        if (mentionItems.length > 0) {
+          e.preventDefault()
+          setActiveMention((idx) => (idx + 1) % mentionItems.length)
+        }
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        if (mentionItems.length > 0) {
+          e.preventDefault()
+          setActiveMention((idx) => (idx - 1 + mentionItems.length) % mentionItems.length)
+        }
+        return
+      }
+      if (e.key === 'Tab') {
+        const active = mentionItems[activeMention]
+        if (active) { e.preventDefault(); applyMention(active) }
+        return
+      }
+    }
+
+  }, [
+    readOnly, mentionOpen, mentionItems, activeMention, applyMention,
+    setMentionFilter, setMentionOpen, mentionMetaRef,
+    setPrompt, onUpdateNodeData,
+  ])
+
   const allowPromptEditing = !readOnly
   const hasToolbarContent = Boolean(
     toolbarLead ||
+    (allowPromptEditing && promptLibraryMediaType && onSelectPromptLibraryPrompt) ||
+    (allowPromptEditing && onPickFromLibrary) ||
     (allowPromptEditing && onOpenPromptSamples) ||
-    (!hideBrainButton && allowPromptEditing),
+    (!hideBrainButton && allowPromptEditing && hasStoryboardScriptGenerator),
   )
   const rootClassName = [
     'task-node-prompt__root',
     layout === 'media-focus' ? 'task-node-prompt__root--media-focus' : '',
   ].filter(Boolean).join(' ')
 
+  const editorMinHeight = React.useMemo(() => {
+    if (dragMinHeight !== null) return dragMinHeight
+    const base = typeof minRows === 'number' ? minRows : 2
+    return Math.max(base, 2) * 21
+  }, [dragMinHeight, minRows])
+
+  const editorPlaceholder = readOnly
+    ? (readOnlyHint || '当前为编译后的执行提示词预览')
+    : (placeholder || '在这里输入提示词...')
+
   return (
     <div className={rootClassName}>
-      {!hidePresetSection && hasPresetModule && (
-        <Group className="task-node-prompt__preset-row" gap={6} mb={6} wrap="nowrap">
-          <div className="task-node-prompt__preset-select-wrap" style={{ flex: 1, minWidth: 0 }}>
-            <Select
-              className="task-node-prompt__preset-select"
-              size="xs"
-              data={presetOptions || []}
-              value={presetValue || null}
-              onChange={onPresetChange}
-              placeholder={hasPresetOptions ? '选择预设能力' : '暂无预设能力'}
-              searchable
-              clearable
-              disabled={!!presetDisabled}
-              nothingFoundMessage="没有匹配的预设"
-            />
-            {!hasPresetOptions && (
-              <Text className="task-node-prompt__preset-empty-hint" size="xs" c="dimmed" mt={4}>
-                还没有可用预设，可点击右侧“新增预设”创建。
-              </Text>
-            )}
-          </div>
-          {onOpenCreatePresetModal && (
-            <Button
-              className="task-node-prompt__preset-create-btn"
-              size="xs"
-              variant="light"
-              onClick={onOpenCreatePresetModal}
-            >
-              新增预设
-            </Button>
-          )}
-        </Group>
-      )}
       <div className="task-node-prompt__input-wrap" ref={inputWrapRef} style={{ position: 'relative' }}>
         {hasToolbarContent && (
           <div
@@ -394,6 +773,17 @@ export function PromptSection({
             }}
           >
             {toolbarLead}
+            {allowPromptEditing && promptLibraryMediaType && onSelectPromptLibraryPrompt ? (
+              <CanvasPromptLibraryPicker
+                mediaType={promptLibraryMediaType}
+                currentPrompt={prompt}
+                onPromptChange={(nextPrompt) => {
+                  setPrompt(nextPrompt)
+                  onUpdateNodeData({ prompt: nextPrompt })
+                }}
+                onSelect={onSelectPromptLibraryPrompt}
+              />
+            ) : null}
             {allowPromptEditing && onOpenPromptSamples && (
               <ActionIcon
                 className="task-node-prompt__toolbar-button"
@@ -409,408 +799,97 @@ export function PromptSection({
                 <IconBulb className="task-node-prompt__toolbar-icon" size={12} style={{ color: nodeShellText }} />
               </ActionIcon>
             )}
-            {!hideBrainButton && allowPromptEditing && (
+            {allowPromptEditing && onPickFromLibrary && (
+              <ActionIcon
+                className="task-node-prompt__toolbar-button"
+                variant="subtle"
+                size="xs"
+                onClick={onPickFromLibrary}
+                title="从素材库选择参考图"
+                style={{
+                  border: 'none',
+                  background: isDarkUi ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+                }}
+              >
+                <IconPhoto className="task-node-prompt__toolbar-icon" size={12} style={{ color: nodeShellText }} />
+              </ActionIcon>
+            )}
+            {!hideBrainButton && allowPromptEditing && hasStoryboardScriptGenerator && (
               <ActionIcon
                 className="task-node-prompt__toolbar-button"
                 variant="subtle"
                 size="xs"
                 onClick={() => {
-                  if (hasStoryboardScriptGenerator) {
-                    onGenerateStoryboardScript?.()
-                    return
-                  }
-                  setSuggestionsEnabled(!suggestionsEnabled)
+                  onGenerateStoryboardScript?.()
                 }}
-                title={brainTitle}
-                loading={hasStoryboardScriptGenerator ? !!generateStoryboardScriptLoading : false}
-                disabled={hasStoryboardScriptGenerator ? !!generateStoryboardScriptDisabled : false}
+                title="AI 生成分镜脚本"
+                loading={!!generateStoryboardScriptLoading}
+                disabled={!!generateStoryboardScriptDisabled}
                 style={{
-                  background: brainActive ? 'rgba(59, 130, 246, 0.1)' : 'rgba(107, 114, 128, 0.1)',
+                  background: 'rgba(122, 129, 140, 0.1)',
                   border: 'none',
                 }}
               >
                 <IconBrain
                   className="task-node-prompt__toolbar-icon"
                   size={12}
-                  style={{ color: brainActive ? 'rgb(59, 130, 246)' : 'rgb(107, 114, 128)' }}
+                  style={{ color: 'rgb(122, 129, 140)' }}
                 />
               </ActionIcon>
             )}
           </div>
         )}
-        <Textarea
-          className="task-node-prompt__textarea"
-          ref={textareaRef}
-          autosize
-          minRows={typeof minRows === 'number' ? minRows : 2}
-          maxRows={typeof maxRows === 'number' ? maxRows : 6}
-          readOnly={readOnly}
-          placeholder={
-            readOnly
-              ? (readOnlyHint || '当前为编译后的执行提示词预览')
-              : (placeholder || '在这里输入提示词... (输入6个字符后按 Ctrl/Cmd+Space 激活智能建议)')
-          }
-          value={prompt}
-          onChange={(e) => {
-          if (readOnly) return
-          const el = e.currentTarget
-          const v = el.value
-          setPrompt(v)
-          onUpdateNodeData({ prompt: v })
-          syncMentionState({ textarea: el, value: v })
-        }}
-          onClick={(e) => {
-            if (readOnly) return
-            syncMentionState({ textarea: e.currentTarget, value: e.currentTarget.value })
-          }}
-          onKeyUp={(e) => {
-            if (readOnly) return
-            const key = e.key
-            if (key.startsWith('Arrow') || key === 'Home' || key === 'End') {
-              syncMentionState({ textarea: e.currentTarget, value: e.currentTarget.value })
-            }
-          }}
-          onSelect={(e) => {
-            if (readOnly) return
-            syncMentionState({ textarea: e.currentTarget, value: e.currentTarget.value })
-          }}
-          onBlur={() => {
-            if (readOnly) return
-            setPromptSuggestions([])
-            setMentionOpen(false)
-            setMentionFilter('')
-            setMentionMenuPosition(null)
-          }}
-          onKeyDown={(e) => {
-          if (readOnly) return
-          const isMac = navigator.platform.toLowerCase().includes('mac')
-          const mod = isMac ? e.metaKey : e.ctrlKey
-
-          if (e.key === 'Escape') {
-            if (mentionOpen) {
-              e.stopPropagation()
-              setMentionOpen(false)
-              setMentionFilter('')
-              mentionMetaRef.current = null
-              return
-            }
-            if (!mentionOpen && promptSuggestions.length > 0) {
-              e.preventDefault()
-              setPromptSuggestions([])
-              setSuggestionsEnabled(false)
-              return
-            }
-          }
-
-          if (mentionOpen) {
-            if (e.key === 'ArrowDown') {
-              if (mentionItems.length > 0) {
-                e.preventDefault()
-                setActiveMention((idx) => (idx + 1) % mentionItems.length)
-              }
-              return
-            }
-            if (e.key === 'ArrowUp') {
-              if (mentionItems.length > 0) {
-                e.preventDefault()
-                setActiveMention((idx) => (idx - 1 + mentionItems.length) % mentionItems.length)
-              }
-              return
-            }
-            if (e.key === 'Enter' || e.key === 'Tab') {
-              const active = mentionItems[activeMention]
-              if (active) {
-                e.preventDefault()
-                applyMention(active)
-              }
-              return
-            }
-          }
-
-          if ((e.key === ' ' || (isMac && e.key === 'Space' && !e.shiftKey)) && mod) {
-            e.preventDefault()
-            if (!suggestionsAllowed) return
-            const value = prompt.trim()
-            if (value.length >= 6) {
-              setSuggestionsEnabled(true)
-            }
-            return
-          }
-
-          if (!promptSuggestions.length) return
-          if (e.key === 'ArrowDown') {
-            e.preventDefault()
-            setActiveSuggestion((idx) => (idx + 1) % promptSuggestions.length)
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault()
-            setActiveSuggestion((idx) => (idx - 1 + promptSuggestions.length) % promptSuggestions.length)
-          } else if (e.key === 'Tab') {
-            e.preventDefault()
-            const suggestion = promptSuggestions[activeSuggestion]
-            if (suggestion) {
-              setPrompt(suggestion)
-              setPromptSuggestions([])
-              setSuggestionsEnabled(false)
-              markPromptUsed(suggestion)
-            }
-          } else if (e.key === 'Escape') {
-            setPromptSuggestions([])
-            setSuggestionsEnabled(false)
-          }
-          }}
+        <div
+          ref={editorRef}
+          className={`task-node-prompt__editor notranslate${readOnly ? ' task-node-prompt__editor--readonly' : ''}`}
+          contentEditable={!readOnly}
+          suppressContentEditableWarning
+          translate="no"
+          data-placeholder={editorPlaceholder}
+          data-empty={!prompt ? 'true' : undefined}
+          style={{ minHeight: editorMinHeight }}
+          onInput={handleInput}
+          onBeforeInput={handleBeforeInput}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
+          onFocus={handleFocus}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          onSelect={handleSelect}
         />
         {readOnlyHint ? (
           <Text className="task-node-prompt__readonly-hint" size="xs" c="dimmed" mt={6}>
             {readOnlyHint}
           </Text>
         ) : null}
-        {allowPromptEditing && !mentionOpen && promptSuggestions.length > 0 && (
-          <div
-            className="task-node-prompt__suggestions"
-            style={{
-              position: 'absolute',
-              right: 10,
-              top: '100%',
-              zIndex: 40,
-              background: isDarkUi ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.95)',
-              borderRadius: 8,
-              boxShadow: '0 16px 32px rgba(0,0,0,0.25)',
-              width: '100%',
-              maxWidth: 340,
-              marginTop: 6,
-              border: `1px solid ${isDarkUi ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
-              overflow: 'hidden',
-              maxHeight: 180,
-              overflowY: 'auto',
+        {allowPromptEditing && (
+          <AssetMentionPanel
+            open={mentionOpen && mentionMenuPosition !== null}
+            position={mentionMenuPosition}
+            projectId={projectId || ''}
+            baseItems={mentionItems}
+            onApply={applyMention}
+            onClose={() => {
+              setMentionOpen(false)
+              setMentionFilter('')
+              setMentionMenuPosition(null)
             }}
-          >
-            {promptSuggestions.map((s, idx) => (
-              <div
-                className="task-node-prompt__suggestion"
-                key={`${idx}-${s.slice(0, 16)}`}
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  setPrompt(s)
-                  setPromptSuggestions([])
-                  markPromptUsed(s)
-                }}
-                onMouseEnter={() => setActiveSuggestion(idx)}
-                style={{
-                  padding: '4px 8px',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                  background: idx === activeSuggestion ? 'rgba(59,130,246,0.15)' : 'transparent',
-                  color: nodeShellText,
-                }}
-              >
-                {s}
-              </div>
-            ))}
-          </div>
-        )}
-        {allowPromptEditing && mentionOpen && (
-          <Portal>
-            <div
-              className="task-node-prompt__mentions"
-              style={{
-                position: 'fixed',
-                left: mentionMenuPosition ? mentionMenuPosition.left : 8,
-                top: mentionMenuPosition ? mentionMenuPosition.top : 8,
-                borderRadius: 10,
-                padding: 8,
-                background: isDarkUi ? 'rgba(0,0,0,0.84)' : '#fff',
-                boxShadow: '0 16px 32px rgba(0,0,0,0.25)',
-                zIndex: 1200,
-                maxHeight: 220,
-                width: mentionMenuPosition ? mentionMenuPosition.width : 280,
-                overflowY: 'auto',
-                overflowX: 'hidden',
-              }}
-            >
-            <Text className="task-node-prompt__mentions-title" size="xs" c="dimmed" mb={4}>
-              选择引用
-            </Text>
-            {mentionItems.map((item, idx: number) => {
-              const avatar =
-                (typeof item?.profile_picture_url === 'string' && item.profile_picture_url.trim()) ||
-                null
-              const username = String(item?.username || '').replace(/^@/, '').trim()
-              const display = String(item?.display_name || item?.username || '角色')
-              const meta = item.source === 'asset' ? '资产引用' : '角色引用'
-              return (
-                <div
-                  className="task-node-prompt__mention"
-                  key={username || item?.id || item?.name || idx}
-                  style={{
-                    padding: '6px 8px',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                    background: idx === activeMention ? 'rgba(59,130,246,0.15)' : 'transparent',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                  }}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    applyMention(item)
-                  }}
-                  onMouseEnter={() => setActiveMention(idx)}
-                >
-                  {avatar && (
-                    <img
-                      className="task-node-prompt__mention-avatar"
-                      src={avatar}
-                      alt={username ? `@${username}` : 'avatar'}
-                      style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
-                    />
-                  )}
-                  <div className="task-node-prompt__mention-text" style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                    <Text className="task-node-prompt__mention-name" size="sm" lineClamp={1}>
-                      {display}
-                    </Text>
-                    {(username || meta) && (
-                      <Text className="task-node-prompt__mention-username" size="xs" c="dimmed" lineClamp={1}>
-                        {[username ? `@${username}` : null, meta].filter(Boolean).join(' · ')}
-                      </Text>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-            {mentionLoading && (
-              <Text className="task-node-prompt__mention-loading" size="xs" c="dimmed">
-                加载中...
-              </Text>
-            )}
-            {!mentionLoading && mentionItems.length === 0 && (
-              <Text className="task-node-prompt__mention-empty" size="xs" c="dimmed">
-                无匹配引用
-              </Text>
-            )}
-            </div>
-          </Portal>
+            isDarkUi={isDarkUi}
+            panelActiveRef={mentionPanelActiveRef}
+          />
         )}
       </div>
-      {showAssetBinding && !hideAnchorBindingSection && (
+      {!readOnly && (
         <div
-          className="task-node-prompt__asset-bind-panel"
-          style={{
-            marginTop: 8,
-            border: `1px solid ${isDarkUi ? 'rgba(148,163,184,.28)' : 'rgba(100,116,139,.28)'}`,
-            borderRadius: 8,
-            padding: 8,
-            background: isDarkUi ? '#0f172a' : '#f8fafc',
-          }}
+          className="task-node-prompt__resize-handle nodrag"
+          onMouseDown={handleResizeMouseDown}
         >
-          <Group className="task-node-prompt__asset-bind-header" justify="space-between" align="center" mb={6}>
-            <Text className="task-node-prompt__asset-bind-title" size="xs" fw={600}>
-              引用绑定
-            </Text>
-            <Badge className="task-node-prompt__asset-bind-badge" size="xs" variant="light" color="blue">
-              @ID
-            </Badge>
-          </Group>
-          <Group className="task-node-prompt__asset-bind-row" gap="xs" align="flex-end" wrap="wrap">
-            <TextInput
-              className="task-node-prompt__asset-bind-input"
-              label="引用ID"
-              size="xs"
-              value={assetBindingId}
-              onChange={(e) => setAssetBindingId(e.currentTarget.value)}
-              placeholder="例如：fangyuan_main"
-              style={{ flex: 1, minWidth: 180 }}
-            />
-            <Button
-              className="task-node-prompt__asset-bind-btn"
-              size="xs"
-              variant="light"
-              color="blue"
-              disabled={bindAssetDisabled}
-              onClick={onBindPrimaryAssetReference}
-            >
-              绑定当前主资产
-            </Button>
-          </Group>
-          <Text className="task-node-prompt__asset-bind-hint" size="xs" c="dimmed" mt={6}>
-            绑定后，当前主图或主视频会写入该引用ID，后续在提示词中可直接使用 @引用ID。
-          </Text>
-          {!!bindAssetStatusText && (
-            <Text className="task-node-prompt__asset-bind-status" size="xs" c="dimmed" mt={4}>
-              {bindAssetStatusText}
-            </Text>
-          )}
-        </div>
-      )}
-      {showAnchorBinding && !hideAnchorBindingSection && (
-        <div
-          className="task-node-prompt__anchor-bind-panel"
-          style={{
-            marginTop: 8,
-            border: `1px solid ${isDarkUi ? 'rgba(148,163,184,.28)' : 'rgba(100,116,139,.28)'}`,
-            borderRadius: 8,
-            padding: 8,
-            background: isDarkUi ? '#0f172a' : '#f8fafc',
-          }}
-        >
-        <Group className="task-node-prompt__anchor-bind-header" justify="space-between" align="center" mb={6}>
-          <Text className="task-node-prompt__anchor-bind-title" size="xs" fw={600}>
-            通用锚点绑定
-          </Text>
-          <Badge className="task-node-prompt__anchor-bind-badge" size="xs" variant="light" color="grape">
-            使用主图
-          </Badge>
-        </Group>
-        <Group className="task-node-prompt__anchor-bind-row" gap="xs" align="flex-end" wrap="wrap">
-          <Select
-            className="task-node-prompt__anchor-bind-kind"
-            label="锚点类型"
-            size="xs"
-            data={[
-              { value: 'character', label: '角色' },
-              { value: 'scene', label: '场景' },
-              { value: 'prop', label: '道具' },
-              { value: 'shot', label: '分镜' },
-              { value: 'story', label: '剧情' },
-              { value: 'asset', label: '资产' },
-              { value: 'context', label: '上下文' },
-              { value: 'authority_base_frame', label: '权威基底帧' },
-            ]}
-            value={anchorBindingKind}
-            onChange={setAnchorBindingKind}
-            allowDeselect={false}
-            style={{ width: 140 }}
-          />
-          <TextInput
-            className="task-node-prompt__anchor-bind-input"
-            label="锚点名称"
-            size="xs"
-            value={anchorBindingLabel}
-            onChange={(e) => setAnchorBindingLabel(e.currentTarget.value)}
-            placeholder="例如：方源 / 青茅山宗祠 / 春秋蝉"
-            style={{ flex: 1, minWidth: 180 }}
-          />
-          <Button
-            className="task-node-prompt__anchor-bind-btn"
-            size="xs"
-            variant="light"
-            color="grape"
-            loading={bindAnchorLoading}
-            disabled={bindAnchorDisabled}
-            onClick={onBindPrimaryAnchor}
-          >
-            绑定当前主图
-          </Button>
-        </Group>
-        <Text className="task-node-prompt__anchor-bind-hint" size="xs" c="dimmed" mt={6}>
-          绑定后，节点当前主图会写入统一的 anchorBindings；角色、场景、道具、分镜和其他资产都走同一套锚点定义。
-        </Text>
-        {!!bindAnchorStatusText && (
-          <Text className="task-node-prompt__anchor-bind-status" size="xs" c="dimmed" mt={4}>
-            {bindAnchorStatusText}
-          </Text>
-        )}
+          <div className="task-node-prompt__resize-dots" />
         </div>
       )}
     </div>
   )
 }
+
+const _PromptSection = React.memo(PromptSection)
+export { _PromptSection as PromptSection }

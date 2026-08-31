@@ -10,6 +10,7 @@ export type ChatAssetInputRole =
   | 'mask'
 
 export type ChatAssetInput = {
+  nodeId?: string
   assetId?: string
   assetRefId?: string
   url?: string
@@ -20,6 +21,7 @@ export type ChatAssetInput = {
 }
 
 type SelectedImageAssetCandidate = {
+  nodeId?: string
   assetId?: string
   assetRefId?: string
   url: string
@@ -41,16 +43,18 @@ export function buildSelectedImageAssetInputs(
 
   for (const item of items) {
     const url = String(item.url || '').trim()
-    if (!url) continue
-    const key = url
-    if (seen.has(key)) continue
-    seen.add(key)
+    const nodeId = typeof item.nodeId === 'string' ? item.nodeId.trim() : ''
     const assetId = typeof item.assetId === 'string' ? item.assetId.trim() : ''
     const assetRefId = typeof item.assetRefId === 'string' ? item.assetRefId.trim() : ''
+    if (!url || (!nodeId && !assetId && !assetRefId)) continue
+    const key = `${nodeId}|${assetId}|${assetRefId}|${url}`
+    if (seen.has(key)) continue
+    seen.add(key)
     const role = item.role || 'reference'
     const note = typeof item.note === 'string' ? item.note.trim() : ''
     const name = typeof item.name === 'string' ? item.name.trim() : ''
     out.push({
+      ...(nodeId ? { nodeId } : {}),
       ...(assetId ? { assetId } : {}),
       ...(assetRefId ? { assetRefId } : {}),
       url,

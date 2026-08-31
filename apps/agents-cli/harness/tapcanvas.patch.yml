@@ -1,0 +1,42 @@
+# TapCanvas hard-cutover overlay for DeepSeek Harness's official `sdk` profile.
+# Hono supplies only per-turn facts and authorization. The Harness runtime owns
+# planning, skills, tool selection, subagents, persistence, and the agent loop.
+
+- id: system-prompt
+  config:
+    persona: !!js process.env.TAPCANVAS_DSH_SYSTEM_PROMPT
+
+- id: llm-pi-ai
+  config:
+    providers:
+      tapcanvas:
+        displayName: TapCanvas Model Gateway
+        apiKeyEnv: TAPCANVAS_DSH_API_KEY
+        api: !!js process.env.TAPCANVAS_DSH_API_STYLE
+        baseURL: !!js process.env.TAPCANVAS_DSH_API_BASE_URL
+        defaultContextWindow: !!js Number(process.env.TAPCANVAS_DSH_CONTEXT_WINDOW)
+        defaultMaxTokens: !!js Number(process.env.TAPCANVAS_DSH_MAX_OUTPUT_TOKENS)
+        reasoning: !!js process.env.TAPCANVAS_DSH_REASONING_EFFORT
+        models:
+          - id: !!js process.env.TAPCANVAS_DSH_MODEL
+            name: !!js process.env.TAPCANVAS_DSH_MODEL
+            contextWindow: !!js Number(process.env.TAPCANVAS_DSH_CONTEXT_WINDOW)
+
+- id: skill-filesystem
+  config:
+    customSkillDirs: [!!js process.env.TAPCANVAS_DSH_REQUEST_SKILLS_DIR]
+
+- insert:
+    - id: tapcanvas-request-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: !!js process.env.TAPCANVAS_DSH_MCP_ENABLED !== 'true'
+      config:
+        serverName: tapcanvas
+        transport: streamable-http
+        url: !!js process.env.TAPCANVAS_DSH_MCP_URL
+        headers:
+          Authorization: !!js '`Bearer ${process.env.TAPCANVAS_DSH_MCP_TOKEN}`'
+        failOnStartupError: true
+        reconnect:
+          enabled: false
+        toolCallTimeoutMs: 600000

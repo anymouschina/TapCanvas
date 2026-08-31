@@ -1,17 +1,27 @@
 import React from 'react'
 import type { Node, NodeProps } from '@xyflow/react'
 import { NodeResizeControl } from '@xyflow/react'
-import { IconEdit, IconGripVertical } from '@tabler/icons-react'
+import { IconEdit, IconGripVertical, IconPlayerPlay } from '@tabler/icons-react'
 import { useRFStore } from '../store'
+import { runGroupToFilm } from '../runGroupToFilm'
 
 type GroupNodeData = {
   label?: string
+  adminWorkflow?: boolean
+  sourceRecipeId?: string
+  targetDurationSeconds?: number
+  videoAspect?: string
+  videoModel?: string
+  videoProfileId?: string
 }
 
 type GroupCanvasNode = Node<GroupNodeData, 'groupNode'>
 
 export default function GroupNode({ id, data, selected, dragging }: NodeProps<GroupCanvasNode>): JSX.Element {
   const label = String(data?.label || '组').trim() || '组'
+  const isWorkflowGroup = data?.adminWorkflow === true
+  // 只读快照/投影（data.readOnly === true）：禁止改名、禁止运行/出片、禁止缩放。
+  const readOnly = (data as unknown as Record<string, unknown> | undefined)?.readOnly === true
   const borderColor = selected ? 'var(--canvas-group-border-selected)' : 'var(--canvas-group-border)'
   const renameGroup = useRFStore((s) => s.renameGroup)
   const [editing, setEditing] = React.useState(false)
@@ -23,23 +33,30 @@ export default function GroupNode({ id, data, selected, dragging }: NodeProps<Gr
 
   const submitRename = React.useCallback(() => {
     const next = draftLabel.trim()
-    if (next && next !== label) {
+    if (!readOnly && next && next !== label) {
       renameGroup(id, next)
     }
     setEditing(false)
-  }, [draftLabel, id, label, renameGroup])
+  }, [draftLabel, id, label, readOnly, renameGroup])
 
   return (
-    <div className="tc-group-node" style={{ width: '100%', height: '100%' }}>
+    <div
+      className={`tc-group-node${isWorkflowGroup ? ' tc-group-node--workflow' : ''}`}
+      style={{ width: '100%', height: '100%' }}
+    >
       <div
         className="tc-group-node__shell"
         style={{
           width: '100%',
           height: '100%',
-          border: `1.5px dashed ${borderColor}`,
-          borderRadius: 12,
-          background: 'var(--canvas-group-bg)',
-          boxShadow: selected ? 'var(--canvas-group-shadow-selected)' : 'var(--canvas-group-shadow)',
+          border: isWorkflowGroup ? 'none' : `1.5px dashed ${borderColor}`,
+          borderRadius: isWorkflowGroup ? 0 : 12,
+          background: isWorkflowGroup
+            ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0) 96px)'
+            : 'var(--canvas-group-bg)',
+          boxShadow: isWorkflowGroup
+            ? selected ? 'inset 0 1px 0 var(--canvas-group-border-selected)' : 'none'
+            : selected ? 'var(--canvas-group-shadow-selected)' : 'var(--canvas-group-shadow)',
           boxSizing: 'border-box',
           position: 'relative',
           transition: 'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
@@ -66,10 +83,10 @@ export default function GroupNode({ id, data, selected, dragging }: NodeProps<Gr
             maxWidth: 'calc(100% - 8px)',
             zIndex: 5,
             padding: '2px 8px',
-            borderRadius: 999,
-            border: `1px solid ${selected ? 'var(--canvas-group-border-selected)' : 'var(--canvas-group-border)'}`,
-            background: 'var(--canvas-group-bg)',
-            boxShadow: selected ? '0 6px 16px rgba(15, 23, 42, 0.14)' : 'none',
+            borderRadius: isWorkflowGroup ? 4 : 999,
+            border: isWorkflowGroup ? 'none' : `1px solid ${selected ? 'var(--canvas-group-border-selected)' : 'var(--canvas-group-border)'}`,
+            background: isWorkflowGroup ? 'rgba(17, 18, 21, 0.9)' : 'var(--canvas-group-bg)',
+            boxShadow: selected ? '0 6px 16px rgba(17, 18, 21, 0.14)' : 'none',
             overflow: 'hidden',
           }}
           title="拖这里移动组"
@@ -123,7 +140,7 @@ export default function GroupNode({ id, data, selected, dragging }: NodeProps<Gr
               {label}
             </div>
           )}
-          {!editing && (
+          {!editing && !readOnly && (
             <button
               className="tc-group-node__title-edit nodrag nopan"
               type="button"
@@ -151,9 +168,42 @@ export default function GroupNode({ id, data, selected, dragging }: NodeProps<Gr
               <IconEdit size={12} stroke={2} />
             </button>
           )}
+          {isWorkflowGroup && !editing ? (
+            <span className="tc-group-node__direction" aria-label="工作流方向：执行入口到最终输出">
+              单向执行：入口 → 处理 → 输出
+            </span>
+          ) : null}
+          {!editing && !isWorkflowGroup && !readOnly && (
+            <button
+              className="tc-group-node__run-film nodrag nopan"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                void runGroupToFilm(id)
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 18,
+                height: 18,
+                padding: 0,
+                marginLeft: 2,
+                border: 'none',
+                borderRadius: 999,
+                background: 'transparent',
+                color: 'inherit',
+                cursor: 'pointer',
+                flex: '0 0 auto',
+              }}
+              title="运行/出片"
+            >
+              <IconPlayerPlay size={12} stroke={2} />
+            </button>
+          )}
         </div>
 
-        {selected && !dragging && (
+        {selected && !dragging && !readOnly && (
           <NodeResizeControl
             className="tc-group-node__resize-control nodrag"
             position="bottom-right"

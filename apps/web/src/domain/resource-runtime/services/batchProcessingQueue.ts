@@ -1,12 +1,11 @@
 import { useResourceRuntimeStore } from '../store/resourceRuntimeStore'
 
-type BatchJobTask<T> = {
-  execute: () => Promise<T>
+type BatchJobTask = {
+  executeAndResolve: () => Promise<void>
   reject: (reason?: unknown) => void
-  resolve: (value: T | PromiseLike<T>) => void
 }
 
-const pendingBatchJobs: BatchJobTask<unknown>[] = []
+const pendingBatchJobs: BatchJobTask[] = []
 
 function setBatchQueueCounts(nextActiveBatchJobs: number, nextQueuedBatchJobs: number): void {
   useResourceRuntimeStore.setState((state) => ({
@@ -41,8 +40,7 @@ async function flushBatchQueue(): Promise<void> {
 
   setBatchQueueCounts(state.activeBatchJobs + 1, pendingBatchJobs.length)
   try {
-    const result = await nextJob.execute()
-    nextJob.resolve(result)
+    await nextJob.executeAndResolve()
   } catch (error) {
     nextJob.reject(error)
   } finally {
@@ -54,7 +52,12 @@ async function flushBatchQueue(): Promise<void> {
 
 export function runBatchProcessingJob<T>(execute: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    pendingBatchJobs.push({ execute, resolve, reject })
+    pendingBatchJobs.push({
+      executeAndResolve: async () => {
+        resolve(await execute())
+      },
+      reject,
+    })
     const state = useResourceRuntimeStore.getState()
     setBatchQueueCounts(state.activeBatchJobs, pendingBatchJobs.length)
     scheduleBatchQueueFlush()

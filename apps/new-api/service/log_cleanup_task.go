@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	logCleanupInterval  = 1 * time.Hour
-	logRetentionSeconds = 3 * 24 * 3600 // 3 天
-	logCleanupBatchSize = 500
+	logCleanupInterval           = 1 * time.Hour
+	logAndTaskRetention          = 3 * 24 * time.Hour
+	logCleanupBatchSize          = 500
+	requestTraceCleanupBatchSize = 500
 )
 
 var (
@@ -31,7 +32,13 @@ func StartLogCleanupTask() {
 			return
 		}
 		gopool.Go(func() {
-			logger.LogInfo(context.Background(), fmt.Sprintf("log cleanup task started: retention=3d, tick=%s", logCleanupInterval))
+			logger.LogInfo(context.Background(), fmt.Sprintf(
+				"log cleanup task started: log-and-task-retention=%s, request-trace-retention=%s, request-trace-batch=%d, tick=%s",
+				logAndTaskRetention,
+				model.RequestTraceRetention,
+				requestTraceCleanupBatchSize,
+				logCleanupInterval,
+			))
 			ticker := time.NewTicker(logCleanupInterval)
 			defer ticker.Stop()
 
@@ -43,6 +50,10 @@ func StartLogCleanupTask() {
 	})
 }
 
+func resolveCleanupCutoffs(now time.Time) (logAndTaskCutoff int64, requestTraceCutoff int64) {
+	return now.Add(-logAndTaskRetention).Unix(), model.RequestTraceCutoff(now)
+}
+
 func runLogCleanupOnce() {
 	if !logCleanupRunning.CompareAndSwap(false, true) {
 		return
@@ -50,20 +61,37 @@ func runLogCleanupOnce() {
 	defer logCleanupRunning.Store(false)
 
 	ctx := context.Background()
-	cutoff := time.Now().Unix() - logRetentionSeconds
+	logAndTaskCutoff, requestTraceCutoff := resolveCleanupCutoffs(time.Now())
 
-	deletedLogs, err := model.DeleteOldLog(ctx, cutoff, logCleanupBatchSize)
+	deletedLogs, err := model.DeleteOldLog(ctx, logAndTaskCutoff, logCleanupBatchSize)
 	if err != nil && ctx.Err() == nil {
 		logger.LogWarn(ctx, fmt.Sprintf("log cleanup failed: %v", err))
 	}
 
-	deletedTasks, err := model.DeleteOldTasks(ctx, cutoff, logCleanupBatchSize)
+	deletedTasks, err := model.DeleteOldTasks(ctx, logAndTaskCutoff, logCleanupBatchSize)
 	if err != nil && ctx.Err() == nil {
 		logger.LogWarn(ctx, fmt.Sprintf("task cleanup failed: %v", err))
 	}
 
-	if deletedLogs > 0 || deletedTasks > 0 {
-		logger.LogInfo(ctx, fmt.Sprintf("log cleanup: deleted run-logs=%d, tasks=%d (older than 3 days; financial logs retained)", deletedLogs, deletedTasks))
+	deletedRequestTraces, err := model.DeleteExpiredRequestTraceBatch(ctx, requestTraceCutoff, requestTraceCleanupBatchSize)
+	if err != nil && ctx.Err() == nil {
+		logger.LogWarn(ctx, fmt.Sprintf(
+			"request trace cleanup failed: cutoff=%d, batch=%d, error=%v",
+			requestTraceCutoff,
+			requestTraceCleanupBatchSize,
+			err,
+		))
+	}
+
+	if deletedLogs > 0 || deletedTasks > 0 || deletedRequestTraces > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf(
+			"log cleanup: deleted run-logs=%d, tasks=%d, request-traces=%d (log/task retention=%s; request trace retention=%s; financial logs retained)",
+			deletedLogs,
+			deletedTasks,
+			deletedRequestTraces,
+			logAndTaskRetention,
+			model.RequestTraceRetention,
+		))
 	}
 
 	// PostgreSQL 删行后死元组不会立即释放，需要 VACUUM ANALYZE 才能让页面重新可用。

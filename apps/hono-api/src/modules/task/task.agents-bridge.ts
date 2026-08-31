@@ -1,27 +1,86 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { DIRECTOR_POSE_LABELS, DIRECTOR_PROP_LABELS } from "./director-capture.shared";
+import { resolvePositiveIntEnv, CONCURRENCY_DEFAULTS } from "./concurrency-limits";
+import {
+	AgentsBridgeAdmissionScheduler,
+	type AgentsBridgeAdmissionPriority,
+} from "./agents-bridge-admission";
+import { createAgentsBridgeRequestDeadlineController } from "./agents-bridge-request-deadline";
 import { AppError } from "../../middleware/error";
-import { getPrismaClient } from "../../platform/node/prisma";
-import { listAssetsForUser, type AssetRow } from "../asset/asset.repo";
+import { normalizeRetrievalContextV1 } from "../execution/execution.retrieval-context";
 import type { AppContext } from "../../types";
 import { appendTraceEvent } from "../../trace";
-import { writeUserExecutionTrace } from "../memory/memory.service";
-import { type PublicChatReferenceImageSlot } from "./chat-system-prompt";
-import type { PublicChatPromptContext } from "./chat-prompt.types";
+import type {
+	AgentCanonicalPersistenceHealthV1,
+	AgentCompletionTraceV1,
+	AgentContinuationTicketV1,
+	AgentLogicalTaskStateV1,
+	AgentPhysicalRunExitV1,
+	AgentPerformanceSnapshotV1,
+	AgentRequestTerminalV1,
+	AgentRunOutcomeV1,
+	AgentRuntimeObservabilityV1,
+} from "@tapcanvas/agent-observability";
+import {
+	createHonoAgentTraceContext,
+	resolveAgentTraceCapturePolicy,
+} from "../agents/agent-observability.context";
+import { normalizeAgentRuntimeObservability } from "../agents/agent-observability.schemas";
+import { normalizeAgentPerformanceSnapshot } from "../agents/agent-performance-snapshot";
+import {
+	buildAgentObservabilitySpans,
+	buildFailedHonoAgentObservability,
+} from "../agents/agent-observability.spans";
+import { persistBuiltAgentObservability } from "../agents/agent-observability.service";
+import { redactHttpImageUrls } from "./agents-image-url-privacy";
+import { buildPublicChatSystemPrompt } from "./chat-system-prompt";
+import { loadPublicChatEnabledModelCatalogSummary } from "../model-catalog/model-catalog.public-chat-summary";
+import { buildPhysicalContinuationLeaseTakeover } from "./agents-bridge-continuation-lease";
+import { buildAgentsBridgeSessionAffinityHeader } from "./agents-bridge-session-affinity";
+import type { PublicChatPromptContext, PublicChatReferenceImageSlot } from "./chat-prompt.types";
 import {
 	resolveEffectivePublicChatBookChapterScope,
 } from "./public-chat-workflow";
-import { buildPublicChatExecutionPlanningDirective } from "./public-chat-execution-planning";
 import {
 	buildPublicChatExpectedDeliverySummary,
-	verifyPublicChatDelivery,
+	isPublicChatDeliveryEnvelopeStructurallyConsistent,
+	normalizePublicChatDurableTerminalDelivery,
+	normalizePublicChatDeliveryEvidence,
+	normalizePublicChatDeliveryVerification,
+	normalizePublicChatSemanticDeliveryContract,
 	type PublicChatDeliveryEvidence,
-	type PublicChatExpectedDeliveryKind,
+	type PublicChatDurableTerminalDelivery,
+	type PublicChatSemanticDeliveryContract,
 	type PublicChatDeliveryVerificationSummary,
 	type PublicChatExpectedDeliverySummary,
 } from "./public-chat-delivery-verifier";
-import { loadPublicChatEnabledModelCatalogSummary } from "../model-catalog/model-catalog.public-chat-summary";
+import {
+	projectPublicChatLogicalTaskState,
+	projectWorkflowActionLogicalTaskState,
+} from "./public-chat-logical-task-state";
+import { collectPublicChatToolDeliveryArtifacts } from "./public-chat-tool-asset-evidence";
+import {
+	collectPublicChatHostAsyncDeliveryArtifacts,
+	collectPublicChatHostExecutionHandoffEvidence,
+	type PublicChatHostExecutionHandoffEvidenceV1,
+} from "./public-chat-host-async-evidence";
+import {
+	summarizeAgentsBridgeLlmTermination,
+	type AgentsBridgeLlmTerminationSummary,
+} from "./agents-bridge-llm-termination";
+import {
+	parseAgentExecutionProvenance,
+	type AgentExecutionProvenance,
+} from "./agent-execution-provenance";
 import { getFlowForOwner, listFlowsByOwner } from "../flow/flow.repo";
+import {
+	PUBLIC_FLOW_AUTHORITY_BASE_FRAME_STATUSES,
+	PUBLIC_FLOW_ADMIN_WORKFLOW_TASK_NODE_KINDS,
+	PUBLIC_FLOW_CREATION_STAGES,
+	PUBLIC_FLOW_PRODUCTION_LAYERS,
+} from "../flow/flow.public.schemas";
+import { isAdminRequest } from "../team/team.service";
 import {
 	CANVAS_PLAN_TAG_NAME,
 	canvasPlanSchema,
@@ -39,33 +98,137 @@ import {
 import type { TaskRequestDto, TaskResultDto } from "./task.schemas";
 import { createSseEventParser } from "../../utils/sse";
 import type { SseEventMessage } from "../../utils/sse";
-import { buildCanvasCapabilityManifest } from "../ai/tool-schemas";
+import {
+	characterIdentityBoardSpecToolSchema,
+	propFunctionSpecToolSchema,
+	propIdentityBoardSpecToolSchema,
+	sceneLightingSpecToolSchema,
+} from "../ai/tool-schemas";
 import {
 	loadGenerationContractModule,
-	loadImagePromptSpecModule,
 	type GenerationContract,
-	type ImagePromptSpecV2,
 } from "../../platform/node/shared-schema-loader";
 import { resolveProjectDataRepoRoot } from "../asset/project-data-root";
+import { BookIndexStoreError, readBookIndex } from "../asset/book-index-store";
+import {
+	resolveChatSkillReferences,
+	type ChatSkillReferenceSource,
+} from "./chat-skill-references";
+import {
+	getBuiltInCapabilityAvailability,
+	listDisabledSkillKeys,
+	listReplacedSkillKeys,
+	listEquippedWorkflowCapabilities,
+} from "../agents/capability-bay.service";
+import { resolveProjectWorkspaceContextDir } from "../agents/project-context.service";
+import {
+	assetObjectContractSchema,
+	beatSheetDraftBeatPatchSchema,
+	beatSheetDraftBeatSchema,
+	beatSheetDraftHeaderPatchSchema,
+	beatSheetDraftHeaderSchema,
+} from "./video-orchestrator.tool-schema";
+import {
+	parseDurableProgressCursor,
+	type DurableProgressCursorV1,
+} from "./durable-progress-cursor";
+import { MAX_IMAGE_REFERENCE_INSPECTION_ITEMS } from "./agents-tool-bridge.image-reference-contract";
+import {
+	HostCanvasContextSchema,
+	HostCapabilityManifestSchema,
+	buildHostFlowPatchTool,
+	buildHostTool,
+	renderHostManifestPrompt,
+	type HostCanvasContext,
+	type HostCapabilityManifest,
+} from "./host-canvas-protocol";
+import { applyAgentExecutionToolPolicy } from "./agents-bridge-tool-policy";
+import {
+	readToolOperationExecution,
+	readToolSchemaOperationIndex,
+	type ToolOperationExecution,
+} from "./agents-tool-schema-projection";
+import { buildTrustedInternalExecutionApiKey } from "./agents-bridge-continuation-auth";
+import { buildInternalApiKey } from "../apiKey/internal-api-key";
+import { buildShotTableCriticRemoteTool } from "./agents-bridge-shot-critic-tool";
+import { filterRejectedSelectedReferenceMedia } from "./agents-bridge-reference-media";
+import { buildGenerationPrefsContextBlock, parseUserGenerationPrefs } from "../auth/generation-prefs";
+import { getPrismaClient } from "../../platform/node/prisma";
+import {
+	listBuiltInSmallTCapabilities,
+	measureRemoteToolCatalogIndex,
+	measureRemoteToolSurface,
+	readRemoteToolCapabilityRegistryEntry,
+	readRemoteToolSurfaceMetadata,
+	resolveAgentsBridgeRemoteToolSurface,
+	type AgentsBridgeRemoteToolCatalogEntry,
+	type AgentsBridgeRemoteToolSurfaceResolution,
+} from "./agents-bridge-remote-tool-surface";
+import {
+	STORY_PREVIEW_MAX_BOARDS,
+	STORY_PREVIEW_ORCHESTRATOR_TOOL,
+	storyPreviewPutBoardMode,
+} from "./story-preview-orchestrator";
 
 const generationContractModule = loadGenerationContractModule();
-const imagePromptSpecModule = loadImagePromptSpecModule();
 const { parseGenerationContract } = generationContractModule;
-const { parseImagePromptSpecV2 } = imagePromptSpecModule;
+
+const replanReplacementBeatPropertyNames = new Set([
+	"logline",
+	"durationBudget",
+	"dialogueScript",
+]);
+const replanReplacementBeatSchema = {
+	type: "object",
+	additionalProperties: false,
+	properties: Object.fromEntries(
+		Object.entries(beatSheetDraftBeatSchema.properties ?? {})
+			.filter(([propertyName]) => replanReplacementBeatPropertyNames.has(propertyName)),
+	),
+	required: [...replanReplacementBeatPropertyNames],
+};
+
+async function loadUserGenerationPrefsContext(userId: string): Promise<string | null> {
+	const normalizedUserId = userId.trim();
+	if (!normalizedUserId) return null;
+	try {
+		const user = await getPrismaClient().users.findUnique({
+			where: { id: normalizedUserId },
+			select: { generation_prefs: true },
+		});
+		return buildGenerationPrefsContextBlock(parseUserGenerationPrefs(user?.generation_prefs ?? null));
+	} catch (error) {
+		console.error(
+			`[agents-bridge.generation-prefs] read failed user=${normalizedUserId} reason=${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+		throw new AppError("读取用户生成偏好失败，未继续本轮对话", {
+			status: 503,
+			code: "generation_preferences_unavailable",
+		});
+	}
+}
 
 type AgentsBridgeChatResponse = {
 	id?: string;
 	text?: string;
+	pendingUserInput?: Record<string, unknown>;
 	assets?: Array<{
 		type?: string;
 		url?: string;
 		thumbnailUrl?: string;
+		title?: string;
+		fileName?: string;
+		mimeType?: string;
+		assetId?: string;
 	}>;
 	trace?: {
 		toolCalls?: Array<Record<string, unknown>>;
 		output?: Record<string, unknown>;
 		summary?: Record<string, unknown>;
 		completion?: Record<string, unknown>;
+		runOutcome?: Record<string, unknown>;
 		planning?: Record<string, unknown>;
 		turns?: Array<Record<string, unknown>>;
 		runtime?: Record<string, unknown>;
@@ -77,8 +240,10 @@ type AgentsBridgeChatResponse = {
 type AgentsBridgeStreamToolCall = {
 	toolCallId?: unknown;
 	toolName?: unknown;
+	transportToolName?: unknown;
 	phase?: unknown;
 	status?: unknown;
+	severity?: unknown;
 	input?: unknown;
 	outputPreview?: unknown;
 	startedAt?: unknown;
@@ -97,11 +262,17 @@ type AgentsBridgeStreamTodoListEvent = {
 	inProgressCount?: unknown;
 };
 
-type AgentsBridgeStreamEvent =
+export type AgentsBridgeStreamEvent =
 	| { event: "content"; data: { delta?: string } }
+	| { event: "block"; data: Record<string, unknown> }
+	| { event: "suggestions"; data: Record<string, unknown> }
 	| { event: "tool"; data: AgentsBridgeStreamToolCall }
+	| { event: "skill"; data: Record<string, unknown> }
 	| { event: "todo_list"; data: AgentsBridgeStreamTodoListEvent }
 	| { event: "result"; data: { response: AgentsBridgeChatResponse } }
+	| { event: "agent_role"; data: Record<string, unknown> }
+	| { event: "status-update"; data: Record<string, unknown> }
+	| { event: "artifact-update"; data: Record<string, unknown> }
 	| { event: "error"; data: { message?: string; code?: string; details?: unknown } }
 	| { event: "done"; data: { reason?: string } }
 	| {
@@ -115,7 +286,7 @@ type AgentsBridgeStreamEvent =
 			data: Record<string, unknown>;
 	  };
 
-type AgentsBridgeStreamObserver = (event: AgentsBridgeStreamEvent) => void | Promise<void>;
+export type AgentsBridgeStreamObserver = (event: AgentsBridgeStreamEvent) => void | Promise<void>;
 
 type AgentsBridgeAssetRole =
 	| "target"
@@ -129,9 +300,11 @@ type AgentsBridgeAssetRole =
 	| "mask";
 
 type AgentsBridgeAssetInput = {
+	nodeId?: string;
 	assetId?: string;
 	assetRefId?: string;
 	url: string;
+	mediaType: "image" | "video";
 	role: AgentsBridgeAssetRole;
 	weight?: number;
 	note?: string;
@@ -140,13 +313,76 @@ type AgentsBridgeAssetInput = {
 
 type AgentsBridgeReferenceImageSlot = PublicChatReferenceImageSlot;
 
+export function assertHostGenerationModeSupported(
+	manifest: HostCapabilityManifest | null,
+): "host" {
+	const generationMode = manifest?.generationMode ?? "host";
+	if (manifest && generationMode !== "host") {
+		throw new AppError(`Host generation mode is not implemented: ${generationMode}`, {
+			status: 400,
+			code: "host_generation_mode_not_implemented",
+			details: { generationMode },
+		});
+	}
+	return "host";
+}
+
 type AgentsBridgeChatContextSkill = {
+	id: string | null;
+	source: ChatSkillReferenceSource | null;
 	key: string | null;
 	name: string | null;
-	content?: string | null;
 };
 
+type AgentsBridgeRoleSkillAssignment = {
+	roleId: string;
+	roleName: string;
+	source: "system" | "custom";
+	skillId: string | null;
+	skillKey: string | null;
+	skillName: string | null;
+	fileName: string | null;
+	content: string | null;
+};
+
+type AgentsBridgeChapterDirectorPersona = {
+	personaId: string;
+	personaName: string;
+	source: "catalog" | "custom";
+	prompt: string | null;
+};
+
+type AgentsBridgeChapterStyleOverride = {
+	styleId: string | null;
+	styleName: string | null;
+	stylePrompt: string | null;
+	category: string | null;
+	referenceImageCount: number;
+};
+
+type AgentsBridgeGenerationProposal = {
+	version: 1;
+	proposalId: string;
+	kind: "image" | "video" | "audio" | "prompt";
+	title: string;
+	prompt: string;
+	model?: string;
+	parameters: Array<{ label: string; value: string }>;
+	action: string | null;
+	nodeId: string | null;
+};
+
+type AgentsBridgeChapterCanvasIntent =
+	| "extract_roles"
+	| "expand_video_script"
+	| "generate_shot_placeholders"
+	| "generate_scene_references"
+	| "generate_video_nodes"
+	| "generate_group_storyboard";
+
 type AgentsBridgeChatContext = {
+	requestedWorkflowExecutionVariant: "full_video" | "first_video" | null;
+	generationProposal: AgentsBridgeGenerationProposal | null;
 	currentProjectName: string | null;
 	workspaceAction:
 		| "chapter_script_generation"
@@ -154,6 +390,9 @@ type AgentsBridgeChatContext = {
 		| "shot_video_generation"
 		| null;
 	skill: AgentsBridgeChatContextSkill | null;
+	roleSkillAssignments: AgentsBridgeRoleSkillAssignment[];
+	chapterDirectorPersona: AgentsBridgeChapterDirectorPersona | null;
+	chapterStyleOverride: AgentsBridgeChapterStyleOverride | null;
 	selectedNodeLabel: string | null;
 	selectedNodeKind: string | null;
 	selectedNodeTextPreview: string | null;
@@ -178,19 +417,25 @@ type AgentsBridgeChatContext = {
 		hasDownstreamComposeVideo: boolean;
 		storyboardSelectionContext: StoryboardSelectionContext | null;
 	} | null;
+	chapterCanvasReference: {
+		version: 1;
+		scopeKey: string;
+		nodeCount: number;
+		edgeCount: number;
+		summary: string | null;
+		selectedNodeId: string | null;
+	} | null;
+	chatMode: "creative" | null;
+	creativePhase: "prep" | "writing" | null;
+	canvasSummary: string | null;
 };
 
 type AgentsBridgeRemoteToolDefinition = {
 	name: string;
 	description: string;
 	parameters: Record<string, unknown>;
+	execution?: import("../ai/tool-schemas").ToolExecutionSemantics;
 };
-
-const EXECUTION_TRACE_TOOL_CALL_LIMIT = 48;
-const EXECUTION_TRACE_ARRAY_LIMIT = 24;
-const EXECUTION_TRACE_OBJECT_KEY_LIMIT = 24;
-const EXECUTION_TRACE_STRING_LIMIT = 800;
-const EXECUTION_TRACE_TEXT_PREVIEW_LIMIT = 2000;
 
 const REMOTE_FLOW_CREATE_NODE_TYPES = ["taskNode", "groupNode"] as const;
 const REMOTE_FLOW_TASK_NODE_KINDS = [
@@ -199,6 +444,8 @@ const REMOTE_FLOW_TASK_NODE_KINDS = [
 	"imageEdit",
 	"video",
 	"storyboard",
+	"videoAnalysis",
+	"shotTable",
 	"novelDoc",
 	"scriptDoc",
 	"storyboardScript",
@@ -207,7 +454,6 @@ const REMOTE_FLOW_TASK_NODE_KINDS = [
 	"workflowOutput",
 	"storyboardImage",
 	"imageFission",
-	"mosaic",
 	"composeVideo",
 	"audio",
 	"subtitle",
@@ -218,129 +464,8 @@ const REMOTE_FLOW_TASK_NODE_KINDS_WITHOUT_STORYBOARD = REMOTE_FLOW_TASK_NODE_KIN
 );
 
 
-type BookChapterCharacterMeta = {
-	name?: string;
-};
-
-type BookChapterNamedEntityMeta = {
-	name?: string;
-};
-
-type BookChapterPropMeta = {
-	name?: string;
-	description?: string;
-	narrativeImportance?: "critical" | "supporting" | "background";
-	visualNeed?: "must_render" | "shared_scene_only" | "mention_only";
-	functionTags?: Array<
-		| "plot_trigger"
-		| "combat"
-		| "threat"
-		| "identity_marker"
-		| "continuity_anchor"
-		| "transaction"
-		| "environment_clutter"
-	>;
-	reusableAssetPreferred?: boolean;
-	independentlyFramable?: boolean;
-};
-
-type BookChapterMeta = {
-	chapter?: number;
-	characters?: BookChapterCharacterMeta[];
-	props?: BookChapterPropMeta[];
-	scenes?: BookChapterNamedEntityMeta[];
-};
-
-type BookStoryboardChunkMeta = {
-	chapter?: number;
-	updatedAt?: string;
-	tailFrameUrl?: string;
-};
-
-type BookRoleCardMeta = {
-	cardId?: string;
-	roleId?: string;
-	roleName?: string;
-	imageUrl?: string;
-	threeViewImageUrl?: string;
-	status?: string;
-	confirmationMode?: string | null;
-	confirmedAt?: string | null;
-	updatedAt?: string;
-	createdAt?: string;
-	stateDescription?: string;
-	stateKey?: string;
-	ageDescription?: string;
-	stateLabel?: string;
-	healthStatus?: string;
-	injuryStatus?: string;
-	chapter?: number;
-	chapterStart?: number;
-	chapterEnd?: number;
-	chapterSpan?: number[];
-};
-
-type BookVisualRefMeta = {
-	refId?: string;
-	category?: string;
-	name?: string;
-	imageUrl?: string;
-	status?: string;
-	confirmationMode?: string | null;
-	confirmedAt?: string | null;
-	updatedAt?: string;
-	createdAt?: string;
-	stateDescription?: string;
-	stateKey?: string;
-	chapter?: number;
-	chapterStart?: number;
-	chapterEnd?: number;
-	chapterSpan?: number[];
-};
-
-type BookSemanticAssetMeta = {
-	semanticId?: string;
-	mediaKind?: string;
-	status?: string;
-	nodeId?: string;
-	nodeKind?: string;
-	taskId?: string;
-	planId?: string;
-	chunkId?: string;
-	imageUrl?: string;
-	videoUrl?: string;
-	thumbnailUrl?: string;
-	chapter?: number;
-	chapterStart?: number;
-	chapterEnd?: number;
-	chapterSpan?: number[];
-	shotNo?: number;
-	stateDescription?: string;
-	prompt?: string;
-	anchorBindings?: PublicFlowAnchorBinding[];
-	productionLayer?: string;
-	creationStage?: string;
-	approvalStatus?: string;
-	confirmationMode?: string | null;
-	confirmedAt?: string | null;
-	updatedAt?: string;
-	createdAt?: string;
-};
-
-type BookIndexAssetsMeta = {
-	storyboardChunks?: BookStoryboardChunkMeta[];
-	roleCards?: BookRoleCardMeta[];
-	visualRefs?: BookVisualRefMeta[];
-	semanticAssets?: BookSemanticAssetMeta[];
-	styleBible?: {
-		referenceImages?: string[];
-	};
-};
-
 type BookIndexMeta = {
 	title?: string;
-	chapters?: BookChapterMeta[];
-	assets?: BookIndexAssetsMeta;
 };
 
 type ProjectBookCandidate = {
@@ -390,21 +515,35 @@ type BridgeToolEvidence = {
 	wroteCanvas: boolean;
 };
 
-type ToolStatusSummary = {
+export type ToolStatusSummary = {
 	totalToolCalls: number;
 	succeededToolCalls: number;
 	failedToolCalls: number;
 	deniedToolCalls: number;
 	blockedToolCalls: number;
+	warningToolCalls?: number;
 	runMs: number | null;
 };
 
-type ToolExecutionIssueSummary = {
+export type ToolExecutionIssueSummary = {
+	/** 全回合观测到的历史问题计数，保留给 trace/诊断，绝不因后续成功而抹除。 */
 	failedToolCalls: number;
 	deniedToolCalls: number;
 	blockedToolCalls: number;
+	warningToolCalls: number;
 	coordinationBlockedToolCalls: number;
 	actionableBlockedToolCalls: number;
+	/** 被同一逻辑工具后续成功调用明确替代的、可重试早期尝试数量。 */
+	retryRecoveredToolCalls: number;
+	/** 排除协调门禁与已成功重试后，仍未解决的执行问题数量。 */
+	unresolvedToolCalls: number;
+	/** 是否所有可执行历史问题都已由同一逻辑工具的后续成功重试解决。 */
+	recoveredBySuccessfulRetry: boolean;
+	/** 是否由同一回合、同一 delivery contract 的真实事实证据覆盖了早期问题。 */
+	recoveredByDeliveryEvidence: boolean;
+	/** 历史上确实发生过执行问题；与 hasExecutionIssues（未解决）刻意分离。 */
+	hasHistoricalExecutionIssues: boolean;
+	/** 仅表示交付收口时仍未被真实证据覆盖的执行问题。 */
 	hasExecutionIssues: boolean;
 };
 
@@ -413,26 +552,6 @@ type DiagnosticFlag = {
 	severity: "high" | "medium";
 	title: string;
 	detail: string;
-};
-
-type VideoPromptGovernanceSummary = {
-	active: boolean;
-	sourceHints: string[];
-	hasExecutablePrompt: boolean;
-	usesDeprecatedVideoPromptField: boolean;
-};
-
-type ImagePromptSpecGovernanceSummary = {
-	active: boolean;
-	sourceHints: string[];
-	chapterGroundedTargetCount: number;
-	validSpecCount: number;
-	missingSpecCount: number;
-	invalidSpecCount: number;
-	missingReferenceBindingsCount: number;
-	missingIdentityConstraintsCount: number;
-	missingEnvironmentObjectsCount: number;
-	missingCharacterContinuityCount: number;
 };
 
 type ChapterGroundedVisualPreproductionSummary = {
@@ -448,27 +567,32 @@ type ChapterGroundedVisualPreproductionSummary = {
 	materializedStoryboardStillCount: number;
 };
 
-type ChapterGroundedReferenceBindingSummary = {
-	active: boolean;
-	targetNodeCount: number;
-	missingBindingCount: number;
-	missingCharacterBindingCount: number;
+export type AgentsContinuationTicketV1 = AgentContinuationTicketV1;
+export type AgentsPhysicalRunExitV1 = AgentPhysicalRunExitV1;
+
+export type AgentsBridgeAdmissionReceiptV1 = {
+	version: 1;
+	acceptance: "accepted" | "unknown";
+	publicTurnId: string;
+	sessionId: string;
+	turnState: string | null;
+	activeTurn: boolean | null;
+	reconciledAt: string;
 };
 
-type StoryboardEditorContractSummary = {
-	active: boolean;
-	sourceHints: string[];
-	hasStoryboardNodes: boolean;
-	hasStoryboardEditorCells: boolean;
-	hasMaterializedStoryboardCellImages: boolean;
-	hasTextOnlyStoryboardPayload: boolean;
-};
-
-type AgentsTeamExecutionSummary = {
-	active: boolean;
-	sourceHints: string[];
-	hasExecutionEvidence: boolean;
-};
+export function buildAgentsBridgeTurnIdentity(
+	publicTurnId: string,
+	requestId: string,
+): Readonly<{ publicTurnId: string; logicalTaskId: string }> {
+	const stableTurnId = publicTurnId.trim() || requestId.trim();
+	if (!stableTurnId) {
+		throw new Error("Agents bridge turn identity is missing");
+	}
+	return {
+		publicTurnId: stableTurnId,
+		logicalTaskId: stableTurnId,
+	};
+}
 
 type FlowPatchNodeFinalState = {
 	id: string;
@@ -478,12 +602,50 @@ type FlowPatchNodeFinalState = {
 
 type AgentsRuntimeTraceSummary = {
 	profile: "general" | "code" | "unknown";
+	terminalAuthority?: "user_delivery" | "workflow_action";
 	registeredToolNames: string[];
 	registeredTeamToolNames: string[];
 	requiredSkills: string[];
 	loadedSkills: string[];
 	allowedSubagentTypes: string[];
 	requireAgentsTeamExecution: boolean;
+	inputProgressionGate?: {
+		status: "completed";
+		model: "deepseek-v4-flash";
+		decision: "allow" | "deny";
+		reasonCode: string;
+		reason: string;
+	};
+	physicalRunExit?: AgentsPhysicalRunExitV1;
+	terminalDelivery?: PublicChatDurableTerminalDelivery;
+	admissionReceipt?: AgentsBridgeAdmissionReceiptV1;
+	executionProvenance?: AgentExecutionProvenance;
+	promptExampleCandidateSearch?: {
+		version: 1;
+		status: "not_attempted" | "candidate_found" | "no_match" | "retrieval_failed" | "invalid_evidence" | "tool_unavailable";
+		mediaType: "image" | "video";
+		attempted: boolean;
+		remoteAttempted: boolean;
+		candidateCount: number;
+		blocking: false;
+		rationale: string;
+		toolCallId?: string;
+	};
+	userIntentContract?: Record<string, unknown>;
+	retrievalCandidateSets?: Record<string, unknown>[];
+	suspension?: {
+		reasonCode: string;
+		physicalRunId: string;
+		progressRevision: number;
+	};
+		deliveryReport?: {
+			required: boolean;
+			present: boolean;
+			satisfiedByAsyncSubmission: boolean;
+		remoteActionCount: number;
+		lastRemoteActionSeq: number | null;
+		lastReportSeq: number | null;
+	};
 	contextDiagnostics?: {
 		totalChars: number;
 		totalBudgetChars: number;
@@ -513,6 +675,8 @@ type AgentsRuntimeTraceSummary = {
 		requiresApprovalCount: number;
 		uniqueDeniedSignatures: string[];
 	};
+	performanceSnapshot?: AgentPerformanceSnapshotV1;
+	observability?: AgentRuntimeObservabilityV1;
 };
 
 type AgentsTodoListItemSummary = {
@@ -538,8 +702,11 @@ type AgentsTodoEventTraceSummary = AgentsTodoListTraceSummary & {
 };
 
 type AgentsPlanningTraceSummary = {
-	source: "todo_list" | "unknown";
+	source: "goal" | "todo_list" | "unknown";
 	planningRequired: boolean;
+	hasGoal: boolean;
+	goalStatus: string | null;
+	goalObjective: string | null;
 	minimumStepCount: number;
 	hasChecklist: boolean;
 	latestStepCount: number;
@@ -551,44 +718,44 @@ type AgentsPlanningTraceSummary = {
 	checklistComplete: boolean;
 };
 
-type AgentsCompletionTraceSummary = {
-	source: "deterministic" | "final_self_check" | "unknown";
-	terminal: "success" | "explicit_failure" | "blocked" | "unknown";
-	allowFinish: boolean;
-	failureReason: string | null;
-	rationale: string;
-	successCriteria: string[];
-	missingCriteria: string[];
-	requiredActions: string[];
-};
+type AgentsCompletionTraceSummary = AgentCompletionTraceV1;
+type AgentsBridgeRunOutcome = AgentRunOutcomeV1;
 
-type AgentsSemanticTaskSummary = {
+export type AgentsSemanticTaskSummary = {
 	taskGoal: string;
 	requestedOutput: string;
 	taskKind: string;
 	recommendedNextStage: string;
 	mustStop: boolean;
+	requiresExecutionDelivery: boolean;
 	blockingGaps: string[];
 	successCriteria: string[];
-	deliveryContract?: {
-		kind: Exclude<PublicChatExpectedDeliveryKind, "none">;
-		minStillCount?: number;
-	} | null;
+	deliveryContract?: PublicChatSemanticDeliveryContract | null;
+	deliveryEvidence?: PublicChatDeliveryEvidence["items"];
+	deliveryVerification?: PublicChatDeliveryVerificationSummary;
 };
 
 type AgentsSemanticExecutionIntentSummary = {
 	detected: boolean;
-	source: "task_interrogation_json" | "tool_trace_output_json" | "none";
+	source:
+		| "task_interrogation_json"
+		| "tool_trace_output_json"
+		| "runtime_user_intent_contract"
+		| "none";
 	taskKind: string | null;
 	mustStop: boolean;
 	requiresExecutionDelivery: boolean;
 	reason: string;
 };
 
-type BridgeToolCall = {
+export type BridgeToolCall = {
 	toolCallId: string;
+	seq: number | null;
+	atMs: number | null;
+	logicalToolName?: string;
 	name: string;
 	status: "succeeded" | "failed" | "denied" | "blocked" | "";
+	severity?: "warning" | "error" | "";
 	pathHint: string;
 	errorMessage: string;
 	outputPreview: string;
@@ -598,16 +765,55 @@ type BridgeToolCall = {
 	outputJson: Record<string, unknown> | null;
 	inputJson: Record<string, unknown> | null;
 	requestedAgentType: string;
+	startedAt: string;
+	finishedAt: string;
+	durationMs: number | null;
 };
 
 type AgentsBridgeOutputMode = "plan_with_assets" | "plan_only" | "direct_assets" | "text_only";
+
+/**
+ * An empty interactive canvas does not need the full hot tool payload on the
+ * first model turn. Keep the authenticated catalog available so agents can
+ * discover an exact operation when the request actually needs one, while
+ * avoiding a 20k+ token prompt for ordinary text conversations.
+ *
+ * This is deliberately based only on explicit, structural execution facts;
+ * it does not inspect or classify the user's wording.
+ */
+export function shouldDeferPublicChatDirectTools(input: {
+	publicAgentsRequest: boolean;
+	requestKind: "chat" | "prompt_refine";
+	hostManifestPresent: boolean;
+	canvasNodeId: string;
+	assetInputCount: number;
+	referenceImageCount: number;
+	forceAssetGeneration: boolean;
+	hasGenerationContract: boolean;
+	hasChapterContext: boolean;
+	hasForcedAgentRole: boolean;
+	requiredSkillCount: number;
+	hasExplicitToolPolicy?: boolean;
+}): boolean {
+	return input.publicAgentsRequest
+		&& !input.hostManifestPresent
+		&& input.requestKind === "chat"
+		&& !input.canvasNodeId.trim()
+		&& input.assetInputCount === 0
+		&& input.referenceImageCount === 0
+		&& !input.forceAssetGeneration
+		&& !input.hasGenerationContract
+		&& !input.hasChapterContext
+		&& !input.hasForcedAgentRole
+		&& input.requiredSkillCount === 0
+		&& !input.hasExplicitToolPolicy;
+}
 
 type AgentsBridgeDecision = {
 	executionKind: "plan" | "execute" | "generate" | "answer";
 	canvasAction: "create_canvas_workflow" | "write_canvas" | "none";
 	assetCount: number;
 	projectStateRead: boolean;
-	requiresConfirmation: boolean;
 	reason: string;
 };
 
@@ -626,7 +832,51 @@ type AgentsBridgeTurnVerdict = {
 	reasons: string[];
 };
 
+type AgentsBridgeRequestTerminal = AgentRequestTerminalV1;
+
+export type DurableTaskReferenceV1 = {
+	version: 1;
+	toolName: string;
+	mode: string | null;
+	runId: string | null;
+	taskId: string | null;
+	draftRevision: string | null;
+	beatRevision: string | null;
+	preflightRevision: string | null;
+	preflightFingerprint: string | null;
+	clipIndex: number | null;
+	progressCursor?: DurableProgressCursorV1 | null;
+	acceptedAsync: boolean;
+};
+
+export type DurableProgressClaimV1 = {
+	key: string;
+	fingerprint: string;
+	kind: "durable_action" | "delivery" | "task_state";
+	toolName: string;
+	toolCallId: string;
+	observedAt: string;
+	revision: number;
+};
+
+export type DurableActionRecoveryFactV1 = {
+	version: 1;
+	toolName: string;
+	mode: string | null;
+	status: "failed" | "blocked" | "denied" | "warning";
+	code: string | null;
+	message: string;
+	runId: string | null;
+	draftRevision: string | null;
+	/** Exact failed action input, only for server-declared same-chain repair. */
+	retryInput?: Record<string, unknown>;
+};
+
 type AgentsBridgeResponseMeta = {
+	traceId: string;
+	/** 本轮实际传入 agents-cli 的唯一模型选择器；公开响应据此保留可追溯模型事实。 */
+	modelKey?: string;
+	modelAlias?: string;
 	requestId?: string;
 	sessionId?: string;
 	outputMode: AgentsBridgeOutputMode;
@@ -634,106 +884,41 @@ type AgentsBridgeResponseMeta = {
 	expectedDelivery?: PublicChatExpectedDeliverySummary;
 	deliveryEvidence?: PublicChatDeliveryEvidence;
 	deliveryVerification?: PublicChatDeliveryVerificationSummary;
-	promptPipeline: PromptPipelineTraceSummary;
+	llmTermination?: AgentsBridgeLlmTerminationSummary;
 	toolStatusSummary: ToolStatusSummary;
+	/** 历史工具问题及其是否被同回合真实交付证据纠正。 */
+	toolExecutionIssues: ToolExecutionIssueSummary;
 	diagnosticFlags: DiagnosticFlag[];
 	canvasPlan: CanvasPlanDiagnostics;
 	canvasMutation?: AgentsBridgeCanvasMutation;
 	agentDecision: AgentsBridgeDecision;
 	completionTrace?: AgentsCompletionTraceSummary;
+	runOutcome: AgentsBridgeRunOutcome;
+	logicalTaskState: AgentLogicalTaskStateV1;
 	semanticExecutionIntent?: AgentsSemanticExecutionIntentSummary;
 	planningTrace?: AgentsPlanningTraceSummary;
 	todoList?: AgentsTodoListTraceSummary;
 	todoEvents?: AgentsTodoEventTraceSummary[];
 	turnVerdict: AgentsBridgeTurnVerdict;
+	requestTerminal: AgentsBridgeRequestTerminal;
+	hostExecutionHandoff?: PublicChatHostExecutionHandoffEvidenceV1;
+	durableTaskReferences?: DurableTaskReferenceV1[];
+	actionRecoveryFacts?: DurableActionRecoveryFactV1[];
+	runtime?: AgentsRuntimeTraceSummary;
+	executionProvenance?: AgentExecutionProvenance;
+	observability: {
+		canonicalPersistence: AgentCanonicalPersistenceHealthV1;
+	};
 };
 
-type PromptPipelineTarget =
-	| "general_chat"
-	| "text_evidence_context"
-	| "visual_generation";
-
-type PromptPipelinePrecheckSnapshot = {
-	target: PromptPipelineTarget;
-	roleMentionCount: number;
-	matchedRoleCardCount: number;
-	missingRoleCardCount: number;
-	ambiguousRoleCardCount: number;
-	chapterRoleCardInjectedCount: number;
-	continuityTailFrameFound: boolean;
-	autoReferenceImageCount: number;
-	generationGateActive: boolean;
-	directGenerationReady: boolean;
-	generationGateReason: string;
-};
-
-type PromptPipelineStageStatus = "not_needed" | "pending" | "completed";
-
-type PromptPipelineStageSummary = {
-	status: PromptPipelineStageStatus;
-	reason: string;
-};
-
-type PromptPipelineTraceSummary = {
-	target: PromptPipelineTarget;
-	precheck: PromptPipelineStageSummary;
-	prerequisiteGeneration: PromptPipelineStageSummary;
-	promptGeneration: PromptPipelineStageSummary;
-	precheckSnapshot: PromptPipelinePrecheckSnapshot;
-};
-
-const HARD_FAILURE_DIAGNOSTIC_CODES = new Set<string>([
-	"planning_checklist_missing",
-	"planning_checklist_too_short",
-	"auto_mode_agents_team_execution_missing",
-	"chapter_grounded_visual_anchor_missing",
-	"chapter_grounded_character_reference_missing",
-	"chapter_grounded_character_state_missing",
-	"chapter_grounded_character_three_view_missing",
-	"chapter_grounded_scene_prop_reference_missing",
-	"image_prompt_spec_v2_missing",
-	"image_prompt_spec_v2_invalid",
-	"image_prompt_spec_v2_reference_bindings_missing",
-	"image_prompt_spec_v2_identity_constraints_missing",
-	"image_prompt_spec_v2_environment_objects_missing",
-	"image_prompt_spec_v2_character_continuity_missing",
-	"storyboard_prompt_only_visual_delivery_missing",
+const TEAM_COORDINATION_BLOCKED_CODES = new Set([
+	"team_subagents_pending",
+	"team_coordination_pending",
 ]);
-
-const AGENTS_TEAM_EXECUTION_TOOL_NAMES = new Set<string>([
-	"spawn_agent",
-	"send_input",
-	"resume_agent",
-	"mailbox_send",
-	"mailbox_read",
-	"protocol_request",
-	"protocol_read",
-	"protocol_respond",
-	"protocol_get",
-	"agent_workspace_import",
+const EXECUTION_PLANNING_BLOCKED_CODES = new Set([
+	"execution_planning_required",
+	"execution_checklist_required",
 ]);
-
-const IMAGE_PROMPT_CONTEXT_KINDS = new Set<string>([
-	"image",
-	"imageedit",
-	"storyboardshot",
-	"storyboardimage",
-	"novelstoryboard",
-]);
-
-const IMAGE_PROMPT_SPEC_NODE_KINDS = new Set<string>([
-	"image",
-	"imageedit",
-	"storyboardshot",
-	"storyboardimage",
-	"novelstoryboard",
-]);
-
-const TEAM_COORDINATION_BLOCKED_MESSAGE_HINTS = [
-	"已有 team 子代理尚未结束",
-	"等待子代理终态后才能继续",
-	"请在下一轮重新发起",
-];
 
 function readTraceStringField(
 	value: Record<string, unknown> | null | undefined,
@@ -763,16 +948,34 @@ function readTraceBooleanField(
 	return typeof raw === "boolean" ? raw : null;
 }
 
-async function parseAgentsBridgeSseResponse(input: {
+export async function parseAgentsBridgeSseResponse(input: {
 	response: Response;
 	c: AppContext;
 	onEvent?: AgentsBridgeStreamObserver;
-}): Promise<AgentsBridgeChatResponse | null> {
+	// The public chat interrupt path aborts the request controller while the
+	// bridge can still be waiting on the next SSE chunk. Cancel the reader as
+	// soon as that signal fires so the awaiting read cannot keep the turn alive.
+	abortSignal?: AbortSignal;
+	// Called only after a named, valid runtime event is parsed. Transport heartbeat
+	// comments prove the socket is alive but do not prove the agent made progress.
+	onActivity?: () => void;
+}): Promise<AgentsBridgeChatResponse> {
 	if (!input.response.body) {
-		throw new Error("agents_bridge_stream_missing_body");
+		throw new AppError("Agents bridge 流响应缺少正文", {
+			status: 502,
+			code: "agents_bridge_stream_missing_body",
+		});
 	}
 
 	const reader = input.response.body.getReader();
+	const onAbort = () => {
+		void reader.cancel(toAbortError(input.abortSignal)).catch(() => undefined);
+	};
+	if (input.abortSignal?.aborted) {
+		onAbort();
+	} else {
+		input.abortSignal?.addEventListener("abort", onAbort, { once: true });
+	}
 	const decoder = new TextDecoder();
 	const parser = createSseEventParser();
 	let finalResponse: AgentsBridgeChatResponse | null = null;
@@ -809,8 +1012,20 @@ async function parseAgentsBridgeSseResponse(input: {
 		switch (rawEvent.event) {
 			case "content":
 				return { event: "content", data: payload };
+			case "block":
+				// content-block 协议（agents-cli 发射、web 前端消费）：本层只做透传，
+				// 不解读 op/block 结构，交给前端 reconcileBlocks 处理。
+				return { event: "block", data: payload };
+			case "suggestions":
+				// suggest_replies 产出的可点击后续建议，透传给前端渲染成 chips。
+				return { event: "suggestions", data: payload };
+			case "agent_role":
+				// 团队角色子 agent 活动（分镜师/生成师/剪辑师/后期 working）：透传给前端展示。
+				return { event: "agent_role", data: payload };
 			case "tool":
 				return { event: "tool", data: payload as AgentsBridgeStreamToolCall };
+			case "skill":
+				return { event: "skill", data: payload };
 			case "todo_list":
 				return { event: "todo_list", data: payload as AgentsBridgeStreamTodoListEvent };
 			case "result": {
@@ -830,6 +1045,10 @@ async function parseAgentsBridgeSseResponse(input: {
 				return { event: "error", data: payload };
 			case "done":
 				return { event: "done", data: payload };
+			case "status-update":
+				return { event: "status-update", data: payload };
+			case "artifact-update":
+				return { event: "artifact-update", data: payload };
 			case "thread.started":
 			case "turn.started":
 			case "item.started":
@@ -890,6 +1109,10 @@ async function parseAgentsBridgeSseResponse(input: {
 						},
 					});
 				}
+				// Only a valid named runtime event advances the idle deadline. SSE comment
+				// heartbeats are intentionally excluded so a live socket cannot mask a
+				// stalled model continuation forever.
+				input.onActivity?.();
 				await handleParsedEvent(event);
 			}
 		}
@@ -909,31 +1132,94 @@ async function parseAgentsBridgeSseResponse(input: {
 					},
 				});
 			}
+			input.onActivity?.();
 			await handleParsedEvent(event);
 		}
+		throwIfAbortSignalAborted(input.abortSignal);
+		if (!finalResponse) {
+			throw new AppError("Agents bridge 流在返回终态结果前结束", {
+				status: 502,
+				code: "agents_bridge_stream_interrupted",
+				details: { resultReceived: false, transportEndedCleanly: true },
+			});
+		}
 		return finalResponse;
+	} catch (error: unknown) {
+		throwIfAbortSignalAborted(input.abortSignal);
+		if (error instanceof AppError) throw error;
+		if (finalResponse) return finalResponse;
+		throw new AppError("Agents bridge 流在返回终态结果前中断", {
+			status: 502,
+			code: "agents_bridge_stream_interrupted",
+			details: {
+				resultReceived: finalResponse !== null,
+				cause: {
+					name: error instanceof Error ? error.name : "UnknownError",
+					message: error instanceof Error ? error.message : String(error),
+				},
+			},
+		});
 	} finally {
+		input.abortSignal?.removeEventListener("abort", onAbort);
 		reader.releaseLock();
 	}
 }
 
 function extractCanvasPlanPayload(text: string): string {
-	const match = text.match(
-		new RegExp(`<${CANVAS_PLAN_TAG_NAME}>([\\s\\S]*?)</${CANVAS_PLAN_TAG_NAME}>`, "i"),
-	);
-	return match ? String(match[1] || "").trim() : "";
+	const normalizedText = text.toLowerCase();
+	const openTag = `<${CANVAS_PLAN_TAG_NAME.toLowerCase()}>`;
+	const closeTag = `</${CANVAS_PLAN_TAG_NAME.toLowerCase()}>`;
+	const contentStart = normalizedText.indexOf(openTag);
+	if (contentStart < 0) return "";
+	const payloadStart = contentStart + openTag.length;
+	const contentEnd = normalizedText.indexOf(closeTag, payloadStart);
+	if (contentEnd < 0) return "";
+	return text.slice(payloadStart, contentEnd).trim();
+}
+
+function isAsciiLetter(value: string): boolean {
+	if (value.length !== 1) return false;
+	const code = value.toLowerCase().charCodeAt(0);
+	return code >= 97 && code <= 122;
+}
+
+function isSimpleProtocolTagName(value: string): boolean {
+	if (!value || !isAsciiLetter(value[0] || "")) return false;
+	for (const character of value) {
+		if (isAsciiLetter(character) || character === "_") continue;
+		const code = character.charCodeAt(0);
+		if (code < 48 || code > 57) return false;
+	}
+	return true;
+}
+
+function normalizeSimpleProtocolTag(raw: string): string {
+	const trimmed = raw.trim();
+	const withoutClosingMarker = trimmed.startsWith("/")
+		? trimmed.slice(1).trim()
+		: trimmed;
+	return isSimpleProtocolTagName(withoutClosingMarker)
+		? withoutClosingMarker
+		: "";
 }
 
 function detectCanvasPlanTagName(text: string): string {
-	const matches = Array.from(
-		text.matchAll(/<\s*\/?\s*([a-z][a-z0-9_]*)\s*>/gi),
-	);
-	for (const match of matches) {
-		const tagName = String(match[1] || "").trim();
-		if (!tagName || tagName.toLowerCase() === CANVAS_PLAN_TAG_NAME.toLowerCase()) continue;
-		if (tagName.toLowerCase().endsWith("canvas_plan")) {
+	let cursor = 0;
+	while (cursor < text.length) {
+		const tagStart = text.indexOf("<", cursor);
+		if (tagStart < 0) return "";
+		const tagEnd = text.indexOf(">", tagStart + 1);
+		if (tagEnd < 0) return "";
+		const tagName = normalizeSimpleProtocolTag(text.slice(tagStart + 1, tagEnd));
+		const normalizedTagName = tagName.toLowerCase();
+		if (
+			normalizedTagName
+			&& normalizedTagName !== CANVAS_PLAN_TAG_NAME.toLowerCase()
+			&& normalizedTagName.endsWith("canvas_plan")
+		) {
 			return tagName;
 		}
+		cursor = tagEnd + 1;
 	}
 	return "";
 }
@@ -968,9 +1254,18 @@ const GENERATED_ASSET_RESULT_KEYS = new Set([
 	"outputs",
 ]);
 
+function isHttpAssetUrl(value: string): boolean {
+	try {
+		const parsed = new URL(value);
+		return (parsed.protocol === "http:" || parsed.protocol === "https:") && Boolean(parsed.hostname);
+	} catch {
+		return false;
+	}
+}
+
 function valueHasGeneratedAssetUrl(value: unknown, currentKey = ""): boolean {
 	if (typeof value === "string") {
-		return GENERATED_ASSET_URL_KEYS.has(currentKey) && /^https?:\/\//i.test(value.trim());
+		return GENERATED_ASSET_URL_KEYS.has(currentKey) && isHttpAssetUrl(value.trim());
 	}
 	if (Array.isArray(value)) {
 		return value.some((item) => valueHasGeneratedAssetUrl(item, currentKey));
@@ -978,7 +1273,7 @@ function valueHasGeneratedAssetUrl(value: unknown, currentKey = ""): boolean {
 	if (!value || typeof value !== "object") return false;
 	return Object.entries(value).some(([key, entryValue]) => {
 		if (typeof entryValue === "string") {
-			return GENERATED_ASSET_URL_KEYS.has(key) && /^https?:\/\//i.test(entryValue.trim());
+			return GENERATED_ASSET_URL_KEYS.has(key) && isHttpAssetUrl(entryValue.trim());
 		}
 		if (GENERATED_ASSET_RESULT_KEYS.has(key)) {
 			return valueHasGeneratedAssetUrl(entryValue, "url");
@@ -1000,7 +1295,7 @@ function nodeConfigHasGeneratedAssetUrl(node: ChatCanvasPlan["nodes"][number]): 
 				? "audioUrl"
 				: "imageUrl";
 	const directUrlRaw = typeof record[directUrlKey] === "string" ? record[directUrlKey].trim() : "";
-	if (!/^https?:\/\//i.test(directUrlRaw)) return false;
+	if (!isHttpAssetUrl(directUrlRaw)) return false;
 	const sourceUrl = typeof record.sourceUrl === "string" ? record.sourceUrl.trim() : "";
 	if (sourceUrl && sourceUrl === directUrlRaw) return false;
 	const referenceImages = Array.isArray(record.referenceImages)
@@ -1098,19 +1393,24 @@ function buildCanvasPlanDiagnostics(text: string): CanvasPlanDiagnostics {
 
 function summarizeBridgeToolEvidence(toolCalls: BridgeToolCall[]): BridgeToolEvidence {
 	const names = toolCalls
-		.map((call) => (typeof call.name === "string" ? call.name.trim() : ""))
+		.map(resolveBridgeLogicalToolName)
 		.filter(Boolean);
 	const uniqueNames = Array.from(new Set(names));
 	const hasSuccessfulTool = (name: string): boolean =>
-		toolCalls.some((call) => call.name === name && call.status === "succeeded");
+		toolCalls.some((call) => resolveBridgeLogicalToolName(call) === name && call.status === "succeeded");
 	const readProjectState =
 		hasSuccessfulTool("tapcanvas_project_flows_list") ||
+		hasSuccessfulTool("tapcanvas_project_context_get") ||
+		hasSuccessfulTool("tapcanvas_project_chapters_list") ||
+		hasSuccessfulTool("tapcanvas_project_chapter_get") ||
 		hasSuccessfulTool("tapcanvas_canvas_workflow_analyze") ||
 		hasSuccessfulTool("tapcanvas_flow_get") ||
 		hasSuccessfulTool("tapcanvas_flow_patch");
 	const readBookList = hasSuccessfulTool("tapcanvas_books_list");
 	const readBookIndex = hasSuccessfulTool("tapcanvas_book_index_get");
-	const readChapter = hasSuccessfulTool("tapcanvas_book_chapter_get");
+	const readChapter =
+		hasSuccessfulTool("tapcanvas_book_chapter_get") ||
+		hasSuccessfulTool("tapcanvas_project_chapter_get");
 	const readStoryboardPlan = hasSuccessfulTool("tapcanvas_book_storyboard_plan_get");
 	const readStoryboardContinuity = hasSuccessfulTool("tapcanvas_storyboard_continuity_get");
 	const readStoryboardSourceBundle = hasSuccessfulTool("tapcanvas_storyboard_source_bundle_get");
@@ -1149,215 +1449,15 @@ function summarizeBridgeToolEvidence(toolCalls: BridgeToolCall[]): BridgeToolEvi
 	};
 }
 
-function hasSuccessfulRequestedAgentType(
-	toolCalls: BridgeToolCall[],
-	...agentTypes: string[]
-): boolean {
-	const expected = new Set(
-		agentTypes.map((item) => String(item || "").trim()).filter(Boolean),
-	);
-	if (expected.size === 0) return false;
-	return toolCalls.some((call) => {
-		if (call.status !== "succeeded") return false;
-		if (expected.has(call.requestedAgentType)) return true;
-		const outputAgentType =
-			typeof call.outputJson?.agentType === "string"
-				? String(call.outputJson.agentType).trim()
-				: "";
-		return Boolean(outputAgentType) && expected.has(outputAgentType);
-	});
-}
-
-function resolvePromptPipelineTarget(input: {
-	selectedNodeKind: string | null;
-	selectedReferenceKind: string | null;
-	referenceImageCount: number;
-}): PromptPipelineTarget {
-	if (
-		input.referenceImageCount > 0 ||
-		isImagePromptContextKind(input.selectedNodeKind) ||
-		isImagePromptContextKind(input.selectedReferenceKind) ||
-		normalizeComparableKind(input.selectedReferenceKind) === "composevideo" ||
-		normalizeComparableKind(input.selectedReferenceKind) === "video"
-	) {
-		return "visual_generation";
-	}
-	return "general_chat";
-}
-
-function buildPromptPipelinePrecheckSnapshot(input: {
-	target: PromptPipelineTarget;
-	mentionRoleInjection: {
-		mentions: string[];
-		matched: Array<{ roleNameKey: string }>;
-		missing: string[];
-		ambiguous: string[];
-		referenceImages: string[];
-	};
-	chapterContinuityInjection: {
-		tailFrameUrl: string | null;
-		roleNameKeys: string[];
-		referenceImages: string[];
-	};
-	generationGate: PublicAgentsGenerationGate;
-	mergedReferenceImages: string[];
-}): PromptPipelinePrecheckSnapshot {
-	return {
-		target: input.target,
-		roleMentionCount: input.mentionRoleInjection.mentions.length,
-		matchedRoleCardCount: input.mentionRoleInjection.matched.length,
-		missingRoleCardCount: input.mentionRoleInjection.missing.length,
-		ambiguousRoleCardCount: input.mentionRoleInjection.ambiguous.length,
-		chapterRoleCardInjectedCount: input.chapterContinuityInjection.roleNameKeys.length,
-		continuityTailFrameFound: Boolean(input.chapterContinuityInjection.tailFrameUrl),
-		autoReferenceImageCount: input.mergedReferenceImages.length,
-		generationGateActive: input.generationGate.active,
-		directGenerationReady: input.generationGate.directGenerationReady,
-		generationGateReason: input.generationGate.reason,
-	};
-}
-
-function buildPromptPipelineTraceSummary(input: {
-	target: PromptPipelineTarget;
-	precheckSnapshot: PromptPipelinePrecheckSnapshot;
-	toolEvidence: BridgeToolEvidence;
-	toolCalls: BridgeToolCall[];
-	text: string;
-	assetCount: number;
-	canvasPlanDiagnostics: CanvasPlanDiagnostics;
-}): PromptPipelineTraceSummary {
-	const hasPrecheckEvidence =
-		input.toolEvidence.readProjectState ||
-		input.toolEvidence.readBookList ||
-		input.toolEvidence.readBookIndex ||
-		input.toolEvidence.readChapter ||
-		input.toolEvidence.readStoryboardPlan ||
-		input.toolEvidence.readStoryboardContinuity ||
-		input.toolEvidence.readStoryboardSourceBundle ||
-		input.toolEvidence.readNodeContextBundle ||
-		input.toolEvidence.readVideoReviewBundle ||
-		input.toolEvidence.readMaterialAssets;
-	const promptGenerationDelivered =
-		Boolean(input.text.trim()) ||
-		input.assetCount > 0 ||
-		input.toolEvidence.wroteCanvas ||
-		(input.canvasPlanDiagnostics.parseSuccess === true &&
-			input.canvasPlanDiagnostics.nodeCount > 0) ||
-		hasSuccessfulRequestedAgentType(
-			input.toolCalls,
-			"image_prompt_specialist",
-			"video_prompt_specialist",
-			"pacing_reviewer",
-		);
-	const prerequisiteNeeded =
-		input.target === "visual_generation" &&
-		(!input.precheckSnapshot.directGenerationReady ||
-			input.precheckSnapshot.matchedRoleCardCount > 0 ||
-			input.precheckSnapshot.chapterRoleCardInjectedCount > 0 ||
-			input.precheckSnapshot.continuityTailFrameFound);
-	const prerequisiteCompleted =
-		input.precheckSnapshot.directGenerationReady &&
-		(input.precheckSnapshot.matchedRoleCardCount > 0 ||
-			input.precheckSnapshot.chapterRoleCardInjectedCount > 0 ||
-			input.precheckSnapshot.continuityTailFrameFound ||
-			input.precheckSnapshot.autoReferenceImageCount > 0);
-	return {
-		target: input.target,
-		precheck: {
-			status:
-				input.target === "general_chat"
-					? "not_needed"
-					: hasPrecheckEvidence
-						? "completed"
-						: "pending",
-			reason:
-				input.target === "general_chat"
-					? "general_chat_without_project_precheck"
-					: hasPrecheckEvidence
-						? "project_or_storyboard_evidence_read"
-						: "no_runtime_evidence_read",
-		},
-		prerequisiteGeneration: {
-			status: !prerequisiteNeeded
-				? "not_needed"
-				: prerequisiteCompleted
-					? "completed"
-					: "pending",
-			reason: !prerequisiteNeeded
-				? "no_prerequisite_assets_required"
-				: prerequisiteCompleted
-					? "preflight_assets_or_anchors_available"
-					: input.precheckSnapshot.generationGateReason,
-		},
-		promptGeneration: {
-			status: input.target === "general_chat"
-				? "not_needed"
-				: promptGenerationDelivered
-					? "completed"
-					: "pending",
-			reason: input.target === "general_chat"
-				? "general_chat_without_visual_prompt_pipeline"
-				: promptGenerationDelivered
-					? "prompt_or_canvas_result_delivered"
-					: "no_prompt_generation_result",
-		},
-		precheckSnapshot: input.precheckSnapshot,
-	};
-}
-
-function buildPromptPipelineRequestSummary(input: {
-	target: PromptPipelineTarget;
-	precheckSnapshot: PromptPipelinePrecheckSnapshot;
-}): PromptPipelineTraceSummary {
-	const prerequisiteNeeded =
-		input.target === "visual_generation" &&
-		(!input.precheckSnapshot.directGenerationReady ||
-			input.precheckSnapshot.matchedRoleCardCount > 0 ||
-			input.precheckSnapshot.chapterRoleCardInjectedCount > 0 ||
-			input.precheckSnapshot.continuityTailFrameFound);
-	const prerequisiteCompleted =
-		input.precheckSnapshot.directGenerationReady &&
-		(input.precheckSnapshot.matchedRoleCardCount > 0 ||
-			input.precheckSnapshot.chapterRoleCardInjectedCount > 0 ||
-			input.precheckSnapshot.continuityTailFrameFound ||
-			input.precheckSnapshot.autoReferenceImageCount > 0);
-	return {
-		target: input.target,
-		precheck: {
-			status: input.target === "general_chat" ? "not_needed" : "completed",
-			reason:
-				input.target === "general_chat"
-					? "general_chat_without_project_precheck"
-					: "bridge_context_collected",
-		},
-		prerequisiteGeneration: {
-			status: !prerequisiteNeeded
-				? "not_needed"
-				: prerequisiteCompleted
-					? "completed"
-					: "pending",
-			reason: !prerequisiteNeeded
-				? "no_prerequisite_assets_required"
-				: prerequisiteCompleted
-					? "preflight_assets_or_anchors_available"
-					: input.precheckSnapshot.generationGateReason,
-		},
-		promptGeneration: {
-			status: input.target === "general_chat" ? "not_needed" : "pending",
-			reason:
-				input.target === "general_chat"
-					? "general_chat_without_visual_prompt_pipeline"
-					: "awaiting_agents_execution",
-		},
-		precheckSnapshot: input.precheckSnapshot,
-	};
-}
-
 function normalizeBridgeToolCalls(toolCalls: Array<Record<string, unknown>>): BridgeToolCall[] {
 	return toolCalls.map((call) => {
 		const toolCallId = typeof call.toolCallId === "string" ? call.toolCallId.trim() : "";
+		const seq = typeof call.seq === "number" && Number.isFinite(call.seq) ? Math.max(0, Math.trunc(call.seq)) : null;
+		const atMs = typeof call.atMs === "number" && Number.isFinite(call.atMs) ? Math.max(0, Math.trunc(call.atMs)) : null;
+		const logicalToolName = typeof call.logicalToolName === "string" ? call.logicalToolName.trim() : "";
 		const name = typeof call.name === "string" ? call.name.trim() : "";
 		const status = typeof call.status === "string" ? call.status.trim() : "";
+		const severity = typeof call.severity === "string" ? call.severity.trim().toLowerCase() : "";
 		const pathHint = typeof call.pathHint === "string" ? call.pathHint.trim() : "";
 		const errorMessage =
 			typeof call.errorMessage === "string"
@@ -1384,13 +1484,22 @@ function normalizeBridgeToolCalls(toolCalls: Array<Record<string, unknown>>): Br
 			typeof inputJson?.agent_type === "string"
 				? String(inputJson.agent_type).trim()
 				: "";
+		const startedAt = typeof call.startedAt === "string" ? call.startedAt.trim() : "";
+		const finishedAt = typeof call.finishedAt === "string" ? call.finishedAt.trim() : "";
+		const durationMs = typeof call.durationMs === "number" && Number.isFinite(call.durationMs)
+			? Math.max(0, Math.trunc(call.durationMs))
+			: null;
 		return {
 			toolCallId,
+			seq,
+			atMs,
+			logicalToolName,
 			name,
 			status:
 				status === "succeeded" || status === "failed" || status === "denied" || status === "blocked"
 					? status
 					: "",
+			severity: severity === "warning" || severity === "error" ? severity : "",
 			pathHint,
 			errorMessage,
 			outputPreview,
@@ -1400,76 +1509,157 @@ function normalizeBridgeToolCalls(toolCalls: Array<Record<string, unknown>>): Br
 			outputJson,
 			inputJson,
 			requestedAgentType,
+			startedAt,
+			finishedAt,
+			durationMs,
 		};
 	});
 }
 
-function truncateExecutionTraceString(value: unknown, maxLength = EXECUTION_TRACE_STRING_LIMIT): string {
-	const text = typeof value === "string" ? value.trim() : String(value ?? "").trim();
-	if (!text) return "";
-	return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…` : text;
+function readReceiptRecord(output: Record<string, unknown> | null): Record<string, unknown> | null {
+	if (!output) return null;
+	const data = isRecord(output.data) ? output.data : null;
+	return data ?? output;
 }
 
-function sanitizeExecutionTraceValue(value: unknown, depth = 0): unknown {
-	if (typeof value === "string") {
-		return truncateExecutionTraceString(value);
-	}
-	if (
-		typeof value === "number" ||
-		typeof value === "boolean" ||
-		value === null ||
-		typeof value === "undefined"
-	) {
-		return value ?? null;
-	}
-	if (depth >= 3) {
-		if (Array.isArray(value)) {
-			return `[array:${value.length}]`;
-		}
-		if (value && typeof value === "object") {
-			return `[object:${Object.keys(value as Record<string, unknown>).length}]`;
-		}
-		return truncateExecutionTraceString(value);
-	}
-	if (Array.isArray(value)) {
-		return value
-			.slice(0, EXECUTION_TRACE_ARRAY_LIMIT)
-			.map((item) => sanitizeExecutionTraceValue(item, depth + 1));
-	}
-	if (value && typeof value === "object") {
-		const out: Record<string, unknown> = {};
-		for (const [key, entryValue] of Object.entries(value as Record<string, unknown>).slice(
-			0,
-			EXECUTION_TRACE_OBJECT_KEY_LIMIT,
-		)) {
-			out[key] = sanitizeExecutionTraceValue(entryValue, depth + 1);
-		}
-		return out;
-	}
-	return truncateExecutionTraceString(value);
+function readReceiptString(
+	primary: Record<string, unknown> | null,
+	fallback: Record<string, unknown> | null,
+	key: string,
+): string | null {
+	const first = typeof primary?.[key] === "string" ? String(primary[key]).trim() : "";
+	if (first) return first;
+	const second = typeof fallback?.[key] === "string" ? String(fallback[key]).trim() : "";
+	return second || null;
 }
 
-function buildExecutionTraceToolCallSummary(toolCalls: BridgeToolCall[]): Array<Record<string, unknown>> {
-	return toolCalls.slice(0, EXECUTION_TRACE_TOOL_CALL_LIMIT).map((toolCall) => ({
-		toolCallId: toolCall.toolCallId,
-		name: toolCall.name,
-		status: toolCall.status,
-		...(toolCall.pathHint ? { pathHint: truncateExecutionTraceString(toolCall.pathHint, 240) } : {}),
-		...(toolCall.requestedAgentType
-			? { requestedAgentType: truncateExecutionTraceString(toolCall.requestedAgentType, 120) }
-			: {}),
-		...(toolCall.errorMessage
-			? { errorMessage: truncateExecutionTraceString(toolCall.errorMessage, 320) }
-			: {}),
-		...(toolCall.outputPreview
-			? { outputPreview: truncateExecutionTraceString(toolCall.outputPreview, 320) }
-			: {}),
-		...(typeof toolCall.outputChars === "number" ? { outputChars: toolCall.outputChars } : {}),
-		...(toolCall.outputHead ? { outputHead: truncateExecutionTraceString(toolCall.outputHead, 320) } : {}),
-		...(toolCall.outputTail ? { outputTail: truncateExecutionTraceString(toolCall.outputTail, 320) } : {}),
-		...(toolCall.inputJson ? { input: sanitizeExecutionTraceValue(toolCall.inputJson) } : {}),
-		...(toolCall.outputJson ? { outputJson: sanitizeExecutionTraceValue(toolCall.outputJson) } : {}),
-	}));
+/**
+ * Projects only stable protocol receipts into physical-run continuation state.
+ * Prompt text and creative payloads are deliberately excluded: the next
+ * process receives task identity/fencing facts without replaying large tool
+ * arguments or being allowed to invent a new run id.
+ */
+export function collectDurableTaskReferences(
+	toolCalls: BridgeToolCall[],
+): DurableTaskReferenceV1[] {
+	const references: DurableTaskReferenceV1[] = [];
+	const seen = new Set<string>();
+	for (const call of toolCalls) {
+		const knownCallStatus =
+			call.status === "succeeded" ||
+			call.status === "failed" ||
+			call.status === "blocked" ||
+			call.status === "denied";
+		if (!knownCallStatus) continue;
+		const output = readReceiptRecord(call.outputJson);
+		const wrappedArgs = isRecord(call.inputJson?.args) ? call.inputJson.args : null;
+		const input = wrappedArgs ?? call.inputJson;
+		const runId = readReceiptString(output, input, "runId");
+		const taskId = readReceiptString(output, input, "taskId");
+		const draftRevision = readReceiptString(output, input, "draftRevision");
+		const beatRevision = readReceiptString(output, input, "beatRevision");
+		const preflightRevision = readReceiptString(output, input, "preflightRevision");
+		const preflightFingerprint = readReceiptString(output, input, "preflightFingerprint");
+		const progressCursor =
+			parseDurableProgressCursor(output?.progressCursor) ??
+			parseDurableProgressCursor(call.outputJson?.progressCursor);
+		const rejected =
+			call.status !== "succeeded" ||
+			call.outputJson?.ok === false ||
+			call.outputJson?.success === false ||
+			output?.ok === false ||
+			output?.success === false;
+		// A deterministic rejection can carry a server-authored repair frontier.
+		// Preserve that cursor as scheduling evidence without turning the failed
+		// action into success. Ordinary failures remain excluded.
+		if (rejected && !progressCursor) continue;
+		if (!runId && !taskId && !progressCursor) continue;
+		if (
+			!draftRevision && !beatRevision && !preflightRevision && !preflightFingerprint &&
+			output?.acceptedAsync !== true && !progressCursor
+		) continue;
+		const mode = readReceiptString(output, input, "mode");
+		const clipIndexRaw = output?.clipIndex ?? input?.clipIndex;
+		const clipIndex = typeof clipIndexRaw === "number" && Number.isInteger(clipIndexRaw) && clipIndexRaw >= 0
+			? clipIndexRaw
+			: null;
+		const toolName = resolveBridgeLogicalToolName(call);
+		const reference: DurableTaskReferenceV1 = {
+			version: 1,
+			toolName,
+			mode,
+			runId,
+			taskId,
+			draftRevision,
+			beatRevision,
+			preflightRevision,
+			preflightFingerprint,
+			clipIndex,
+			...(progressCursor ? { progressCursor } : {}),
+			acceptedAsync: output?.acceptedAsync === true,
+		};
+		const identity = JSON.stringify(reference);
+		if (seen.has(identity)) continue;
+		seen.add(identity);
+		references.push(reference);
+	}
+	return references.slice(-32);
+}
+
+/**
+ * Preserve the latest unresolved deterministic action failure per declared
+ * tool operation. A physical-run continuation can then repair the exact
+ * protocol boundary instead of rediscovering schemas and source material.
+ * Only structured tool fields participate; prompt text and creative content
+ * are never inspected.
+ */
+export function collectDurableActionRecoveryFacts(
+	toolCalls: BridgeToolCall[],
+): DurableActionRecoveryFactV1[] {
+	const factsByOperation = new Map<string, DurableActionRecoveryFactV1>();
+	for (const call of toolCalls) {
+		const output = readReceiptRecord(call.outputJson);
+		const wrappedArgs = isRecord(call.inputJson?.args) ? call.inputJson.args : null;
+		const input = wrappedArgs ?? call.inputJson;
+		const toolName = resolveBridgeLogicalToolName(call);
+		const mode = readReceiptString(output, input, "mode");
+		const operationKey = `${toolName}\u0000${mode ?? "default"}`;
+		const outputRejected = output?.ok === false || output?.success === false;
+		const failed = call.status === "failed" || call.status === "blocked" || call.status === "denied" || outputRejected;
+		if (!failed) {
+			factsByOperation.delete(operationKey);
+			continue;
+		}
+		const rawMessage = readReceiptString(output, null, "message") ?? call.errorMessage ?? call.outputPreview;
+		const message = rawMessage.trim().slice(0, 2_000);
+		if (!message) continue;
+		const code = readReceiptString(output, null, "code");
+		const details = isRecord(output?.details) ? output.details : null;
+		const serializedRetryInput = details?.retryableInCurrentAgentChain === true && isRecord(input)
+			? JSON.stringify(input)
+			: "";
+		const retryInput = serializedRetryInput.length > 0 && serializedRetryInput.length <= 512_000
+			? JSON.parse(serializedRetryInput) as Record<string, unknown>
+			: null;
+		factsByOperation.set(operationKey, {
+			version: 1,
+			toolName,
+			mode,
+			status: call.status === "blocked"
+				? "blocked"
+				: call.status === "denied"
+					? "denied"
+					: call.status === "failed" && call.severity !== "warning"
+						? "failed"
+						: "warning",
+			code,
+			message,
+			runId: readReceiptString(output, input, "runId"),
+			draftRevision: readReceiptString(output, input, "draftRevision"),
+			...(retryInput ? { retryInput } : {}),
+		});
+	}
+	return [...factsByOperation.values()].slice(-16);
 }
 
 function readCanonicalBridgeToolOutputJson(toolCall: BridgeToolCall): Record<string, unknown> | null {
@@ -1481,33 +1671,57 @@ function readCanonicalBridgeToolOutputJson(toolCall: BridgeToolCall): Record<str
 
 function isTeamCoordinationBlockedToolCall(toolCall: BridgeToolCall): boolean {
 	if (toolCall.status !== "blocked") return false;
-	const diagnosticText = [toolCall.errorMessage, toolCall.outputPreview]
-		.map((item) => item.trim())
-		.filter(Boolean)
-		.join("\n");
-	if (!diagnosticText) return false;
-	return TEAM_COORDINATION_BLOCKED_MESSAGE_HINTS.every((hint) => diagnosticText.includes(hint));
+	const output = readCanonicalBridgeToolOutputJson(toolCall);
+	const code = typeof output?.code === "string" ? output.code.trim() : "";
+	return TEAM_COORDINATION_BLOCKED_CODES.has(code);
 }
 
 function isExecutionPlanningBlockedToolCall(toolCall: BridgeToolCall): boolean {
 	if (toolCall.status !== "blocked") return false;
-	const diagnosticText = [toolCall.errorMessage, toolCall.outputPreview]
-		.map((item) => item.trim())
-		.filter(Boolean)
-		.join("\n");
-	if (!diagnosticText) return false;
-	return (
-		diagnosticText.includes("Execution planning required before") ||
-		diagnosticText.includes("当前回合要求 checklist-first")
+	const output = readCanonicalBridgeToolOutputJson(toolCall);
+	const code = typeof output?.code === "string" ? output.code.trim() : "";
+	return EXECUTION_PLANNING_BLOCKED_CODES.has(code);
+}
+
+function resolveBridgeLogicalToolName(toolCall: BridgeToolCall): string {
+	return toolCall.logicalToolName || toolCall.name;
+}
+
+function isExplicitlyRetryableFailedToolCall(toolCall: BridgeToolCall): boolean {
+	if (toolCall.status !== "failed") return false;
+	const output = readCanonicalBridgeToolOutputJson(toolCall);
+	return output?.terminal === false || output?.retryable === true;
+}
+
+function isRecoveredByLaterSuccessfulRetry(
+	toolCalls: BridgeToolCall[],
+	issueIndex: number,
+): boolean {
+	const issue = toolCalls[issueIndex];
+	if (!issue) return false;
+	const retryableAttempt =
+		issue.status === "blocked" || isExplicitlyRetryableFailedToolCall(issue);
+	if (!retryableAttempt) return false;
+	const logicalName = resolveBridgeLogicalToolName(issue);
+	if (!logicalName) return false;
+	return toolCalls.slice(issueIndex + 1).some(
+		(toolCall) =>
+			toolCall.status === "succeeded" &&
+			resolveBridgeLogicalToolName(toolCall) === logicalName,
 	);
 }
 
-function summarizeBridgeToolExecutionIssues(input: {
+export function summarizeBridgeToolExecutionIssues(input: {
 	toolCalls: BridgeToolCall[];
 	toolStatusSummary: ToolStatusSummary;
+	deliveryVerification: PublicChatDeliveryVerificationSummary | null;
+	deliveryEvidence: PublicChatDeliveryEvidence;
 }): ToolExecutionIssueSummary {
 	const failedToolCalls =
 		typeof input.toolStatusSummary.failedToolCalls === "number" ? input.toolStatusSummary.failedToolCalls : 0;
+	const warningToolCalls =
+		typeof input.toolStatusSummary.warningToolCalls === "number" ? input.toolStatusSummary.warningToolCalls : 0;
+	const effectiveFailedToolCalls = Math.max(failedToolCalls - warningToolCalls, 0);
 	const deniedToolCalls =
 		typeof input.toolStatusSummary.deniedToolCalls === "number" ? input.toolStatusSummary.deniedToolCalls : 0;
 	const observedBlockedToolCalls = input.toolCalls.filter((toolCall) => toolCall.status === "blocked");
@@ -1525,14 +1739,71 @@ function summarizeBridgeToolExecutionIssues(input: {
 		observedBlockedToolCalls.length - coordinationBlockedToolCalls,
 		0,
 	);
+	const observedFailedToolCalls = input.toolCalls.filter(
+		(toolCall) => toolCall.status === "failed" && toolCall.severity !== "warning",
+	).length;
+	const observedWarningToolCalls = input.toolCalls.filter(
+		(toolCall) => toolCall.severity === "warning",
+	).length;
+	const observedDeniedToolCalls = input.toolCalls.filter(
+		(toolCall) => toolCall.status === "denied",
+	).length;
+	const observedActionableBlockedToolCalls = observedBlockedToolCalls.length - coordinationBlockedToolCalls;
+	const actionableIssueIndexes = input.toolCalls.flatMap((toolCall, index) => {
+		if (toolCall.severity === "warning") return [];
+		if (toolCall.status === "failed" || toolCall.status === "denied") return [index];
+		if (
+			toolCall.status === "blocked" &&
+			!isTeamCoordinationBlockedToolCall(toolCall) &&
+			!isExecutionPlanningBlockedToolCall(toolCall)
+		) {
+			return [index];
+		}
+		return [];
+	});
+	const retryRecoveredToolCalls = actionableIssueIndexes.filter((index) =>
+		isRecoveredByLaterSuccessfulRetry(input.toolCalls, index),
+	).length;
+	const unobservedIssueCount =
+		Math.max(effectiveFailedToolCalls - observedFailedToolCalls, 0) +
+		Math.max(deniedToolCalls - observedDeniedToolCalls, 0) +
+		Math.max(actionableBlockedToolCalls - observedActionableBlockedToolCalls, 0);
+	const unresolvedToolCalls = Math.max(
+		actionableIssueIndexes.length - retryRecoveredToolCalls + unobservedIssueCount,
+		0,
+	);
+	const hasHistoricalExecutionIssues =
+		effectiveFailedToolCalls > 0 || deniedToolCalls > 0 || actionableBlockedToolCalls > 0;
+	const recoveredBySuccessfulRetry =
+		hasHistoricalExecutionIssues &&
+		retryRecoveredToolCalls > 0 &&
+		unresolvedToolCalls === 0;
+	// 只有可复核的交付验收已满足，且存在真实资产/画布写入/异步提交事实时，才可认定早期
+	// 工具问题已经在本回合被后续动作纠正。子代理 completed、普通文本或单次 wait 均不构成恢复证据。
+	const recoveredByDeliveryEvidence =
+		hasHistoricalExecutionIssues &&
+		input.deliveryVerification?.status === "satisfied" &&
+		(input.deliveryEvidence.items.length > 0 ||
+			input.deliveryEvidence.artifacts.length > 0 ||
+			input.deliveryEvidence.assetCount > 0 ||
+			input.deliveryEvidence.wroteCanvas ||
+			input.deliveryEvidence.generatedAssets);
 	return {
-		failedToolCalls,
+		failedToolCalls: effectiveFailedToolCalls,
+		warningToolCalls: Math.max(warningToolCalls, observedWarningToolCalls),
 		deniedToolCalls,
 		blockedToolCalls,
 		coordinationBlockedToolCalls,
 		actionableBlockedToolCalls,
+		retryRecoveredToolCalls,
+		unresolvedToolCalls,
+		recoveredBySuccessfulRetry,
+		recoveredByDeliveryEvidence,
+		hasHistoricalExecutionIssues,
 		hasExecutionIssues:
-			failedToolCalls > 0 || deniedToolCalls > 0 || actionableBlockedToolCalls > 0,
+			hasHistoricalExecutionIssues &&
+			unresolvedToolCalls > 0 &&
+			!recoveredByDeliveryEvidence,
 	};
 }
 
@@ -1540,19 +1811,288 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeAgentsRuntimeTraceSummary(value: unknown): AgentsRuntimeTraceSummary | null {
+function readRequiredProtocolString(value: unknown): string | null {
+	return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function normalizeAgentsPhysicalRunExitV1(value: unknown): AgentsPhysicalRunExitV1 | null {
+	if (!isRecord(value) || value.version !== 1) return null;
+	const kind = value.kind;
+	const logicalTaskId = readRequiredProtocolString(value.logicalTaskId);
+	const taskNodeId = readRequiredProtocolString(value.taskNodeId);
+	const reasonCode = readRequiredProtocolString(value.reasonCode);
+	const exitedAt = readRequiredProtocolString(value.exitedAt);
+	const taskRevision = typeof value.taskRevision === "number" && Number.isInteger(value.taskRevision) && value.taskRevision >= 0
+		? value.taskRevision
+		: null;
+	if (!logicalTaskId || !taskNodeId || !reasonCode || !exitedAt || taskRevision === null) return null;
+	if (
+		kind !== "logical_terminal" &&
+		kind !== "needs_input" &&
+		kind !== "waiting_external" &&
+		kind !== "handoff" &&
+		kind !== "replan"
+	) return null;
+	const taskStatus = value.taskStatus;
+	const statusMatchesKind =
+		(kind === "logical_terminal" && (taskStatus === "satisfied" || taskStatus === "failed" || taskStatus === "canceled")) ||
+		(kind === "needs_input" && taskStatus === "needs_input") ||
+		(kind === "waiting_external" && taskStatus === "waiting_for_evidence") ||
+		(kind === "handoff" && taskStatus === "repair_required") ||
+		(kind === "replan" && taskStatus === "replan_required");
+	if (!statusMatchesKind) return null;
+
+	let continuationTicket: AgentsContinuationTicketV1 | null = null;
+	if (kind === "waiting_external" || kind === "handoff" || kind === "replan") {
+		const ticket = isRecord(value.continuationTicket) ? value.continuationTicket : null;
+		const ticketId = readRequiredProtocolString(ticket?.ticketId);
+		const issuedAt = readRequiredProtocolString(ticket?.issuedAt);
+		if (
+			ticket?.version !== 1 ||
+			!ticketId ||
+			!issuedAt ||
+			ticket.logicalTaskId !== logicalTaskId ||
+			ticket.taskNodeId !== taskNodeId ||
+			ticket.taskRevision !== taskRevision ||
+			ticket.reasonCode !== reasonCode
+		) return null;
+		const resumeFromStatus = ticket.resumeFromStatus;
+		const nextTrigger = ticket.nextTrigger;
+		if (
+			(kind === "handoff" && (resumeFromStatus !== "repair_required" || nextTrigger !== "durable_resume")) ||
+			(kind === "replan" && (resumeFromStatus !== "replan_required" || nextTrigger !== "durable_resume")) ||
+			(kind === "waiting_external" && (resumeFromStatus !== "waiting_for_evidence" || nextTrigger !== "external_evidence"))
+		) return null;
+		continuationTicket = {
+			version: 1,
+			ticketId,
+			logicalTaskId,
+			taskNodeId,
+			taskRevision,
+			resumeFromStatus: kind === "handoff"
+				? "repair_required"
+				: kind === "replan"
+					? "replan_required"
+					: "waiting_for_evidence",
+			nextTrigger: kind === "waiting_external" ? "external_evidence" : "durable_resume",
+			reasonCode,
+			issuedAt,
+		};
+	} else if (value.continuationTicket !== null) {
+		return null;
+	}
+	const base = {
+		version: 1,
+		logicalTaskId,
+		taskNodeId,
+		taskRevision,
+		reasonCode,
+		exitedAt,
+	} as const;
+	if (kind === "logical_terminal") {
+		if (taskStatus !== "satisfied" && taskStatus !== "failed" && taskStatus !== "canceled") return null;
+		return { ...base, kind, taskStatus, continuationTicket: null };
+	}
+	if (kind === "needs_input") {
+		if (taskStatus !== "needs_input") return null;
+		return { ...base, kind, taskStatus, continuationTicket: null };
+	}
+	if (!continuationTicket) return null;
+	if (kind === "waiting_external") {
+		if (taskStatus !== "waiting_for_evidence") return null;
+		return { ...base, kind, taskStatus, continuationTicket };
+	}
+	if (kind === "handoff") {
+		if (taskStatus !== "repair_required") return null;
+		return { ...base, kind, taskStatus, continuationTicket };
+	}
+	if (taskStatus !== "replan_required") return null;
+	return { ...base, kind: "replan", taskStatus, continuationTicket };
+}
+
+export function normalizeAgentsBridgeAdmissionReceiptV1(value: unknown): AgentsBridgeAdmissionReceiptV1 | null {
+	if (!isRecord(value) || value.version !== 1) return null;
+	const acceptance = value.acceptance === "accepted" || value.acceptance === "unknown"
+		? value.acceptance
+		: null;
+	const publicTurnId = readRequiredProtocolString(value.publicTurnId);
+	const sessionId = readRequiredProtocolString(value.sessionId);
+	const reconciledAt = readRequiredProtocolString(value.reconciledAt);
+	const turnState = value.turnState === null
+		? null
+		: readRequiredProtocolString(value.turnState);
+	const activeTurn = typeof value.activeTurn === "boolean" ? value.activeTurn : null;
+	if (!acceptance || !publicTurnId || !sessionId || !reconciledAt) return null;
+	if (acceptance === "accepted" && (!turnState || activeTurn === null)) return null;
+	return {
+		version: 1,
+		acceptance,
+		publicTurnId,
+		sessionId,
+		turnState,
+		activeTurn,
+		reconciledAt,
+	};
+}
+
+export function normalizeAgentsRuntimeTraceSummary(value: unknown): AgentsRuntimeTraceSummary | null {
 	if (!isRecord(value)) return null;
 	const profileRaw = typeof value.profile === "string" ? value.profile.trim() : "";
 	const profile =
 		profileRaw === "general" || profileRaw === "code" ? profileRaw : "unknown";
+	const terminalAuthority = value.terminalAuthority === "user_delivery" || value.terminalAuthority === "workflow_action"
+		? value.terminalAuthority
+		: null;
+	const executionProvenance = parseAgentExecutionProvenance(value.executionProvenance);
+	const promptExampleSearchRecord = isRecord(value.promptExampleCandidateSearch)
+		? value.promptExampleCandidateSearch
+		: null;
+	const promptExampleSearchStatus = typeof promptExampleSearchRecord?.status === "string"
+		&& new Set([
+			"not_attempted",
+			"candidate_found",
+			"no_match",
+			"retrieval_failed",
+			"invalid_evidence",
+			"tool_unavailable",
+		]).has(promptExampleSearchRecord.status)
+		? promptExampleSearchRecord.status as NonNullable<AgentsRuntimeTraceSummary["promptExampleCandidateSearch"]>["status"]
+		: null;
+	const promptExampleCandidateSearch = promptExampleSearchRecord?.version === 1
+		&& promptExampleSearchStatus
+		&& (promptExampleSearchRecord.mediaType === "image" || promptExampleSearchRecord.mediaType === "video")
+		&& typeof promptExampleSearchRecord.attempted === "boolean"
+		&& typeof promptExampleSearchRecord.remoteAttempted === "boolean"
+		&& typeof promptExampleSearchRecord.candidateCount === "number"
+		&& Number.isInteger(promptExampleSearchRecord.candidateCount)
+		&& promptExampleSearchRecord.candidateCount >= 0
+		&& promptExampleSearchRecord.blocking === false
+		&& typeof promptExampleSearchRecord.rationale === "string"
+		&& promptExampleSearchRecord.rationale.trim()
+		? {
+			version: 1 as const,
+			status: promptExampleSearchStatus,
+			mediaType: promptExampleSearchRecord.mediaType,
+			attempted: promptExampleSearchRecord.attempted,
+			remoteAttempted: promptExampleSearchRecord.remoteAttempted,
+			candidateCount: promptExampleSearchRecord.candidateCount,
+			blocking: false as const,
+			rationale: promptExampleSearchRecord.rationale.trim(),
+			...(typeof promptExampleSearchRecord.toolCallId === "string" && promptExampleSearchRecord.toolCallId.trim()
+				? { toolCallId: promptExampleSearchRecord.toolCallId.trim() }
+				: {}),
+		}
+		: null;
+	const observability = normalizeAgentRuntimeObservability(value.observability);
+	const performanceSnapshot = normalizeAgentPerformanceSnapshot(value.performanceSnapshot);
+	const physicalRunExit = normalizeAgentsPhysicalRunExitV1(value.physicalRunExit);
+	const terminalDelivery = normalizePublicChatDurableTerminalDelivery(value.terminalDelivery);
+	const admissionReceipt = normalizeAgentsBridgeAdmissionReceiptV1(value.admissionReceipt);
+	const userIntentContract = isRecord(value.userIntentContract)
+		? value.userIntentContract
+		: null;
+	const retrievalCandidateSets = Array.isArray(value.retrievalCandidateSets)
+		? value.retrievalCandidateSets
+			.filter((item): item is Record<string, unknown> => isRecord(item))
+			.filter((item) => JSON.stringify(item).length <= 128_000)
+			.slice(-8)
+		: [];
+	const inputProgressionGateRecord = isRecord(value.inputProgressionGate)
+		? value.inputProgressionGate
+		: null;
+	const inputProgressionGateReasonCode =
+		typeof inputProgressionGateRecord?.reasonCode === "string"
+			? inputProgressionGateRecord.reasonCode.trim()
+			: "";
+	const inputProgressionGateReason =
+		typeof inputProgressionGateRecord?.reason === "string"
+			? inputProgressionGateRecord.reason.trim()
+			: "";
+	const inputProgressionGate =
+		inputProgressionGateRecord?.status === "completed" &&
+		inputProgressionGateRecord.model === "deepseek-v4-flash" &&
+		(inputProgressionGateRecord.decision === "allow" ||
+			inputProgressionGateRecord.decision === "deny") &&
+		inputProgressionGateReasonCode &&
+		inputProgressionGateReason
+			? {
+				status: "completed" as const,
+				model: "deepseek-v4-flash" as const,
+				decision:
+					inputProgressionGateRecord.decision === "allow"
+						? ("allow" as const)
+						: ("deny" as const),
+				reasonCode: inputProgressionGateReasonCode,
+				reason: inputProgressionGateReason,
+			}
+			: null;
+	const suspensionRecord = isRecord(value.suspension) ? value.suspension : null;
+	const suspensionPhysicalRunId =
+		typeof suspensionRecord?.physicalRunId === "string"
+			? suspensionRecord.physicalRunId.trim()
+			: "";
+	const suspensionProgressRevision =
+		typeof suspensionRecord?.progressRevision === "number" &&
+		Number.isInteger(suspensionRecord.progressRevision) &&
+		suspensionRecord.progressRevision >= 0
+			? suspensionRecord.progressRevision
+			: null;
+	const suspensionReasonCode =
+		typeof suspensionRecord?.reasonCode === "string"
+			? suspensionRecord.reasonCode.trim()
+			: "";
+	const suspension =
+		suspensionReasonCode &&
+		suspensionPhysicalRunId &&
+		suspensionProgressRevision !== null
+			? {
+				reasonCode: suspensionReasonCode,
+				physicalRunId: suspensionPhysicalRunId,
+				progressRevision: suspensionProgressRevision,
+			}
+			: null;
 	return {
 		profile,
+		...(terminalAuthority ? { terminalAuthority } : {}),
 		registeredToolNames: readTrimmedStringArray(value.registeredToolNames).slice(0, 256),
 		registeredTeamToolNames: readTrimmedStringArray(value.registeredTeamToolNames).slice(0, 64),
 		requiredSkills: readTrimmedStringArray(value.requiredSkills).slice(0, 32),
 		loadedSkills: readTrimmedStringArray(value.loadedSkills).slice(0, 64),
 		allowedSubagentTypes: readTrimmedStringArray(value.allowedSubagentTypes).slice(0, 16),
 		requireAgentsTeamExecution: value.requireAgentsTeamExecution === true,
+		...(inputProgressionGate ? { inputProgressionGate } : {}),
+		...(physicalRunExit ? { physicalRunExit } : {}),
+		...(terminalDelivery ? { terminalDelivery } : {}),
+		...(admissionReceipt ? { admissionReceipt } : {}),
+		...(executionProvenance ? { executionProvenance } : {}),
+		...(promptExampleCandidateSearch ? { promptExampleCandidateSearch } : {}),
+		...(userIntentContract ? { userIntentContract } : {}),
+		...(retrievalCandidateSets.length > 0 ? { retrievalCandidateSets } : {}),
+		...(suspension ? { suspension } : {}),
+		...(observability ? { observability } : {}),
+		...(performanceSnapshot ? { performanceSnapshot } : {}),
+		...(isRecord(value.deliveryReport)
+			? {
+					deliveryReport: {
+						required: value.deliveryReport.required === true,
+						present: value.deliveryReport.present === true,
+						satisfiedByAsyncSubmission:
+							value.deliveryReport.satisfiedByAsyncSubmission === true,
+						remoteActionCount:
+							typeof value.deliveryReport.remoteActionCount === "number"
+								? value.deliveryReport.remoteActionCount
+								: 0,
+						lastRemoteActionSeq:
+							typeof value.deliveryReport.lastRemoteActionSeq === "number"
+								? value.deliveryReport.lastRemoteActionSeq
+								: null,
+						lastReportSeq:
+							typeof value.deliveryReport.lastReportSeq === "number"
+								? value.deliveryReport.lastReportSeq
+								: null,
+					},
+			  }
+			: {}),
 		...(isRecord(value.contextDiagnostics)
 			? {
 					contextDiagnostics: {
@@ -1701,29 +2241,103 @@ function normalizeAgentsTodoEventTraceSummaries(value: unknown): AgentsTodoEvent
 }
 
 function normalizeAgentsCompletionTraceSummary(value: unknown): AgentsCompletionTraceSummary | null {
-	if (!isRecord(value)) return null;
+	if (!isRecord(value) || value.version !== 1) return null;
 	const sourceRaw = typeof value.source === "string" ? value.source.trim() : "";
 	const terminalRaw = typeof value.terminal === "string" ? value.terminal.trim() : "";
+	if (
+		sourceRaw !== "runtime" &&
+		sourceRaw !== "task_completion_priority" &&
+		sourceRaw !== "terminal_delivery_verifier" &&
+		sourceRaw !== "async_submission" &&
+		sourceRaw !== "deterministic"
+	) return null;
+	if (terminalRaw !== "success" && terminalRaw !== "failure" && terminalRaw !== "suspended") {
+		return null;
+	}
+	if (typeof value.allowFinish !== "boolean") return null;
+	if (value.failureReason !== null && typeof value.failureReason !== "string") return null;
+	if (typeof value.rationale !== "string" || !value.rationale.trim()) return null;
+	const readContractStringArray = (input: unknown): string[] | null => {
+		if (!Array.isArray(input)) return null;
+		const out: string[] = [];
+		for (const item of input) {
+			if (typeof item !== "string" || !item.trim()) return null;
+			out.push(item.trim());
+		}
+		return out;
+	};
+	const successCriteria = readContractStringArray(value.successCriteria);
+	const missingCriteria = readContractStringArray(value.missingCriteria);
+	const requiredActions = readContractStringArray(value.requiredActions);
+	if (!successCriteria || !missingCriteria || !requiredActions) return null;
+	const retryCount = value.retryCount;
+	if (
+		retryCount !== undefined &&
+		(typeof retryCount !== "number" || !Number.isInteger(retryCount) || retryCount < 0)
+	) return null;
+	if (value.recoveredAfterRetry !== undefined && typeof value.recoveredAfterRetry !== "boolean") return null;
 	return {
-		source:
-			sourceRaw === "deterministic" || sourceRaw === "final_self_check"
-				? sourceRaw
-				: "unknown",
-		terminal:
-			terminalRaw === "success" ||
-			terminalRaw === "explicit_failure" ||
-			terminalRaw === "blocked"
-				? terminalRaw
-				: "unknown",
-		allowFinish: value.allowFinish === true,
+		version: 1,
+		source: sourceRaw,
+		terminal: terminalRaw,
+		allowFinish: value.allowFinish,
 		failureReason:
 			typeof value.failureReason === "string" && value.failureReason.trim()
 				? value.failureReason.trim()
 				: null,
-		rationale: typeof value.rationale === "string" ? value.rationale.trim() : "",
-		successCriteria: readTrimmedStringArray(value.successCriteria).slice(0, 16),
-		missingCriteria: readTrimmedStringArray(value.missingCriteria).slice(0, 16),
-		requiredActions: readTrimmedStringArray(value.requiredActions).slice(0, 16),
+		rationale: value.rationale.trim(),
+		successCriteria: successCriteria.slice(0, 16),
+		missingCriteria: missingCriteria.slice(0, 16),
+		requiredActions: requiredActions.slice(0, 16),
+		...(typeof retryCount === "number" ? { retryCount } : {}),
+		...(typeof value.recoveredAfterRetry === "boolean"
+			? { recoveredAfterRetry: value.recoveredAfterRetry }
+			: {}),
+	};
+}
+
+function normalizeAgentsBridgeRunOutcome(value: unknown): AgentsBridgeRunOutcome | null {
+	if (!isRecord(value) || value.version !== 1 || value.terminal !== true) return null;
+	const status = value.status;
+	if (
+		status !== "succeeded" &&
+		status !== "failed" &&
+		status !== "needs_input" &&
+		status !== "suspended"
+	) return null;
+	const reason = typeof value.reason === "string" ? value.reason.trim() : "";
+	if (!reason) return null;
+	return { version: 1, terminal: true, status, reason };
+}
+
+/**
+ * PhysicalRunExitV1 is the TaskStore-backed authority. AgentRunOutcomeV1 is a
+ * transport projection of that exit and must never be allowed to override it.
+ */
+export function projectAgentsBridgeRunOutcomeFromPhysicalExit(
+	exit: AgentsPhysicalRunExitV1,
+): AgentsBridgeRunOutcome {
+	if (exit.kind === "logical_terminal") {
+		return {
+			version: 1,
+			terminal: true,
+			status: exit.taskStatus === "satisfied" ? "succeeded" : "failed",
+			reason: exit.reasonCode,
+		};
+	}
+	if (exit.kind === "needs_input") {
+		return {
+			version: 1,
+			terminal: true,
+			status: "needs_input",
+			reason: exit.reasonCode,
+		};
+	}
+	return {
+		version: 1,
+		terminal: true,
+		status: "suspended",
+		reason: exit.reasonCode,
 	};
 }
 
@@ -1736,8 +2350,20 @@ function normalizeAgentsPlanningTraceSummary(value: unknown): AgentsPlanningTrac
 		return Math.max(0, Math.trunc(num));
 	};
 	return {
-		source: sourceRaw === "todo_list" ? "todo_list" : "unknown",
+		source:
+			sourceRaw === "goal" || sourceRaw === "todo_list"
+				? sourceRaw
+				: "unknown",
 		planningRequired: value.planningRequired === true,
+		hasGoal: value.hasGoal === true,
+		goalStatus:
+			typeof value.goalStatus === "string" && value.goalStatus.trim()
+				? value.goalStatus.trim()
+				: null,
+		goalObjective:
+			typeof value.goalObjective === "string" && value.goalObjective.trim()
+				? value.goalObjective.trim()
+				: null,
 		minimumStepCount: Math.max(2, readCount(value.minimumStepCount, 2)),
 		hasChecklist: value.hasChecklist === true,
 		latestStepCount: readCount(value.latestStepCount),
@@ -1770,6 +2396,9 @@ function deriveAgentsPlanningTraceSummaryFromTodo(input: {
 	return {
 		source: "todo_list",
 		planningRequired: false,
+		hasGoal: false,
+		goalStatus: null,
+		goalObjective: null,
 		minimumStepCount: 2,
 		hasChecklist: true,
 		latestStepCount,
@@ -1789,23 +2418,6 @@ function readTrimmedStringArray(value: unknown): string[] {
 		.filter(Boolean);
 }
 
-function tryParseStructuredJsonRecord(text: string): Record<string, unknown> | null {
-	const trimmed = text.trim();
-	if (!trimmed) return null;
-	if (
-		(!trimmed.startsWith("{") || !trimmed.endsWith("}")) &&
-		(!trimmed.startsWith("[") || !trimmed.endsWith("]"))
-	) {
-		return null;
-	}
-	try {
-		const parsed = JSON.parse(trimmed) as unknown;
-		return isRecord(parsed) ? parsed : null;
-	} catch {
-		return null;
-	}
-}
-
 function normalizeAgentsSemanticTaskSummaryFromRecord(
 	record: Record<string, unknown>,
 ): AgentsSemanticTaskSummary | null {
@@ -1822,58 +2434,79 @@ function normalizeAgentsSemanticTaskSummaryFromRecord(
 		Boolean(recommendedNextStage) &&
 		Array.isArray(record.blockingGaps) &&
 		Array.isArray(record.successCriteria) &&
-		"mustStop" in record;
+		"mustStop" in record &&
+		typeof record.requiresExecutionDelivery === "boolean";
 	if (!hasTaskInterrogationShape) return null;
-	const deliveryContractRaw = asRecord(record.deliveryContract);
-	const deliveryContractKind = readTrimmedString(deliveryContractRaw?.kind);
-	const normalizedDeliveryContractKind =
-		deliveryContractKind === "generic_execution" ||
-		deliveryContractKind === "single_baseframe_preproduction" ||
-		deliveryContractKind === "chapter_asset_preproduction" ||
-		deliveryContractKind === "chapter_multishot_stills" ||
-		deliveryContractKind === "video_followup"
-			? (deliveryContractKind as Exclude<PublicChatExpectedDeliveryKind, "none">)
-			: null;
-	const deliveryContractMinStillCountRaw = Number(deliveryContractRaw?.minStillCount);
-	const normalizedDeliveryContractMinStillCount =
-		Number.isFinite(deliveryContractMinStillCountRaw) && deliveryContractMinStillCountRaw > 0
-			? Math.max(1, Math.trunc(deliveryContractMinStillCountRaw))
-			: null;
+	const normalizedDeliveryContract = normalizePublicChatSemanticDeliveryContract(
+		record.deliveryContract,
+	);
+	const normalizedDeliveryEvidence = record.deliveryEvidence === undefined
+		? null
+		: normalizePublicChatDeliveryEvidence(record.deliveryEvidence);
+	const normalizedDeliveryVerification = record.deliveryVerification === undefined
+		? null
+		: normalizePublicChatDeliveryVerification(record.deliveryVerification);
+	if (
+		"deliveryContract" in record &&
+		record.deliveryContract !== undefined &&
+		record.deliveryContract !== null &&
+		!normalizedDeliveryContract
+	) {
+		return null;
+	}
+	if (
+		(record.deliveryEvidence !== undefined || record.deliveryVerification !== undefined) &&
+		(!normalizedDeliveryEvidence || !normalizedDeliveryVerification)
+	) {
+		return null;
+	}
+	if (
+		normalizedDeliveryVerification &&
+		normalizedDeliveryEvidence &&
+		!normalizedDeliveryVerification.criteria.every((criterion) =>
+			criterion.evidenceIds.every((evidenceId) =>
+				normalizedDeliveryEvidence.some((evidence) => evidence.evidenceId === evidenceId),
+			),
+		)
+	) {
+		return null;
+	}
 	return {
 		taskGoal,
 		requestedOutput,
 		taskKind,
 		recommendedNextStage,
 		mustStop: record.mustStop === true,
+		requiresExecutionDelivery: record.requiresExecutionDelivery === true,
 		blockingGaps,
 		successCriteria,
-		...(normalizedDeliveryContractKind
+		...(normalizedDeliveryContract
 			? {
-					deliveryContract: {
-						kind: normalizedDeliveryContractKind,
-						...(normalizedDeliveryContractMinStillCount
-							? { minStillCount: normalizedDeliveryContractMinStillCount }
-							: {}),
-					},
+					deliveryContract: normalizedDeliveryContract,
 			  }
+			: {}),
+		...(normalizedDeliveryEvidence ? { deliveryEvidence: normalizedDeliveryEvidence } : {}),
+		...(normalizedDeliveryVerification
+			? { deliveryVerification: normalizedDeliveryVerification }
 			: {}),
 	};
 }
 
-function normalizeAgentsSemanticTaskSummaryFromText(text: string): AgentsSemanticTaskSummary | null {
-	const parsed = tryParseStructuredJsonRecord(text);
-	if (!parsed) return null;
-	return normalizeAgentsSemanticTaskSummaryFromRecord(parsed);
-}
-
-function normalizeAgentsSemanticTaskSummaryFromToolCalls(
+export function normalizeAgentsSemanticTaskSummaryFromToolCalls(
 	toolCalls: BridgeToolCall[],
 ): AgentsSemanticTaskSummary | null {
-	for (const toolCall of toolCalls) {
+	for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+		const toolCall = toolCalls[index];
 		if (toolCall.status !== "succeeded") continue;
 		const parsed = readCanonicalBridgeToolOutputJson(toolCall);
 		if (!parsed) continue;
 		const direct = normalizeAgentsSemanticTaskSummaryFromRecord(parsed);
+		if (toolCall.name === "report_delivery") {
+			// The latest successful report is authoritative. A malformed latest
+			// contract must fail visibly; falling through to an older valid report
+			// would silently restore superseded delivery semantics.
+			return direct;
+		}
 		if (direct) return direct;
 		const nestedCandidates = [
 			asRecord(parsed.result),
@@ -1890,6 +2523,64 @@ function normalizeAgentsSemanticTaskSummaryFromToolCalls(
 		}
 	}
 	return null;
+}
+
+/**
+ * Projects the root agent's already-frozen UserIntentContract into the generic
+ * delivery verifier contract. This performs structural copying only: it does
+ * not inspect user prose, labels, keywords, or choose a workflow.
+ */
+export function normalizeAgentsSemanticTaskSummaryFromRuntimeIntentContract(
+	value: unknown,
+): AgentsSemanticTaskSummary | null {
+	if (!isRecord(value) || value.version !== 2) return null;
+	const contractHash = readTrimmedString(value.contractHash);
+	const delivery = isRecord(value.delivery) ? value.delivery : null;
+	const deliveryMode = readTrimmedString(delivery?.mode);
+	const mediaType = delivery?.mediaType === null ||
+			delivery?.mediaType === "image" ||
+			delivery?.mediaType === "video" ||
+			delivery?.mediaType === "audio"
+		? delivery.mediaType
+		: undefined;
+	const kind = readTrimmedString(delivery?.kind);
+	const requestedOutput = readTrimmedString(delivery?.output);
+	const unresolved = readTrimmedStringArray(value.unresolved);
+	if (
+		!contractHash ||
+		!delivery ||
+		mediaType === undefined ||
+		!kind ||
+		!requestedOutput ||
+		(deliveryMode !== "response" && deliveryMode !== "state_change" && deliveryMode !== "async_artifact") ||
+		unresolved.length > 0 ||
+		(mediaType !== null && deliveryMode !== "async_artifact")
+	) {
+		return null;
+	}
+	const successCriteria = Array.isArray(value.must)
+		? value.must
+			.map((item) => isRecord(item) ? readTrimmedString(item.statement) : "")
+			.filter(Boolean)
+			.slice(0, 32)
+		: [];
+	if (successCriteria.length === 0) return null;
+	const deliveryContract = normalizePublicChatSemanticDeliveryContract({
+		...delivery,
+		kind,
+	});
+	if (!deliveryContract) return null;
+	return {
+		taskGoal: requestedOutput,
+		requestedOutput,
+		taskKind: kind,
+		recommendedNextStage: "execute_frozen_user_intent_contract",
+		mustStop: false,
+		requiresExecutionDelivery: deliveryMode !== "response",
+		blockingGaps: [],
+		successCriteria,
+		deliveryContract,
+	};
 }
 
 function buildAgentsSemanticExecutionIntentSummary(
@@ -1910,6 +2601,7 @@ function buildAgentsSemanticExecutionIntentSummary(
 		};
 	}
 	const requiresExecutionDelivery =
+		taskSummary.requiresExecutionDelivery === true &&
 		taskSummary.mustStop !== true &&
 		taskSummary.blockingGaps.length === 0 &&
 		Boolean(taskSummary.recommendedNextStage);
@@ -1923,158 +2615,6 @@ function buildAgentsSemanticExecutionIntentSummary(
 			? "agents_marked_next_stage_as_executable_delivery"
 			: "agents_marked_task_as_stop_or_blocked",
 	};
-}
-
-function parsePromptPayloadFieldValue(raw: string): unknown {
-	const trimmed = raw.trim();
-	if (!trimmed) return "";
-	if (
-		(trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-		(trimmed.startsWith("[") && trimmed.endsWith("]"))
-	) {
-		try {
-			return JSON.parse(trimmed) as unknown;
-		} catch {
-			return trimmed;
-		}
-	}
-	return trimmed;
-}
-
-function extractStructuredPromptPayloadFromText(text: string): Record<string, unknown> | null {
-	const parsedJson = tryParseStructuredJsonRecord(text);
-	if (parsedJson) return parsedJson;
-	const fieldNames = [
-		"imagePrompt",
-		"structuredPrompt",
-		"imagePromptSpecV2",
-		"prompt",
-		"storyBeatPlan",
-		"videoPrompt",
-	];
-	const record: Record<string, unknown> = {};
-	const normalizedText = text.replace(/\r/g, "");
-	const labelPattern = new RegExp(`^\\s*(${fieldNames.join("|")}):\\s*(.*)$`);
-	let activeKey: string | null = null;
-	let activeLines: string[] = [];
-
-	const flushActiveField = () => {
-		if (!activeKey) return;
-		record[activeKey] = parsePromptPayloadFieldValue(activeLines.join("\n"));
-		activeKey = null;
-		activeLines = [];
-	};
-
-	for (const line of normalizedText.split("\n")) {
-		const match = line.match(labelPattern);
-		if (match) {
-			flushActiveField();
-			activeKey = String(match[1] || "").trim() || null;
-			const initialValue = String(match[2] || "");
-			activeLines = initialValue ? [initialValue] : [];
-			continue;
-		}
-		if (activeKey) activeLines.push(line);
-	}
-	flushActiveField();
-	return Object.keys(record).length > 0 ? record : null;
-}
-
-function isAgentsTeamExecutionToolCall(toolCall: BridgeToolCall): boolean {
-	if (toolCall.status !== "succeeded") return false;
-	const normalizedName = toolCall.name.trim().toLowerCase();
-	if (!normalizedName) return false;
-	if (normalizedName === "task") {
-		const outputJson = readCanonicalBridgeToolOutputJson(toolCall);
-		const outputAgentType =
-			typeof outputJson?.agentType === "string" ? outputJson.agentType.trim() : "";
-		return Boolean(toolCall.requestedAgentType.trim() || outputAgentType);
-	}
-	return AGENTS_TEAM_EXECUTION_TOOL_NAMES.has(normalizedName);
-}
-
-function buildAgentsTeamExecutionSummary(input: {
-	toolCalls: BridgeToolCall[];
-}): AgentsTeamExecutionSummary {
-	const summary: AgentsTeamExecutionSummary = {
-		active: false,
-		sourceHints: [],
-		hasExecutionEvidence: false,
-	};
-	for (const toolCall of input.toolCalls) {
-		if (!isAgentsTeamExecutionToolCall(toolCall)) continue;
-		summary.active = true;
-		summary.hasExecutionEvidence = true;
-		const sourceHint = toolCall.name.trim() || "unknown";
-		if (!summary.sourceHints.includes(sourceHint)) {
-			summary.sourceHints.push(sourceHint);
-		}
-	}
-	return summary;
-}
-
-function hasVideoPromptGovernanceShape(record: Record<string, unknown>): boolean {
-	return (
-		(typeof record.prompt === "string" && record.prompt.trim().length > 0) ||
-		(typeof record.videoPrompt === "string" && record.videoPrompt.trim().length > 0) ||
-		Array.isArray(record.storyBeatPlan)
-	);
-}
-
-function isPlaceholderVideoPromptRecord(record: Record<string, unknown>): boolean {
-	const status = typeof record.status === "string" ? record.status.trim().toLowerCase() : "";
-	return status === "error";
-}
-
-function applyVideoPromptGovernanceRecord(
-	summary: VideoPromptGovernanceSummary,
-	record: Record<string, unknown>,
-	sourceHint: string,
-): void {
-	if (isPlaceholderVideoPromptRecord(record)) return;
-	if (!summary.sourceHints.includes(sourceHint)) summary.sourceHints.push(sourceHint);
-	const hasExecutablePrompt =
-		typeof record.prompt === "string" && record.prompt.trim().length > 0;
-	const usesDeprecatedVideoPromptField =
-		typeof record.videoPrompt === "string" && record.videoPrompt.trim().length > 0;
-	summary.active = true;
-	summary.hasExecutablePrompt = summary.hasExecutablePrompt || hasExecutablePrompt;
-	summary.usesDeprecatedVideoPromptField =
-		summary.usesDeprecatedVideoPromptField || usesDeprecatedVideoPromptField;
-}
-
-function buildVideoPromptGovernanceSummary(input: {
-	text: string;
-	canvasPlanDiagnostics: CanvasPlanDiagnostics;
-}): VideoPromptGovernanceSummary {
-	const summary: VideoPromptGovernanceSummary = {
-		active: false,
-		sourceHints: [],
-		hasExecutablePrompt: false,
-		usesDeprecatedVideoPromptField: false,
-	};
-	const textPayload = extractStructuredPromptPayloadFromText(input.text);
-	if (textPayload && hasVideoPromptGovernanceShape(textPayload)) {
-		applyVideoPromptGovernanceRecord(summary, textPayload, "final_text_payload");
-	}
-	if (input.canvasPlanDiagnostics.parseSuccess && input.canvasPlanDiagnostics.rawPayload) {
-		try {
-			const parsed = JSON.parse(input.canvasPlanDiagnostics.rawPayload) as unknown;
-			if (isRecord(parsed) && Array.isArray(parsed.nodes)) {
-				for (const node of parsed.nodes) {
-					if (!isRecord(node)) continue;
-					const kind = typeof node.kind === "string" ? node.kind.trim() : "";
-					if (kind !== "composeVideo" && kind !== "video") continue;
-					const config = isRecord(node.config) ? node.config : null;
-					if (!config) continue;
-					applyVideoPromptGovernanceRecord(summary, config, "canvas_plan_video_node");
-				}
-			}
-		} catch {
-			// canvas plan parse errors are already captured elsewhere
-		}
-	}
-	return summary;
 }
 
 function normalizeComparableKind(value: unknown): string {
@@ -2095,14 +2635,6 @@ function sanitizeSelectedReferenceForAgents(
 		...selectedReference,
 		kind: sanitizeStoryboardEditorKindForAgents(selectedReference.kind),
 	};
-}
-
-function isImagePromptContextKind(value: unknown): boolean {
-	return IMAGE_PROMPT_CONTEXT_KINDS.has(normalizeComparableKind(value));
-}
-
-function isImagePromptSpecNodeKind(kind: string): boolean {
-	return IMAGE_PROMPT_SPEC_NODE_KINDS.has(kind);
 }
 
 function isChapterGroundedVisualNodeKind(kind: string): boolean {
@@ -2139,52 +2671,6 @@ function hasChapterGroundedVisualTraceability(record: Record<string, unknown>): 
 	const hasChapterId =
 		typeof record.chapterId === "string" && record.chapterId.trim().length > 0;
 	return Boolean(sourceBookId && (hasNumericChapter || hasChapterId));
-}
-
-function hasVideoOnlyPayloadSignals(record: Record<string, unknown>): boolean {
-	return (
-		Array.isArray(record.storyBeatPlan) ||
-		(typeof record.videoPrompt === "string" && record.videoPrompt.trim().length > 0)
-	);
-}
-
-function isLikelyImagePromptTextPayload(input: {
-	record: Record<string, unknown>;
-	likelyImageContext: boolean;
-}): boolean {
-	if (
-		typeof input.record.imagePrompt === "string" &&
-		input.record.imagePrompt.trim().length > 0
-	) {
-		return true;
-	}
-	if (Object.prototype.hasOwnProperty.call(input.record, "structuredPrompt")) {
-		return true;
-	}
-	if (Object.prototype.hasOwnProperty.call(input.record, "imagePromptSpecV2")) {
-		return true;
-	}
-	if (!input.likelyImageContext) return false;
-	if (hasVideoOnlyPayloadSignals(input.record)) return false;
-	return typeof input.record.prompt === "string" && input.record.prompt.trim().length > 0;
-}
-
-function readValidImagePromptSpecV2(
-	value: unknown,
-): { ok: true; value: ImagePromptSpecV2 | null } | { ok: false; error: string } {
-	const parsed = parseImagePromptSpecV2(value);
-	if (!parsed.ok) return parsed;
-	return parsed;
-}
-
-function readStructuredPromptField(record: Record<string, unknown>): unknown {
-	if (Object.prototype.hasOwnProperty.call(record, "structuredPrompt")) {
-		return record.structuredPrompt;
-	}
-	if (Object.prototype.hasOwnProperty.call(record, "imagePromptSpecV2")) {
-		return record.imagePromptSpecV2;
-	}
-	return undefined;
 }
 
 function readFlowPatchNodeFinalStateId(value: unknown, fallback: string): string {
@@ -2256,111 +2742,6 @@ function buildFlowPatchNodeFinalStates(input: {
 		});
 	}
 	return states;
-}
-
-type ImagePromptSpecAnchorSummary = {
-	hasReferenceAnchors: boolean;
-	hasCharacterAnchors: boolean;
-	hasEnvironmentAnchors: boolean;
-	characterStateEvidenceCount: number;
-};
-
-function summarizeImagePromptSpecAnchors(assetInputs: AgentsBridgeAssetInput[]): ImagePromptSpecAnchorSummary {
-	let hasCharacterAnchors = false;
-	let hasEnvironmentAnchors = false;
-	let characterStateEvidenceCount = 0;
-	for (const item of assetInputs) {
-		if (item.role === "character") {
-			hasCharacterAnchors = true;
-			const parsed = parseCharacterContinuityNote(String(item.note || ""));
-			if (parsed.age || parsed.state || parsed.stateLabel || parsed.stateKey) {
-				characterStateEvidenceCount += 1;
-			}
-			continue;
-		}
-		hasEnvironmentAnchors = true;
-	}
-	return {
-		hasReferenceAnchors: assetInputs.length > 0,
-		hasCharacterAnchors,
-		hasEnvironmentAnchors,
-		characterStateEvidenceCount,
-	};
-}
-
-function readRecordAssetInputs(record: Record<string, unknown>): AgentsBridgeAssetInput[] {
-	if (!Array.isArray(record.assetInputs)) return [];
-	return normalizeAgentsBridgeAssetInputs(record.assetInputs);
-}
-
-function resolveImagePromptSpecAnchorSummary(input: {
-	record: Record<string, unknown>;
-	sourceHint: string;
-	requestAnchorSummary: ImagePromptSpecAnchorSummary;
-}): ImagePromptSpecAnchorSummary {
-	const localAssetInputs = readRecordAssetInputs(input.record);
-	const hasReferenceImages =
-		Array.isArray(input.record.referenceImages) &&
-		input.record.referenceImages.some((item) => typeof item === "string" && item.trim().length > 0);
-	if (localAssetInputs.length === 0 && !hasReferenceImages) {
-		return input.sourceHint === "final_text_payload"
-			? input.requestAnchorSummary
-			: {
-				hasReferenceAnchors: false,
-				hasCharacterAnchors: false,
-				hasEnvironmentAnchors: false,
-				characterStateEvidenceCount: 0,
-			};
-	}
-	const localSummary = summarizeImagePromptSpecAnchors(localAssetInputs);
-	return {
-		hasReferenceAnchors: localSummary.hasReferenceAnchors || hasReferenceImages,
-		hasCharacterAnchors: localSummary.hasCharacterAnchors,
-		hasEnvironmentAnchors: localSummary.hasEnvironmentAnchors,
-		characterStateEvidenceCount: localSummary.characterStateEvidenceCount,
-	};
-}
-
-function applyImagePromptSpecGovernanceRecord(
-	summary: ImagePromptSpecGovernanceSummary,
-	record: Record<string, unknown>,
-	sourceHint: string,
-	requestAnchorSummary: ImagePromptSpecAnchorSummary,
-): void {
-	summary.active = true;
-	summary.chapterGroundedTargetCount += 1;
-	if (!summary.sourceHints.includes(sourceHint)) summary.sourceHints.push(sourceHint);
-	const structuredPrompt = readStructuredPromptField(record);
-	if (typeof structuredPrompt === "undefined") {
-		summary.missingSpecCount += 1;
-		return;
-	}
-	const parsed = readValidImagePromptSpecV2(structuredPrompt);
-	if (!parsed.ok || !parsed.value) {
-		summary.invalidSpecCount += 1;
-		return;
-	}
-	summary.validSpecCount += 1;
-	const anchorSummary = resolveImagePromptSpecAnchorSummary({
-		record,
-		sourceHint,
-		requestAnchorSummary,
-	});
-	if (anchorSummary.hasReferenceAnchors && parsed.value.referenceBindings.length <= 0) {
-		summary.missingReferenceBindingsCount += 1;
-	}
-	if (anchorSummary.hasCharacterAnchors && parsed.value.identityConstraints.length <= 0) {
-		summary.missingIdentityConstraintsCount += 1;
-	}
-	if (anchorSummary.hasEnvironmentAnchors && parsed.value.environmentObjects.length <= 0) {
-		summary.missingEnvironmentObjectsCount += 1;
-	}
-	if (
-		anchorSummary.characterStateEvidenceCount > 0 &&
-		parsed.value.continuityConstraints.length <= 0
-	) {
-		summary.missingCharacterContinuityCount += 1;
-	}
 }
 
 function readChapterGroundedAuthorityBaseFrameStatus(
@@ -2470,12 +2851,81 @@ function buildChapterGroundedVisualPreproductionSummary(input: {
 	return summary;
 }
 
+function readVideoTargetDurationSeconds(
+	value: Record<string, unknown> | null,
+	depth = 0,
+): number | null {
+	if (!value) return null;
+	const candidates = [
+		value.targetDurationSeconds,
+		asRecord(value.storyPlan)?.targetDurationSeconds,
+		asRecord(asRecord(value.beatSheet)?.meta)?.targetDurationSeconds,
+		asRecord(value.plan)?.targetDurationSeconds,
+	];
+	for (const candidate of candidates) {
+		const durationSeconds = Number(candidate);
+		if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+			return durationSeconds;
+		}
+	}
+	if (depth >= 3) return null;
+	for (const key of ["data", "result", "response"] as const) {
+		const nested = asRecord(value[key]);
+		const durationSeconds = readVideoTargetDurationSeconds(nested, depth + 1);
+		if (durationSeconds) return durationSeconds;
+	}
+	return null;
+}
+
+export function collectVideoTargetDurationEvidence(input: {
+	toolCalls: BridgeToolCall[];
+	artifacts: PublicChatDeliveryEvidence["artifacts"];
+}): number[] {
+	const videoDeliveryToolCallIds = new Set(
+		input.artifacts
+			.filter((artifact) => artifact.assetType === "video")
+			.map((artifact) => artifact.toolCallId),
+	);
+	const durations = new Set<number>();
+	for (const toolCall of input.toolCalls) {
+		if (
+			toolCall.status !== "succeeded" ||
+			toolCall.name !== "tapcanvas_equipped_workflow_run" ||
+			!videoDeliveryToolCallIds.has(toolCall.toolCallId)
+		) {
+			continue;
+		}
+		const durationSeconds =
+			readVideoTargetDurationSeconds(toolCall.inputJson) ??
+			readVideoTargetDurationSeconds(toolCall.outputJson);
+		if (durationSeconds) durations.add(durationSeconds);
+	}
+	return [...durations];
+}
+
 function buildPublicChatDeliveryEvidence(input: {
-	assets: Array<{ type: "image" | "video"; url: string; thumbnailUrl?: string }>;
+	canonicalItems: PublicChatDeliveryEvidence["items"];
+	assets: Array<{
+		type: "image" | "video" | "audio" | "file";
+		url: string;
+		thumbnailUrl?: string;
+		fileName?: string;
+		mimeType?: string;
+	}>;
 	toolEvidence: BridgeToolEvidence;
 	chapterGroundedVisualPreproduction: ChapterGroundedVisualPreproductionSummary;
 	toolCalls: BridgeToolCall[];
+	hostManifest: HostCapabilityManifest | null;
+	hostCanvasContext: HostCanvasContext | null;
 }): PublicChatDeliveryEvidence {
+	const artifacts: PublicChatDeliveryEvidence["artifacts"] =
+		collectPublicChatToolDeliveryArtifacts(input.toolCalls).concat(
+			collectPublicChatHostAsyncDeliveryArtifacts({
+				manifest: input.hostManifest,
+				canvasContext: input.hostCanvasContext,
+				toolCalls: input.toolCalls,
+			}),
+		);
 	const imageAssetCount = input.assets.filter((asset) => asset.type === "image").length;
 	const videoAssetCount = input.assets.filter((asset) => asset.type === "video").length;
 	const storyboardPlanPersistenceCount = input.toolCalls.filter(
@@ -2483,7 +2933,14 @@ function buildPublicChatDeliveryEvidence(input: {
 			toolCall.name === "tapcanvas_book_storyboard_plan_upsert" &&
 			toolCall.status === "succeeded",
 	).length;
+	const videoTargetDurationSeconds = collectVideoTargetDurationEvidence({
+		toolCalls: input.toolCalls,
+		artifacts,
+	});
 	return {
+		version: 2,
+		items: input.canonicalItems,
+		artifacts,
 		assetCount: input.assets.length,
 		imageAssetCount,
 		videoAssetCount,
@@ -2505,244 +2962,20 @@ function buildPublicChatDeliveryEvidence(input: {
 		hasConfirmedAuthorityBaseFrame:
 			input.chapterGroundedVisualPreproduction.hasConfirmedAuthorityBaseFrame,
 		storyboardPlanPersistenceCount,
-	};
+		...(videoTargetDurationSeconds.length > 0 ? { videoTargetDurationSeconds } : {}),
+  };
 }
 
-function recordHasPersistedReferenceBinding(record: Record<string, unknown>): boolean {
-	const hasReferenceImages =
-		Array.isArray(record.referenceImages) &&
-		record.referenceImages.some((item) => typeof item === "string" && item.trim().length > 0);
-	if (hasReferenceImages) return true;
-	return (
-		Array.isArray(record.assetInputs) &&
-		record.assetInputs.some((item) => {
-			if (!isRecord(item)) return false;
-			return typeof item.url === "string" && item.url.trim().length > 0;
-		})
-	);
-}
-
-function recordHasPersistedCharacterBinding(record: Record<string, unknown>): boolean {
-	if (!Array.isArray(record.assetInputs)) return false;
-	return record.assetInputs.some((item) => {
-		if (!isRecord(item)) return false;
-		const role = normalizeComparableKind(item.role);
-		const hasUrl = typeof item.url === "string" && item.url.trim().length > 0;
-		return hasUrl && role === "character";
-	});
-}
-
-function buildCreatedEdgeTargetsBySource(input: {
-	toolCalls: BridgeToolCall[];
-}): Map<string, Set<string>> {
-	const targetsBySource = new Map<string, Set<string>>();
-	for (const toolCall of input.toolCalls) {
-		if (
-			toolCall.name !== "tapcanvas_flow_patch" ||
-			toolCall.status !== "succeeded" ||
-			!toolCall.inputJson
-		) {
-			continue;
-		}
-		const createEdges = Array.isArray(toolCall.inputJson.createEdges)
-			? toolCall.inputJson.createEdges
-			: [];
-		for (const edge of createEdges) {
-			if (!isRecord(edge)) continue;
-			const source = typeof edge.source === "string" ? edge.source.trim() : "";
-			const target = typeof edge.target === "string" ? edge.target.trim() : "";
-			if (!source || !target) continue;
-			const existing = targetsBySource.get(source) || new Set<string>();
-			existing.add(target);
-			targetsBySource.set(source, existing);
-		}
-	}
-	return targetsBySource;
-}
-
-function isRejectedChapterGroundedVisualRecord(record: Record<string, unknown>): boolean {
-	return normalizeComparableKind(record.approvalStatus) === "rejected";
-}
-
-function collectInBatchAuthoritySourceNodeIds(
-	nodeStates: Map<string, FlowPatchNodeFinalState>,
-): Set<string> {
-	const authorityNodeIds = new Set<string>();
-	for (const state of nodeStates.values()) {
-		if (!state.kind || !isChapterGroundedVisualNodeKind(state.kind)) continue;
-		if (!hasChapterGroundedVisualTraceability(state.data)) continue;
-		if (isRejectedChapterGroundedVisualRecord(state.data)) continue;
-		if (isVideoLikeNodeKind(state.kind)) continue;
-		const authorityStatus = readChapterGroundedAuthorityBaseFrameStatus(state.data);
-		if (authorityStatus === "planned" || authorityStatus === "confirmed") {
-			authorityNodeIds.add(state.id);
-		}
-	}
-	return authorityNodeIds;
-}
-
-function buildChapterGroundedReferenceBindingSummary(input: {
-	toolCalls: BridgeToolCall[];
-	selectedNodeKind: string | null;
-	selectedReference: AgentsBridgeChatContext["selectedReference"];
-	referenceImagesCount: number;
-	assetInputsCount: number;
-}): ChapterGroundedReferenceBindingSummary {
-	const summary: ChapterGroundedReferenceBindingSummary = {
-		active: false,
-		targetNodeCount: 0,
-		missingBindingCount: 0,
-		missingCharacterBindingCount: 0,
-	};
-	const hasRuntimeReferenceAnchors =
-		input.referenceImagesCount > 0 || input.assetInputsCount > 0;
-	const hasExplicitSelectedReference = Boolean(
-		input.selectedReference?.nodeId?.trim() ||
-			input.selectedReference?.imageUrl?.trim() ||
-			input.selectedReference?.authorityBaseFrameNodeId?.trim() ||
-			input.selectedReference?.roleName?.trim() ||
-			input.selectedReference?.roleCardId?.trim(),
-	);
-	const requiresReferenceBinding = hasRuntimeReferenceAnchors || hasExplicitSelectedReference;
-	if (!requiresReferenceBinding) return summary;
-	const requiresCharacterBinding = Boolean(
-		input.selectedReference?.roleName?.trim() || input.selectedReference?.roleCardId?.trim(),
-	);
-	const targetsBySource = buildCreatedEdgeTargetsBySource({
-		toolCalls: input.toolCalls,
-	});
-	const explicitAuthoritySourceNodeIds = [
-		input.selectedReference?.nodeId?.trim() || "",
-		input.selectedReference?.authorityBaseFrameNodeId?.trim() || "",
-	].filter(Boolean);
-	const nodeStates = buildFlowPatchNodeFinalStates({
-		toolCalls: input.toolCalls,
-		selectedNodeKind: input.selectedNodeKind,
-	});
-	const inBatchAuthoritySourceNodeIds = collectInBatchAuthoritySourceNodeIds(nodeStates);
-	const authoritySourceNodeIds = Array.from(
-		new Set<string>([...explicitAuthoritySourceNodeIds, ...inBatchAuthoritySourceNodeIds]),
-	);
-	for (const state of nodeStates.values()) {
-		if (!state.kind || !isChapterGroundedVisualNodeKind(state.kind)) continue;
-		if (!hasChapterGroundedVisualTraceability(state.data)) continue;
-		if (isRejectedChapterGroundedVisualRecord(state.data)) continue;
-		summary.active = true;
-		summary.targetNodeCount += 1;
-		const isInBatchAuthorityNode = inBatchAuthoritySourceNodeIds.has(state.id);
-		const linkedByAuthorityEdge = authoritySourceNodeIds.some((sourceNodeId) =>
-			sourceNodeId !== state.id && targetsBySource.get(sourceNodeId)?.has(state.id) === true,
-		);
-		if (
-			!recordHasPersistedReferenceBinding(state.data) &&
-			!linkedByAuthorityEdge &&
-			!isInBatchAuthorityNode
-		) {
-			summary.missingBindingCount += 1;
-		}
-		if (
-			requiresCharacterBinding &&
-			!recordHasPersistedCharacterBinding(state.data) &&
-			!linkedByAuthorityEdge
-		) {
-			summary.missingCharacterBindingCount += 1;
-		}
-	}
-	return summary;
-}
-
-function buildImagePromptSpecGovernanceSummary(input: {
-	text: string;
-	canvasPlanDiagnostics: CanvasPlanDiagnostics;
-	toolCalls: BridgeToolCall[];
-	chapterGroundedPromptSpecRequired: boolean;
-	likelyImageContext: boolean;
-	selectedNodeKind: string | null;
-	requestAssetInputs: AgentsBridgeAssetInput[];
-}): ImagePromptSpecGovernanceSummary {
-	const requestAnchorSummary = summarizeImagePromptSpecAnchors(input.requestAssetInputs);
-	const summary: ImagePromptSpecGovernanceSummary = {
-		active: false,
-		sourceHints: [],
-		chapterGroundedTargetCount: 0,
-		validSpecCount: 0,
-		missingSpecCount: 0,
-		invalidSpecCount: 0,
-		missingReferenceBindingsCount: 0,
-		missingIdentityConstraintsCount: 0,
-		missingEnvironmentObjectsCount: 0,
-		missingCharacterContinuityCount: 0,
-	};
-	if (!input.chapterGroundedPromptSpecRequired) return summary;
-
-	const textPayload = extractStructuredPromptPayloadFromText(input.text);
-	if (
-		textPayload &&
-		isLikelyImagePromptTextPayload({
-			record: textPayload,
-			likelyImageContext: input.likelyImageContext,
-		})
-	) {
-		applyImagePromptSpecGovernanceRecord(
-			summary,
-			textPayload,
-			"final_text_payload",
-			requestAnchorSummary,
-		);
-	}
-
-	if (input.canvasPlanDiagnostics.parseSuccess && input.canvasPlanDiagnostics.rawPayload) {
-		try {
-			const parsed = JSON.parse(input.canvasPlanDiagnostics.rawPayload) as unknown;
-			if (isRecord(parsed) && Array.isArray(parsed.nodes)) {
-				for (const node of parsed.nodes) {
-					if (!isRecord(node)) continue;
-					const kind = normalizeComparableKind(node.kind);
-					if (!isImagePromptSpecNodeKind(kind)) continue;
-					const config = isRecord(node.config) ? node.config : null;
-					if (!config || !hasChapterGroundedVisualTraceability(config)) continue;
-					applyImagePromptSpecGovernanceRecord(
-						summary,
-						config,
-						"canvas_plan_image_node",
-						requestAnchorSummary,
-					);
-				}
-			}
-		} catch {
-			// canvas plan parse errors are already captured elsewhere
-		}
-	}
-
-	const nodeStates = buildFlowPatchNodeFinalStates({
-		toolCalls: input.toolCalls,
-		selectedNodeKind: input.selectedNodeKind,
-	});
-	for (const state of nodeStates.values()) {
-		if (!isImagePromptSpecNodeKind(state.kind) || !hasChapterGroundedVisualTraceability(state.data)) {
-			continue;
-		}
-		applyImagePromptSpecGovernanceRecord(
-			summary,
-			state.data,
-			"flow_patch_final_node_state",
-			requestAnchorSummary,
-		);
-	}
-
-	return summary;
-}
-
-function recordHasStoryboardEditorCells(record: Record<string, unknown>): boolean {
-	return Array.isArray(record.storyboardEditorCells);
-}
-
-function recordHasMaterializedStoryboardCellImages(record: Record<string, unknown>): boolean {
-	if (!Array.isArray(record.storyboardEditorCells)) return false;
-	return record.storyboardEditorCells.some((cell) => {
-		if (!isRecord(cell)) return false;
-		return typeof cell.imageUrl === "string" && cell.imageUrl.trim().length > 0;
-	});
+export function hasMaterializedPublicDeliveryEvidence(
+	evidence: PublicChatDeliveryEvidence,
+): boolean {
+	return evidence.items.length > 0 ||
+		evidence.artifacts.length > 0 ||
+		evidence.assetCount > 0 ||
+		evidence.wroteCanvas ||
+		evidence.generatedAssets ||
+		evidence.materializedStoryboardStillCount > 0 ||
+		evidence.storyboardPlanPersistenceCount > 0;
 }
 
 function countMaterializedStoryboardCellImages(record: Record<string, unknown>): number {
@@ -2754,113 +2987,6 @@ function countMaterializedStoryboardCellImages(record: Record<string, unknown>):
 		count += 1;
 	}
 	return count;
-}
-
-function recordHasStoryboardTextPayload(record: Record<string, unknown>): boolean {
-	const stringKeys = [
-		"content",
-		"prompt",
-		"text",
-		"storyboard",
-		"storyboardTitle",
-		"storyboardNotes",
-	];
-	if (
-		stringKeys.some((key) => typeof record[key] === "string" && String(record[key]).trim().length > 0)
-	) {
-		return true;
-	}
-	if (readTrimmedStringArray(record.storyboardShotPrompts).length > 0) return true;
-	if (!Array.isArray(record.storyboardScenes)) return false;
-	return record.storyboardScenes.some((scene) => {
-		if (typeof scene === "string") return scene.trim().length > 0;
-		if (!isRecord(scene)) return false;
-		return Object.values(scene).some(
-			(value) => typeof value === "string" && value.trim().length > 0,
-		);
-	});
-}
-
-function applyStoryboardEditorContractRecord(
-	summary: StoryboardEditorContractSummary,
-	record: Record<string, unknown>,
-	sourceHint: string,
-): void {
-	summary.active = true;
-	summary.hasStoryboardNodes = true;
-	if (!summary.sourceHints.includes(sourceHint)) summary.sourceHints.push(sourceHint);
-	const hasStoryboardEditorCells = recordHasStoryboardEditorCells(record);
-	if (hasStoryboardEditorCells) summary.hasStoryboardEditorCells = true;
-	if (recordHasMaterializedStoryboardCellImages(record)) {
-		summary.hasMaterializedStoryboardCellImages = true;
-	}
-	if (recordHasStoryboardTextPayload(record) && !hasStoryboardEditorCells) {
-		summary.hasTextOnlyStoryboardPayload = true;
-	}
-}
-
-function buildStoryboardEditorContractSummary(input: {
-	toolCalls: BridgeToolCall[];
-	canvasPlanDiagnostics: CanvasPlanDiagnostics;
-}): StoryboardEditorContractSummary {
-	const summary: StoryboardEditorContractSummary = {
-		active: false,
-		sourceHints: [],
-		hasStoryboardNodes: false,
-		hasStoryboardEditorCells: false,
-		hasMaterializedStoryboardCellImages: false,
-		hasTextOnlyStoryboardPayload: false,
-	};
-	for (const toolCall of input.toolCalls) {
-		if (toolCall.name !== "tapcanvas_flow_patch" || !toolCall.inputJson) continue;
-		const createNodes = Array.isArray(toolCall.inputJson.createNodes)
-			? toolCall.inputJson.createNodes
-			: [];
-		for (const node of createNodes) {
-			if (!isRecord(node)) continue;
-			const data = isRecord(node.data) ? node.data : null;
-			if (!data) continue;
-			const kind = typeof data.kind === "string" ? data.kind.trim().toLowerCase() : "";
-			if (kind !== "storyboard") continue;
-			applyStoryboardEditorContractRecord(summary, data, "flow_patch_create_node");
-		}
-		const patchNodeData = Array.isArray(toolCall.inputJson.patchNodeData)
-			? toolCall.inputJson.patchNodeData
-			: [];
-		for (const patch of patchNodeData) {
-			if (!isRecord(patch)) continue;
-			const data = isRecord(patch.data) ? patch.data : null;
-			if (!data) continue;
-			const kind = typeof data.kind === "string" ? data.kind.trim().toLowerCase() : "";
-			const looksStoryboardPatch =
-				kind === "storyboard" ||
-				"storyboardEditorCells" in data ||
-				"storyboardScenes" in data ||
-				"storyboardShotPrompts" in data ||
-				"storyboardTitle" in data ||
-				"storyboardNotes" in data;
-			if (!looksStoryboardPatch) continue;
-			applyStoryboardEditorContractRecord(summary, data, "flow_patch_patch_node");
-		}
-	}
-	if (input.canvasPlanDiagnostics.parseSuccess && input.canvasPlanDiagnostics.rawPayload) {
-		try {
-			const parsed = JSON.parse(input.canvasPlanDiagnostics.rawPayload) as unknown;
-			if (isRecord(parsed) && Array.isArray(parsed.nodes)) {
-				for (const node of parsed.nodes) {
-					if (!isRecord(node)) continue;
-					const kind = typeof node.kind === "string" ? node.kind.trim().toLowerCase() : "";
-					if (kind !== "storyboard") continue;
-					const config = isRecord(node.config) ? node.config : null;
-					if (!config) continue;
-					applyStoryboardEditorContractRecord(summary, config, "canvas_plan_storyboard_node");
-				}
-			}
-		} catch {
-			// canvas plan parse errors are already captured elsewhere
-		}
-	}
-	return summary;
 }
 
 function buildAgentsBridgeCanvasMutationSummary(
@@ -2914,7 +3040,8 @@ function buildAgentsBridgeCanvasMutationSummary(
 			kind === "storyboard" ||
 			kind === "storyboardimage" ||
 			kind === "video" ||
-			kind === "composevideo"
+			kind === "composevideo" ||
+			kind === "audio"
 		);
 	};
 
@@ -3003,471 +3130,6 @@ function decorateCanvasPlanDiagnosticsForOutputMode(input: {
 	};
 }
 
-function buildDiagnosticFlags(input: {
-	requestKind: string;
-	text: string;
-	toolEvidence: BridgeToolEvidence;
-	canvasPlanDiagnostics: CanvasPlanDiagnostics;
-	outputMode: AgentsBridgeOutputMode;
-	toolStatusSummary: ToolStatusSummary;
-	toolExecutionIssues: ToolExecutionIssueSummary;
-	toolCalls: BridgeToolCall[];
-	runtimeTrace: AgentsRuntimeTraceSummary | null;
-	generationGate: PublicAgentsGenerationGate;
-	forceAssetGeneration: boolean;
-	semanticExecutionIntent: AgentsSemanticExecutionIntentSummary;
-	planningTrace: AgentsPlanningTraceSummary | null;
-	todoListTrace: AgentsTodoListTraceSummary | null;
-	autoModeAgentsTeamRequired: boolean;
-	chapterGroundedPromptSpecRequired: boolean;
-	novelSingleVideoEvidenceRequired: boolean;
-	autoProgressDetectionRequired: boolean;
-	selectedNodeKind: string | null;
-	selectedReference: AgentsBridgeChatContext["selectedReference"];
-	workspaceAction:
-		| "chapter_script_generation"
-		| "chapter_asset_generation"
-		| "shot_video_generation"
-		| null;
-	referenceImagesCount: number;
-	assetInputsCount: number;
-	requestAssetInputs: AgentsBridgeAssetInput[];
-	chapterContinuityInjection: ChapterContinuityInjection;
-	chapterGroundedVisualPreproduction: ChapterGroundedVisualPreproductionSummary;
-}): DiagnosticFlag[] {
-	const flags: DiagnosticFlag[] = [];
-	const canvasPlanParsed = input.canvasPlanDiagnostics.parseSuccess === true;
-	const canvasPlanTagPresent = input.canvasPlanDiagnostics.tagPresent === true;
-	const canvasPlanNodeCount =
-		typeof input.canvasPlanDiagnostics.nodeCount === "number" ? input.canvasPlanDiagnostics.nodeCount : 0;
-	void input.requestKind;
-	void input.toolEvidence;
-	void input.novelSingleVideoEvidenceRequired;
-	void input.autoProgressDetectionRequired;
-	const chapterScriptPersistenceAction =
-		input.workspaceAction === "chapter_script_generation";
-	const chapterGroundedReusableAssetDeliveryRequired =
-		input.chapterGroundedPromptSpecRequired &&
-		!chapterScriptPersistenceAction;
-	if (canvasPlanTagPresent && !canvasPlanParsed) {
-		flags.push({
-			code: input.canvasPlanDiagnostics.errorCode || "invalid_canvas_plan",
-			severity: "medium",
-			title: "画布计划无效",
-			detail: input.canvasPlanDiagnostics.errorDetail || "tapcanvas_canvas_plan 无法解析或不符合 schema。",
-		});
-	}
-	if (canvasPlanParsed && canvasPlanNodeCount <= 0) {
-		flags.push({
-			code: "parsed_plan_without_nodes",
-			severity: "medium",
-			title: "画布计划解析成功但没有节点",
-			detail: "这是无效结果，前端无法创建任何节点。",
-		});
-	}
-	if (input.toolExecutionIssues.hasExecutionIssues) {
-		flags.push({
-			code: "tool_execution_issues",
-			severity: "medium",
-			title: "存在工具执行异常",
-			detail:
-				`failed=${input.toolExecutionIssues.failedToolCalls}, ` +
-				`denied=${input.toolExecutionIssues.deniedToolCalls}, ` +
-				`blocked=${input.toolExecutionIssues.blockedToolCalls}, ` +
-				`coordinationBlocked=${input.toolExecutionIssues.coordinationBlockedToolCalls}, ` +
-				`actionableBlocked=${input.toolExecutionIssues.actionableBlockedToolCalls}`,
-		});
-	}
-	const truncatedContextSources =
-		input.runtimeTrace?.contextDiagnostics?.sources.filter((source) => source.truncated) ?? [];
-	if (truncatedContextSources.length > 0) {
-		flags.push({
-			code: "agents_runtime_context_truncated",
-			severity: "medium",
-			title: "Agents runtime 上下文已触发预算裁剪",
-			detail:
-				`以下上下文来源在 agents-cli 内已按 budget 截断：${truncatedContextSources
-					.map((source) => `${source.id}(${source.chars}/${source.budgetChars})`)
-					.join(", ")}。` +
-				"若本轮语义证据不足、遗漏约束或引用事实不完整，应优先检查这些来源是否被裁剪。",
-		});
-	}
-	const runtimeRequiresApprovalCount =
-		input.runtimeTrace?.policySummary?.requiresApprovalCount ?? 0;
-	if (runtimeRequiresApprovalCount > 0) {
-		flags.push({
-			code: "agents_runtime_requires_approval",
-			severity: "medium",
-			title: "Agents runtime 存在待审批动作",
-			detail:
-				`policy engine 本轮标记了 ${runtimeRequiresApprovalCount} 次 requires_approval。` +
-				"这表示部分工具或命令因高风险/远程本地访问约束没有被直接执行，应由上游显式审批后重试。",
-		});
-	}
-	const runtimePolicyDenyCount = input.runtimeTrace?.policySummary?.denyCount ?? 0;
-	if (runtimePolicyDenyCount > 0) {
-		const deniedSignatures =
-			input.runtimeTrace?.policySummary?.uniqueDeniedSignatures.slice(0, 4) ?? [];
-		flags.push({
-			code: "agents_runtime_policy_denials_present",
-			severity: "medium",
-			title: "Agents runtime 存在策略拒绝",
-			detail:
-				`policy engine 本轮明确拒绝了 ${runtimePolicyDenyCount} 次动作。` +
-				(deniedSignatures.length > 0
-					? ` 拒绝摘要：${deniedSignatures.join(" | ")}`
-					: ""),
-		});
-	}
-	const hasChecklistInProgress =
-		(input.todoListTrace?.inProgressCount ?? 0) > 0 ||
-		(input.todoListTrace?.pendingCount ?? 0) > 0;
-	const checklistExecutionGateActive =
-		input.semanticExecutionIntent.requiresExecutionDelivery || input.forceAssetGeneration;
-	if (checklistExecutionGateActive && hasChecklistInProgress && input.todoListTrace) {
-		flags.push({
-			code: "todo_checklist_incomplete",
-			severity: "medium",
-			title: "Checklist 仍有未完成项",
-			detail:
-				`Todo 清单仍有 pending=${input.todoListTrace.pendingCount}, in_progress=${input.todoListTrace.inProgressCount}。` +
-				"执行型回合在关键项未完成时不得判定为 satisfied。",
-		});
-	}
-	const videoPromptGovernance = buildVideoPromptGovernanceSummary({
-		text: input.text,
-		canvasPlanDiagnostics: input.canvasPlanDiagnostics,
-	});
-	const imagePromptSpecGovernance = buildImagePromptSpecGovernanceSummary({
-		text: input.text,
-		canvasPlanDiagnostics: input.canvasPlanDiagnostics,
-		toolCalls: input.toolCalls,
-		chapterGroundedPromptSpecRequired: input.chapterGroundedPromptSpecRequired,
-		likelyImageContext:
-			isImagePromptContextKind(input.selectedNodeKind) ||
-			isImagePromptContextKind(input.selectedReference?.kind),
-		selectedNodeKind: input.selectedNodeKind,
-		requestAssetInputs: input.requestAssetInputs,
-	});
-	const agentsTeamExecution = buildAgentsTeamExecutionSummary({
-		toolCalls: input.toolCalls,
-	});
-	const storyboardEditorContract = buildStoryboardEditorContractSummary({
-		toolCalls: input.toolCalls,
-		canvasPlanDiagnostics: input.canvasPlanDiagnostics,
-	});
-	const chapterGroundedVisualPreproduction = input.chapterGroundedVisualPreproduction;
-	const chapterGroundedReferenceBinding = buildChapterGroundedReferenceBindingSummary({
-		toolCalls: input.toolCalls,
-		selectedNodeKind: input.selectedNodeKind,
-		selectedReference: input.selectedReference,
-		referenceImagesCount: input.referenceImagesCount,
-		assetInputsCount: input.assetInputsCount,
-	});
-	const runtimeTeamToolsAvailable =
-		(input.runtimeTrace?.registeredTeamToolNames.length ?? 0) > 0;
-	const chapterAssetRepairAction = input.workspaceAction === "chapter_asset_generation";
-	const likelyChapterGroundedVisualContext =
-		input.chapterGroundedPromptSpecRequired &&
-		(isImagePromptContextKind(input.selectedNodeKind) ||
-			isImagePromptContextKind(input.selectedReference?.kind) ||
-			normalizeComparableKind(input.selectedReference?.kind) === "composevideo" ||
-			normalizeComparableKind(input.selectedReference?.kind) === "video");
-	if (input.autoModeAgentsTeamRequired && !agentsTeamExecution.hasExecutionEvidence) {
-		flags.push({
-			code: "auto_mode_agents_team_execution_missing",
-			severity: "high",
-			title: "AUTO 模式未真实使用 agents-team",
-			detail:
-				"AUTO 模式要求通过 agents-team 的真实团队工具链完成关键执行；当前 trace 未看到成功的 `spawn_agent` / `send_input` / `resume_agent` / `mailbox_*` / `protocol_*` / `agent_workspace_import` 或兼容旧链路的 `Task` 调用。仅加载 Skill 或正文自述不算完成。",
-		});
-		if (input.runtimeTrace?.profile === "general") {
-			flags.push({
-				code: "agents_runtime_general_profile",
-				severity: "high",
-				title: "Agents runtime 运行在 general profile",
-				detail:
-					"当前 agents-cli 运行在 general/nocode/chat profile，下发给模型的团队工具不会完整可用，AUTO 模式下无法满足真实 agents-team 执行约束。",
-			});
-		} else if (input.runtimeTrace && !runtimeTeamToolsAvailable) {
-			flags.push({
-				code: "agents_runtime_team_tools_missing",
-				severity: "high",
-				title: "Agents runtime 未暴露团队工具",
-				detail:
-					"runtime trace 显示当前 /chat 响应没有注册任何团队工具；请检查实际运行进程是否为最新 agents-cli 构建，以及 tool catalog 是否正确注入。",
-			});
-		}
-	}
-	if (
-		likelyChapterGroundedVisualContext &&
-		input.generationGate.active &&
-		!input.generationGate.directGenerationReady
-	) {
-		const limitedToSinglePlannedBaseFrame =
-			chapterGroundedVisualPreproduction.active &&
-			chapterGroundedVisualPreproduction.visualNodeCount === 1 &&
-			chapterGroundedVisualPreproduction.imageLikeNodeCount === 1 &&
-			!chapterGroundedVisualPreproduction.hasVideoNodes &&
-			!chapterGroundedVisualPreproduction.hasMaterializedVisualOutputs &&
-			chapterGroundedVisualPreproduction.hasPlannedAuthorityBaseFrame &&
-			!chapterGroundedVisualPreproduction.hasConfirmedAuthorityBaseFrame;
-		const attemptedDirectVisualBatch =
-			((input.outputMode === "direct_assets" ||
-				input.outputMode === "plan_with_assets") &&
-				!limitedToSinglePlannedBaseFrame) ||
-			input.toolEvidence.generatedAssets ||
-			chapterGroundedVisualPreproduction.hasMaterializedVisualOutputs ||
-			chapterGroundedVisualPreproduction.hasVideoNodes ||
-			chapterGroundedVisualPreproduction.visualNodeCount > 1 ||
-			(chapterGroundedVisualPreproduction.active && !limitedToSinglePlannedBaseFrame);
-		if (attemptedDirectVisualBatch) {
-			flags.push({
-				code: "chapter_grounded_visual_anchor_missing",
-				severity: "high",
-				title: "章节视觉前置锚点缺失",
-				detail:
-					input.generationGate.reason === "missing_visual_anchors_for_book_context"
-						? "当前请求已绑定 book/chapter，但合并后的 referenceImages、assetInputs、selectedReference.imageUrl、章节角色卡与 storyboard tail frame 仍未提供任何稳定视觉锚点。缺锚点时只允许先落单张 authorityBaseFrame.status='planned' 的预生产基底帧；禁止直接批量写入多张静态帧、视频节点或已出图结果。"
-						: "当前视觉请求缺少稳定视觉锚点。缺锚点时只允许先落单张 authorityBaseFrame.status='planned' 的预生产基底帧；禁止直接批量写入多张静态帧、视频节点或已出图结果。",
-			});
-		}
-	}
-	if (storyboardEditorContract.active && storyboardEditorContract.hasTextOnlyStoryboardPayload) {
-		flags.push({
-			code: "storyboard_editor_text_only_misuse",
-			severity: "medium",
-			title: "分镜编辑节点被当成文本容器",
-			detail:
-				"kind=storyboard 是图片网格编辑器；若本轮只有逐镜头文本而没有镜头图，应使用 storyboardScript/text，或显式提供 storyboardEditorCells 作为空白分镜板。",
-		});
-	}
-	if (
-		storyboardEditorContract.active &&
-		storyboardEditorContract.hasStoryboardEditorCells &&
-		!storyboardEditorContract.hasMaterializedStoryboardCellImages &&
-		!input.toolEvidence.generatedAssets &&
-		(input.forceAssetGeneration ||
-			input.semanticExecutionIntent.requiresExecutionDelivery ||
-			input.chapterGroundedPromptSpecRequired)
-	) {
-		flags.push({
-			code: "storyboard_prompt_only_visual_delivery_missing",
-			severity: "high",
-			title: "分镜仅有提示词，缺少可执行视觉交付",
-			detail:
-				"检测到 storyboardEditorCells 仅包含 prompt 且没有 imageUrl，同时本轮也没有生成真实资产或创建 image/imageEdit/storyboardImage 等可执行图片节点。该回合不能判定为章节视觉交付完成。",
-		});
-	}
-	if (chapterGroundedReferenceBinding.active && chapterGroundedReferenceBinding.missingBindingCount > 0) {
-		flags.push({
-			code: "chapter_grounded_reference_binding_missing",
-			severity: "high",
-			title: "章节视觉节点缺少参考绑定持久化",
-			detail:
-				`检测到 ${chapterGroundedReferenceBinding.missingBindingCount} 个 chapter-grounded 可视节点没有持久化 referenceImages/assetInputs，且也没有从已确认 authority 节点显式连边。已有锚点时，禁止只在 prompt 里口头声明“参考已有图片”。`,
-		});
-	}
-	if (
-		chapterGroundedReferenceBinding.active &&
-		chapterGroundedReferenceBinding.missingCharacterBindingCount > 0
-	) {
-		flags.push({
-			code: "chapter_grounded_character_binding_missing",
-			severity: "high",
-			title: "章节角色绑定丢失",
-			detail:
-				`检测到 ${chapterGroundedReferenceBinding.missingCharacterBindingCount} 个 chapter-grounded 可视节点没有保留 character 角色绑定。当前已有明确角色卡/角色名时，不允许退回默认人物描述。`,
-		});
-	}
-	if (
-		!chapterAssetRepairAction &&
-		chapterGroundedReusableAssetDeliveryRequired &&
-		input.chapterContinuityInjection.roleNameKeys.length > 0 &&
-		input.chapterContinuityInjection.roleReferenceCount <= 0
-	) {
-		flags.push({
-			code: "chapter_grounded_character_reference_missing",
-			severity: "high",
-			title: "章节角色缺少角色卡锚点",
-			detail:
-				"当前 chapter-grounded 请求存在重复角色，但项目/书籍作用域下没有任何可执行角色卡资产。角色连续性必须先建立，再继续产出关键帧、分镜或视频。",
-		});
-	} else if (
-		chapterGroundedReusableAssetDeliveryRequired &&
-		input.chapterContinuityInjection.missingRoleReferenceNames.length > 0
-	) {
-		if (chapterAssetRepairAction) {
-			// In explicit chapter asset repair flows, missing anchors are the repair target, not a failure symptom.
-		} else {
-		flags.push({
-			code: "chapter_grounded_character_reference_missing",
-			severity: "high",
-			title: "部分章节角色缺少角色卡锚点",
-			detail:
-				`以下角色缺少可执行角色卡资产：${input.chapterContinuityInjection.missingRoleReferenceNames.join("、")}。请先补齐对应角色卡，再执行 chapter-grounded 视觉续写。`,
-		});
-		}
-	}
-	if (
-		!chapterAssetRepairAction &&
-		chapterGroundedReusableAssetDeliveryRequired &&
-		input.chapterContinuityInjection.roleNameKeys.length > 0 &&
-		input.chapterContinuityInjection.stateEvidenceRoleCount <= 0
-	) {
-		flags.push({
-			code: "chapter_grounded_character_state_missing",
-			severity: "high",
-			title: "章节角色状态锚点缺失",
-			detail:
-				"当前 chapter-grounded 请求缺少可追溯的角色年龄/状态证据（ageDescription/stateDescription/stateKey）。未建立状态锚点时，禁止继续产出可执行跨章关键帧。",
-		});
-	} else if (
-		chapterGroundedReusableAssetDeliveryRequired &&
-		input.chapterContinuityInjection.missingStateRoleNames.length > 0
-	) {
-		if (chapterAssetRepairAction) {
-			// In explicit chapter asset repair flows, missing anchors are the repair target, not a failure symptom.
-		} else {
-		flags.push({
-			code: "chapter_grounded_character_state_missing",
-			severity: "high",
-			title: "部分角色状态锚点缺失",
-			detail:
-				`以下角色缺少年龄或状态锚点：${input.chapterContinuityInjection.missingStateRoleNames.join("、")}。请先补齐角色卡状态元数据，再执行章节视觉续写。`,
-		});
-		}
-	}
-	if (
-		!chapterAssetRepairAction &&
-		chapterGroundedReusableAssetDeliveryRequired &&
-		input.chapterContinuityInjection.roleNameKeys.length > 0 &&
-		input.chapterContinuityInjection.threeViewRoleCount <= 0
-	) {
-		flags.push({
-			code: "chapter_grounded_character_three_view_missing",
-			severity: "high",
-			title: "章节角色缺少三视图锚点",
-			detail:
-				"当前 chapter-grounded 请求涉及重复角色，但项目/书籍作用域下没有可执行的角色三视图资产（threeViewImageUrl）。重复主体必须先补齐三视图参考，再继续产出分镜或关键帧。",
-		});
-	} else if (
-		chapterGroundedReusableAssetDeliveryRequired &&
-		input.chapterContinuityInjection.missingThreeViewRoleNames.length > 0
-	) {
-		if (chapterAssetRepairAction) {
-			// In explicit chapter asset repair flows, missing anchors are the repair target, not a failure symptom.
-		} else {
-		flags.push({
-			code: "chapter_grounded_character_three_view_missing",
-			severity: "high",
-			title: "部分角色缺少三视图锚点",
-			detail:
-				`以下角色缺少三视图资产：${input.chapterContinuityInjection.missingThreeViewRoleNames.join("、")}。请先生成并绑定对应三视图，再执行 chapter-grounded 视觉续写。`,
-		});
-		}
-	}
-	if (
-		!chapterAssetRepairAction &&
-		chapterGroundedReusableAssetDeliveryRequired &&
-		input.chapterContinuityInjection.sceneNameKeys.length + input.chapterContinuityInjection.propNameKeys.length > 0 &&
-		input.chapterContinuityInjection.scenePropReferenceCount <= 0
-	) {
-		flags.push({
-			code: "chapter_grounded_scene_prop_reference_missing",
-			severity: "high",
-			title: "章节场景/道具缺少参考锚点",
-			detail:
-				"当前 chapter-grounded 请求存在章节场景或关键道具，但项目/书籍作用域下没有匹配的 scene_prop 参考资产。场景/道具连续性必须先建立，再继续批量分镜生成。",
-		});
-	} else if (
-		chapterGroundedReusableAssetDeliveryRequired &&
-		input.chapterContinuityInjection.missingScenePropNames.length > 0
-	) {
-		if (chapterAssetRepairAction) {
-			// In explicit chapter asset repair flows, missing anchors are the repair target, not a failure symptom.
-		} else {
-		flags.push({
-			code: "chapter_grounded_scene_prop_reference_missing",
-			severity: "high",
-			title: "部分场景/道具缺少参考锚点",
-			detail:
-				`以下场景/道具缺少参考资产：${input.chapterContinuityInjection.missingScenePropNames.join("、")}。请先补齐对应 scene_prop 参考图，再执行 chapter-grounded 视觉续写。`,
-		});
-		}
-	}
-	if (videoPromptGovernance.active) {
-		if (!videoPromptGovernance.hasExecutablePrompt) {
-			flags.push({
-				code: "video_prompt_core_fields_missing",
-				severity: "high",
-				title: "视频提示词缺少核心字段",
-				detail:
-					videoPromptGovernance.usesDeprecatedVideoPromptField
-						? "视频节点必须提供 `prompt`；`videoPrompt` 已废弃，不再作为执行字段。"
-						: "视频节点必须提供 `prompt`，并把真实会参与生成的镜头、动作、导演意图与约束直接写进 prompt 本体。",
-			});
-		}
-	}
-	if (imagePromptSpecGovernance.invalidSpecCount > 0) {
-		flags.push({
-			code: "image_prompt_spec_v2_invalid",
-			severity: "high",
-			title: "章节图片结构化提示词非法",
-			detail:
-				`chapter-grounded 图片结果里检测到 ${imagePromptSpecGovernance.invalidSpecCount} 个无效 structuredPrompt。` +
-				" 若提供结构化 JSON，请统一写入 `structuredPrompt`，并显式提供 version=v2、shotIntent、spatialLayout、cameraPlan、lightingPlan 等核心字段。",
-		});
-	}
-	if (imagePromptSpecGovernance.missingSpecCount > 0) {
-		flags.push({
-			code: "image_prompt_spec_v2_missing",
-			severity: "high",
-			title: "章节图片缺少结构化提示词",
-			detail:
-				`chapter-grounded 图片结果里检测到 ${imagePromptSpecGovernance.missingSpecCount} 个目标缺少 structuredPrompt。` +
-				" 若结果属于章节图片/关键帧输出，必须同步提供 version=v2 的 structuredPrompt，并包含 shotIntent、spatialLayout、cameraPlan、lightingPlan 等核心字段。",
-		});
-	}
-	if (imagePromptSpecGovernance.missingReferenceBindingsCount > 0) {
-		flags.push({
-			code: "image_prompt_spec_v2_reference_bindings_missing",
-			severity: "high",
-			title: "结构化提示词缺少参考绑定",
-			detail:
-				`检测到 ${imagePromptSpecGovernance.missingReferenceBindingsCount} 个 chapter-grounded structuredPrompt 未显式填写 referenceBindings。已有锚点输入时禁止只在自然语言 prompt 里口头引用。`,
-		});
-	}
-	if (imagePromptSpecGovernance.missingIdentityConstraintsCount > 0) {
-		flags.push({
-			code: "image_prompt_spec_v2_identity_constraints_missing",
-			severity: "high",
-			title: "结构化提示词缺少身份锁定",
-			detail:
-				`检测到 ${imagePromptSpecGovernance.missingIdentityConstraintsCount} 个 chapter-grounded structuredPrompt 未填写 identityConstraints。存在角色绑定时必须显式锁定身份。`,
-		});
-	}
-	if (imagePromptSpecGovernance.missingEnvironmentObjectsCount > 0) {
-		flags.push({
-			code: "image_prompt_spec_v2_environment_objects_missing",
-			severity: "high",
-			title: "结构化提示词缺少环境/道具锚点",
-			detail:
-				`检测到 ${imagePromptSpecGovernance.missingEnvironmentObjectsCount} 个 chapter-grounded structuredPrompt 未填写 environmentObjects。存在场景/道具锚点时必须落结构化字段。`,
-		});
-	}
-	if (imagePromptSpecGovernance.missingCharacterContinuityCount > 0) {
-		flags.push({
-			code: "image_prompt_spec_v2_character_continuity_missing",
-			severity: "high",
-			title: "结构化提示词缺少角色连续性约束",
-			detail:
-				`检测到 ${imagePromptSpecGovernance.missingCharacterContinuityCount} 个 chapter-grounded structuredPrompt 未填写 continuityConstraints。存在角色年龄/状态证据时，必须显式约束跨章状态连续性。`,
-		});
-	}
-	return flags;
-}
-
 function buildAgentsBridgeDecision(input: {
 	outputMode: AgentsBridgeOutputMode;
 	assetCount: number;
@@ -3491,9 +3153,6 @@ function buildAgentsBridgeDecision(input: {
 			  input.canvasPlanDiagnostics.action === "create_canvas_workflow"
 			? "create_canvas_workflow"
 			: "none";
-	const requiresConfirmation =
-		(executionKind === "plan" && input.assetCount === 0) ||
-		(canvasAction === "create_canvas_workflow" && !input.toolEvidence.generatedAssets);
 	const reasonParts = [
 		`mode=${input.outputMode}`,
 		`projectStateRead=${input.toolEvidence.readProjectState ? "yes" : "no"}`,
@@ -3509,129 +3168,87 @@ function buildAgentsBridgeDecision(input: {
 		canvasAction,
 		assetCount: input.assetCount,
 		projectStateRead: input.toolEvidence.readProjectState,
-		requiresConfirmation,
 		reason: reasonParts.join("; "),
 	};
 }
 
-function buildAgentsBridgeTurnVerdict(input: {
-	text: string;
-	assetCount: number;
-	toolEvidence: BridgeToolEvidence;
-	toolExecutionIssues: ToolExecutionIssueSummary;
-	canvasPlanDiagnostics: CanvasPlanDiagnostics;
-	diagnosticFlags: DiagnosticFlag[];
-	forceAssetGeneration: boolean;
-	semanticExecutionIntent: AgentsSemanticExecutionIntentSummary;
-	deliveryVerification: PublicChatDeliveryVerificationSummary;
-	completionTrace?: AgentsCompletionTraceSummary | null;
-}): AgentsBridgeTurnVerdict {
-	const failedReasons = new Set<string>();
-	const partialReasons = new Set<string>();
-	const validCanvasPlan =
-		input.canvasPlanDiagnostics.parseSuccess === true &&
-		input.canvasPlanDiagnostics.nodeCount > 0;
-	const invalidCanvasPlan =
-		input.canvasPlanDiagnostics.errorCode === "invalid_canvas_plan_tag_name" ||
-		(input.canvasPlanDiagnostics.tagPresent === true &&
-			input.canvasPlanDiagnostics.parseSuccess !== true);
-	const parsedPlanWithoutNodes =
-		input.canvasPlanDiagnostics.parseSuccess === true &&
-		input.canvasPlanDiagnostics.nodeCount <= 0;
-	const hasExecutionEvidence =
-		input.assetCount > 0 || input.toolEvidence.generatedAssets || input.toolEvidence.wroteCanvas;
-	const hasDeliveredResult =
-		Boolean(input.text.trim()) ||
-		input.assetCount > 0 ||
-		input.toolEvidence.wroteCanvas ||
-		validCanvasPlan;
-	const forceAssetGenerationDeferredToCanvasPlan =
-		input.forceAssetGeneration &&
-		!hasExecutionEvidence &&
-		validCanvasPlan &&
-		input.canvasPlanDiagnostics.action === "create_canvas_workflow";
-	const forceAssetGenerationUnmet =
-		input.forceAssetGeneration &&
-		!hasExecutionEvidence &&
-		!forceAssetGenerationDeferredToCanvasPlan;
-	const semanticExecutionDeliveryUnmet =
-		input.semanticExecutionIntent.requiresExecutionDelivery &&
-		!hasExecutionEvidence &&
-		!validCanvasPlan;
-	const genericDeliveryFailureRedundant =
-		input.deliveryVerification.code === "generic_execution_delivery_missing" &&
-		(
-			forceAssetGenerationUnmet ||
-			forceAssetGenerationDeferredToCanvasPlan ||
-			semanticExecutionDeliveryUnmet
-		);
-
-	if (input.completionTrace) {
-		if (input.completionTrace.allowFinish !== true || input.completionTrace.terminal === "blocked") {
-			failedReasons.add("runtime_completion_blocked");
-			if (input.completionTrace.failureReason) {
-				failedReasons.add(`runtime_completion_reason:${input.completionTrace.failureReason}`);
-			}
-		} else if (input.completionTrace.terminal === "explicit_failure") {
-			failedReasons.add("runtime_completion_explicit_failure");
-			if (input.completionTrace.failureReason) {
-				failedReasons.add(`runtime_completion_reason:${input.completionTrace.failureReason}`);
-			}
+export function resolveAgentsBridgeRequestTerminal(input: {
+	runOutcome: AgentsBridgeRunOutcome;
+	pendingUserInput: boolean;
+}): AgentsBridgeRequestTerminal {
+	if (input.pendingUserInput) {
+		if (input.runOutcome.status !== "needs_input") {
+			return {
+				version: 1,
+				terminal: true,
+				status: "failed",
+				reason: "agent_run_outcome_user_input_mismatch",
+			};
 		}
-	}
-
-	if (invalidCanvasPlan) failedReasons.add("invalid_canvas_plan");
-	if (parsedPlanWithoutNodes) failedReasons.add("parsed_plan_without_nodes");
-	if (!hasDeliveredResult) failedReasons.add("empty_response_without_execution");
-	if (forceAssetGenerationUnmet) failedReasons.add("force_asset_generation_unmet");
-	if (semanticExecutionDeliveryUnmet) {
-		failedReasons.add("semantic_execution_delivery_unmet");
-	}
-	if (
-		input.deliveryVerification.applicable &&
-		input.deliveryVerification.status === "failed" &&
-		input.deliveryVerification.code &&
-		!genericDeliveryFailureRedundant
-	) {
-		failedReasons.add(input.deliveryVerification.code);
-	}
-	if (forceAssetGenerationDeferredToCanvasPlan) {
-		partialReasons.add("force_asset_generation_deferred_to_canvas_plan");
-	}
-	if (input.toolExecutionIssues.hasExecutionIssues) partialReasons.add("tool_execution_issues");
-	if (input.diagnosticFlags.length > 0) {
-		for (const flag of input.diagnosticFlags) {
-			const code = String(flag.code || "").trim();
-			if (!code) continue;
-			if (HARD_FAILURE_DIAGNOSTIC_CODES.has(code)) {
-				failedReasons.add(code);
-				continue;
-			}
-			partialReasons.add(code);
-		}
-		partialReasons.add("diagnostic_flags_present");
-	}
-
-	if (failedReasons.size > 0) {
 		return {
+			version: 1,
+			terminal: true,
+			status: "needs_input",
+			reason: input.runOutcome.reason,
+		};
+	}
+	if (input.runOutcome.status === "needs_input") {
+		return {
+			version: 1,
+			terminal: true,
 			status: "failed",
-			reasons: Array.from(failedReasons),
+			reason: "agent_run_outcome_user_input_evidence_missing",
 		};
 	}
-
-	if (partialReasons.size > 0) {
+	if (input.runOutcome.status === "failed") {
 		return {
-			status: "partial",
-			reasons: Array.from(partialReasons),
+			version: 1,
+			terminal: true,
+			status: "failed",
+			reason: input.runOutcome.reason,
 		};
 	}
-
+	if (input.runOutcome.status === "suspended") {
+		return {
+			version: 1,
+			terminal: true,
+			status: "suspended",
+			reason: input.runOutcome.reason,
+		};
+	}
 	return {
-		status: "satisfied",
-		reasons: ["validated_result"],
+		version: 1,
+		terminal: true,
+		status: "succeeded",
+		reason: input.runOutcome.reason,
 	};
 }
 
+export function buildAgentsBridgeTurnVerdict(
+	requestTerminal: AgentsBridgeRequestTerminal,
+): AgentsBridgeTurnVerdict {
+	if (requestTerminal.status === "succeeded") {
+		return { status: "satisfied", reasons: [requestTerminal.reason] };
+	}
+	if (requestTerminal.status === "needs_input" || requestTerminal.status === "suspended") {
+		return { status: "partial", reasons: [requestTerminal.reason] };
+	}
+	return { status: "failed", reasons: [requestTerminal.reason] };
+}
+
+/**
+ * TaskResult.status describes the logical work represented by this bridge
+ * result. A physical-window suspension or user-input handoff is still running;
+ * callers must not promote it to a completed pipeline/task merely because the
+ * HTTP request returned successfully.
+ */
+export function resolveAgentsBridgeTaskResultStatus(
+	logicalTaskState: AgentLogicalTaskStateV1,
+): TaskResultDto["status"] {
+	if (logicalTaskState.status === "succeeded") return "succeeded";
+	if (logicalTaskState.status === "failed" || logicalTaskState.status === "cancelled") return "failed";
+	return "running";
+}
 
 function pickFirstAnchorBindingByKind(
 	bindings: PublicFlowAnchorBinding[],
@@ -3666,17 +3283,63 @@ function readSelectedReferenceRoleCardId(
 function normalizeAgentsBridgeChatContext(raw: unknown): AgentsBridgeChatContext {
 	if (!raw || typeof raw !== "object") {
 		return {
+			requestedWorkflowExecutionVariant: null,
+			generationProposal: null,
 			currentProjectName: null,
 			workspaceAction: null,
 			skill: null,
+			roleSkillAssignments: [],
+			chapterDirectorPersona: null,
+			chapterStyleOverride: null,
 			selectedNodeLabel: null,
 			selectedNodeKind: null,
 			selectedNodeTextPreview: null,
 			selectedReference: null,
+			chapterCanvasReference: null,
+			chatMode: null,
+			creativePhase: null,
+			canvasSummary: null,
 		};
 	}
 	const value = raw as Record<string, unknown>;
+	const generationProposalRaw = value.generationProposal;
+	let generationProposal: AgentsBridgeGenerationProposal | null = null;
+	if (generationProposalRaw !== undefined && generationProposalRaw !== null) {
+		if (!generationProposalRaw || typeof generationProposalRaw !== "object" || Array.isArray(generationProposalRaw)) {
+			throw new AppError("chatContext.generationProposal 必须是结构化对象", { status: 400, code: "invalid_generation_proposal" });
+		}
+		const proposal = generationProposalRaw as Record<string, unknown>;
+		const proposalId = typeof proposal.proposalId === "string" ? proposal.proposalId.trim() : "";
+		const title = typeof proposal.title === "string" ? proposal.title.trim() : "";
+		const prompt = typeof proposal.prompt === "string" ? proposal.prompt.trim() : "";
+		const kind = proposal.kind === "image" || proposal.kind === "video" || proposal.kind === "audio" || proposal.kind === "prompt" ? proposal.kind : null;
+		if (proposal.version !== 1 || !proposalId || !title || !prompt || !kind) {
+			throw new AppError("chatContext.generationProposal 缺少有效提案事实", { status: 400, code: "invalid_generation_proposal" });
+		}
+		const parametersRaw = Array.isArray(proposal.parameters) ? proposal.parameters : [];
+		const parameters = parametersRaw.slice(0, 32).flatMap((item) => {
+			if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+			const record = item as Record<string, unknown>;
+			const label = typeof record.label === "string" ? record.label.trim() : "";
+			const value = typeof record.value === "string" ? record.value.trim() : "";
+			return label && value ? [{ label, value }] : [];
+		});
+		generationProposal = {
+			version: 1,
+			proposalId,
+			kind,
+			title,
+			prompt,
+			...(typeof proposal.model === "string" && proposal.model.trim() ? { model: proposal.model.trim() } : {}),
+			parameters,
+			action: typeof proposal.action === "string" && proposal.action.trim() ? proposal.action.trim() : null,
+			nodeId: typeof proposal.nodeId === "string" && proposal.nodeId.trim() ? proposal.nodeId.trim() : null,
+		};
+	}
 	const skillRaw = value.skill;
+	const roleSkillAssignments = normalizeAgentsBridgeRoleSkillAssignments(value.roleSkillAssignments);
+	const chapterDirectorPersona = normalizeAgentsBridgeChapterDirectorPersona(value.chapterDirectorPersona);
+	const chapterStyleOverride = normalizeAgentsBridgeChapterStyleOverride(value.chapterStyleOverride);
 	const selectedReferenceRaw = value.selectedReference;
 	const normalizedAnchorBindings =
 		selectedReferenceRaw && typeof selectedReferenceRaw === "object"
@@ -3692,6 +3355,16 @@ function normalizeAgentsBridgeChatContext(raw: unknown): AgentsBridgeChatContext
 	const skill =
 		skillRaw && typeof skillRaw === "object"
 			? {
+					id:
+						typeof (skillRaw as Record<string, unknown>).id === "string"
+							? String((skillRaw as Record<string, unknown>).id).trim() || null
+							: null,
+					source:
+						(skillRaw as Record<string, unknown>).source === "system" ||
+						(skillRaw as Record<string, unknown>).source === "user" ||
+						(skillRaw as Record<string, unknown>).source === "marketplace"
+							? ((skillRaw as Record<string, unknown>).source as ChatSkillReferenceSource)
+							: null,
 					key:
 						typeof (skillRaw as Record<string, unknown>).key === "string"
 							? String((skillRaw as Record<string, unknown>).key).trim() || null
@@ -3703,10 +3376,19 @@ function normalizeAgentsBridgeChatContext(raw: unknown): AgentsBridgeChatContext
 			  }
 			: null;
 	return {
+		requestedWorkflowExecutionVariant:
+			value.requestedWorkflowExecutionVariant === "full_video" ||
+			value.requestedWorkflowExecutionVariant === "first_video"
+				? value.requestedWorkflowExecutionVariant
+				: null,
+		generationProposal,
 		currentProjectName:
 			typeof value.currentProjectName === "string"
 				? String(value.currentProjectName).trim() || null
 				: null,
+		chatMode: value.chatMode === "creative" ? "creative" : null,
+		creativePhase:
+			value.creativePhase === "prep" ? "prep" : value.creativePhase === "writing" ? "writing" : null,
 		workspaceAction:
 			value.workspaceAction === "chapter_script_generation" ||
 			value.workspaceAction === "chapter_asset_generation" ||
@@ -3714,6 +3396,9 @@ function normalizeAgentsBridgeChatContext(raw: unknown): AgentsBridgeChatContext
 				? value.workspaceAction
 				: null,
 		skill,
+		roleSkillAssignments,
+		chapterDirectorPersona,
+		chapterStyleOverride,
 		selectedNodeLabel:
 			typeof value.selectedNodeLabel === "string"
 				? String(value.selectedNodeLabel).trim() || null
@@ -3802,7 +3487,176 @@ function normalizeAgentsBridgeChatContext(raw: unknown): AgentsBridgeChatContext
 						storyboardSelectionContext: normalizedStoryboardSelectionContext,
 				  }
 				: null,
+		chapterCanvasReference: normalizeChapterCanvasReference(value.chapterCanvasReference),
+		canvasSummary:
+			typeof value.canvasSummary === "string" && value.canvasSummary.trim()
+				? truncateMiddleText(value.canvasSummary.trim(), 700)
+				: null,
 	};
+}
+
+function normalizeAgentsBridgeChapterDirectorPersona(raw: unknown): AgentsBridgeChapterDirectorPersona | null {
+	if (typeof raw === "undefined" || raw === null) return null;
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new AppError("chatContext.chapterDirectorPersona 必须是结构化对象", {
+			status: 400,
+			code: "invalid_chapter_director_persona",
+		});
+	}
+	const value = raw as Record<string, unknown>;
+	const personaId = typeof value.personaId === "string" ? value.personaId.trim() : "";
+	if (!personaId) {
+		throw new AppError("chatContext.chapterDirectorPersona 缺少 personaId", {
+			status: 400,
+			code: "invalid_chapter_director_persona",
+		});
+	}
+	return {
+		personaId,
+		personaName: typeof value.personaName === "string" ? value.personaName.trim() : "",
+		source: value.source === "custom" ? "custom" : "catalog",
+		prompt: typeof value.prompt === "string" && value.prompt.trim() ? value.prompt.trim() : null,
+	};
+}
+
+function normalizeAgentsBridgeChapterStyleOverride(raw: unknown): AgentsBridgeChapterStyleOverride | null {
+	if (typeof raw === "undefined" || raw === null) return null;
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new AppError("chatContext.chapterStyleOverride 必须是结构化对象", {
+			status: 400,
+			code: "invalid_chapter_style_override",
+		});
+	}
+	const value = raw as Record<string, unknown>;
+	const styleId = typeof value.styleId === "string" ? value.styleId.trim() || null : null;
+	const styleName = typeof value.styleName === "string" ? value.styleName.trim() || null : null;
+	const stylePrompt = typeof value.stylePrompt === "string" ? value.stylePrompt.trim() || null : null;
+	const category = typeof value.category === "string" ? value.category.trim() || null : null;
+	const referenceImageCount = Number(value.referenceImageCount);
+	if (
+		!Number.isInteger(referenceImageCount) ||
+		referenceImageCount < 0 ||
+		referenceImageCount > 16
+	) {
+		throw new AppError("chatContext.chapterStyleOverride 的参考图数量无效", {
+			status: 400,
+			code: "invalid_chapter_style_reference_count",
+		});
+	}
+	if (!styleId && !styleName && !stylePrompt && !category && referenceImageCount === 0) return null;
+	return { styleId, styleName, stylePrompt, category, referenceImageCount };
+}
+
+function normalizeAgentsBridgeRoleSkillAssignments(raw: unknown): AgentsBridgeRoleSkillAssignment[] {
+	if (typeof raw === "undefined" || raw === null) return [];
+	if (!Array.isArray(raw)) {
+		throw new AppError("chatContext.roleSkillAssignments 必须是数组", {
+			status: 400,
+			code: "invalid_role_skill_assignments",
+		});
+	}
+	if (raw.length > 16) {
+		throw new AppError("chatContext.roleSkillAssignments 超出角色配置上限", {
+			status: 400,
+			code: "role_skill_assignments_limit_exceeded",
+			details: { max: 16, actual: raw.length },
+		});
+	}
+	return raw.map((item, index) => {
+		if (!item || typeof item !== "object" || Array.isArray(item)) {
+			throw new AppError(`chatContext.roleSkillAssignments[${index}] 必须是结构化对象`, {
+				status: 400,
+				code: "invalid_role_skill_assignment",
+			});
+		}
+		const assignment = item as Record<string, unknown>;
+		const roleId = typeof assignment.roleId === "string" ? assignment.roleId.trim() : "";
+		const roleName = typeof assignment.roleName === "string" ? assignment.roleName.trim() : "";
+		const source = assignment.source === "system" || assignment.source === "custom" ? assignment.source : null;
+		const skillId = typeof assignment.skillId === "string" ? assignment.skillId.trim() || null : null;
+		const skillKey = typeof assignment.skillKey === "string" ? assignment.skillKey.trim() || null : null;
+		const skillName = typeof assignment.skillName === "string" ? assignment.skillName.trim() || null : null;
+		const fileName = typeof assignment.fileName === "string" ? assignment.fileName.trim() || null : null;
+		const content = typeof assignment.content === "string" ? assignment.content : null;
+		if (!roleId || !roleName || !source) {
+			throw new AppError(`chatContext.roleSkillAssignments[${index}] 缺少角色或来源`, {
+				status: 400,
+				code: "invalid_role_skill_assignment",
+			});
+		}
+		if (source === "system" && !skillId && !skillKey) {
+			throw new AppError(`chatContext.roleSkillAssignments[${index}] 缺少系统 Skill 标识`, {
+				status: 400,
+				code: "invalid_system_role_skill_assignment",
+			});
+		}
+		if (source === "custom" && !content?.trim()) {
+			throw new AppError(`chatContext.roleSkillAssignments[${index}] 缺少自定义 Skill 文本`, {
+				status: 400,
+				code: "invalid_custom_role_skill_assignment",
+			});
+		}
+		return {
+			roleId,
+			roleName,
+			source,
+			skillId,
+			skillKey,
+			skillName,
+			fileName,
+			content: source === "custom" ? content : null,
+		};
+	});
+}
+
+function normalizeChapterCanvasReference(raw: unknown): AgentsBridgeChatContext["chapterCanvasReference"] {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+	const record = raw as Record<string, unknown>;
+	if (record.version !== 1) return null;
+	const scopeKey = typeof record.scopeKey === "string" ? record.scopeKey.trim() : "";
+	if (!scopeKey) return null;
+	const declaredNodeCount = Number(record.nodeCount);
+	const declaredEdgeCount = Number(record.edgeCount);
+	if (!Number.isInteger(declaredNodeCount) || declaredNodeCount < 0) return null;
+	if (!Number.isInteger(declaredEdgeCount) || declaredEdgeCount < 0) return null;
+	return {
+		version: 1,
+		scopeKey: scopeKey.slice(0, 240),
+		nodeCount: declaredNodeCount,
+		edgeCount: declaredEdgeCount,
+		summary: typeof record.summary === "string" && record.summary.trim()
+			? truncateMiddleText(record.summary.trim(), 700)
+			: null,
+		selectedNodeId: typeof record.selectedNodeId === "string" && record.selectedNodeId.trim()
+			? record.selectedNodeId.trim()
+			: null,
+	};
+}
+
+/** token/字符预算内的中间截断：保留头尾、砍中间（对标 codex truncate_middle，比 slice(0,N) 不丢尾部信息）。 */
+function truncateMiddleText(text: string, maxChars: number): string {
+	const s = String(text ?? "");
+	if (s.length <= maxChars) return s;
+	const keep = Math.max(0, maxChars - 3);
+	const head = Math.ceil(keep * 0.6);
+	const tail = keep - head;
+	return `${s.slice(0, head)}…${tail > 0 ? s.slice(s.length - tail) : ""}`;
+}
+
+// 注入的画布上下文用标记包裹（对标 codex <external_*>）：让模型一眼认出这是"注入的只读画布快照"、
+// 不必复述；同时内容不变时整块前缀稳定，利于 prompt 缓存命中（= 未变化的快照天然不重复计费）。
+function buildChapterCanvasReferenceBlock(reference: AgentsBridgeChatContext["chapterCanvasReference"]): string | null {
+	if (!reference) return null;
+	return [
+		"<canvas_reference readonly version=\"1\">",
+		`scopeKey: ${reference.scopeKey}`,
+		`nodeCount: ${reference.nodeCount}`,
+		`edgeCount: ${reference.edgeCount}`,
+		...(reference.selectedNodeId ? [`selectedNodeId: ${reference.selectedNodeId}`] : []),
+		...(reference.summary ? [`summary: ${reference.summary}`] : []),
+		"节点正文与资产事实未内联；只有当前任务确实需要时才用 tapcanvas_flow_get / tapcanvas_flow_search 按需读取。",
+		"</canvas_reference>",
+	].join("\n");
 }
 
 function normalizeComparableString(value: string | null | undefined): string {
@@ -3829,72 +3683,6 @@ function isDirectVideoSceneAnchorReference(
 		creationStage === "shot_anchor_lock" ||
 		creationStage === "approved_keyframe_selection"
 	);
-}
-
-function hasChapterGroundedSelectedReference(
-	selectedReference: AgentsBridgeChatContext["selectedReference"],
-): boolean {
-	if (!selectedReference) return false;
-	if (selectedReference.bookId?.trim() && selectedReference.chapterId?.trim()) return true;
-	if (typeof selectedReference.shotNo === "number") return true;
-	if (selectedReference.hasUpstreamTextEvidence === true) return true;
-	const storyboardSelectionContext = selectedReference.storyboardSelectionContext;
-	return Boolean(
-		storyboardSelectionContext?.sourceBookId &&
-			typeof storyboardSelectionContext.materialChapter === "number",
-	);
-}
-
-function summarizeAssetRoles(assetInputs: AgentsBridgeAssetInput[]): string[] {
-	const counts = new Map<AgentsBridgeAssetRole, number>();
-	for (const item of assetInputs) {
-		const role = item.role;
-		counts.set(role, (counts.get(role) || 0) + 1);
-	}
-	return Array.from(counts.entries()).map(([role, count]) => `${role}:${count}`);
-}
-
-function describeReferenceImageRole(
-	role: AgentsBridgeAssetRole | null | undefined,
-): string | null {
-	switch (role) {
-		case "target":
-			return "目标图";
-		case "reference":
-			return "参考图";
-		case "character":
-			return "角色参考";
-		case "scene":
-			return "场景参考";
-		case "prop":
-			return "道具参考";
-		case "product":
-			return "产品参考";
-		case "style":
-			return "风格参考";
-		case "context":
-			return "场景参考";
-		case "mask":
-			return "遮罩参考";
-		default:
-			return null;
-	}
-}
-
-function inferReferenceImageSlotLabel(input: {
-	role: AgentsBridgeAssetRole | null;
-	name: string | null;
-	note: string | null;
-	selectedReferenceLabel: string | null;
-}): string | null {
-	if (input.name) return input.name;
-	if (input.selectedReferenceLabel) return input.selectedReferenceLabel;
-	if (input.note) {
-		const trimmedNote = input.note.trim();
-		if (trimmedNote.startsWith("storyboard-tail:")) return "上一组尾帧";
-		if (trimmedNote.length <= 80) return trimmedNote;
-	}
-	return describeReferenceImageRole(input.role) || "参考图";
 }
 
 function buildReferenceImageSlots(input: {
@@ -3930,123 +3718,57 @@ function buildReferenceImageSlots(input: {
 		return {
 			slot: `图${index + 1}`,
 			url,
-			role: describeReferenceImageRole(role),
-			label: inferReferenceImageSlotLabel({
-				role,
-				name,
-				note,
-				selectedReferenceLabel,
-			}),
+			referenceId:
+				matchedAsset?.nodeId
+					? `node:${matchedAsset.nodeId}`
+					: matchedAsset?.assetRefId
+						? `asset-ref:${matchedAsset.assetRefId}`
+						: matchedAsset?.assetId
+							? `asset:${matchedAsset.assetId}`
+							: null,
+			nodeId: matchedAsset?.nodeId || null,
+			assetId: matchedAsset?.assetId || null,
+			assetRefId: matchedAsset?.assetRefId || null,
+			role,
+			label: name || selectedReferenceLabel,
 			note,
 		};
 	});
 }
 
-function summarizeReferenceImageSlotsForTrace(
-	slots: AgentsBridgeReferenceImageSlot[],
-): string[] {
-	return slots.map((slot) => {
-		const parts = [slot.slot];
-		if (slot.label) parts.push(slot.label);
-		if (slot.role) parts.push(`role=${slot.role}`);
-		if (slot.note) parts.push(`note=${slot.note}`);
-		return parts.join(" | ");
-	});
-}
-
-type PublicAgentsGenerationGate = {
-	active: boolean;
-	directGenerationReady: boolean;
-	hasVisualAnchors: boolean;
-	reason: string;
-};
-
-function evaluatePublicAgentsGenerationGate(input: {
-	publicAgentsRequest: boolean;
-	canvasProjectId: string;
-	canvasFlowId: string;
-	referenceImages: string[];
-	assetInputsCount: number;
-	selectedReferenceImageUrl: string;
-	bookId: string;
-	chapterId: string;
-}): PublicAgentsGenerationGate {
-	const active = Boolean(
-		input.publicAgentsRequest && input.canvasProjectId && input.canvasFlowId,
-	);
-	if (!active) {
-		return {
-			active: false,
-			directGenerationReady: true,
-			hasVisualAnchors:
-				input.referenceImages.length > 0 ||
-				input.assetInputsCount > 0 ||
-				/^https?:\/\//i.test(input.selectedReferenceImageUrl),
-			reason: "non_canvas_or_non_public_agents",
-		};
-	}
-
-	const hasVisualAnchors =
-		input.referenceImages.length > 0 ||
-		input.assetInputsCount > 0 ||
-		/^https?:\/\//i.test(input.selectedReferenceImageUrl);
-	if (hasVisualAnchors) {
-		return {
-			active: true,
-			directGenerationReady: true,
-			hasVisualAnchors: true,
-			reason: "visual_anchors_present",
-		};
-	}
-
-	const hasBookContext = Boolean(input.bookId && input.chapterId);
-	return {
-		active: true,
-		directGenerationReady: false,
-		hasVisualAnchors: false,
-		reason: hasBookContext
-			? "missing_visual_anchors_for_book_context"
-			: "missing_visual_anchors",
-	};
-}
-
-function shouldSuppressProductIntegrityConstraint(input: {
-	bookId: string;
-	chapterId: string;
-	chatContext: AgentsBridgeChatContext;
-	canvasProjectId: string;
-	canvasFlowId: string;
-}): boolean {
-	if (!(input.canvasProjectId && input.canvasFlowId)) return false;
-	if (Boolean(input.bookId && input.chapterId)) return true;
-	return hasChapterGroundedSelectedReference(input.chatContext.selectedReference);
-}
-
-const agentsBridgeQueueState: {
-	active: number;
-	waiters: Array<() => void>;
-} = {
-	active: 0,
-	waiters: [],
-};
+const agentsBridgeAdmissionScheduler = new AgentsBridgeAdmissionScheduler();
 
 const nodeFetchDispatcherCache = new Map<number, unknown>();
 
+// All three gates now fall back to FINITE defaults (was 999999 = fail-open, which
+// let the existing 429 admission path never fire). With these finite, peak load is
+// shed with 429 instead of accepted until the process OOMs. Override via env.
 function readAgentsBridgeMaxConcurrency(c: AppContext): number {
 	const rawFromEnv =
 		typeof c.env.AGENTS_BRIDGE_MAX_CONCURRENCY === "string"
 			? c.env.AGENTS_BRIDGE_MAX_CONCURRENCY
 			: "";
 	const rawFromProcess =
-		typeof (globalThis as any)?.process?.env?.AGENTS_BRIDGE_MAX_CONCURRENCY === "string"
-			? String((globalThis as any).process.env.AGENTS_BRIDGE_MAX_CONCURRENCY)
-			: "";
-	const raw = rawFromEnv || rawFromProcess;
-	const n = Number(raw);
-	if (Number.isFinite(n) && n > 0) {
-		return Math.max(1, Math.min(6, Math.trunc(n)));
-	}
-	return 1;
+		readNodeProcessEnv("AGENTS_BRIDGE_MAX_CONCURRENCY");
+	return resolvePositiveIntEnv(
+		rawFromEnv || rawFromProcess,
+		CONCURRENCY_DEFAULTS.bridgeMaxConcurrency,
+	);
+}
+
+function readAgentsBridgeMaxQueueDepth(): number {
+	return resolvePositiveIntEnv(
+		readNodeProcessEnv("AGENTS_BRIDGE_MAX_QUEUE_DEPTH"),
+		CONCURRENCY_DEFAULTS.bridgeMaxQueueDepth,
+		{ allowZero: true },
+	);
+}
+
+function readAgentsBridgeMaxPerUser(): number {
+	return resolvePositiveIntEnv(
+		readNodeProcessEnv("AGENTS_BRIDGE_MAX_PER_USER"),
+		CONCURRENCY_DEFAULTS.bridgeMaxPerUser,
+	);
 }
 
 function toAbortError(signal?: AbortSignal): Error {
@@ -4061,69 +3783,42 @@ function throwIfAbortSignalAborted(signal?: AbortSignal): void {
 	throw toAbortError(signal);
 }
 
-async function waitForAgentsBridgeQueueSlot(signal?: AbortSignal): Promise<void> {
-	throwIfAbortSignalAborted(signal);
-	await new Promise<void>((resolve, reject) => {
-		const wake = () => {
-			cleanup();
-			resolve();
-		};
-		const onAbort = () => {
-			const index = agentsBridgeQueueState.waiters.indexOf(wake);
-			if (index >= 0) {
-				agentsBridgeQueueState.waiters.splice(index, 1);
-			}
-			cleanup();
-			reject(toAbortError(signal));
-		};
-		const cleanup = () => {
-			signal?.removeEventListener("abort", onAbort);
-		};
-		agentsBridgeQueueState.waiters.push(wake);
-		signal?.addEventListener("abort", onAbort, { once: true });
-	});
-}
-
-function createTimedAbortController(timeoutMs: number, externalSignal?: AbortSignal) {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => {
-		controller.abort(new Error("agents_bridge_timeout"));
-	}, timeoutMs);
-	const onAbort = () => {
-		controller.abort(toAbortError(externalSignal));
-	};
-	if (externalSignal?.aborted) {
-		onAbort();
-	} else {
-		externalSignal?.addEventListener("abort", onAbort, { once: true });
+function readAgentsBridgeAdmissionTimeoutMs(c: AppContext): number {
+	const raw =
+		typeof c.env.AGENTS_BRIDGE_ADMISSION_TIMEOUT_MS === "string"
+			? c.env.AGENTS_BRIDGE_ADMISSION_TIMEOUT_MS
+			: "";
+	const parsed = Number(raw);
+	if (Number.isFinite(parsed) && parsed > 0) {
+		return Math.max(5_000, Math.min(120_000, Math.floor(parsed)));
 	}
-	return {
-		signal: controller.signal,
-		cleanup() {
-			clearTimeout(timeout);
-			externalSignal?.removeEventListener("abort", onAbort);
-		},
-	};
+	// Admission covers bridge-side prelude plus the inherited-model input gate.
+	// The gate has a bounded 60s wall clock; keep explicit transport headroom so
+	// a slower parent model can return its real verdict instead of being mislabeled
+	// as an admission failure by this outer request.
+	return 90_000;
 }
 
 async function runAgentsBridgeQueued<T>(
 	c: AppContext,
 	task: () => Promise<T>,
-	signal?: AbortSignal,
+	options: Readonly<{
+		signal?: AbortSignal;
+		userId?: string;
+		priority?: AgentsBridgeAdmissionPriority;
+	}> = {},
 ): Promise<T> {
-	const maxConcurrency = readAgentsBridgeMaxConcurrency(c);
-	if (agentsBridgeQueueState.active >= maxConcurrency) {
-		await waitForAgentsBridgeQueueSlot(signal);
-	}
-	throwIfAbortSignalAborted(signal);
-	agentsBridgeQueueState.active += 1;
-	try {
-		return await task();
-	} finally {
-		agentsBridgeQueueState.active = Math.max(0, agentsBridgeQueueState.active - 1);
-		const wake = agentsBridgeQueueState.waiters.shift();
-		if (wake) wake();
-	}
+	return agentsBridgeAdmissionScheduler.run({
+		...(options.userId ? { userId: options.userId } : {}),
+		...(options.priority ? { priority: options.priority } : {}),
+		limits: {
+			maxConcurrency: readAgentsBridgeMaxConcurrency(c),
+			maxQueueDepth: readAgentsBridgeMaxQueueDepth(),
+			maxPerUser: readAgentsBridgeMaxPerUser(),
+		},
+		...(options.signal ? { signal: options.signal } : {}),
+		task,
+	});
 }
 
 function normalizeAgentsBridgeReferenceImages(value: unknown): string[] {
@@ -4134,7 +3829,7 @@ function normalizeAgentsBridgeReferenceImages(value: unknown): string[] {
 		if (typeof item !== "string") continue;
 		const trimmed = item.trim();
 		if (!trimmed) continue;
-		if (!/^https?:\/\//i.test(trimmed)) continue;
+		if (!isHttpAssetUrl(trimmed)) continue;
 		if (trimmed.length > 2048) continue;
 		if (seen.has(trimmed)) continue;
 		seen.add(trimmed);
@@ -4169,9 +3864,14 @@ function normalizeAgentsBridgeAssetInputs(value: unknown): AgentsBridgeAssetInpu
 		if (!item || typeof item !== "object") continue;
 		const obj = item as Record<string, unknown>;
 		const url = typeof obj.url === "string" ? obj.url.trim() : "";
-		if (!url || !/^https?:\/\//i.test(url) || url.length > 2048) continue;
+		if (!url || !isHttpAssetUrl(url) || url.length > 2048) continue;
 		const role = normalizeAgentsBridgeAssetRole(obj.role);
-		const dedupeKey = `${role}|${url}`;
+		const mediaType = obj.mediaType === "video" ? "video" : "image";
+		const nodeId =
+			typeof obj.nodeId === "string" && obj.nodeId.trim()
+				? obj.nodeId.trim().slice(0, 160)
+				: "";
+		const dedupeKey = `${mediaType}|${role}|${nodeId}|${url}`;
 		if (seen.has(dedupeKey)) continue;
 		seen.add(dedupeKey);
 		const assetId =
@@ -4196,9 +3896,11 @@ function normalizeAgentsBridgeAssetInputs(value: unknown): AgentsBridgeAssetInpu
 				? weightRaw
 				: undefined;
 		out.push({
+			...(nodeId ? { nodeId } : {}),
 			...(assetId ? { assetId } : {}),
 			...(assetRefId ? { assetRefId } : {}),
 			url,
+			mediaType,
 			role,
 			...(typeof weight === "number" ? { weight } : {}),
 			...(note ? { note } : {}),
@@ -4231,10 +3933,6 @@ function normalizeAgentBridgeModelField(value: unknown): string | null {
 	return text.slice(0, 200);
 }
 
-function normalizeRoleNameKey(value: string): string {
-	return String(value || "").trim().toLowerCase();
-}
-
 function readTrimmedString(value: unknown): string {
 	return typeof value === "string" ? value.trim() : "";
 }
@@ -4244,23 +3942,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 	return value as Record<string, unknown>;
 }
 
-function parsePositiveChapterNumber(value: string): number | null {
-	const n = Number(value);
-	if (!Number.isFinite(n) || n <= 0) return null;
-	return Math.trunc(n);
-}
-
 function sanitizePathSegmentForBookIndex(value: string): string {
 	return String(value || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
-}
-
-function buildLegacyProjectBooksRoot(projectId: string): string {
-	return path.join(
-		resolveProjectDataRepoRoot(),
-		"project-data",
-		sanitizePathSegmentForBookIndex(projectId),
-		"books",
-	);
 }
 
 function buildScopedProjectBooksRoot(projectId: string, userId: string): string {
@@ -4280,17 +3963,25 @@ async function resolveReadableBookIndexPath(input: {
 	projectId: string;
 	bookId: string;
 }): Promise<string | null> {
-	const candidates = [
-		path.join(buildScopedProjectBooksRoot(input.projectId, input.userId), sanitizePathSegmentForBookIndex(input.bookId), "index.json"),
-		path.join(buildLegacyProjectBooksRoot(input.projectId), sanitizePathSegmentForBookIndex(input.bookId), "index.json"),
-	];
-	for (const candidate of candidates) {
-		try {
-			await fs.access(candidate);
-			return candidate;
-		} catch {}
+	const indexPath = path.join(
+		buildScopedProjectBooksRoot(input.projectId, input.userId),
+		sanitizePathSegmentForBookIndex(input.bookId),
+		"index.json",
+	);
+	try {
+		await readBookIndex(indexPath);
+		return indexPath;
+	} catch (error) {
+		if (error instanceof BookIndexStoreError && error.code === "book_index_not_found") return null;
+		if (error instanceof BookIndexStoreError) {
+			throw new AppError(error.message, {
+				status: 500,
+				code: error.code,
+				details: error.details,
+			});
+		}
+		throw error;
 	}
-	return null;
 }
 
 async function resolveReadableBookDirectoryPath(input: {
@@ -4307,15 +3998,23 @@ async function readBookIndexMeta(input: {
 	projectId: string;
 	bookId: string;
 }): Promise<BookIndexMeta | null> {
-	const indexPath = await resolveReadableBookIndexPath(input);
-	if (!indexPath) return null;
+	const indexPath = path.join(
+		buildScopedProjectBooksRoot(input.projectId, input.userId),
+		sanitizePathSegmentForBookIndex(input.bookId),
+		"index.json",
+	);
 	try {
-		const raw = await fs.readFile(indexPath, "utf8");
-		const parsed = JSON.parse(raw) as unknown;
-		if (!parsed || typeof parsed !== "object") return null;
-		return parsed as BookIndexMeta;
-	} catch {
-		return null;
+		return (await readBookIndex(indexPath)) as BookIndexMeta;
+	} catch (error) {
+		if (error instanceof BookIndexStoreError && error.code === "book_index_not_found") return null;
+		if (error instanceof BookIndexStoreError) {
+			throw new AppError(error.message, {
+				status: 500,
+				code: error.code,
+				details: error.details,
+			});
+		}
+		throw error;
 	}
 }
 
@@ -4323,10 +4022,7 @@ async function listProjectBookCandidates(input: {
 	userId: string;
 	projectId: string;
 }): Promise<ProjectBookCandidate[]> {
-	const roots = [
-		buildScopedProjectBooksRoot(input.projectId, input.userId),
-		buildLegacyProjectBooksRoot(input.projectId),
-	];
+	const roots = [buildScopedProjectBooksRoot(input.projectId, input.userId)];
 	const out: ProjectBookCandidate[] = [];
 	const seen = new Set<string>();
 	for (const root of roots) {
@@ -4414,1569 +4110,17 @@ async function resolveProjectBookReference(input: {
 	return null;
 }
 
-function shouldAutoForceProjectBookLocalRead(input: {
-	publicAgentsRequest: boolean;
-	requestKind: TaskRequestDto["kind"];
-	canvasProjectId: string;
-	canvasNodeId: string;
-	planOnly: boolean;
-	hasReferenceImages: boolean;
-	hasAssetInputs: boolean;
-	selectedReference: AgentsBridgeChatContext["selectedReference"];
-	bookId: string;
-}): boolean {
-	if (!input.publicAgentsRequest) return false;
-	if (input.requestKind !== "chat") return false;
-	if (!input.canvasProjectId) return false;
-	if (!input.bookId) return false;
-	if (input.planOnly) return false;
-	if (input.canvasNodeId) return false;
-	if (input.hasReferenceImages || input.hasAssetInputs) return false;
-	if (input.selectedReference?.nodeId) return false;
-	if (input.selectedReference?.imageUrl || input.selectedReference?.sourceUrl) return false;
-	return true;
-}
-
-
-type EnsureChapterMetadataWindowResult = {
-	ok: boolean;
-	status: number;
-	bodyText: string;
-};
-
-const CHAPTER_METADATA_ENSURE_TIMEOUT_MS = 15_000;
-
-async function ensureChapterMetadataWindow(input: {
-	c: AppContext;
-	projectId: string;
-	bookId: string;
-	chapter: number;
-}): Promise<EnsureChapterMetadataWindowResult> {
-	const baseUrl = readTapCanvasApiBaseFromEnv(input.c) || (() => {
-		try {
-			return new URL(input.c.req.url).origin;
-		} catch {
-			return "";
-		}
-	})();
-	if (!baseUrl) {
-		return { ok: false, status: 0, bodyText: "ensure_window_base_url_missing" };
-	}
-	const authorization = String(input.c.req.header("authorization") || "").trim();
-	const url = `${baseUrl}/assets/books/${encodeURIComponent(input.bookId)}/metadata/ensure-window?projectId=${encodeURIComponent(input.projectId)}`;
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), CHAPTER_METADATA_ENSURE_TIMEOUT_MS);
-	try {
-		const response = await fetch(url, {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				...(authorization ? { authorization } : {}),
-			},
-			signal: controller.signal,
-			body: JSON.stringify({ chapter: input.chapter, windowSize: 8 }),
-		});
-		const bodyText = await response.text().catch(() => "");
-		return { ok: response.ok, status: response.status, bodyText };
-	} catch (error) {
-		if (error instanceof Error && error.name === "AbortError") {
-			return {
-				ok: false,
-				status: 408,
-				bodyText: "chapter_metadata_ensure_timeout",
-			};
-		}
-		return {
-			ok: false,
-			status: 0,
-			bodyText: error instanceof Error ? error.message : String(error || "ensure_window_unknown_error"),
-		};
-	} finally {
-		clearTimeout(timeout);
-	}
-}
-
-function collectChapterRoleNameKeys(indexData: BookIndexMeta, chapter: number): string[] {
-	const chapterMeta = Array.isArray(indexData.chapters)
-		? indexData.chapters.find((item) => Math.trunc(Number(item?.chapter || 0)) === chapter) || null
-		: null;
-	if (!chapterMeta || !Array.isArray(chapterMeta.characters)) return [];
-	const out: string[] = [];
-	const seen = new Set<string>();
-	for (const item of chapterMeta.characters) {
-		const roleNameKey = normalizeRoleNameKey(String(item?.name || ""));
-		if (!roleNameKey || seen.has(roleNameKey)) continue;
-		seen.add(roleNameKey);
-		out.push(roleNameKey);
-	}
-	return out;
-}
-
-function selectLatestTailFrameUrl(indexData: BookIndexMeta, chapter: number): string | null {
-	const chunks = Array.isArray(indexData.assets?.storyboardChunks) ? indexData.assets.storyboardChunks : [];
-	const matched = chunks
-		.map((item) => ({
-			chapter: Math.trunc(Number(item?.chapter || 0)),
-			updatedAt: String(item?.updatedAt || "").trim(),
-			tailFrameUrl: String(item?.tailFrameUrl || "").trim(),
-		}))
-		.filter((item) => item.chapter === chapter && item.tailFrameUrl && /^https?:\/\//i.test(item.tailFrameUrl));
-	if (!matched.length) return null;
-	matched.sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
-	return matched[0]?.tailFrameUrl || null;
-}
-
-async function listProjectRoleReferenceAssets(input: {
-	userId: string;
-	projectId: string;
-}): Promise<ProjectRoleReferenceAsset[]> {
-	const rows = await listAssetsForUser(getPrismaClient(), input.userId, {
-		projectId: input.projectId,
-		kind: "projectRoleCard",
-		limit: 200,
-	});
-	return rows
-		.map((row) => parseMentionRoleReferenceAsset(row))
-		.filter((item): item is ProjectRoleReferenceAsset => item !== null);
-}
-
-function normalizeVisualReferenceNameKey(value: string): string {
-	return normalizeSemanticReferenceToken(value);
-}
-
-function isVisualReferenceApplicableToChapter(
-	asset: Pick<MentionVisualReferenceAsset, "chapter" | "chapterStart" | "chapterEnd" | "chapterSpan">,
-	chapter: number | null,
-): boolean {
-	return getReferenceChapterRelevance(asset, chapter) > 0;
-}
-
-function sortVisualReferenceAssets(
-	assets: MentionVisualReferenceAsset[],
-	chapter: number | null,
-): MentionVisualReferenceAsset[] {
-	return assets.slice().sort((left, right) => {
-		const leftCovered = getReferenceChapterRelevance(left, chapter);
-		const rightCovered = getReferenceChapterRelevance(right, chapter);
-		if (leftCovered !== rightCovered) return rightCovered - leftCovered;
-		return right.updatedAtTs - left.updatedAtTs;
-	});
-}
-
-function hasSemanticAssetExecutableConfirmation(asset: BookSemanticAssetMeta): boolean {
-	const status = String(asset?.status || "").trim().toLowerCase();
-	if (status !== "generated") return false;
-	const confirmedAt = String(asset?.confirmedAt || "").trim();
-	if (confirmedAt) return true;
-	const confirmationMode = String(asset?.confirmationMode || "").trim().toLowerCase();
-	return confirmationMode === "auto" || confirmationMode === "manual";
-}
-
-function readSemanticAssetReferenceImageUrl(asset: BookSemanticAssetMeta): string {
-	const imageUrl = String(asset?.imageUrl || "").trim();
-	if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
-	const thumbnailUrl = String(asset?.thumbnailUrl || "").trim();
-	if (/^https?:\/\//i.test(thumbnailUrl)) return thumbnailUrl;
-	return "";
-}
-
-function parseBookSemanticRoleReferenceAssets(input: {
-	indexData: BookIndexMeta;
-	chapter: number | null;
-}): MentionRoleReferenceAsset[] {
-	const semanticAssets = Array.isArray(input.indexData.assets?.semanticAssets)
-		? input.indexData.assets.semanticAssets
-		: [];
-	const out: MentionRoleReferenceAsset[] = [];
-	const seen = new Set<string>();
-	for (const item of semanticAssets) {
-		if (!hasSemanticAssetExecutableConfirmation(item)) continue;
-		const semanticId = String(item?.semanticId || "").trim();
-		const semanticReferenceImageUrl = readSemanticAssetReferenceImageUrl(item);
-		const chapter = normalizePositiveReferenceChapter(item?.chapter);
-		const chapterStart = normalizePositiveReferenceChapter(item?.chapterStart);
-		const chapterEnd = normalizePositiveReferenceChapter(item?.chapterEnd);
-		const chapterSpan = normalizeReferenceChapterSpan(item?.chapterSpan);
-		if (
-			!isRoleReferenceApplicableToChapter(
-				{ chapter, chapterStart, chapterEnd, chapterSpan },
-				input.chapter,
-			)
-		) {
-			continue;
-		}
-		const updatedAtTs = (() => {
-			const ts = Date.parse(String(item?.updatedAt || item?.createdAt || ""));
-			return Number.isFinite(ts) ? ts : 0;
-		})();
-		const anchorBindings = Array.isArray(item?.anchorBindings) ? item.anchorBindings : [];
-		for (const binding of anchorBindings) {
-			if (String(binding?.kind || "").trim().toLowerCase() !== "character") continue;
-			const roleName =
-				readTrimmedString(binding?.label) ||
-				readTrimmedString(binding?.refId) ||
-				readTrimmedString(binding?.entityId);
-			const roleNameKey = normalizeRoleNameKey(roleName);
-			const bindingImageUrl = String(binding?.imageUrl || "").trim();
-			const imageUrl =
-				semanticReferenceImageUrl ||
-				(/^https?:\/\//i.test(bindingImageUrl) ? bindingImageUrl : "");
-			if (!roleName || !roleNameKey || !imageUrl) continue;
-			const note = readTrimmedString(binding?.note);
-			const parsedNote = parseCharacterContinuityNote(note);
-			const stateDescription = readTrimmedString(item?.stateDescription) || parsedNote.state || note;
-			const stateKey = normalizeRoleNameKey(parsedNote.stateKey || stateDescription);
-			const dedupeKey = `${semanticId || imageUrl}:${roleNameKey}:${stateKey || ""}`;
-			if (seen.has(dedupeKey)) continue;
-			seen.add(dedupeKey);
-			out.push({
-				assetId: semanticId ? `${semanticId}:${roleNameKey}` : `${roleNameKey}:${String(updatedAtTs)}`,
-				cardId: semanticId || `${roleNameKey}:${String(updatedAtTs)}`,
-				roleName,
-				roleNameKey,
-				roleIdKey:
-					normalizeRoleNameKey(
-						readTrimmedString(binding?.refId) || readTrimmedString(binding?.entityId),
-					),
-				cardIdKey: normalizeRoleNameKey(semanticId || roleNameKey),
-				imageUrl,
-				primaryImageUrl: imageUrl,
-				threeViewImageUrl: null,
-				ageDescription: parsedNote.age,
-				stateDescription,
-				stateLabel: parsedNote.stateLabel,
-				stateKey,
-				chapter,
-				chapterStart,
-				chapterEnd,
-				chapterSpan,
-				updatedAtTs,
-				referenceSource: "semantic_asset",
-			});
-		}
-	}
-	return out;
-}
-
-function parseBookSemanticVisualReferenceAssets(input: {
-	indexData: BookIndexMeta;
-	chapter: number | null;
-}): MentionVisualReferenceAsset[] {
-	const semanticAssets = Array.isArray(input.indexData.assets?.semanticAssets)
-		? input.indexData.assets.semanticAssets
-		: [];
-	const out: MentionVisualReferenceAsset[] = [];
-	const seen = new Set<string>();
-	for (const item of semanticAssets) {
-		if (!hasSemanticAssetExecutableConfirmation(item)) continue;
-		const semanticId = String(item?.semanticId || "").trim();
-		const semanticReferenceImageUrl = readSemanticAssetReferenceImageUrl(item);
-		const chapter = normalizePositiveReferenceChapter(item?.chapter);
-		const chapterStart = normalizePositiveReferenceChapter(item?.chapterStart);
-		const chapterEnd = normalizePositiveReferenceChapter(item?.chapterEnd);
-		const chapterSpan = normalizeReferenceChapterSpan(item?.chapterSpan);
-		if (
-			!isVisualReferenceApplicableToChapter(
-				{ chapter, chapterStart, chapterEnd, chapterSpan },
-				input.chapter,
-			)
-		) {
-			continue;
-		}
-		const updatedAtTs = (() => {
-			const ts = Date.parse(String(item?.updatedAt || item?.createdAt || ""));
-			return Number.isFinite(ts) ? ts : 0;
-		})();
-		const anchorBindings = Array.isArray(item?.anchorBindings) ? item.anchorBindings : [];
-		for (const binding of anchorBindings) {
-			const kind = String(binding?.kind || "").trim().toLowerCase();
-			if (kind !== "scene" && kind !== "prop") continue;
-			const name =
-				readTrimmedString(binding?.label) ||
-				readTrimmedString(binding?.refId) ||
-				readTrimmedString(binding?.entityId);
-			const nameKey = normalizeVisualReferenceNameKey(name);
-			const bindingImageUrl = String(binding?.imageUrl || "").trim();
-			const imageUrl =
-				semanticReferenceImageUrl ||
-				(/^https?:\/\//i.test(bindingImageUrl) ? bindingImageUrl : "");
-			if (!name || !nameKey || !imageUrl) continue;
-			const rawCategory = String(binding?.category || "").trim().toLowerCase();
-			const category =
-				kind === "prop" && rawCategory === "spell_fx" ? "spell_fx" : "scene_prop";
-			const refId =
-				readTrimmedString(binding?.refId) ||
-				(semanticId ? `${semanticId}:${kind}:${nameKey}` : `${kind}:${nameKey}:${String(updatedAtTs)}`);
-			const dedupeKey = `${refId}:${imageUrl}`;
-			if (seen.has(dedupeKey)) continue;
-			seen.add(dedupeKey);
-			out.push({
-				refId,
-				category,
-				name,
-				nameKey,
-				imageUrl,
-				stateDescription:
-					readTrimmedString(item?.stateDescription) || readTrimmedString(binding?.note),
-				chapter,
-				chapterStart,
-				chapterEnd,
-				chapterSpan,
-				updatedAtTs,
-				referenceSource: "semantic_asset",
-			});
-		}
-	}
-	return out;
-}
-
-function isMentionTokenBoundaryChar(char: string): boolean {
-	return /[\s,，。；;:：!！?？"'“”‘’()（）\[\]【】{}<>]/.test(char);
-}
-
-type PromptMentionToken = {
-	raw: string;
-	rawDisplay: string;
-	mentionKey: string;
-	stateKey: string;
-	disambiguatorKey: string;
-};
-
-function normalizePromptMentionToken(value: string): string {
-	return String(value || "")
-		.trim()
-		.replace(/^@+/, "")
-		.replace(/[，。！？、；：,.!?;:)\]】》〉'"`]+$/g, "")
-		.toLowerCase();
-}
-
-function normalizePromptMentionStateKey(value: string): string {
-	return normalizeRoleNameKey(value).replace(/[\s_\-—–/／:：|｜]+/g, "");
-}
-
-function splitPromptMentionNameAndState(value: string): {
-	namePart: string;
-	statePart: string;
-} {
-	const trimmed = String(value || "").trim();
-	if (!trimmed) return { namePart: "", statePart: "" };
-	const separators = ["-", "—", "–", "/", "／", ":", "：", "|", "｜"];
-	let splitIndex = -1;
-	for (const separator of separators) {
-		const index = trimmed.lastIndexOf(separator);
-		if (index > 0 && index < trimmed.length - 1) {
-			splitIndex = Math.max(splitIndex, index);
-		}
-	}
-	if (splitIndex <= 0) return { namePart: trimmed, statePart: "" };
-	return {
-		namePart: trimmed.slice(0, splitIndex).trim(),
-		statePart: trimmed.slice(splitIndex + 1).trim(),
-	};
-}
-
-function parsePromptMentionToken(rawToken: string): PromptMentionToken | null {
-	const cleaned = String(rawToken || "").trim();
-	if (!cleaned) return null;
-	const normalized = normalizePromptMentionToken(cleaned);
-	if (!normalized) return null;
-	const [corePart, disambiguatorPart] = normalized.split("#", 2);
-	const { namePart, statePart } = splitPromptMentionNameAndState(corePart || "");
-	const mentionKey = normalizeRoleNameKey(namePart || "");
-	if (!mentionKey) return null;
-	return {
-		raw: cleaned,
-		rawDisplay: cleaned.replace(/^@+/, "@"),
-		mentionKey,
-		stateKey: normalizePromptMentionStateKey(statePart || ""),
-		disambiguatorKey: normalizeRoleNameKey(disambiguatorPart || ""),
-	};
-}
-
-function extractPromptMentionTokens(prompt: string): PromptMentionToken[] {
-	const text = String(prompt || "");
-	const out: PromptMentionToken[] = [];
-	const seen = new Set<string>();
-	for (let index = 0; index < text.length; index += 1) {
-		if (text[index] !== "@") continue;
-		let end = index + 1;
-		while (end < text.length && !isMentionTokenBoundaryChar(text[end] || "")) {
-			end += 1;
-		}
-		const token = parsePromptMentionToken(text.slice(index, end));
-		if (!token) continue;
-		const dedupeKey = `${token.mentionKey}:${token.stateKey || ""}#${token.disambiguatorKey || ""}`;
-		if (seen.has(dedupeKey)) continue;
-		seen.add(dedupeKey);
-		out.push(token);
-	}
-	return out;
-}
-
-function doesMentionRoleStateMatchQuery(input: {
-	queryStateKey: string;
-	ageDescription?: string;
-	stateDescription?: string;
-	stateLabel?: string;
-	stateKey?: string;
-}): boolean {
-	const queryKey = normalizePromptMentionStateKey(input.queryStateKey);
-	if (!queryKey) return true;
-	const candidates = new Set(
-		[
-		input.stateKey,
-		input.stateLabel,
-		input.stateDescription,
-		input.ageDescription,
-	]
-			.map((item) => normalizePromptMentionStateKey(String(item || "")))
-			.filter(Boolean),
-	);
-	if (candidates.size === 0) return false;
-	return candidates.has(queryKey);
-}
-
-type MentionRoleReferenceAsset = {
-	assetId: string;
-	cardId: string;
-	roleName: string;
-	roleNameKey: string;
-	roleIdKey: string;
-	cardIdKey: string;
-	imageUrl: string;
-	primaryImageUrl: string | null;
-	threeViewImageUrl: string | null;
-	ageDescription: string;
-	stateDescription: string;
-	stateLabel: string;
-	stateKey: string;
-	chapter?: number;
-	chapterStart?: number;
-	chapterEnd?: number;
-	chapterSpan: number[];
-	updatedAtTs: number;
-	referenceSource: "role_card" | "semantic_asset";
-};
-
-type ProjectRoleReferenceAsset = MentionRoleReferenceAsset;
-
-type MentionVisualReferenceAsset = {
-	refId: string;
-	category: "scene_prop" | "spell_fx";
-	name: string;
-	nameKey: string;
-	imageUrl: string;
-	stateDescription: string;
-	chapter?: number;
-	chapterStart?: number;
-	chapterEnd?: number;
-	chapterSpan: number[];
-	updatedAtTs: number;
-	referenceSource: "visual_ref" | "semantic_asset";
-};
-
-type MentionBoundReferenceAsset = {
-	assetId: string;
-	assetRefId: string;
-	assetName: string;
-	assetNameKey: string;
-	assetIdKey: string;
-	assetRefIdKey: string;
-	url: string;
-	referenceImageUrl: string | null;
-	nodeId: string | null;
-	source: "flow" | "project_asset";
-};
-
-function normalizePositiveReferenceChapter(value: unknown): number | undefined {
-	const numeric = Number(value);
-	if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
-	return Math.trunc(numeric);
-}
-
-function normalizeReferenceChapterSpan(value: unknown): number[] {
-	if (!Array.isArray(value)) return [];
-	return value
-		.map((item) => Number(item))
-		.filter((item) => Number.isFinite(item) && item > 0)
-		.map((item) => Math.trunc(item));
-}
-
-function getReferenceChapterRelevance(
-	asset: {
-		chapter?: number;
-		chapterStart?: number;
-		chapterEnd?: number;
-		chapterSpan: number[];
-	},
-	chapter: number | null,
-): 0 | 1 | 2 | 3 {
-	if (chapter === null) return 3;
-	if (asset.chapterSpan.length > 0) {
-		if (asset.chapterSpan.includes(chapter)) return 3;
-		const maxChapter = Math.max(...asset.chapterSpan);
-		if (maxChapter < chapter) return 2;
-		return 0;
-	}
-	if (typeof asset.chapter === "number") {
-		if (asset.chapter === chapter) return 3;
-		return asset.chapter < chapter ? 2 : 0;
-	}
-	const start = typeof asset.chapterStart === "number" ? asset.chapterStart : undefined;
-	const end = typeof asset.chapterEnd === "number" ? asset.chapterEnd : start;
-	if (typeof start === "number" && typeof end === "number") {
-		if (chapter >= start && chapter <= end) return 3;
-		return end < chapter ? 2 : 0;
-	}
-	if (typeof start === "number") {
-		return chapter >= start ? 3 : 0;
-	}
-	return 1;
-}
-
-function isRoleReferenceApplicableToChapter(
-	asset: Pick<MentionRoleReferenceAsset, "chapter" | "chapterStart" | "chapterEnd" | "chapterSpan">,
-	chapter: number | null,
-): boolean {
-	return getReferenceChapterRelevance(asset, chapter) > 0;
-}
-
-function sortRoleReferenceAssets(assets: MentionRoleReferenceAsset[], chapter: number | null): MentionRoleReferenceAsset[] {
-	return assets.slice().sort((left, right) => {
-		const leftCovered = getReferenceChapterRelevance(left, chapter);
-		const rightCovered = getReferenceChapterRelevance(right, chapter);
-		if (leftCovered !== rightCovered) return rightCovered - leftCovered;
-		return right.updatedAtTs - left.updatedAtTs;
-	});
-}
-
-function readRoleAgeDescription(value: Record<string, unknown>): string {
-	const direct = readTrimmedString(value.ageDescription);
-	if (direct) return direct;
-	const age = readTrimmedString(value.age);
-	if (age) return age;
-	const ageLabel = readTrimmedString(value.ageLabel);
-	if (ageLabel) return ageLabel;
-	return "";
-}
-
-function readRoleStateLabel(value: Record<string, unknown>): string {
-	const direct = readTrimmedString(value.stateLabel);
-	if (direct) return direct;
-	const currentState = readTrimmedString(value.currentState);
-	if (currentState) return currentState;
-	const healthStatus = readTrimmedString(value.healthStatus);
-	if (healthStatus) return healthStatus;
-	const injuryStatus = readTrimmedString(value.injuryStatus);
-	if (injuryStatus) return injuryStatus;
-	return "";
-}
-
-function hasRoleAgeOrStateEvidence(asset: MentionRoleReferenceAsset): boolean {
-	return Boolean(
-		asset.ageDescription ||
-			asset.stateDescription ||
-			asset.stateLabel ||
-			asset.stateKey,
-	);
-}
-
-function normalizeSemanticReferenceToken(value: string): string {
-	return String(value || "")
-		.trim()
-		.toLowerCase()
-		.replace(/[^a-z0-9\u4e00-\u9fa5_-]+/g, "_")
-		.replace(/_+/g, "_")
-		.replace(/^_+|_+$/g, "")
-		.slice(0, 80);
-}
-
-function buildSemanticRoleReferenceAssetRefId(
-	asset: Pick<
-		MentionRoleReferenceAsset,
-		"roleName" | "roleNameKey" | "roleIdKey" | "stateKey" | "stateLabel"
-	>,
-): string {
-	const base =
-		normalizeSemanticReferenceToken(asset.roleIdKey) ||
-		normalizeSemanticReferenceToken(asset.roleNameKey) ||
-		normalizeSemanticReferenceToken(asset.roleName) ||
-		"role";
-	const state =
-		normalizeSemanticReferenceToken(asset.stateKey) ||
-		normalizeSemanticReferenceToken(asset.stateLabel);
-	return [base, state].filter(Boolean).join("_").slice(0, 160);
-}
-
-function buildSemanticVisualReferenceAssetRefId(input: {
-	role: "scene" | "prop" | "reference";
-	name: string;
-}): string {
-	const rolePrefix = normalizeSemanticReferenceToken(input.role) || "reference";
-	const nameToken = normalizeSemanticReferenceToken(input.name) || "anchor";
-	return `${rolePrefix}_${nameToken}`.slice(0, 160);
-}
-
-function buildRoleReferenceNote(prefix: string, asset: MentionRoleReferenceAsset): string {
-	const stateLine = String(asset.stateDescription || "").split("\n").map((item) => item.trim()).find(Boolean) || "";
-	const parts = [
-		prefix,
-		asset.threeViewImageUrl
-			? "reference=three_view"
-			: asset.referenceSource === "semantic_asset"
-				? "reference=semantic_asset"
-				: "reference=role_card",
-	];
-	if (asset.ageDescription) parts.push(`age=${asset.ageDescription}`);
-	if (asset.stateLabel) parts.push(`stateLabel=${asset.stateLabel}`);
-	if (stateLine) parts.push(`state=${stateLine}`);
-	if (asset.stateKey) parts.push(`stateKey=${asset.stateKey}`);
-	return parts.filter(Boolean).join(" | ");
-}
-
-function buildVisualReferenceNote(prefix: string, asset: MentionVisualReferenceAsset): string {
-	const parts = [
-		prefix,
-		`category=${asset.category}`,
-		...(asset.referenceSource === "semantic_asset" ? ["reference=semantic_asset"] : []),
-	];
-	if (asset.stateDescription) parts.push(`state=${asset.stateDescription}`);
-	return parts.filter(Boolean).join(" | ");
-}
-
-function buildBoundReferenceNote(asset: MentionBoundReferenceAsset): string {
-	const parts = [
-		asset.nodeId ? `canvas-node:${asset.nodeId}` : null,
-		asset.assetName && asset.assetName !== asset.assetRefId ? asset.assetName : null,
-	].filter(Boolean);
-	return [`@${asset.assetRefId}`, ...parts].join(" · ");
-}
-
-function pickMentionBoundReferenceAsset(
-	mention: PromptMentionToken,
-	candidates: MentionBoundReferenceAsset[],
-): MentionBoundReferenceAsset | "missing" | "ambiguous" {
-	if (candidates.length === 0) return "missing";
-	if (candidates.length === 1) return candidates[0] || "missing";
-	const preferred = candidates.filter(
-		(item) =>
-			item.assetRefIdKey === mention.mentionKey || item.assetIdKey === mention.mentionKey,
-	);
-	if (preferred.length === 1) return preferred[0] || "missing";
-	return "ambiguous";
-}
-
-function pickMentionRoleReferenceAsset(
-	mention: PromptMentionToken,
-	candidates: MentionRoleReferenceAsset[],
-): MentionRoleReferenceAsset | "missing" | "ambiguous" {
-	if (candidates.length === 0) return "missing";
-	const narrowedByState = mention.stateKey
-		? candidates.filter((candidate) =>
-				doesMentionRoleStateMatchQuery({
-					queryStateKey: mention.stateKey,
-					ageDescription: candidate.ageDescription,
-					stateDescription: candidate.stateDescription,
-					stateLabel: candidate.stateLabel,
-					stateKey: candidate.stateKey,
-				}),
-			)
-		: candidates;
-	if (narrowedByState.length === 0) return "missing";
-	if (!mention.disambiguatorKey) return narrowedByState.length === 1 ? narrowedByState[0]! : "ambiguous";
-	const matched =
-		narrowedByState.find((item) => item.roleIdKey && item.roleIdKey.startsWith(mention.disambiguatorKey)) ||
-		narrowedByState.find((item) => item.cardIdKey && item.cardIdKey.startsWith(mention.disambiguatorKey)) ||
-		null;
-	return matched || "missing";
-}
-
-function parseMentionRoleReferenceAsset(row: AssetRow): MentionRoleReferenceAsset | null {
-	const rawData = typeof row.data === "string" ? row.data.trim() : "";
-	if (!rawData) return null;
-	let parsed: unknown = null;
-	try {
-		parsed = JSON.parse(rawData);
-	} catch {
-		return null;
-	}
-	if (!parsed || typeof parsed !== "object") return null;
-	const obj = parsed as Record<string, unknown>;
-	const kind = String(obj.kind || "").trim();
-	if (kind !== "projectRoleCard") return null;
-	const roleName = String(obj.roleName || "").trim();
-	const roleNameKey = normalizeRoleNameKey(String(obj.roleNameKey || roleName));
-	const primaryImageUrlRaw = String(obj.imageUrl || "").trim();
-	const primaryImageUrl = /^https?:\/\//i.test(primaryImageUrlRaw) ? primaryImageUrlRaw : null;
-	const threeViewImageUrlRaw = String(obj.threeViewImageUrl || "").trim();
-	const threeViewImageUrl = /^https?:\/\//i.test(threeViewImageUrlRaw) ? threeViewImageUrlRaw : null;
-	const imageUrl = threeViewImageUrl || primaryImageUrl;
-	if (!roleName || !roleNameKey || !imageUrl) return null;
-	const stateDescription = readTrimmedString(obj.stateDescription);
-	const stateKey = normalizeRoleNameKey(readTrimmedString(obj.stateKey));
-	const ageDescription = readRoleAgeDescription(obj);
-	const stateLabel = readRoleStateLabel(obj);
-	return {
-		assetId: row.id,
-		cardId: String(obj.cardId || row.id || "").trim(),
-		roleName,
-		roleNameKey,
-		roleIdKey: normalizeRoleNameKey(String(obj.roleId || "")),
-		cardIdKey: normalizeRoleNameKey(String(obj.cardId || row.id || "")),
-		imageUrl,
-		primaryImageUrl,
-		threeViewImageUrl,
-		ageDescription,
-		stateDescription,
-		stateLabel,
-		stateKey,
-		chapter: normalizePositiveReferenceChapter(obj.chapter),
-		chapterStart: normalizePositiveReferenceChapter(obj.chapterStart),
-		chapterEnd: normalizePositiveReferenceChapter(obj.chapterEnd),
-		chapterSpan: normalizeReferenceChapterSpan(obj.chapterSpan),
-		updatedAtTs: (() => {
-			const ts = Date.parse(String(obj.updatedAt || row.updatedAt || row.createdAt || ""));
-			return Number.isFinite(ts) ? ts : 0;
-		})(),
-		referenceSource: "role_card",
-	};
-}
-
-function parseMentionGenerationAsset(row: AssetRow): MentionBoundReferenceAsset | null {
-	const rawData = typeof row.data === "string" ? row.data.trim() : "";
-	if (!rawData) return null;
-	let parsed: unknown = null;
-	try {
-		parsed = JSON.parse(rawData);
-	} catch {
-		return null;
-	}
-	const obj = asRecord(parsed);
-	if (!obj) return null;
-	if (readTrimmedString(obj.kind) !== "generation") return null;
-	const assetId = readTrimmedString(row.id);
-	const assetRefId = (readTrimmedString(obj.assetRefId) || assetId).slice(0, 160);
-	const assetRefIdKey = normalizeRoleNameKey(assetRefId);
-	const url = readTrimmedString(obj.url);
-	if (!assetId || !assetRefIdKey || !url || !/^https?:\/\//i.test(url)) return null;
-	const assetName =
-		readTrimmedString(obj.assetName) ||
-		readTrimmedString(row.name) ||
-		assetRefId;
-	const thumbnailUrl = readTrimmedString(obj.thumbnailUrl);
-	return {
-		assetId,
-		assetRefId,
-		assetName,
-		assetNameKey: normalizeRoleNameKey(assetName),
-		assetIdKey: normalizeRoleNameKey(assetId),
-		assetRefIdKey,
-		url,
-		referenceImageUrl:
-			thumbnailUrl && /^https?:\/\//i.test(thumbnailUrl) ? thumbnailUrl : url,
-		nodeId: null,
-		source: "project_asset",
-	};
-}
-
-function collectFlowNodeMentionReferenceAssets(flowData: unknown): MentionBoundReferenceAsset[] {
-	const graph = asRecord(flowData);
-	const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-	const out: MentionBoundReferenceAsset[] = [];
-	for (const rawNode of nodes) {
-		const node = asRecord(rawNode);
-		if (!node) continue;
-		const nodeId = readTrimmedString(node.id) || null;
-		const data = asRecord(node.data) || {};
-		const nodeLabel = readTrimmedString(data.label) || nodeId || "asset";
-		const rootAssetId = readTrimmedString(data.assetId);
-		const rootAssetRefId = readTrimmedString(data.assetRefId);
-		const pushAsset = (item: unknown) => {
-			const record = asRecord(item);
-			if (!record) return;
-			const url = readTrimmedString(record.url);
-			if (!url || !/^https?:\/\//i.test(url)) return;
-			const assetId = readTrimmedString(record.assetId) || rootAssetId;
-			const assetRefId = (
-				readTrimmedString(record.assetRefId) ||
-				rootAssetRefId ||
-				assetId
-			).slice(0, 160);
-			const assetRefIdKey = normalizeRoleNameKey(assetRefId);
-			if (!assetId || !assetRefIdKey) return;
-			const assetName =
-				readTrimmedString(record.assetName) ||
-				readTrimmedString(record.title) ||
-				nodeLabel;
-			const thumbnailUrl = readTrimmedString(record.thumbnailUrl);
-			out.push({
-				assetId,
-				assetRefId,
-				assetName,
-				assetNameKey: normalizeRoleNameKey(assetName),
-				assetIdKey: normalizeRoleNameKey(assetId),
-				assetRefIdKey,
-				url,
-				referenceImageUrl:
-					thumbnailUrl && /^https?:\/\//i.test(thumbnailUrl) ? thumbnailUrl : url,
-				nodeId,
-				source: "flow",
-			});
-		};
-		const imageResults = Array.isArray(data.imageResults) ? data.imageResults : [];
-		for (const item of imageResults) pushAsset(item);
-		const videoResults = Array.isArray(data.videoResults) ? data.videoResults : [];
-		for (const item of videoResults) pushAsset(item);
-		if (imageResults.length === 0 && videoResults.length === 0) {
-			const fallbackUrl = readTrimmedString(data.imageUrl) || readTrimmedString(data.videoUrl);
-			if (fallbackUrl) {
-				pushAsset({
-					url: fallbackUrl,
-					thumbnailUrl: readTrimmedString(data.videoThumbnailUrl) || undefined,
-					assetId: rootAssetId || undefined,
-					assetRefId: rootAssetRefId || undefined,
-					assetName: nodeLabel,
-					title: nodeLabel,
-				});
-			}
-		}
-	}
-	return out;
-}
-
-function buildBoundReferenceAssetLookup(
-	assets: MentionBoundReferenceAsset[],
-): Map<string, MentionBoundReferenceAsset[]> {
-	const lookup = new Map<string, MentionBoundReferenceAsset[]>();
-	for (const item of assets) {
-		for (const key of [item.assetRefIdKey, item.assetIdKey, item.assetNameKey]) {
-			if (!key) continue;
-			const list = lookup.get(key) || [];
-			list.push(item);
-			lookup.set(key, list);
-		}
-	}
-	return lookup;
-}
-
-function parseBookRoleReferenceAssets(input: {
-	indexData: BookIndexMeta;
-	chapter: number | null;
-}): MentionRoleReferenceAsset[] {
-	const roleCards = Array.isArray(input.indexData.assets?.roleCards) ? input.indexData.assets.roleCards : [];
-	const roleCardAssets = roleCards
-		.map((item) => {
-			const roleName = String(item?.roleName || "").trim();
-			const roleNameKey = normalizeRoleNameKey(roleName);
-			const primaryImageUrlRaw = String(item?.imageUrl || "").trim();
-			const primaryImageUrl = /^https?:\/\//i.test(primaryImageUrlRaw) ? primaryImageUrlRaw : null;
-			const threeViewImageUrlRaw = String(item?.threeViewImageUrl || "").trim();
-			const threeViewImageUrl = /^https?:\/\//i.test(threeViewImageUrlRaw) ? threeViewImageUrlRaw : null;
-			const imageUrl = threeViewImageUrl || primaryImageUrl;
-			const status = String(item?.status || "").trim().toLowerCase();
-			const confirmedAt = String(item?.confirmedAt || "").trim();
-			if (!roleName || !roleNameKey || !imageUrl || status !== "generated" || !confirmedAt) return null;
-			const stateDescription = readTrimmedString(item?.stateDescription);
-			const stateKey = normalizeRoleNameKey(readTrimmedString(item?.stateKey));
-			const ageDescription = readRoleAgeDescription((item as Record<string, unknown>) || {});
-			const stateLabel = readRoleStateLabel((item as Record<string, unknown>) || {});
-			const asset: MentionRoleReferenceAsset = {
-				assetId: String(item?.cardId || "").trim(),
-				cardId: String(item?.cardId || "").trim(),
-				roleName,
-				roleNameKey,
-				roleIdKey: normalizeRoleNameKey(String(item?.roleId || "")),
-				cardIdKey: normalizeRoleNameKey(String(item?.cardId || "")),
-				imageUrl,
-				primaryImageUrl,
-				threeViewImageUrl,
-				ageDescription,
-				stateDescription,
-				stateLabel,
-				stateKey,
-				chapter: normalizePositiveReferenceChapter(item?.chapter),
-				chapterStart: normalizePositiveReferenceChapter(item?.chapterStart),
-				chapterEnd: normalizePositiveReferenceChapter(item?.chapterEnd),
-				chapterSpan: normalizeReferenceChapterSpan(item?.chapterSpan),
-				updatedAtTs: (() => {
-					const ts = Date.parse(String(item?.updatedAt || item?.createdAt || ""));
-					return Number.isFinite(ts) ? ts : 0;
-				})(),
-				referenceSource: "role_card",
-			};
-			return isRoleReferenceApplicableToChapter(asset, input.chapter) ? asset : null;
-		})
-		.filter((item): item is MentionRoleReferenceAsset => item !== null);
-	const semanticAssets = parseBookSemanticRoleReferenceAssets(input);
-	return [...roleCardAssets, ...semanticAssets];
-}
-
-function parseBookVisualReferenceAssets(input: {
-	indexData: BookIndexMeta;
-	chapter: number | null;
-}): MentionVisualReferenceAsset[] {
-	const visualRefs = Array.isArray(input.indexData.assets?.visualRefs) ? input.indexData.assets.visualRefs : [];
-	const visualReferenceAssets = visualRefs
-		.map((item) => {
-			const refId = String(item?.refId || "").trim();
-			const category = String(item?.category || "").trim().toLowerCase();
-			const name = String(item?.name || "").trim();
-			const nameKey = normalizeVisualReferenceNameKey(name);
-			const imageUrl = String(item?.imageUrl || "").trim();
-			const status = String(item?.status || "").trim().toLowerCase();
-			const confirmedAt = String(item?.confirmedAt || "").trim();
-			if (
-				!refId ||
-				(category !== "scene_prop" && category !== "spell_fx") ||
-				!name ||
-				!nameKey ||
-				!imageUrl ||
-				!/^https?:\/\//i.test(imageUrl) ||
-				status !== "generated" ||
-				!confirmedAt
-			) {
-				return null;
-			}
-			const asset: MentionVisualReferenceAsset = {
-				refId,
-				category: category as "scene_prop" | "spell_fx",
-				name,
-				nameKey,
-				imageUrl,
-				stateDescription: readTrimmedString(item?.stateDescription),
-				chapter: normalizePositiveReferenceChapter(item?.chapter),
-				chapterStart: normalizePositiveReferenceChapter(item?.chapterStart),
-				chapterEnd: normalizePositiveReferenceChapter(item?.chapterEnd),
-				chapterSpan: normalizeReferenceChapterSpan(item?.chapterSpan),
-				updatedAtTs: (() => {
-					const ts = Date.parse(String(item?.updatedAt || item?.createdAt || ""));
-					return Number.isFinite(ts) ? ts : 0;
-				})(),
-				referenceSource: "visual_ref",
-			};
-			return isVisualReferenceApplicableToChapter(asset, input.chapter) ? asset : null;
-		})
-		.filter((item): item is MentionVisualReferenceAsset => item !== null);
-	const semanticAssets = parseBookSemanticVisualReferenceAssets(input);
-	return [...visualReferenceAssets, ...semanticAssets];
-}
-
-async function resolveMentionBoundAssetInputs(input: {
-	userId: string;
-	projectId: string;
-	canvasFlowId?: string | null;
-	prompt: string;
-	existingAssetInputs: AgentsBridgeAssetInput[];
-}): Promise<{
-	mentions: string[];
-	matched: MentionBoundReferenceAsset[];
-	missing: string[];
-	ambiguous: string[];
-	assetInputs: AgentsBridgeAssetInput[];
-	referenceImages: string[];
-	resolvedMentionKeys: string[];
-}> {
-	const mentions = extractPromptMentionTokens(input.prompt);
-	if (!input.userId || !input.projectId || mentions.length === 0) {
-		return {
-			mentions: mentions.map((item) => item.rawDisplay),
-			matched: [],
-			missing: [],
-			ambiguous: [],
-			assetInputs: [],
-			referenceImages: [],
-			resolvedMentionKeys: [],
-		};
-	}
-	const assets: MentionBoundReferenceAsset[] = [];
-	if (input.canvasFlowId) {
-		const flow = await getFlowForOwner(
-			getPrismaClient(),
-			input.canvasFlowId,
-			input.userId,
-		);
-		if (flow?.data) {
-			try {
-				assets.push(...collectFlowNodeMentionReferenceAssets(JSON.parse(flow.data)));
-			} catch {
-				// malformed flow payload should not block mention resolution
-			}
-		}
-	}
-	const rows = await listAssetsForUser(getPrismaClient(), input.userId, {
-		projectId: input.projectId,
-		kind: "generation",
-		limit: 200,
-	});
-	assets.push(
-		...rows
-			.map((row) => parseMentionGenerationAsset(row))
-			.filter((item): item is MentionBoundReferenceAsset => item !== null),
-	);
-	const lookup = buildBoundReferenceAssetLookup(assets);
-	const matched: MentionBoundReferenceAsset[] = [];
-	const missing: string[] = [];
-	const ambiguous: string[] = [];
-	const resolvedMentionKeys: string[] = [];
-	for (const mention of mentions) {
-		const picked = pickMentionBoundReferenceAsset(
-			mention,
-			lookup.get(mention.mentionKey) || [],
-		);
-		if (picked === "missing") {
-			missing.push(mention.rawDisplay);
-			continue;
-		}
-		if (picked === "ambiguous") {
-			ambiguous.push(mention.rawDisplay);
-			continue;
-		}
-		matched.push(picked);
-		resolvedMentionKeys.push(mention.mentionKey);
-	}
-	const existingKeys = new Set(
-		input.existingAssetInputs.map(
-			(item) =>
-				`${item.role}|${String(item.assetId || "").trim()}|${String(item.assetRefId || "").trim()}|${item.url}`,
-		),
-	);
-	const assetInputs: AgentsBridgeAssetInput[] = [];
-	const referenceImages: string[] = [];
-	const seenReferenceImages = new Set<string>();
-	for (const item of matched) {
-		const referenceImageUrl = item.referenceImageUrl || item.url;
-		const dedupeKey = `reference|${item.assetId}|${item.assetRefId}|${item.url}`;
-		if (!existingKeys.has(dedupeKey)) {
-			assetInputs.push({
-				assetId: item.assetId,
-				assetRefId: item.assetRefId,
-				url: item.url,
-				role: "reference",
-				note: buildBoundReferenceNote(item),
-				name: item.assetName,
-			});
-		}
-		if (referenceImageUrl && !seenReferenceImages.has(referenceImageUrl)) {
-			seenReferenceImages.add(referenceImageUrl);
-			referenceImages.push(referenceImageUrl);
-		}
-		if (assetInputs.length >= 6 && referenceImages.length >= 6) break;
-	}
-	return {
-		mentions: mentions.map((item) => item.rawDisplay),
-		matched,
-		missing,
-		ambiguous,
-		assetInputs,
-		referenceImages,
-		resolvedMentionKeys,
-	};
-}
-
-async function resolveMentionRoleAssetInputs(input: {
-	userId: string;
-	projectId: string;
-	bookId?: string;
-	chapterId?: string;
-	prompt: string;
-	existingAssetInputs: AgentsBridgeAssetInput[];
-	skipMentionKeys?: string[];
-}): Promise<{
-	mentions: string[];
-	matched: MentionRoleReferenceAsset[];
-	missing: string[];
-	ambiguous: string[];
-	assetInputs: AgentsBridgeAssetInput[];
-	referenceImages: string[];
-}> {
-	const mentions = extractPromptMentionTokens(input.prompt);
-	const skipMentionKeys = new Set(
-		(input.skipMentionKeys || []).map((item) => normalizeRoleNameKey(item)),
-	);
-	const pendingMentions = mentions.filter(
-		(item) => !skipMentionKeys.has(item.mentionKey),
-	);
-	if (!input.userId || !input.projectId || pendingMentions.length === 0) {
-		return { mentions: pendingMentions.map((item) => item.rawDisplay), matched: [], missing: [], ambiguous: [], assetInputs: [], referenceImages: [] };
-	}
-	const chapter = input.chapterId ? parsePositiveChapterNumber(input.chapterId) : null;
-	let roleAssets: MentionRoleReferenceAsset[] = [];
-	if (input.bookId) {
-		const indexData = await readBookIndexMeta({
-			userId: input.userId,
-			projectId: input.projectId,
-			bookId: input.bookId,
-		});
-		if (indexData) {
-			roleAssets = parseBookRoleReferenceAssets({ indexData, chapter });
-		}
-	}
-	if (roleAssets.length === 0) {
-		const rows = await listAssetsForUser(getPrismaClient(), input.userId, {
-			projectId: input.projectId,
-			kind: "projectRoleCard",
-			limit: 200,
-		});
-		roleAssets = rows
-			.map((row) => parseMentionRoleReferenceAsset(row))
-			.filter((item): item is MentionRoleReferenceAsset => item !== null)
-			.filter((item) => isRoleReferenceApplicableToChapter(item, chapter));
-	}
-	const roleAssetMap = new Map<string, MentionRoleReferenceAsset[]>();
-	for (const item of roleAssets) {
-		const list = roleAssetMap.get(item.roleNameKey) || [];
-		list.push(item);
-		roleAssetMap.set(item.roleNameKey, list);
-	}
-	const matched: MentionRoleReferenceAsset[] = [];
-	const missing: string[] = [];
-	const ambiguous: string[] = [];
-	for (const mention of pendingMentions) {
-		const picked = pickMentionRoleReferenceAsset(
-			mention,
-			sortRoleReferenceAssets(roleAssetMap.get(mention.mentionKey) || [], chapter),
-		);
-		if (picked === "missing") {
-			missing.push(mention.rawDisplay);
-			continue;
-		}
-		if (picked === "ambiguous") {
-			ambiguous.push(mention.rawDisplay);
-			continue;
-		}
-		matched.push(picked);
-	}
-	const existingKeys = new Set(
-		input.existingAssetInputs.map(
-			(item) =>
-				`${item.role}|${String(item.assetId || "").trim()}|${String(item.assetRefId || "").trim()}|${item.url}`,
-		),
-	);
-	const assetInputs: AgentsBridgeAssetInput[] = [];
-	const referenceImages: string[] = [];
-	const seenUrls = new Set<string>();
-	for (const item of matched) {
-		const dedupeKey = `character|${item.assetId}|${item.imageUrl}`;
-		if (!existingKeys.has(dedupeKey)) {
-			assetInputs.push({
-				assetId: item.assetId,
-				assetRefId: buildSemanticRoleReferenceAssetRefId(item),
-				url: item.imageUrl,
-				role: "character",
-				note: buildRoleReferenceNote(`@${item.roleName}`, item),
-				name: item.roleName,
-			});
-		}
-		if (!seenUrls.has(item.imageUrl)) {
-			seenUrls.add(item.imageUrl);
-			referenceImages.push(item.imageUrl);
-		}
-		if (assetInputs.length >= 4 && referenceImages.length >= 4) break;
-	}
-	return {
-		mentions: pendingMentions.map((item) => item.rawDisplay),
-		matched,
-		missing,
-		ambiguous,
-		assetInputs,
-		referenceImages,
-	};
-}
-
-
-type ChapterContinuityInjection = {
-	chapter: number | null;
-	roleNameKeys: string[];
-	sceneNameKeys: string[];
-	propNameKeys: string[];
-	tailFrameUrl: string | null;
-	assetInputs: AgentsBridgeAssetInput[];
-	referenceImages: string[];
-	roleReferenceCount: number;
-	stateEvidenceRoleCount: number;
-	threeViewRoleCount: number;
-	missingRoleReferenceNames: string[];
-	missingStateRoleNames: string[];
-	missingThreeViewRoleNames: string[];
-	scenePropReferenceCount: number;
-	missingScenePropNames: string[];
-	reasons: string[];
-};
-
-function buildChapterPreproductionMissingAssetNames(
-	input: ChapterContinuityInjection,
-): string[] {
-	return Array.from(
-		new Set<string>([
-			...input.missingRoleReferenceNames,
-			...input.missingStateRoleNames,
-			...input.missingThreeViewRoleNames,
-			...input.missingScenePropNames,
-		].map((item) => String(item || "").trim()).filter(Boolean)),
-	);
-}
-
-function resolveChapterPreproductionRequiredAssetCount(
-	input: ChapterContinuityInjection,
-): number {
-	return buildChapterPreproductionMissingAssetNames(input).length;
-}
-
-function readBookStyleReferenceImages(indexData: BookIndexMeta | null | undefined): string[] {
-	const assets = asRecord(indexData?.assets);
-	const styleBible = asRecord(assets?.styleBible);
-	const rawItems = Array.isArray(styleBible?.referenceImages) ? styleBible.referenceImages : [];
-	const out: string[] = [];
-	const seen = new Set<string>();
-	for (const item of rawItems) {
-		const url = typeof item === "string" ? item.trim() : "";
-		if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
-		seen.add(url);
-		out.push(url);
-		if (out.length >= 4) break;
-	}
-	return out;
-}
-
-async function resolveChapterContinuityAssetInputs(input: {
-	c: AppContext;
-	userId: string;
-	projectId: string;
-	bookId: string;
-	chapterId: string;
-	existingAssetInputs: AgentsBridgeAssetInput[];
-	mentionMatchedRoleNameKeys: string[];
-}): Promise<ChapterContinuityInjection> {
-	const chapter = parsePositiveChapterNumber(input.chapterId);
-	if (!input.userId || !input.projectId || !input.bookId || chapter === null) {
-			return {
-				chapter,
-				roleNameKeys: [],
-				sceneNameKeys: [],
-				propNameKeys: [],
-				tailFrameUrl: null,
-				assetInputs: [],
-				referenceImages: [],
-				roleReferenceCount: 0,
-				stateEvidenceRoleCount: 0,
-				threeViewRoleCount: 0,
-				missingRoleReferenceNames: [],
-				missingStateRoleNames: [],
-				missingThreeViewRoleNames: [],
-				scenePropReferenceCount: 0,
-			missingScenePropNames: [],
-			reasons: ["chapter_context_invalid"],
-		};
-	}
-	const indexData = await readBookIndexMeta({
-		userId: input.userId,
-		projectId: input.projectId,
-		bookId: input.bookId,
-	});
-	if (!indexData) {
-			return {
-				chapter,
-				roleNameKeys: [],
-				sceneNameKeys: [],
-				propNameKeys: [],
-				tailFrameUrl: null,
-				assetInputs: [],
-				referenceImages: [],
-				roleReferenceCount: 0,
-				stateEvidenceRoleCount: 0,
-				threeViewRoleCount: 0,
-				missingRoleReferenceNames: [],
-				missingStateRoleNames: [],
-				missingThreeViewRoleNames: [],
-				scenePropReferenceCount: 0,
-			missingScenePropNames: [],
-			reasons: ["book_index_missing"],
-		};
-	}
-	const collectChapterNamedAnchors = (
-		items: BookChapterNamedEntityMeta[] | undefined,
-	): Array<{ key: string; label: string }> => {
-		if (!Array.isArray(items)) return [];
-		const out: Array<{ key: string; label: string }> = [];
-		const seen = new Set<string>();
-		for (const item of items) {
-			const label = String(item?.name || "").trim();
-			const key = normalizeVisualReferenceNameKey(label);
-			if (!label || !key || seen.has(key)) continue;
-			seen.add(key);
-			out.push({ key, label });
-			if (out.length >= 8) break;
-		}
-		return out;
-	};
-	const collectChapterRequiredPropAnchors = (
-		items: BookChapterPropMeta[] | undefined,
-	): Array<{ key: string; label: string }> => {
-		if (!Array.isArray(items)) return [];
-		const out: Array<{ key: string; label: string }> = [];
-		const seen = new Set<string>();
-		for (const item of items) {
-			const label = String(item?.name || "").trim();
-			const key = normalizeVisualReferenceNameKey(label);
-			const shouldRequireReference =
-				item?.visualNeed === "must_render" || item?.reusableAssetPreferred === true;
-			if (!label || !key || !shouldRequireReference || seen.has(key)) continue;
-			seen.add(key);
-			out.push({ key, label });
-			if (out.length >= 8) break;
-		}
-		return out;
-	};
-	const reasons: string[] = [];
-	let chapterRoleNameKeys = collectChapterRoleNameKeys(indexData, chapter);
-	let effectiveIndexData = indexData;
-	let currentChapterMeta = Array.isArray(indexData.chapters)
-		? indexData.chapters.find((item) => Math.trunc(Number(item?.chapter || 0)) === chapter) || null
-		: null;
-	let chapterSceneAnchors = collectChapterNamedAnchors(currentChapterMeta?.scenes);
-	let chapterPropAnchors = collectChapterRequiredPropAnchors(currentChapterMeta?.props);
-	if (
-		chapterRoleNameKeys.length === 0 ||
-		(chapterSceneAnchors.length === 0 && chapterPropAnchors.length === 0)
-	) {
-		const ensured = await ensureChapterMetadataWindow({
-			c: input.c,
-			projectId: input.projectId,
-			bookId: input.bookId,
-			chapter,
-		});
-		if (ensured.ok) {
-			const reloadedIndexData = await readBookIndexMeta({
-				userId: input.userId,
-				projectId: input.projectId,
-				bookId: input.bookId,
-			});
-			if (reloadedIndexData) {
-				effectiveIndexData = reloadedIndexData;
-				chapterRoleNameKeys = collectChapterRoleNameKeys(reloadedIndexData, chapter);
-				currentChapterMeta = Array.isArray(reloadedIndexData.chapters)
-					? reloadedIndexData.chapters.find((item) => Math.trunc(Number(item?.chapter || 0)) === chapter) || null
-					: null;
-				chapterSceneAnchors = collectChapterNamedAnchors(currentChapterMeta?.scenes);
-				chapterPropAnchors = collectChapterRequiredPropAnchors(currentChapterMeta?.props);
-			}
-		} else {
-			reasons.push(`chapter_metadata_ensure_failed:${ensured.status || 0}`);
-		}
-	}
-	if (chapterRoleNameKeys.length === 0) reasons.push("chapter_role_names_missing");
-	let roleAssets = parseBookRoleReferenceAssets({ indexData: effectiveIndexData, chapter });
-	if (roleAssets.length === 0) {
-		roleAssets = (await listProjectRoleReferenceAssets({ userId: input.userId, projectId: input.projectId }))
-			.filter((item) => isRoleReferenceApplicableToChapter(item, chapter));
-	}
-	const visualReferenceAssets = parseBookVisualReferenceAssets({
-		indexData: effectiveIndexData,
-		chapter,
-	}).filter((item) => item.category === "scene_prop");
-	const roleAssetMap = new Map<string, ProjectRoleReferenceAsset[]>();
-	for (const item of roleAssets) {
-		const list = roleAssetMap.get(item.roleNameKey) || [];
-		list.push(item);
-		roleAssetMap.set(item.roleNameKey, list);
-	}
-	const visualRefMap = new Map<string, MentionVisualReferenceAsset[]>();
-	for (const item of visualReferenceAssets) {
-		const list = visualRefMap.get(item.nameKey) || [];
-		list.push(item);
-		visualRefMap.set(item.nameKey, list);
-	}
-	const preferredRoleKeys = input.mentionMatchedRoleNameKeys.length > 0 ? input.mentionMatchedRoleNameKeys : chapterRoleNameKeys;
-	const existingKeys = new Set(
-		input.existingAssetInputs.map((item) => `${item.role}|${String(item.assetId || "").trim()}|${item.url}`),
-	);
-	const assetInputs: AgentsBridgeAssetInput[] = [];
-	const referenceImages: string[] = [];
-	const seenUrls = new Set<string>();
-	const styleReferenceImages = readBookStyleReferenceImages(effectiveIndexData);
-	const missingRoleReferenceNames: string[] = [];
-	const missingStateRoleNames: string[] = [];
-	const missingThreeViewRoleNames: string[] = [];
-	const missingScenePropNames: string[] = [];
-	let roleReferenceCount = 0;
-	let stateEvidenceRoleCount = 0;
-	let threeViewRoleCount = 0;
-	let scenePropReferenceCount = 0;
-	for (const roleNameKey of preferredRoleKeys) {
-		const foundList = sortRoleReferenceAssets(roleAssetMap.get(roleNameKey) || [], chapter);
-		const primaryRoleAsset = foundList[0] || null;
-		const stateEvidenceAsset = foundList.find((item) => hasRoleAgeOrStateEvidence(item)) || null;
-		const threeViewAsset = foundList.find((item) => Boolean(item.threeViewImageUrl)) || null;
-		if (primaryRoleAsset) {
-			roleReferenceCount += 1;
-			if (threeViewAsset) {
-				threeViewRoleCount += 1;
-			} else {
-				missingThreeViewRoleNames.push(primaryRoleAsset.roleName);
-			}
-			if (stateEvidenceAsset) {
-				stateEvidenceRoleCount += 1;
-				} else {
-					missingStateRoleNames.push(primaryRoleAsset.roleName);
-				}
-		} else if (roleNameKey) {
-			missingRoleReferenceNames.push(roleNameKey);
-		}
-		for (const found of foundList) {
-			const dedupeKey = `character|${found.assetId}|${found.imageUrl}`;
-			if (!existingKeys.has(dedupeKey)) {
-				assetInputs.push({
-					assetId: found.assetId,
-					assetRefId: buildSemanticRoleReferenceAssetRefId(found),
-					url: found.imageUrl,
-					role: "character",
-					note: buildRoleReferenceNote(`chapter-role:${found.roleName}`, found),
-					name: found.roleName,
-				});
-			}
-			if (!seenUrls.has(found.imageUrl)) {
-				seenUrls.add(found.imageUrl);
-				referenceImages.push(found.imageUrl);
-			}
-			if (assetInputs.length >= 4 && referenceImages.length >= 4) break;
-		}
-	}
-	for (const sceneAnchor of chapterSceneAnchors) {
-		const matched = sortVisualReferenceAssets(visualRefMap.get(sceneAnchor.key) || [], chapter)[0] || null;
-		if (!matched) {
-			missingScenePropNames.push(sceneAnchor.label);
-			continue;
-		}
-		scenePropReferenceCount += 1;
-		const dedupeKey = `scene|${matched.refId}|${matched.imageUrl}`;
-		if (!existingKeys.has(dedupeKey)) {
-			assetInputs.push({
-				assetId: matched.refId,
-				assetRefId: buildSemanticVisualReferenceAssetRefId({
-					role: "scene",
-					name: matched.name,
-				}),
-				url: matched.imageUrl,
-				role: "scene",
-				note: buildVisualReferenceNote(`chapter-scene:${matched.name}`, matched),
-				name: matched.name,
-			});
-		}
-		if (!seenUrls.has(matched.imageUrl)) {
-			seenUrls.add(matched.imageUrl);
-			referenceImages.push(matched.imageUrl);
-		}
-	}
-	for (const propAnchor of chapterPropAnchors) {
-		const matched = sortVisualReferenceAssets(visualRefMap.get(propAnchor.key) || [], chapter)[0] || null;
-		if (!matched) {
-			missingScenePropNames.push(propAnchor.label);
-			continue;
-		}
-		scenePropReferenceCount += 1;
-		const dedupeKey = `prop|${matched.refId}|${matched.imageUrl}`;
-		if (!existingKeys.has(dedupeKey)) {
-			assetInputs.push({
-				assetId: matched.refId,
-				assetRefId: buildSemanticVisualReferenceAssetRefId({
-					role: "prop",
-					name: matched.name,
-				}),
-				url: matched.imageUrl,
-				role: "prop",
-				note: buildVisualReferenceNote(`chapter-prop:${matched.name}`, matched),
-				name: matched.name,
-			});
-		}
-		if (!seenUrls.has(matched.imageUrl)) {
-			seenUrls.add(matched.imageUrl);
-			referenceImages.push(matched.imageUrl);
-		}
-	}
-	if (preferredRoleKeys.length > 0 && roleReferenceCount <= 0) {
-		reasons.push("chapter_role_reference_missing");
-	}
-	if (missingRoleReferenceNames.length > 0) {
-		reasons.push("chapter_role_reference_partial_missing");
-	}
-	if (preferredRoleKeys.length > 0 && stateEvidenceRoleCount <= 0) {
-		reasons.push("chapter_role_state_evidence_missing");
-	}
-	if (missingStateRoleNames.length > 0) {
-		reasons.push("chapter_role_state_evidence_partial_missing");
-	}
-	if (preferredRoleKeys.length > 0 && threeViewRoleCount <= 0) {
-		reasons.push("chapter_role_three_view_missing");
-	}
-	if (missingThreeViewRoleNames.length > 0) {
-		reasons.push("chapter_role_three_view_partial_missing");
-	}
-	if (chapterSceneAnchors.length + chapterPropAnchors.length > 0 && scenePropReferenceCount <= 0) {
-		reasons.push("chapter_scene_prop_reference_missing");
-	}
-	if (missingScenePropNames.length > 0) {
-		reasons.push("chapter_scene_prop_reference_partial_missing");
-	}
-	const tailFrameUrl = selectLatestTailFrameUrl(effectiveIndexData, chapter);
-	if (!tailFrameUrl) reasons.push("chapter_tail_frame_missing");
-	if (tailFrameUrl && !seenUrls.has(tailFrameUrl)) {
-		const contextDedupeKey = `context||${tailFrameUrl}`;
-		if (!existingKeys.has(contextDedupeKey)) {
-			assetInputs.push({
-				url: tailFrameUrl,
-				role: "context",
-				note: `storyboard-tail:chapter-${chapter}`,
-				name: `chapter-${chapter}-tail-frame`,
-			});
-		}
-		referenceImages.push(tailFrameUrl);
-	}
-	for (const styleImageUrl of styleReferenceImages) {
-		const styleDedupeKey = `style||${styleImageUrl}`;
-		if (!existingKeys.has(styleDedupeKey)) {
-			assetInputs.push({
-				url: styleImageUrl,
-				role: "style",
-				note: `style-bible:chapter-${chapter}`,
-				name: `chapter-${chapter}-style-anchor`,
-			});
-		}
-		if (!seenUrls.has(styleImageUrl)) {
-			seenUrls.add(styleImageUrl);
-			referenceImages.push(styleImageUrl);
-		}
-	}
-	return {
-		chapter,
-		roleNameKeys: preferredRoleKeys.slice(0, 8),
-		sceneNameKeys: chapterSceneAnchors.map((item) => item.key).slice(0, 8),
-		propNameKeys: chapterPropAnchors.map((item) => item.key).slice(0, 8),
-		tailFrameUrl,
-		assetInputs,
-		referenceImages,
-		roleReferenceCount,
-		stateEvidenceRoleCount,
-		threeViewRoleCount,
-		missingRoleReferenceNames: Array.from(new Set(missingRoleReferenceNames)).slice(0, 8),
-		missingStateRoleNames: Array.from(new Set(missingStateRoleNames)).slice(0, 8),
-		missingThreeViewRoleNames: Array.from(new Set(missingThreeViewRoleNames)).slice(0, 8),
-		scenePropReferenceCount,
-		missingScenePropNames: Array.from(new Set(missingScenePropNames)).slice(0, 8),
-		reasons,
-	};
-}
-
 function readRequestHeader(c: AppContext, key: string): string {
 	const v = c.req.header(key);
 	return typeof v === "string" ? v.trim() : "";
 }
 
-function resolveEffectiveUserId(c: AppContext, inputUserId: string): string {
+export function resolveEffectiveUserId(c: AppContext, inputUserId: string): string {
 	const direct = String(inputUserId || "").trim();
 	if (direct) return direct;
-	const fromCtxUserId = String((c as any).get?.("userId") || "").trim();
+	const fromCtxUserId = String(c.get("userId") || "").trim();
 	if (fromCtxUserId) return fromCtxUserId;
-	const fromCtxApiKeyOwnerId = String((c as any).get?.("apiKeyOwnerId") || "").trim();
+	const fromCtxApiKeyOwnerId = String(c.get("apiKeyOwnerId") || "").trim();
 	if (fromCtxApiKeyOwnerId) return fromCtxApiKeyOwnerId;
 	const fromHeader =
 		readRequestHeader(c, "x-agents-user-id") ||
@@ -5998,67 +4142,6 @@ function normalizeLocalResourcePathForAgents(value: string): string | null {
 	return raw.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 }
 
-type CharacterContinuityNote = {
-	age: string;
-	state: string;
-	stateLabel: string;
-	stateKey: string;
-};
-
-function parseCharacterContinuityNote(note: string): CharacterContinuityNote {
-	const parsed: CharacterContinuityNote = {
-		age: "",
-		state: "",
-		stateLabel: "",
-		stateKey: "",
-	};
-	for (const segment of String(note || "").split("|")) {
-		const item = segment.trim();
-		if (!item) continue;
-		if (item.startsWith("age=")) {
-			parsed.age = item.slice("age=".length).trim();
-			continue;
-		}
-		if (item.startsWith("state=")) {
-			parsed.state = item.slice("state=".length).trim();
-			continue;
-		}
-		if (item.startsWith("stateLabel=")) {
-			parsed.stateLabel = item.slice("stateLabel=".length).trim();
-			continue;
-		}
-		if (item.startsWith("stateKey=")) {
-			parsed.stateKey = item.slice("stateKey=".length).trim();
-			continue;
-		}
-	}
-	return parsed;
-}
-
-function collectCharacterContinuityPromptLines(assetInputs: AgentsBridgeAssetInput[]): string[] {
-	const lines: string[] = [];
-	const seen = new Set<string>();
-	for (const item of assetInputs) {
-		if (item.role !== "character") continue;
-		const parsed = parseCharacterContinuityNote(String(item.note || ""));
-		const roleName = String(item.name || item.assetRefId || item.assetId || item.url || "角色").trim();
-		const ageLine = parsed.age ? `- ${roleName} 年龄锚点：${parsed.age}` : "";
-		const stateParts = [parsed.stateLabel, parsed.state].filter(Boolean);
-		const stateLine =
-			stateParts.length > 0
-				? `- ${roleName} 状态锚点：${stateParts.join("；")}${
-						parsed.stateKey ? `（stateKey=${parsed.stateKey}）` : ""
-				  }`
-				: "";
-		for (const line of [ageLine, stateLine]) {
-			if (!line || seen.has(line)) continue;
-			seen.add(line);
-			lines.push(line);
-		}
-	}
-	return lines;
-}
-
 const RUNTIME_REFERENCE_CONTEXT_START_TAG = "<tapcanvas_runtime_reference_context>";
 const RUNTIME_REFERENCE_CONTEXT_END_TAG = "</tapcanvas_runtime_reference_context>";
 
@@ -6068,32 +4151,98 @@ function decoratePromptWithReferenceImages(
 	assetInputs: AgentsBridgeAssetInput[],
 	referenceImageSlots: AgentsBridgeReferenceImageSlot[],
 	selectedReference: AgentsBridgeChatContext["selectedReference"],
-	options?: {
-		suppressProductIntegrity?: boolean;
-	},
 ): string {
-	const base = typeof prompt === "string" ? prompt : "";
-	if (!referenceImages.length && !assetInputs.length) return base;
+	const rawBase = typeof prompt === "string" ? prompt : "";
+	const identityByUrl = new Map<string, string>();
+	for (const [index, item] of assetInputs.entries()) {
+		const url = String(item.url || "").trim();
+		if (!url || identityByUrl.has(url)) continue;
+		const parts = [`媒体引用#${index + 1}`, `mediaType=${item.mediaType}`];
+		if (item.name) parts.push(`name=${item.name}`);
+		if (item.nodeId) parts.push(`nodeId=${item.nodeId}`);
+		if (item.assetId) parts.push(`assetId=${item.assetId}`);
+		if (item.assetRefId) parts.push(`assetRefId=${item.assetRefId}`);
+		identityByUrl.set(url, `[${parts.join(" | ")}]`);
+	}
+	const base = redactHttpImageUrls(
+		rawBase,
+		(url) =>
+			identityByUrl.get(url) ||
+			"[图片引用已隐藏；调用方未提供可验证的节点或资产 ID]",
+	);
+	const selectedReferenceParts = selectedReference
+		? [
+				selectedReference.nodeId ? `nodeId=${selectedReference.nodeId}` : "",
+				selectedReference.label ? `label=${selectedReference.label}` : "",
+				selectedReference.kind ? `kind=${selectedReference.kind}` : "",
+				selectedReference.roleName ? `roleName=${selectedReference.roleName}` : "",
+				selectedReference.roleCardId ? `roleCardId=${selectedReference.roleCardId}` : "",
+				selectedReference.bookId ? `bookId=${selectedReference.bookId}` : "",
+				selectedReference.chapterId ? `chapterId=${selectedReference.chapterId}` : "",
+				typeof selectedReference.shotNo === "number"
+					? `shotNo=${selectedReference.shotNo}`
+					: "",
+				selectedReference.productionLayer
+					? `productionLayer=${selectedReference.productionLayer}`
+					: "",
+				selectedReference.creationStage
+					? `creationStage=${selectedReference.creationStage}`
+					: "",
+				selectedReference.approvalStatus
+					? `approvalStatus=${selectedReference.approvalStatus}`
+					: "",
+				selectedReference.authorityBaseFrameNodeId
+					? `authorityBaseFrameNodeId=${selectedReference.authorityBaseFrameNodeId}`
+					: "",
+				selectedReference.authorityBaseFrameStatus
+					? `authorityBaseFrameStatus=${selectedReference.authorityBaseFrameStatus}`
+					: "",
+		  ].filter(Boolean)
+		: [];
+	const anchorBindingLines = (selectedReference?.anchorBindings || []).map(
+		(binding, index) => {
+			const parts = [
+				`#${index + 1}`,
+				`kind=${binding.kind}`,
+				binding.refId ? `refId=${binding.refId}` : "",
+				binding.entityId ? `entityId=${binding.entityId}` : "",
+				binding.label ? `label=${binding.label}` : "",
+				binding.sourceBookId ? `sourceBookId=${binding.sourceBookId}` : "",
+				binding.sourceNodeId ? `sourceNodeId=${binding.sourceNodeId}` : "",
+				binding.assetId ? `assetId=${binding.assetId}` : "",
+				binding.assetRefId ? `assetRefId=${binding.assetRefId}` : "",
+				binding.referenceView ? `referenceView=${binding.referenceView}` : "",
+				binding.category ? `category=${binding.category}` : "",
+				binding.note ? `note=${binding.note}` : "",
+			].filter(Boolean);
+			return `- ${parts.join(" | ")}`;
+		},
+	);
+	if (
+		!referenceImages.length &&
+		!assetInputs.length &&
+		selectedReferenceParts.length === 0 &&
+		anchorBindingLines.length === 0
+	) {
+		return base;
+	}
 	if (base.includes(RUNTIME_REFERENCE_CONTEXT_START_TAG)) return base;
-	const hasCharacterReference = assetInputs.some((item) => item.role === "character");
-	const hasSubjectIntegrityReference = assetInputs.some(
-		(item) => item.role === "product" || item.role === "target" || item.role === "reference",
-	);
-	const hasEnvironmentReference = assetInputs.some(
-		(item) => item.role === "scene" || item.role === "prop" || item.role === "context",
-	);
-	const characterContinuityLines = collectCharacterContinuityPromptLines(assetInputs);
-	const suppressProductIntegrity = options?.suppressProductIntegrity === true;
-	const blocks: string[] = [];
+	const blocks: string[] = [
+		"【引用事实边界】",
+		"- 媒体存储 URL 已脱敏；以下仅列调用方显式提供的身份事实。不得伪造节点、资产或 URL。",
+		"",
+	];
 	if (assetInputs.length) {
 		blocks.push(
-			"【资产输入】",
+			"【媒体资产输入】",
 			...assetInputs.map((item, idx) => {
 				const parts = [
 					`#${idx + 1}`,
+					`mediaType=${item.mediaType}`,
 					`role=${item.role}`,
-					`url=${item.url}`,
+					item.nodeId ? `nodeId=${item.nodeId}` : "",
 					item.assetId ? `assetId=${item.assetId}` : "",
+					item.assetRefId ? `assetRefId=${item.assetRefId}` : "",
 					typeof item.weight === "number" ? `weight=${item.weight}` : "",
 					item.name ? `name=${item.name}` : "",
 					item.note ? `note=${item.note}` : "",
@@ -6105,25 +4254,13 @@ function decoratePromptWithReferenceImages(
 	}
 	if (referenceImageSlots.length) {
 		blocks.push(
-			"【参考图图位协议】",
-			"- 对第三方图片/视频模型，参考图的有效语义是图位顺序，不是字段名 `referenceImages` 本身。",
-			...(referenceImageSlots.length > 2
-				? [
-					"- 当前参考资产超过 2 张时，执行层会先把它们合成为一张带右下角资产 id/名字标记的拼图参考板。",
-					"- 这种情况下，最终执行 prompt 不要再逐张写 `图1/图2/图3` 职责分配，而要按资产 id / 名称引用，例如 `@li_changan`、`@night_market`。",
-				]
-				: [
-					"- 参考资产不超过 2 张时，你在最终执行 prompt 里必须显式使用 `图1`、`图2` 这种图位编号来引用这些参考图。",
-					"- 若不同参考图承担不同职责，必须按图位写清楚，例如“人物外观严格参考图1，场景与光线延续图2”。",
-				]),
-			"",
-		);
-	}
-	if (referenceImageSlots.length) {
-		blocks.push(
-			"【参考图图位清单】",
+			"【参考图位】",
 			...referenceImageSlots.map((slot) => {
-				const parts = [slot.slot, `url=${slot.url}`];
+				const parts = [slot.slot];
+				if (slot.referenceId) parts.push(`referenceId=${slot.referenceId}`);
+				if (slot.nodeId) parts.push(`nodeId=${slot.nodeId}`);
+				if (slot.assetId) parts.push(`assetId=${slot.assetId}`);
+				if (slot.assetRefId) parts.push(`assetRefId=${slot.assetRefId}`);
 				if (slot.role) parts.push(`role=${slot.role}`);
 				if (slot.label) parts.push(`label=${slot.label}`);
 				if (slot.note) parts.push(`note=${slot.note}`);
@@ -6131,65 +4268,18 @@ function decoratePromptWithReferenceImages(
 			}),
 			"",
 		);
-	} else {
-		blocks.push("【参考图】", ...referenceImages.map((url) => `- ${url}`), "");
-	}
-	if (hasCharacterReference) {
+	} else if (referenceImages.length) {
 		blocks.push(
-			"【角色参考一致性约束】",
-			"- 角色参考图锁定角色身份：脸型、发型、服装主轮廓、配色与可识别特征必须保持一致。",
-			"- 允许调整景别、机位、光线与动作，但不得把同一角色改成另一张脸或另一套核心服设。",
-			"- 多角色同场时，必须维持各角色之间的体型、站位关系与主次关系，不得串脸。",
-			"- 若文字描述与角色参考图冲突，以角色参考图中的身份锚点为准。",
-		);
-	}
-	if (hasSubjectIntegrityReference && !suppressProductIntegrity) {
-		blocks.push(
-			"【参考主体保真硬约束】",
-			"- 参考图中的主体对象必须保持同一对象：外轮廓、比例、结构、关键开孔/按键/接口位置不可改变。",
-			"- 保持完整主体，不得裁掉关键部件；禁止只保留局部导致主体信息不完整。",
-			"- 保持主材质与颜色一致（允许正常光照变化，不允许改色改材质）。",
-			"- 允许改变背景、道具与模特姿态，但主体对象不得被重绘成不同款式。",
-			"- 若参考图本身是纯净背景主体图，优先保留主体边界清晰、无形变、无遮挡。",
-		);
-	} else if (hasEnvironmentReference) {
-		blocks.push(
-			"【场景与道具连续性约束】",
-			"- 场景参考图锁定空间结构、地标、主光方向与环境材质，不得无因跳场景。",
-			"- 道具参考图锁定材质、比例、关键结构与摆放关系，不得替换成另一件相似但不同的物件。",
-			"- 当角色参考与场景/道具参考同时存在时，必须同时保持人物身份和环境连续性，不能只保留其中一半。",
-		);
-	} else if (!hasCharacterReference && suppressProductIntegrity) {
-		blocks.push(
-			"【视觉参考使用约束】",
-			"- 当前参考图仅作为视觉锚点与连续性证据，不自动等同于既有图主体替换任务。",
-			"- 若任务绑定章节/分镜/视频节点等 project-grounded 创作上下文，应优先服从章节文本、镜头关系与画布目标。",
-			"- 仅当用户明确要求复刻/替换既有图主体时，才把版式保留与主体替换视为主目标。",
-		);
-	}
-	if (characterContinuityLines.length > 0) {
-		blocks.push(
-			"【角色年龄与状态连续性约束】",
-			...characterContinuityLines,
-			"- 章节续写默认保持状态连续；若需要从“重伤/濒死”转为“恢复/无伤”，必须在 continuityConstraints 明确恢复原因与时间跨度。",
+			"【参考图】",
+			`- 已绑定 ${referenceImages.length} 张内部图片资产；存储 URL 不向主模型公开。`,
 			"",
 		);
 	}
-	const identityLines: string[] = [];
-	if (selectedReference?.roleName?.trim()) {
-		identityLines.push(`- 当前已明确绑定角色：${selectedReference.roleName.trim()}。最终执行 prompt 不得退回“默认少年/默认人物/未命名角色”。`);
+	if (selectedReferenceParts.length > 0) {
+		blocks.push("【已选引用】", `- ${selectedReferenceParts.join(" | ")}`, "");
 	}
-	if (selectedReference?.roleCardId?.trim()) {
-		identityLines.push(`- 当前已明确绑定角色卡：${selectedReference.roleCardId.trim()}。若创建执行节点，必须把该角色绑定以 assetInputs(role=character) 或真实连边保留下来。`);
-	}
-	if (selectedReference?.authorityBaseFrameNodeId?.trim()) {
-		identityLines.push(`- 当前已明确权威基底帧节点：${selectedReference.authorityBaseFrameNodeId.trim()}。若没有上游边，必须显式落 referenceImages / assetInputs，不能只靠文字描述“参考已有图片”。`);
-	}
-	if (selectedReference?.authorityBaseFrameStatus === "confirmed") {
-		identityLines.push("- authorityBaseFrame.status=confirmed，后续图片/分镜节点不得使用 generic/default 主体占位。");
-	}
-	if (identityLines.length > 0) {
-		blocks.push("【身份锁定】", ...identityLines, "");
+	if (anchorBindingLines.length > 0) {
+		blocks.push("【锚点绑定】", ...anchorBindingLines, "");
 	}
 	const runtimeReferenceContext = [
 		RUNTIME_REFERENCE_CONTEXT_START_TAG,
@@ -6199,46 +4289,13 @@ function decoratePromptWithReferenceImages(
 	return [runtimeReferenceContext, base].filter(Boolean).join("\n\n");
 }
 
-function buildChapterAssetRepairDiagnosticContext(input: {
-	workspaceAction:
-		| "chapter_script_generation"
-		| "chapter_asset_generation"
-		| "shot_video_generation"
-		| null;
-	chapterContinuityInjection: ChapterContinuityInjection;
-}): Record<string, unknown> {
-	if (input.workspaceAction !== "chapter_asset_generation") return {};
-	const missingAssetNames = buildChapterPreproductionMissingAssetNames(
-		input.chapterContinuityInjection,
-	);
-	if (missingAssetNames.length <= 0) {
-		return {
-			chapterAssetRepairRequired: false,
-			chapterAssetPreproductionRequiredCount: 0,
-		};
-	}
-	return {
-		chapterAssetRepairRequired: true,
-		chapterAssetPreproductionRequiredCount: missingAssetNames.length,
-		chapterMissingReusableAssets: missingAssetNames,
-		chapterMissingRoleReferences:
-			input.chapterContinuityInjection.missingRoleReferenceNames,
-		chapterMissingRoleStates: input.chapterContinuityInjection.missingStateRoleNames,
-		chapterMissingRoleThreeViews:
-			input.chapterContinuityInjection.missingThreeViewRoleNames,
-		chapterMissingSceneProps: input.chapterContinuityInjection.missingScenePropNames,
-	};
-}
-
 export function readAgentsBridgeBaseUrl(c: AppContext): string {
 	const rawFromEnv =
 		typeof c.env.AGENTS_BRIDGE_BASE_URL === "string"
 			? c.env.AGENTS_BRIDGE_BASE_URL
 			: "";
 	const rawFromProcess =
-		typeof (globalThis as any)?.process?.env?.AGENTS_BRIDGE_BASE_URL === "string"
-			? String((globalThis as any).process.env.AGENTS_BRIDGE_BASE_URL)
-			: "";
+		readNodeProcessEnv("AGENTS_BRIDGE_BASE_URL");
 	const raw = rawFromEnv || rawFromProcess;
 	return raw.trim().replace(/\/+$/, "");
 }
@@ -6253,90 +4310,856 @@ export function readTapCanvasApiBaseFromEnv(c: AppContext): string {
 			? c.env.TAPCANVAS_API_BASE_URL
 			: "";
 	const rawProcessInternal =
-		typeof (globalThis as any)?.process?.env?.TAPCANVAS_API_INTERNAL_BASE === "string"
-			? String((globalThis as any).process.env.TAPCANVAS_API_INTERNAL_BASE)
-			: "";
+		readNodeProcessEnv("TAPCANVAS_API_INTERNAL_BASE");
 	const rawProcessBase =
-		typeof (globalThis as any)?.process?.env?.TAPCANVAS_API_BASE_URL === "string"
-			? String((globalThis as any).process.env.TAPCANVAS_API_BASE_URL)
-			: "";
+		readNodeProcessEnv("TAPCANVAS_API_BASE_URL");
 	const raw = rawInternal || rawBase || rawProcessInternal || rawProcessBase;
+	if (!raw.trim()) {
+		console.error(JSON.stringify({
+			message: "agents_remote_tool_callback_base_unavailable",
+			requestUrl: c.req.url,
+			nodeRuntime: isNodeRuntime(),
+			contextInternalBasePresent: Boolean(rawInternal),
+			contextBaseUrlPresent: Boolean(rawBase),
+			processInternalBasePresent: Boolean(rawProcessInternal),
+			processBaseUrlPresent: Boolean(rawProcessBase),
+		}));
+	}
 	return raw.trim().replace(/\/+$/, "");
+}
+
+export function assertAgentsRemoteToolCallbackBase(input: {
+	baseUrl: string;
+	remoteToolCount: number;
+}): void {
+	if (input.remoteToolCount <= 0 || input.baseUrl.trim()) return;
+	throw new AppError(
+		"Agents 远程工具回调地址未配置：必须显式设置 TAPCANVAS_API_INTERNAL_BASE 或 TAPCANVAS_API_BASE_URL。",
+		{
+			status: 503,
+			code: "agents_remote_tool_callback_base_missing",
+			details: {
+				requiredEnv: [
+					"TAPCANVAS_API_INTERNAL_BASE",
+					"TAPCANVAS_API_BASE_URL",
+				],
+			},
+		},
+	);
 }
 
 function buildTapCanvasFlowPatchDescription(input: {
 	hideStoryboardEditor: boolean;
 }): string {
-	const visualKinds = input.hideStoryboardEditor
-		? "image / imageEdit / storyboardImage / video / composeVideo"
-		: "image / storyboard / video / composeVideo";
 	const imageLikeKinds = input.hideStoryboardEditor
 		? "image / imageEdit / storyboardImage"
 		: "image / storyboard";
-	const lines = [
-		`Patch the current TapCanvas flow graph in the authorized project/flow scope.`,
-		"deleteNodeIds removes existing nodes by id and also removes any connected edges in the same persisted write.",
-		"deleteEdgeIds removes existing edges by id without touching nodes.",
-		`Create new nodes only with the real frontend node protocol. Supported createNodes object types are ${REMOTE_FLOW_CREATE_NODE_TYPES.join(" / ")} only.`,
-		"Asset generation is executed by the web app after runnable nodes are added.",
-		`When the current run already carries referenceImageSlots / referenceImages / assetInputs and you create executable ${visualKinds} nodes that must reuse them, persist the real reference inputs into node data or create explicit upstream edges; never rely on prompt wording alone to preserve references.`,
-		"If the current turn already binds a role card / authorityBaseFrame / selectedReference, your created node must preserve that identity explicitly and must not fall back to a generic default person.",
-		"If createEdges references a node created in the same request, every referenced createNode must declare an explicit stable id first; labels are never valid node ids for edges.",
-		"Child nodes that declare parentId must use positions relative to that parent group, not absolute canvas coordinates.",
-		"When the same flow_patch batch writes grouped nodes, persisted node order is normalized parent-first and each affected group is compacted after write. Put the group node before its children, and list grouped children in the exact visual order you want preserved.",
-		"A blank text node must be a taskNode with data.kind='text', for example {type:'taskNode', position:{x:number,y:number}, data:{kind:'text', label:'', content:'', nodeWidth:220, nodeHeight:120}}.",
-		"Do not invent textNode or other unsupported object types.",
-		...(!input.hideStoryboardEditor
-			? [
-				"A taskNode with data.kind='storyboard' is the front-end storyboard editor image grid, not a text container. Only use storyboard when you are providing storyboardEditorCells or the user explicitly asked for an empty storyboard board.",
-				"On storyboard nodes, storyboardEditorCells[*].prompt is the execution prompt and storyboardEditorCells[*].imageUrl is the factual asset URL; runtime-only fields such as status / progress / runToken / lastResult are diagnostics only and do not replace board config.",
-			  ]
-			: []),
-		`For chapter-grounded visual production, every created or patched ${imageLikeKinds} / composeVideo / video node in the same flow_patch batch must already carry data.productionLayer / data.creationStage / data.approvalStatus plus complete data.productionMetadata.`,
-		"Example: productionMetadata:{chapterGrounded:true,lockedAnchors:{character:['role:a'],scene:['寨楼'],shot:['推窗'],continuity:[],missing:[]},authorityBaseFrame:{status:'planned',source:'chapter_context',reason:'缺少已确认基底帧',nodeId:null}}.",
-		"Do not omit chapterGrounded:true and do not plan a follow-up cleanup patch just to add metadata.",
-		"When the user explicitly asks to connect / wire / attach a reference node to another node, prefer createEdges with the real source/target node ids instead of only copying URLs into patchNodeData.",
-		"Edge handles must be exact frontend handle ids such as out-image / in-image / out-video / in-any.",
-		"Handle matrix: text-like nodes such as text / storyboardScript / novelDoc / scriptDoc use source handles out-text / out-text-wide and have no target handles; image-like nodes such as image / imageEdit / storyboardImage use in-image / in-image-wide and out-image / out-image-wide; video-like nodes such as video / composeVideo use in-any / in-any-wide and out-video / out-video-wide.",
-		...(!input.hideStoryboardEditor
-			? [
-				"Storyboard nodes also use in-image / in-image-wide and out-image / out-image-wide; do not use in-any for storyboard nodes.",
-			  ]
-			: []),
-		"Never invent semantic aliases like image / reference / out-any for text nodes.",
-		"Example edge: {source:'role-card-node-id', target:'image-node-id', sourceHandle:'out-image', targetHandle:'in-image'}.",
-		"appendNodeArrays only appends items into data[key] of an existing node id, never targets the flow root. The item shape is {id:'node-id', key:'arrayField', items:[...]}; items is required.",
-		...(!input.hideStoryboardEditor
-			? [
-				"If you are replacing the whole storyboardEditorCells array, prefer patchNodeData with data.storyboardEditorCells instead of appendNodeArrays.",
-			  ]
-			: []),
-		"patchNodeData only patches data of an existing node.",
-	];
-	return lines.join(" ");
+	return [
+		"Patch flow nodes/edges/data/arrays.",
+		`createNodes: ${REMOTE_FLOW_CREATE_NODE_TYPES.join(" / ")}. 分镜表 / shot table requires data.kind='shotTable' plus valid data.shotTable; content/prompt/Markdown cannot replace it. storyboardScript is text only.`,
+		"Use real IDs/handles. Child positions are parent-relative.",
+		"Bind media by node/asset IDs or edges; never persist media URLs in prompts/data.",
+		`Chapter ${imageLikeKinds} / video / composeVideo needs productionLayer, creationStage, approvalStatus and productionMetadata.`,
+		"Preserve spatialBlocking provenance.",
+		"patchNodeData merges; appendNodeArrays appends; replacing non-null data needs allowOverwrite=true.",
+		"Returns stats/IDs only.",
+	].join(" ");
 }
 
-export function buildAgentsBridgeRemoteTools(input: {
+const shotTableNodeDataSchema = {
+	type: "object",
+	description:
+		"Required for kind='shotTable': {version:1,overview:Record<string,string>,columns:Array<{key,label,scope:'shot'|'timeline'}>,rows:Array<{id,shotId,values:Record<string,string>}>}. Markdown cannot replace it.",
+} as const;
+
+function compactRemoteTools(
+	tools: AgentsBridgeRemoteToolDefinition[],
+): Array<{ name: string; description: string; parameters?: Record<string, unknown>; execution?: import("../ai/tool-schemas").ToolExecutionSemantics }> {
+	return tools.map(({ name, description, parameters, execution }) => ({
+		name,
+		description,
+		...(parameters ? { parameters: parameters as Record<string, unknown> } : {}),
+		...(execution ? { execution } : {}),
+	}));
+}
+
+export function compactRemoteToolCatalog(
+	tools: Array<AgentsBridgeRemoteToolCatalogEntry<AgentsBridgeRemoteToolDefinition>>,
+): Array<
+	AgentsBridgeRemoteToolCatalogEntry<{
+		name: string;
+		description: string;
+		execution?: import("../ai/tool-schemas").ToolExecutionSemantics;
+		parameters?: Record<string, unknown>;
+	}> & {
+		operationExecutions?: Array<{
+			selector: { field: string; value: string };
+			execution: ToolOperationExecution;
+		}>;
+	}
+> {
+	const compactDescription = (description: string, capability: string): string => {
+		// The model only receives the generic schema-loader/call tools. The cold
+		// catalog remains an authorization index, but it must retain enough of the
+		// real tool contract to distinguish image generation from image inspection
+		// before asking for the exact schema. Full parameters are still fetched only
+		// after the model selects one exact name.
+		const normalized = description.trim();
+		const preview = normalized.length > 280
+			? `${normalized.slice(0, 280)}…`
+			: normalized;
+		return `${preview || "Authorized catalog tool"} [capability=${capability}]`;
+	};
+	return tools.map(
+		({ name, description: _description, parameters, execution, requiredScope, capability }) => {
+			const operationIndex = parameters
+				? readToolSchemaOperationIndex(parameters as Record<string, unknown>)
+				: null;
+			const operationExecutions = operationIndex
+				? operationIndex.values.flatMap((value) => {
+					const operationExecution = readToolOperationExecution({
+						parameters: parameters as Record<string, unknown>,
+						selector: { field: operationIndex.field, value },
+					}) ?? execution ?? null;
+					return operationExecution
+						? [{
+							selector: { field: operationIndex.field, value },
+							execution: operationExecution,
+						}]
+						: [];
+				})
+				: [];
+			return {
+				name,
+				description: compactDescription(_description, capability),
+				// Catalog schemas are fetched only when the agent asks for this exact
+				// tool. Keeping the name/description/scope contract here preserves
+				// authorization while avoiding the full parameter tree on every chat
+				// request.
+				schemaDeferred: true,
+				descriptionDeferred: true,
+				...(execution ? { execution } : {}),
+				...(operationExecutions.length > 0 ? { operationExecutions } : {}),
+				requiredScope,
+				capability,
+			};
+		},
+	);
+}
+
+function buildRemoteToolSchemas(
+	tools: AgentsBridgeRemoteToolDefinition[],
+): Record<string, Record<string, unknown>> {
+	const out: Record<string, Record<string, unknown>> = {};
+	for (const tool of tools) {
+		if (tool.parameters) out[tool.name] = tool.parameters as Record<string, unknown>;
+	}
+	return out;
+}
+
+export function normalizeChapterCanvasIntent(value: unknown): AgentsBridgeChapterCanvasIntent | null {
+	const raw = typeof value === "string" ? value.trim() : "";
+	if (
+		raw === "extract_roles" ||
+		raw === "expand_video_script" ||
+		raw === "generate_shot_placeholders" ||
+		raw === "generate_scene_references" ||
+		raw === "generate_video_nodes" ||
+		raw === "generate_group_storyboard"
+	) {
+		return raw;
+	}
+	return null;
+}
+
+function attachRemoteToolExecutionSemantics(
+	tool: AgentsBridgeRemoteToolDefinition,
+): AgentsBridgeRemoteToolDefinition {
+	return {
+		...tool,
+		execution: readRemoteToolCapabilityRegistryEntry(tool.name).execution,
+	};
+}
+
+export type AgentsBridgeRemoteToolsInput = {
 	publicAgentsRequest: boolean;
 	canvasProjectId: string | null;
 	canvasFlowId: string | null;
+	canvasNodeId?: string | null;
+	bookId?: string | null;
+	chapterId?: string | null;
+	executionId?: string | null;
 	hideStoryboardEditor?: boolean;
-}): AgentsBridgeRemoteToolDefinition[] {
+	adminWorkflowAccess?: boolean;
+	/**
+	 * Machine-owned continuation of an already accepted workflow family. This
+	 * exposes only the family resume protocol; it never re-enables the admin
+	 * start surface or permits a second equipped-workflow submission.
+	 */
+	workflowRecoveryAccess?: boolean;
+	disabledBuiltInCapabilities?: readonly string[];
+	enabledVideoModelKeys?: readonly string[];
+	enabledImageModelKeys?: readonly string[];
+	equippedWorkflows?: readonly Readonly<{
+		attachmentId: string;
+		name: string;
+		summary: string;
+		invocation?: Readonly<{
+			sourceMode: "inline_text" | "canvas_group" | "project_context" | "none";
+			requiredTriggerPayloadFields: readonly string[];
+			executionVariant?: "full_video" | "first_video";
+		}>;
+		primaryForCapabilities?: readonly Readonly<{
+			capabilityId: string;
+			name: string;
+			description: string;
+		}>[];
+	}>[];
+};
+
+export function filterEquippedWorkflowsByExecutionVariant<
+	T extends Readonly<{
+		descriptor: Readonly<{ invocation?: Readonly<{ executionVariant?: "full_video" | "first_video" }> }>;
+		primaryForCapabilities?: readonly Readonly<{ capabilityId: string }>[];
+	}>,
+>(
+	workflows: readonly T[],
+	requestedVariant: "full_video" | "first_video" | null,
+): T[] {
+	if (requestedVariant) {
+		return workflows.filter(
+			(workflow) => workflow.descriptor.invocation?.executionVariant === requestedVariant,
+		);
+	}
+	return workflows.filter((workflow) => (
+		workflow.descriptor.invocation?.executionVariant === undefined ||
+		(workflow.primaryForCapabilities?.length ?? 0) > 0
+	));
+}
+
+export type AgentsPrimaryCapabilityRoute = Readonly<{
+	capabilityId: string;
+	toolName: "tapcanvas_equipped_workflow_run";
+	attachmentId: string;
+}>;
+
+type EquippedWorkflowVideoCapability = Readonly<{
+	invocation?: Readonly<{
+		requiredTriggerPayloadFields: readonly string[];
+	}>;
+}>;
+
+/**
+ * The pinned workflow descriptor derives this requirement from its actual
+ * executor graph. Its canonical model must be selected from the live catalog
+ * before admission; the workflow runtime never guesses or silently falls back
+ * to an account-wide default.
+ */
+export function equippedWorkflowRequiresVideoModel(
+	workflow: EquippedWorkflowVideoCapability,
+): boolean {
+	return (workflow.invocation?.requiredTriggerPayloadFields ?? [])
+		.some((field) => field.trim() === "videoModelKey");
+}
+
+export function equippedWorkflowRequiresImageModel(
+	workflow: EquippedWorkflowVideoCapability,
+): boolean {
+	return (workflow.invocation?.requiredTriggerPayloadFields ?? [])
+		.some((field) => field.trim() === "imageModelKey");
+}
+
+function equippedWorkflowRequiredTriggerFields(
+	workflow: NonNullable<AgentsBridgeRemoteToolsInput["equippedWorkflows"]>[number],
+): string[] {
+	return [...new Set([
+		...(workflow.invocation?.requiredTriggerPayloadFields ?? []),
+	])];
+}
+
+
+function buildEquippedWorkflowSchemaBranch(
+	workflow: NonNullable<AgentsBridgeRemoteToolsInput["equippedWorkflows"]>[number],
+	requiresAttachmentSelection: boolean,
+): Record<string, unknown> {
+	const triggerRequired = equippedWorkflowRequiredTriggerFields(workflow);
+	return {
+		type: "object",
+		properties: {
+			...(requiresAttachmentSelection
+				? { attachmentId: { type: "string", const: workflow.attachmentId } }
+				: {}),
+			...(triggerRequired.length > 0
+				? {
+					triggerPayload: {
+						type: "object",
+						required: triggerRequired,
+					},
+				}
+				: {}),
+		},
+		required: [
+			...(requiresAttachmentSelection ? ["attachmentId"] : []),
+			...(triggerRequired.length > 0 ? ["triggerPayload"] : []),
+		],
+	};
+}
+
+const NON_REPLACEABLE_BUILT_IN_CAPABILITY_IDS = new Set(
+	listBuiltInSmallTCapabilities()
+		.filter((capability) => capability.replaceable === false)
+		.map((capability) => capability.id),
+);
+
+const listReplaceablePrimaryCapabilities = (
+	capabilities: NonNullable<
+		NonNullable<AgentsBridgeRemoteToolsInput["equippedWorkflows"]>[number]["primaryForCapabilities"]
+	>,
+) => capabilities.filter(
+	(capability) => !NON_REPLACEABLE_BUILT_IN_CAPABILITY_IDS.has(capability.capabilityId.trim()),
+);
+
+/**
+ * Projects confirmed capability-bay replacement decisions into a compact
+ * runtime route. This reads persisted machine facts only; workflow names and
+ * user prompt text never participate in route selection.
+ */
+export function buildEquippedWorkflowPrimaryCapabilityRoutes(
+	equippedWorkflows: AgentsBridgeRemoteToolsInput["equippedWorkflows"],
+): AgentsPrimaryCapabilityRoute[] {
+	if (!equippedWorkflows) return [];
+	const routes = new Map<string, AgentsPrimaryCapabilityRoute>();
+	for (const workflow of equippedWorkflows) {
+		const attachmentId = workflow.attachmentId.trim();
+		if (!attachmentId) continue;
+		for (const capability of listReplaceablePrimaryCapabilities(workflow.primaryForCapabilities ?? [])) {
+			const capabilityId = capability.capabilityId.trim();
+			if (!capabilityId) continue;
+			routes.set(`${capabilityId}\u0000${attachmentId}`, {
+				capabilityId,
+				toolName: "tapcanvas_equipped_workflow_run",
+				attachmentId,
+			});
+		}
+	}
+	return Array.from(routes.values()).sort((left, right) =>
+		left.capabilityId.localeCompare(right.capabilityId) ||
+		left.attachmentId.localeCompare(right.attachmentId),
+	);
+}
+
+function buildWorkflowResumeParameters(): Record<string, unknown> {
+	const sourceExecutionId = { type: "string", minLength: 1 } as const;
+	const branch = (
+		propertyName: "providerBalanceRestored" | "cancellationRevoked" | "agentModelCutover" | "definitionCutover" | null,
+		propertySchema?: Record<string, unknown>,
+	): Record<string, unknown> => ({
+		type: "object",
+		properties: {
+			sourceExecutionId,
+			...(propertyName && propertySchema ? { [propertyName]: propertySchema } : {}),
+		},
+		required: ["sourceExecutionId", ...(propertyName ? [propertyName] : [])],
+		additionalProperties: false,
+	});
+	return {
+		type: "object",
+		oneOf: [
+			branch(null),
+			branch("providerBalanceRestored", {
+				type: "boolean",
+				const: true,
+				description: "Set only after the user explicitly confirms that the same provider/channel balance has been restored. Keeps the frozen model and API style unchanged.",
+			}),
+			branch("cancellationRevoked", {
+				type: "boolean",
+				const: true,
+				description: "Set only after the user explicitly revokes the latest cancellation and asks to continue that same logical workflow family.",
+			}),
+			branch("agentModelCutover", {
+				type: "object",
+				properties: {
+					targetModelKey: { type: "string", minLength: 1 },
+					apiStyle: { type: "string", enum: ["chat", "responses"] },
+				},
+				required: ["targetModelKey", "apiStyle"],
+				additionalProperties: false,
+			}),
+			branch("definitionCutover", {
+				type: "object",
+				properties: { mode: { type: "string", const: "current_flow" } },
+				required: ["mode"],
+				additionalProperties: false,
+				description: "Use only after explicit user authorization to apply the already-persisted current workflow configuration to this same failed family. Topology and invocation facts remain frozen.",
+			}),
+		],
+	};
+}
+
+function buildEquippedWorkflowRunTool(
+	equippedWorkflows: AgentsBridgeRemoteToolsInput["equippedWorkflows"],
+	enabledVideoModelKeysInput: readonly string[] | undefined,
+	enabledImageModelKeysInput: readonly string[] | undefined,
+): AgentsBridgeRemoteToolDefinition | null {
+	if (!equippedWorkflows || equippedWorkflows.length === 0) return null;
+	const commonRequiredTriggerFields = equippedWorkflows.length > 0
+		? equippedWorkflows.reduce<string[] | null>((common, workflow) => {
+			const fields = equippedWorkflowRequiredTriggerFields(workflow);
+			if (common === null) return [...fields];
+			return common.filter((field) => fields.includes(field));
+		}, null) ?? []
+		: [];
+	const enabledVideoModelKeys = [...new Set((enabledVideoModelKeysInput ?? [])
+		.map((modelKey) => modelKey.trim())
+		.filter(Boolean))].sort();
+	const enabledImageModelKeys = [...new Set((enabledImageModelKeysInput ?? [])
+		.map((modelKey) => modelKey.trim())
+		.filter(Boolean))].sort();
+	const requiresAttachmentSelection = equippedWorkflows.length > 1;
+	return {
+		name: "tapcanvas_equipped_workflow_run",
+				description: [
+			requiresAttachmentSelection
+				? "Run one workflow that the current user explicitly equipped in 小T 能力舱. Select only from the attachment IDs declared in this tool schema; the server pins the saved workflow version and trigger. idempotencyKey is mandatory."
+				: "Run the only workflow currently equipped for this scope in 小T 能力舱. The server binds its exact attachment ID from persisted capability facts; do not submit attachmentId. The server pins the saved workflow version and trigger. idempotencyKey is mandatory.",
+			...equippedWorkflows.map((item) => {
+				const primaryFor = listReplaceablePrimaryCapabilities(item.primaryForCapabilities ?? []);
+				const invocation = item.invocation;
+				const requiredTriggerFields = equippedWorkflowRequiredTriggerFields(item);
+				return [
+					`- ${item.attachmentId}: ${item.name}${item.summary ? ` — ${item.summary}` : ""}`,
+					invocation || requiredTriggerFields.length > 0
+						? `  本工作流的真实输入契约：sourceMode=${invocation?.sourceMode ?? "none"}${invocation?.executionVariant ? `；videoVariant=${invocation.executionVariant}` : ""}；${requiredTriggerFields.length > 0 ? `triggerPayload 必须提供 ${requiredTriggerFields.join("、")}。` : "无需额外 triggerPayload 字段。"}`
+						: "",
+					primaryFor.length > 0
+						? `  用户已确认该工作流是这些能力的主路径替代：${primaryFor.map((capability) => `${capability.capabilityId}（${capability.name}）`).join("、")}。`
+						: "",
+				].filter(Boolean).join("\n");
+			}),
+			"每次调用都会真实启动或幂等认领一个持久工作流执行，不存在 schema-only、dry-run 或 preflight 模式。本工具已携带本轮精确参数结构，不得在调用前再调用 tapcanvas_get_tool_schema，也不得以测试性 idempotencyKey 调用本工具。每个逻辑任务只调用一次，并在所有物理续跑中复用同一个稳定 idempotencyKey；受理后只能观察已返回的 execution，不得更换 key 创建替代执行。",
+			"一键成片只使用当前已装配的 Workflow IR 作为端到端主动作。底层媒体工具只由工作流节点消费，不得从根代理建立平行生产链。attachment 的 requiredTriggerPayloadFields 是按次必须提供字段的唯一结构来源；未列出的模型与规格由已装配 Workflow IR 的权威配置提供。videoModelKey、videoResolution、videoAspectRatio 与 imageModelKey、imageAspectRatio、imageSize 是从本轮实时 enabled catalog 选择的执行事实；UserIntentContract 已冻结的用户规格是这些事实必须满足的约束，不得把账号偏好、历史 run 或静态默认值冒充用户选择。",
+			"服务端会在每次调用时动态冻结当前 ProjectContext（项目、画布、选择、时间线、权限和可见资产 ID 快照）。必须遵守所选 attachment 上方声明的真实输入契约：inline_text 提供 source，canvas_group 提供 sourceGroupId；standalone 公开画布聊天调用 project_context 时省略来源字段，服务端以本轮不可变 accepted user turn 作为唯一来源；章节或非聊天调用 project_context 才读取当前选择或唯一就绪文本来源。triggerPayload 只携带 requiredTriggerPayloadFields、选择范围，以及用户明确冻结的 targetDurationSeconds、requestedClipCount、requestedClipDurationsSeconds。只有用户明确指定物理 clip 数量时才传 requestedClipCount；同时明确每段时长时，还必须把有序时长原样传入 requestedClipDurationsSeconds，数组长度必须等于 requestedClipCount、总和必须等于 targetDurationSeconds。不得从题材或总时长推断这些用户规格；运行规格只按 requiredTriggerPayloadFields 从实时目录选择。资产全链路只传 asset_id + project_id；不要传临时 URL，执行节点会通过 Asset Resolver 在消费时解析并校验权限/状态。",
+		].join("\n"),
+		parameters: {
+			type: "object",
+			oneOf: equippedWorkflows.map((workflow) =>
+				buildEquippedWorkflowSchemaBranch(workflow, requiresAttachmentSelection)),
+			properties: {
+				...(requiresAttachmentSelection
+					? {
+						attachmentId: {
+							type: "string",
+							enum: equippedWorkflows.map((item) => item.attachmentId),
+						},
+					}
+					: {}),
+				idempotencyKey: { type: "string", minLength: 1 },
+				triggerPayload: {
+					type: "object",
+					description: "按次触发参数。source 与 sourceGroupId 不可互换；必须遵守所选 attachment 的真实输入契约。",
+					properties: {
+						source: { type: "string", description: "仅供 sourceMode=inline_text 的工作流使用：本次故事事实与叙事节拍。不得在这里把剧情阶段数量写成物理视频 clip 拓扑；物理 clip 由工作流按实时模型能力冻结。" },
+						sourceGroupId: { type: "string", description: "调用者当前画布内的源组 id；绑定调用者项目已选节点（文本 + 已就绪图片/视频）作为本次源与参考资产，供工作流复用。" },
+						selectedAssetIds: { type: "array", items: { type: "string" }, description: "当前明确选中的稳定资产 ID；服务端会过滤掉无权限或跨项目 ID。" },
+						selectedNodeIds: { type: "array", items: { type: "string" }, description: "当前多选的画布节点 ID。" },
+						targetDurationSeconds: { type: "number", description: "目标成片总时长（秒）；仅声明总量，不声明 clip 分段。" },
+						requestedClipCount: { type: "number", minimum: 1, description: "用户明确指定的物理 clip 数量；未明确指定时必须省略。" },
+						requestedClipDurationsSeconds: { type: "array", minItems: 1, maxItems: 64, items: { type: "number", minimum: 1 }, description: "用户明确指定的逐物理 clip 有序时长（秒）；未逐段指定时必须省略。长度必须等于 requestedClipCount，总和必须等于 targetDurationSeconds。" },
+						videoModelKey: {
+							type: "string",
+							minLength: 1,
+							...(enabledVideoModelKeys.length > 0 ? { enum: enabledVideoModelKeys } : {}),
+							description: "必须逐字复制本字段 enum 中的当前 enabledVideoModels canonical modelKey；用户显式选择优先，账号生成偏好只有仍出现在 enum 中时才可使用。服务端据其实时 durationOptions 冻结物理 clip 拓扑；禁止猜测、展示名、过期偏好或默认模型。",
+						},
+						imageModelKey: {
+							type: "string",
+							minLength: 1,
+							...(enabledImageModelKeys.length > 0 ? { enum: enabledImageModelKeys } : {}),
+							description: "必须逐字复制本字段 enum 中的当前 enabledImageModels canonical modelKey；禁止使用展示名、过期偏好或默认模型。",
+						},
+						imageSize: { type: "string", minLength: 1, description: "图片模型实时目录支持的精确尺寸档位，例如 2K；禁止默认。" },
+						imageAspectRatio: { type: "string", minLength: 1, description: "图片模型实时目录支持的精确画幅比例；只配置图片节点，不表示用户指定了成片画幅。" },
+						videoResolution: { type: "string", minLength: 1, description: "视频模型实时目录支持的精确分辨率；若用户冻结了分辨率，必须逐字满足该约束。" },
+						videoAspectRatio: { type: "string", minLength: 1, description: "视频模型实时目录支持的精确画幅比例；若用户冻结了画幅，必须逐字满足该约束。" },
+					},
+					...(commonRequiredTriggerFields.length > 0 ? { required: commonRequiredTriggerFields } : {}),
+					additionalProperties: false,
+				},
+			},
+			required: [
+				...(requiresAttachmentSelection ? ["attachmentId"] : []),
+				"idempotencyKey",
+				...(commonRequiredTriggerFields.length > 0 ? ["triggerPayload"] : []),
+			],
+			additionalProperties: false,
+		},
+	};
+}
+
+function buildAgentsBridgeRemoteToolCatalog(
+	input: AgentsBridgeRemoteToolsInput,
+): AgentsBridgeRemoteToolDefinition[] {
 	if (!input.publicAgentsRequest) return [];
 	const projectId = String(input.canvasProjectId || "").trim();
 	const flowId = String(input.canvasFlowId || "").trim();
+	const inChapterScope = String(input.chapterId || "").trim().length > 0;
 	const hideStoryboardEditor = input.hideStoryboardEditor === true;
-	const remoteFlowTaskNodeKinds = hideStoryboardEditor
+	const baseRemoteFlowTaskNodeKinds = hideStoryboardEditor
 		? REMOTE_FLOW_TASK_NODE_KINDS_WITHOUT_STORYBOARD
 		: REMOTE_FLOW_TASK_NODE_KINDS;
-	if (!projectId && !flowId) return [];
-	const tools: AgentsBridgeRemoteToolDefinition[] = [];
+	const remoteFlowTaskNodeKinds = input.adminWorkflowAccess === true
+		? [...baseRemoteFlowTaskNodeKinds, ...PUBLIC_FLOW_ADMIN_WORKFLOW_TASK_NODE_KINDS]
+		: baseRemoteFlowTaskNodeKinds;
+	const keyframeCompositionContractDef = {
+		type: "object",
+		description:
+			"Agent-authored composition facts; Hono validates structure/provenance without inferring prompt semantics.",
+		properties: {
+			narrativeTask: {
+				type: "string",
+				description: "本镜主要视觉叙事任务。",
+			},
+			focusKind: {
+				type: "string",
+				enum: ["environment", "character", "relationship", "object", "event"],
+			},
+			focusTargetNames: {
+				type: "array",
+				items: { type: "string" },
+				description: "具名的第一视觉注意对象。",
+			},
+			focalPoint: {
+				type: "array",
+				items: { type: "number" },
+				minItems: 2,
+				maxItems: 2,
+				description: "归一化主焦点 [x,y]。",
+			},
+			shotScale: {
+				type: "string",
+				enum: ["establishing", "wide", "full", "medium", "close", "detail"],
+			},
+			environmentVisualWeight: {
+				type: "string",
+				enum: ["primary", "secondary", "context"],
+			},
+			subjects: {
+				type: "array",
+				minItems: 1,
+				items: {
+					type: "object",
+					properties: {
+						name: { type: "string" },
+						visualWeight: {
+							type: "string",
+							enum: ["primary", "secondary", "context"],
+						},
+						depthLayer: {
+							type: "string",
+							enum: ["foreground", "midground", "background"],
+						},
+						centerPlacement: {
+							type: "string",
+							enum: ["required", "allowed", "forbidden"],
+						},
+						maxFrameHeightRatio: {
+							type: "number",
+							description: "角色最大画高占比 [0.05,1]。",
+						},
+					},
+					required: [
+						"name",
+						"visualWeight",
+						"depthLayer",
+						"centerPlacement",
+						"maxFrameHeightRatio",
+					],
+					additionalProperties: false,
+				},
+			},
+		},
+		required: [
+			"narrativeTask",
+			"focusKind",
+			"focusTargetNames",
+			"focalPoint",
+			"shotScale",
+			"environmentVisualWeight",
+			"subjects",
+		],
+		additionalProperties: false,
+	} as const;
+	const chapterGroundedProductionMetadataDef = {
+		type: "object",
+		description:
+			"Optional chapter provenance; ordinary images may omit it.",
+		properties: {
+			chapterGrounded: { type: "boolean", const: true },
+			blockingFrameNodeId: {
+				type: "string",
+				description: "Existing blocking-diagram node ID; required when spatialBlocking=true.",
+			},
+			spatialBlocking: {
+				type: "boolean",
+				description: "Declares that exact spatial staging evidence is required.",
+			},
+			compositionContract: keyframeCompositionContractDef,
+			compositionContractHash: {
+				type: "string",
+				description: "Exact blocking-tool sha256; required with spatialBlocking=true.",
+			},
+			lockedAnchors: {
+				type: "object",
+				properties: {
+					character: { type: "array", items: { type: "string" } },
+					scene: { type: "array", items: { type: "string" } },
+					shot: { type: "array", items: { type: "string" } },
+					continuity: { type: "array", items: { type: "string" } },
+					missing: { type: "array", items: { type: "string" } },
+				},
+				required: ["character", "scene", "shot", "continuity", "missing"],
+			},
+			authorityBaseFrame: {
+				type: "object",
+				properties: {
+					status: {
+						type: "string",
+						enum: [...PUBLIC_FLOW_AUTHORITY_BASE_FRAME_STATUSES],
+					},
+					source: { type: "string" },
+					reason: { type: "string" },
+					nodeId: {
+						anyOf: [{ type: "string" }, { type: "null" }],
+					},
+				},
+				required: ["status", "source", "reason"],
+			},
+		},
+		required: ["chapterGrounded", "lockedAnchors", "authorityBaseFrame"],
+		additionalProperties: false,
+	} as const;
+	const storyPreviewReferenceDef = {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			nodeId: { type: "string", minLength: 1 },
+			assetId: { type: "string", minLength: 1 },
+			role: { type: "string", enum: ["identity", "layout", "content", "style"] },
+			entityKind: { type: "string", enum: ["character", "scene", "prop", "vfx", "content"] },
+			entityName: { type: "string", minLength: 1 },
+		},
+		required: ["role", "entityKind", "entityName"],
+		oneOf: [{ required: ["nodeId"] }, { required: ["assetId"] }],
+	} as const;
+	const storyPreviewContractDef = {
+		type: "object",
+		description:
+			"持久化的章节视觉合同。预览整段故事时必须显式使用 previewScope='full_story'，省略 previewWindow，由服务端确定性展开为 0-storyDurationSeconds。只有用户明确指定局部预览起止或预览时长时才使用 previewScope='user_window' 并提交 previewWindow。小T必须先保存合同，不需要用户额外说‘冻结’；章节预览生成时服务端会从章节唯一真源注入本合同与 requiredReferences。",
+		additionalProperties: false,
+		properties: {
+			schemaVersion: { type: "string", const: "story-preview-contract/v1" },
+			storyDurationSeconds: { type: "number", exclusiveMinimum: 0, maximum: 3600 },
+			previewScope: {
+				type: "string",
+				enum: ["full_story", "user_window"],
+				description: "必须显式声明：full_story 覆盖完整故事；user_window 只在用户明确要求局部预览时使用。",
+			},
+			previewWindow: {
+				type: "object",
+				description: "仅 previewScope='user_window' 时提交；full_story 时省略，防止模型自行裁短。",
+				additionalProperties: false,
+				properties: {
+					startSeconds: { type: "number", minimum: 0 },
+					endSeconds: { type: "number", exclusiveMinimum: 0 },
+				},
+				required: ["startSeconds", "endSeconds"],
+			},
+			frameIntervalSeconds: { type: "number", exclusiveMinimum: 0 },
+			requiredReferences: {
+				type: "array",
+				minItems: 1,
+				maxItems: 32,
+				items: storyPreviewReferenceDef,
+			},
+		},
+		required: [
+			"schemaVersion",
+			"storyDurationSeconds",
+			"previewScope",
+			"frameIntervalSeconds",
+			"requiredReferences",
+		],
+		allOf: [{
+			if: { properties: { previewScope: { const: "user_window" } } },
+			then: { required: ["previewWindow"] },
+		}],
+	} as const;
+	const storyPointDef = {
+		type: "object",
+		description:
+			"Story time point. sequence is a caller-authored monotonic ordinal inside one chapter; use 0 for chapter entry. validUntil is exclusive.",
+		properties: {
+			chapter: { type: "number" },
+			sequence: { type: "number" },
+			label: { type: "string" },
+		},
+		required: ["chapter", "sequence"],
+		additionalProperties: false,
+	} as const;
+	const storyFactSubjectDef = {
+		type: "object",
+		properties: {
+			kind: {
+				type: "string",
+				description: "Structural subject kind chosen by the agent, such as character, relationship, prop, mystery, event, or world_rule.",
+			},
+			key: {
+				type: "string",
+				description: "Stable canonical key used for exact filtering; semantic identity is decided by the agent, not Hono.",
+			},
+			name: { type: "string", description: "Human-readable subject name." },
+		},
+		required: ["kind", "key", "name"],
+		additionalProperties: false,
+	} as const;
+	const storyFactValueDef = {
+		oneOf: [
+			{ type: "string" },
+			{ type: "number" },
+			{ type: "boolean" },
+			{ type: "null" },
+			{ type: "array", items: {} },
+			{ type: "object", additionalProperties: true },
+		],
+		description: "Bounded JSON value. Store the fact itself, not a prose chapter summary.",
+	} as const;
+	const storyFactSourceSelectorDef = {
+		oneOf: [
+			{
+				type: "object",
+				properties: {
+					kind: { type: "string", const: "chapter_canvas_node" },
+					chapterId: { type: "string" },
+					nodeId: { type: "string" },
+					field: { type: "string" },
+				},
+				required: ["kind", "chapterId", "nodeId", "field"],
+				additionalProperties: false,
+			},
+			{
+				type: "object",
+				properties: {
+					kind: { type: "string", const: "book_chapter" },
+					chapter: { type: "number" },
+				},
+				required: ["kind", "chapter"],
+				additionalProperties: false,
+			},
+			{
+				type: "object",
+				properties: {
+					kind: { type: "string", const: "creative_brief" },
+				},
+				required: ["kind"],
+				additionalProperties: false,
+			},
+		],
+		description:
+			"A persisted source that Hono can fresh-read and hash. Chat text, an unsaved draft, planned metadata, or an agent claim is not accepted as source evidence.",
+	} as const;
+	const storyFactDisclosureDef = {
+		oneOf: [
+			{
+				type: "object",
+				properties: {
+					mode: { type: "string", const: "immediate" },
+					revealAt: { type: "null" },
+				},
+				required: ["mode", "revealAt"],
+				additionalProperties: false,
+			},
+			{
+				type: "object",
+				properties: {
+					mode: { type: "string", const: "gated" },
+					revealAt: storyPointDef,
+				},
+				required: ["mode", "revealAt"],
+				additionalProperties: false,
+			},
+		],
+		description:
+			"Audience disclosure authority. immediate means the fact may be asserted whenever it is active; gated means every audience-facing channel must keep it opaque before revealAt. validFrom is world truth time and must not be used as reveal time.",
+	} as const;
+	const storyFactOperationDef = {
+		oneOf: [
+			{
+				type: "object",
+				properties: {
+					type: { type: "string", const: "add" },
+					factId: { type: "string" },
+					subject: storyFactSubjectDef,
+					predicate: { type: "string" },
+					value: storyFactValueDef,
+					status: { type: "string", enum: ["confirmed", "inferred", "draft_choice"] },
+					validFrom: storyPointDef,
+					disclosure: storyFactDisclosureDef,
+				},
+				required: ["type", "factId", "subject", "predicate", "value", "status", "validFrom", "disclosure"],
+				additionalProperties: false,
+			},
+			{
+				type: "object",
+				properties: {
+					type: { type: "string", const: "close" },
+					factId: { type: "string" },
+					validUntil: storyPointDef,
+				},
+				required: ["type", "factId", "validUntil"],
+				additionalProperties: false,
+			},
+			{
+				type: "object",
+				properties: {
+					type: { type: "string", const: "set_status" },
+					factId: { type: "string" },
+					expectedStatus: { type: "string", enum: ["confirmed", "inferred", "draft_choice"] },
+					status: { type: "string", enum: ["confirmed", "inferred", "draft_choice"] },
+				},
+				required: ["type", "factId", "expectedStatus", "status"],
+				additionalProperties: false,
+			},
+			{
+				type: "object",
+				properties: {
+					type: { type: "string", const: "set_disclosure" },
+					factId: { type: "string" },
+					expectedDisclosure: storyFactDisclosureDef,
+					disclosure: storyFactDisclosureDef,
+				},
+				required: ["type", "factId", "expectedDisclosure", "disclosure"],
+				additionalProperties: false,
+			},
+		],
+	} as const;
+	const equippedWorkflowRunTool = buildEquippedWorkflowRunTool(
+		input.equippedWorkflows,
+		input.enabledVideoModelKeys,
+		input.enabledImageModelKeys,
+	);
+	if (!projectId && !flowId) {
+		return [
+			buildShotTableCriticRemoteTool(),
+			...(equippedWorkflowRunTool ? [equippedWorkflowRunTool] : []),
+		].map(attachRemoteToolExecutionSemantics);
+	}
+	const tools: AgentsBridgeRemoteToolDefinition[] = [buildShotTableCriticRemoteTool()];
 	if (projectId) {
 		tools.push(
 			{
 				name: "tapcanvas_project_flows_list",
 				description:
-					"List flows in the current authorized TapCanvas project. Use when the project is known but you need to inspect or choose the most relevant flow.",
+					"List flows in the current authorized TapCanvas project with their identifiers and persisted metadata.",
 				parameters: {
 					type: "object",
 					properties: {},
@@ -6346,7 +5169,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 			{
 				name: "tapcanvas_project_context_get",
 				description:
-					"Read the current authorized project workspace context assembled by hono-api. Use this when you need project-level evidence, context files, or book/chapter-scoped workspace summaries before planning.",
+					"Read authorized project workspace evidence in every project or chapter session, including the versioned CREATIVE_BRIEF.md cross-chapter narrative source and optional book/chapter-scoped context summaries assembled by hono-api.",
 				parameters: {
 					type: "object",
 					properties: {
@@ -6358,9 +5181,159 @@ export function buildAgentsBridgeRemoteTools(input: {
 				},
 			},
 			{
+				name: "tapcanvas_story_facts_get",
+				description:
+					"Read the current book's schema-v2 temporal story-fact ledger. projection is required: authoring returns full truth; audience_safe requires at and replaces unrevealed facts with opaque factId/category/status/revealAt guards. Paginated pages report a revision; mixed revisions are not one consistent snapshot. Hono applies structural time/disclosure projection only and does not infer prose semantics.",
+				parameters: {
+					type: "object",
+					properties: {
+						bookId: { type: "string" },
+						projection: {
+							type: "string",
+							enum: ["authoring", "audience_safe"],
+							description:
+								"Choose full authoring truth or an audience-safe projection. No default is applied.",
+						},
+						at: storyPointDef,
+						statuses: {
+							type: "array",
+							items: { type: "string", enum: ["confirmed", "inferred", "draft_choice"] },
+						},
+						subjectKeys: {
+							type: "array",
+							items: { type: "string" },
+							description: "Optional exact canonical-key filter; this is not fuzzy semantic search.",
+						},
+						includeClosed: { type: "boolean" },
+						includeCommits: { type: "boolean" },
+						offset: {
+							type: "number",
+							minimum: 0,
+							maximum: 20000,
+							description: "Zero-based exact pagination offset over the filtered fact list.",
+						},
+						limit: { type: "number", minimum: 1, maximum: 1000 },
+					},
+					required: ["bookId", "projection"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_story_facts_commit",
+				description:
+					"CAS-commit an incremental schema-v2 story-fact change against expectedRevision and a stable commitId. Hono fresh-reads and hashes the persisted source, validates structure/time/status/disclosure transitions, and atomically writes story-facts.json. A successful ledger commit with a failed STORY_STATE.md projection returns partialSuccess=true and preserves the commit.",
+				parameters: {
+					type: "object",
+					properties: {
+						bookId: { type: "string" },
+						commitId: {
+							type: "string",
+							description: "Stable idempotency key for this exact source+operations request.",
+						},
+						expectedRevision: { type: "number" },
+						source: storyFactSourceSelectorDef,
+						operations: {
+							type: "array",
+							minItems: 1,
+							maxItems: 100,
+							items: storyFactOperationDef,
+						},
+						note: {
+							type: "string",
+							description: "Short audit note about why this exact fact delta is being committed.",
+						},
+					},
+					required: ["bookId", "commitId", "expectedRevision", "source", "operations"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_project_chapters_list",
+				description:
+					"List every persisted chapter row in the current authorized TapCanvas project, including manually created chapters and chapters linked to uploaded books. This is a metadata-only authoritative chapter catalog and never returns chapter summary or narrative text; call tapcanvas_project_chapter_get with the selected chapterId before any task that depends on chapter content. An empty uploaded-books list does not imply that this list is empty.",
+				parameters: {
+					type: "object",
+					properties: {},
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_project_creative_brief_update",
+				description:
+					"Replace the current project's versioned CREATIVE_BRIEF.md after reading tapcanvas_project_context_get. This is the canonical cross-chapter narrative source for manually created or imported projects: it may contain the user-approved world rules, story/character bible, series outline, unresolved threads, and chapter-level plan. The write preserves version history and must contain the complete intended document, not a partial patch.",
+				parameters: {
+					type: "object",
+					properties: {
+						content: {
+							type: "string",
+							minLength: 1,
+							maxLength: 200000,
+							description: "Complete Markdown content for the new CREATIVE_BRIEF.md version.",
+						},
+					},
+					required: ["content"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_project_chapter_get",
+				description:
+					"Read one persisted project chapter by chapter row id. Returns chapter metadata (including the manually entered summary) plus its independent chapter-canvas revision and nodes. Without nodeIds, canvas nodes are slim; pass nodeIds and fields to read selected text or prompt fields.",
+				parameters: {
+					type: "object",
+					properties: {
+						chapterId: { type: "string", minLength: 1 },
+						nodeIds: {
+							type: "array",
+							items: { type: "string", minLength: 1 },
+							maxItems: 50,
+						},
+						fields: {
+							type: "array",
+							items: { type: "string", minLength: 1 },
+							maxItems: 50,
+						},
+						limit: { type: "number", minimum: 0, maximum: 200 },
+						offset: { type: "number", minimum: 0 },
+					},
+					required: ["chapterId"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_project_chapter_update",
+				description:
+					"Atomically replace the canonical title and/or narrative of one chapter after reading it with tapcanvas_project_chapter_get. This single CAS write updates both chapter metadata and the locked chapter-seed node, increments canvasRevision, broadcasts the new source, and returns sourceHash. Use this instead of tapcanvas_node_text_edit for chapter story changes. When the user states a total duration, clip duration, preview window, or required character/scene/prop assets, also submit the complete storyPreviewContract in this same CAS write; that is the automatic freeze and does not require the user to say ‘冻结’. Story preview defaults to the complete story: if the user did not explicitly request a shorter preview range, submit previewScope='full_story' and omit previewWindow. Only explicit user ranges use previewScope='user_window'. Later story_preview generation must fresh-read the chapter but must NOT copy this immutable contract into image-node arguments; the image service always injects the current chapter truth and ignores stale chat copies.",
+				parameters: {
+					type: "object",
+					properties: {
+						chapterId: { type: "string", minLength: 1 },
+						expectedCanvasRevision: {
+							type: "integer",
+							minimum: 0,
+							description: "Exact revision returned by the preceding chapter read.",
+						},
+						title: { type: "string", minLength: 1 },
+						summary: {
+							type: "string",
+							minLength: 1,
+							description: "Complete intended chapter narrative, not a patch or synopsis fragment.",
+						},
+						storyPreviewContract: storyPreviewContractDef,
+					},
+					required: ["chapterId", "expectedCanvasRevision"],
+					anyOf: [
+						{ required: ["title"] },
+						{ required: ["summary"] },
+						{ required: ["storyPreviewContract"] },
+					],
+					additionalProperties: false,
+				},
+			},
+			{
 				name: "tapcanvas_books_list",
 				description:
-					"List uploaded books in the current authorized TapCanvas project. Returns bookId, title, chapterCount, and updatedAt.",
+					"List uploaded books in the current authorized TapCanvas project. Returns bookId, title, chapterCount, and updatedAt. An empty list only means there are no uploaded books; it says nothing about manually created project chapters, which must be read with tapcanvas_project_chapters_list.",
 				parameters: {
 					type: "object",
 					properties: {},
@@ -6370,7 +5343,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 			{
 				name: "tapcanvas_book_index_get",
 				description:
-					"Read one book index.json in the current authorized TapCanvas project. Use this to inspect chapter metadata, assets.storyboardChunks, and other book-level facts.",
+					"Read one authorized book index, including chapter metadata, assets.storyboardChunks, and other persisted book-level facts.",
 				parameters: {
 					type: "object",
 					properties: {
@@ -6381,23 +5354,138 @@ export function buildAgentsBridgeRemoteTools(input: {
 				},
 			},
 			{
-				name: "tapcanvas_book_chapter_get",
+				name: "tapcanvas_book_evidence_search",
 				description:
-					"Read one chapter正文 from a book in the current authorized TapCanvas project. Returns chapter text plus summary, keywords, characters, props, scenes, and locations when available.",
+					"Search the authorized book's persisted raw.md for lexical evidence. Each hit returns an exact quote, book/project/chapter scope, sourceTextSha256, offsets, and hashes. An empty results array means no lexical match was found.",
 				parameters: {
 					type: "object",
 					properties: {
 						bookId: { type: "string" },
-						chapter: { type: "number" },
+						query: {
+							type: "string",
+							minLength: 1,
+							maxLength: 500,
+							description: "Agent-selected words or phrases to locate in the persisted book source.",
+						},
+						chapterStart: {
+							type: "number",
+							minimum: 1,
+							description: "Optional inclusive first chapter for this evidence search.",
+						},
+						chapterEnd: {
+							type: "number",
+							minimum: 1,
+							description: "Optional inclusive last chapter; must be >= chapterStart.",
+						},
+						limit: {
+							type: "number",
+							minimum: 1,
+							maximum: 20,
+						},
 					},
-					required: ["bookId", "chapter"],
+					required: ["bookId", "query"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_book_style_confirm",
+				description:
+					"Create or explicitly update the authorized book's structured Style Bible. Supplied template and directives replace prior styleBible values; history outside styleBible and project styleImages are preserved.",
+				parameters: {
+					type: "object",
+					properties: {
+						bookId: { type: "string" },
+						styleName: { type: "string" },
+						styleLocked: { type: "boolean" },
+						confirmed: { type: "boolean" },
+						confirmMainCharacterCards: { type: "boolean" },
+						visualDirectives: { type: "array", items: { type: "string" } },
+						negativeDirectives: { type: "array", items: { type: "string" } },
+						consistencyRules: { type: "array", items: { type: "string" } },
+						referenceImageNodeIds: {
+							type: "array",
+							items: { type: "string" },
+							description: "当前授权画布中的项目画风图片节点 ID。真实 URL 仅由服务端解析。",
+						},
+						referenceAssetIds: {
+							type: "array",
+							items: { type: "string" },
+							description: "项目画风上传资产、素材资产或素材具体版本 ID。",
+						},
+					},
+					required: [
+						"bookId",
+						"styleName",
+						"visualDirectives",
+						"negativeDirectives",
+						"consistencyRules",
+					],
+					additionalProperties: false,
+				},
+			},
+				{
+				name: "tapcanvas_book_chapter_get",
+					description:
+						"Read one chapter from an authorized book. Default contentMode=task_context selects only the requested chapter while preserving its complete正文 plus bookTitle, chapterCount, adjacent chapter title/summary, summary, keywords, characters, props, scenes, and locations. Use contentMode=full as an explicit full-source declaration; both modes are lossless. Use book_evidence_search only when a targeted evidence lookup is actually preferable. Accepts chapter number or a parseable chapterId.",
+					parameters: {
+						type: "object",
+						properties: {
+							bookId: { type: "string" },
+							chapter: { type: "number", description: "章节序号(如 273)。也可改用 chapterId。" },
+							chapterId: {
+								type: "string",
+								description:
+									"章节完整 id(如 book-<bookId>-ch273)；提供时自动解析出章节序号，可替代 chapter。",
+							},
+							contentMode: {
+								type: "string",
+								enum: ["task_context", "full"],
+								description: "默认 task_context：只选择当前章节，但返回完整原文；full 也是无损完整原文模式。",
+							},
+						},
+					required: ["bookId"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_book_chapter_summary_set",
+				description:
+					"Persist a chapter summary into the book index and, when chapterId is supplied, the chapters table. Accepts chapter number or chapterId; summary is limited to 800 characters.",
+				parameters: {
+					type: "object",
+					properties: {
+						bookId: { type: "string" },
+						chapter: { type: "number", description: "章节序号(如 11)。也可改用 chapterId。" },
+						chapterId: {
+							type: "string",
+							description: "章节完整 id(如 book-<bookId>-ch11)；提供时自动解析序号并同步 chapters 表。",
+						},
+						summary: {
+							type: "string",
+							description: "本章摘要，最多 800 字。",
+						},
+					},
+					required: ["bookId", "summary"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_book_worldbible_confirm",
+				description:
+					"Mark the authorized book's four world-bible artifacts as user-confirmed. Requires explicit user confirmation and four non-empty text nodes with exact data.bookBibleType values: world, roster, redlines, ip_safe. Labels are display-only and never establish artifact identity.",
+				parameters: {
+					type: "object",
+					properties: {
+						bookId: { type: "string" },
+					},
+					required: ["bookId"],
 					additionalProperties: false,
 				},
 			},
 			{
 				name: "tapcanvas_book_storyboard_plan_get",
 				description:
-					"Read persisted storyboard plan metadata for one chapter from the current authorized TapCanvas book index. Use this to inspect saved storyboardPlans / shotPrompts / storyboardStructured before deciding whether a chapter already has a real saved plan. Do not probe write tools just to test existence.",
+					"Read persisted storyboardPlans, shotPrompts, and storyboardStructured metadata for one authorized book chapter.",
 				parameters: {
 					type: "object",
 					properties: {
@@ -6413,7 +5501,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 			{
 				name: "tapcanvas_book_storyboard_plan_upsert",
 				description:
-					"Write chapter storyboard plan metadata into the current authorized TapCanvas book index. Use this to persist storyboardPlans / shotPrompts after generating the current chapter script so the workspace can refresh from real saved data.",
+					"Write one validated storyboard-director/v1.2 chapter plan into the current authorized TapCanvas book index. storyboardStructured must be the exact complete artifact. The server derives a canonical SHA-256 identity directly from that artifact, derives prompts from the same artifact, and rejects any supplied shotPrompts that do not match exactly.",
 				parameters: {
 					type: "object",
 					properties: {
@@ -6424,8 +5512,16 @@ export function buildAgentsBridgeRemoteTools(input: {
 						taskTitle: { type: "string" },
 						mode: { type: "string", enum: ["single", "full"] },
 						groupSize: { type: "number", enum: [1, 4, 9, 25] },
-						storyboardContent: { type: "string" },
-						storyboardStructured: { type: "object", additionalProperties: true },
+						storyboardStructured: {
+							type: "object",
+									properties: {
+										schemaVersion: { type: "string", const: "storyboard-director/v1.2" },
+										storyFactsContext: { type: "object" },
+										shots: { type: "array", minItems: 1, maxItems: 128, items: { type: "object" } },
+									},
+									required: ["schemaVersion", "storyFactsContext", "shots"],
+							additionalProperties: true,
+						},
 						shotPrompts: { type: "array", items: { type: "string" } },
 						runId: { type: "string" },
 						outputAssetId: { type: "string" },
@@ -6442,62 +5538,285 @@ export function buildAgentsBridgeRemoteTools(input: {
 							additionalProperties: false,
 						},
 					},
-					required: ["bookId", "chapter"],
+					required: ["bookId", "chapter", "storyboardStructured"],
 					additionalProperties: false,
 				},
 			},
 			{
 				name: "tapcanvas_storyboard_continuity_get",
 				description:
-					"Read storyboard continuity evidence for one book chapter chunk in the current authorized TapCanvas project. Returns previous tail frame, chapter chunk history, matched role references, scene/spell references, and continuity constraints derived from current book metadata.",
+					"Read deterministic continuity evidence for one exact authorized book chapter chunk. Requires bookId, taskId, chapter, groupSize, and zero-based chunkIndex; chunkIndex>0 also requires the exact direct previousChunkId. The server performs exact-name asset lookup and never guesses predecessors, scans prompt text, aliases names, or falls back to unrelated assets.",
 				parameters: {
 					type: "object",
 					properties: {
 						bookId: { type: "string" },
+						taskId: { type: "string" },
 						chapter: { type: "number" },
 						groupSize: { type: "number", enum: [1, 4, 9, 25] },
 						chunkIndex: { type: "number" },
-						shotPrompts: { type: "array", items: { type: "string" } },
+						previousChunkId: { type: "string" },
+						requiredRoleNames: { type: "array", items: { type: "string" } },
 						scenePropRefId: { type: "string" },
 						spellFxRefId: { type: "string" },
 					},
-					required: ["bookId", "chapter", "groupSize", "chunkIndex"],
+					required: ["bookId", "taskId", "chapter", "groupSize", "chunkIndex"],
 					additionalProperties: false,
 				},
 			},
 			{
-				name: "tapcanvas_pipeline_runs_list",
+				name: "tapcanvas_material_assets_list",
 				description:
-					"List agent pipeline runs in the current authorized project. Use this to inspect ongoing or completed agent production runs before deciding next actions.",
+					"List the authorized project's durable project/chapter/shot nodes as assets, newest-updated first. Visual kinds return only real production-ready image assets by default; set includeDrafts=true when you explicitly need metadata-only text/draft nodes. Returns original node provenance, media readiness, state, version, and sourceChapterId without storage URLs. Exact node, chapter, and state filters are supported.",
 				parameters: {
 					type: "object",
 					properties: {
+						kind: { type: "string", enum: ["character", "scene", "prop", "style", "text", "ensemble", "pose", "voice"] },
+						scope: { type: "string", enum: ["project", "owner", "all"] },
+						name: {
+							type: "string",
+							description: "Exact asset name to look up (trimmed). Takes precedence over nameContains.",
+						},
+						nameContains: {
+							type: "string",
+							description: "Substring match on asset name (fuzzy fallback when the exact name misses, e.g. alias/nickname).",
+						},
+						nodeId: {
+							type: "string",
+							description: "Exact original canvas node ID.",
+						},
+						sourceChapterId: {
+							type: "string",
+							description: "Exact source chapter ID. Returns only nodes persisted in that chapter.",
+						},
+						stateKey: {
+							type: "string",
+							description: "Exact durable asset state key. Never substitutes another state.",
+						},
+						includeDrafts: {
+							type: "boolean",
+							description: "Include visual nodes without a real image URL. Default false; use only for explicit metadata inspection, never as a video reference.",
+						},
+						limit: {
+							type: "number",
+							description: "Page size. Default 40, maximum 100.",
+						},
+						offset: {
+							type: "number",
+							description: "Zero-based page offset. Use nextOffset from the previous response.",
+						},
+					},
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_material_assets_sync",
+				description:
+					"Persist exact current-canvas character, scene, prop, ensemble, and pose node bindings as durable project materials. Every binding is ownership-checked against the authorized canvas; missing nodes fail explicitly and existing generated assets are preserved.",
+				parameters: {
+					type: "object",
+					properties: {
+						bindings: {
+							type: "array",
+							minItems: 1,
+							items: {
+								type: "object",
+								properties: {
+									nodeId: { type: "string" },
+									kind: {
+										type: "string",
+										enum: ["character", "scene", "prop", "ensemble", "pose"],
+									},
+									name: { type: "string" },
+									materialIdentity: {
+										type: "object",
+										additionalProperties: true,
+									},
+								},
+								required: ["nodeId", "kind", "name"],
+								additionalProperties: false,
+							},
+						},
+					},
+					required: ["bindings"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_material_asset_versions_get",
+				description:
+					"Read version history for one current-project material asset. Each item returns versionId/version, hasImage/hasThreeViewImage, state and audit facts without storage URLs. For 回基态, select the exact base versionId and pass it through referenceAssetIds; the paid execution boundary resolves that version to its real image.",
+				parameters: {
+					type: "object",
+					properties: {
+						assetId: { type: "string" },
+						kind: { type: "string", enum: ["character", "scene", "prop", "style", "text", "ensemble", "pose", "voice"] },
+						name: { type: "string" },
 						limit: { type: "number" },
 					},
 					additionalProperties: false,
 				},
 			},
 			{
-				name: "tapcanvas_pipeline_run_get",
+				name: "tapcanvas_material_asset_version_create",
 				description:
-					"Read one agent pipeline run by runId in the current authorized project scope.",
+					"Append one verified image version to an existing current-project material asset. Pass exact assetId, exact expectedName and sourceNodeId for an image node on the authorized canvas. The server resolves that node ID to the real image internally, rejects cross-project/name mismatches, and never returns the storage URL. Existing versions are never overwritten.",
 				parameters: {
 					type: "object",
 					properties: {
-						runId: { type: "string" },
+						assetId: { type: "string" },
+						expectedName: { type: "string" },
+						stateKey: { type: "string" },
+						stateDescription: { type: "string" },
+						sourceNodeId: { type: "string" },
 					},
+					required: ["assetId", "expectedName", "sourceNodeId"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_material_asset_delete",
+				description:
+					"Delete one incorrectly created material asset from the current authorized project. This is a destructive repair tool: pass the exact assetId and exact expectedName. The server re-lists the current project's assets, verifies both id ownership and the name byte-for-byte, then deletes only that one asset. Cross-project deletion and name mismatches fail explicitly.",
+				parameters: {
+					type: "object",
+					properties: {
+						assetId: { type: "string" },
+						expectedName: { type: "string" },
+					},
+					required: ["assetId", "expectedName"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_get_style_reference",
+				description:
+					"Read the authorized project's global style reference, styleLock, and cinematicCamera facts without returning storage URLs.",
+				parameters: { type: "object", properties: {}, additionalProperties: false },
+			},
+			{
+				name: "tapcanvas_set_style_reference",
+				description:
+					"Set the project's GLOBAL style reference only when the project has no style yet. In a chapter session, an existing non-empty style is immutable: reuse it; replacing or clearing it fails with chapter_style_reference_overwrite_forbidden. Project-wide replacement belongs to the explicit project settings surface, never chapter production. A repeated identical value is an idempotent no-op.",
+				parameters: {
+					type: "object",
+					properties: {
+						nodeIds: { type: "array", items: { type: "string" }, maxItems: 8 },
+						assetIds: { type: "array", items: { type: "string" }, maxItems: 8 },
+					},
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_project_look_bible_get",
+				description:
+					"Read the current authorized project's active Project Look Bible version and structured text projections. Returns no image URLs and does not modify the project.",
+				parameters: { type: "object", properties: {}, additionalProperties: false },
+			},
+			{
+				name: "tapcanvas_project_look_bible_confirm",
+				description:
+					"Activate a new immutable Project Look Bible version compiled from a user-authored text document. sourceNodeId must identify a real kind=text, productionLayer=anchors, semanticKind=projectLookBible node on the current authorized canvas. The server fresh-reads the node, stores a versioned project asset, and marks that node approved. Existing versions and generated media are preserved.",
+				parameters: {
+					type: "object",
+					properties: {
+						sourceNodeId: { type: "string", minLength: 1 },
+						lookBible: {
+							type: "object",
+							properties: {
+								schemaVersion: { type: "string", enum: ["project-look-bible/v1"] },
+								name: { type: "string" },
+								summary: { type: "string" },
+								globalCore: {
+									type: "object",
+									properties: {
+										styleName: { type: "string" },
+										summary: { type: "string" },
+										visualDirectives: { type: "array", items: { type: "string" } },
+										negativeDirectives: { type: "array", items: { type: "string" } },
+										consistencyRules: { type: "array", items: { type: "string" } },
+										characterPrompt: { type: "string" },
+										imagePrompt: { type: "string" },
+										videoPrompt: { type: "string" },
+									},
+									required: [
+										"styleName", "summary", "visualDirectives", "negativeDirectives",
+										"consistencyRules", "characterPrompt", "imagePrompt", "videoPrompt",
+									],
+									additionalProperties: false,
+								},
+								sections: {
+									type: "array",
+									maxItems: 16,
+									items: {
+										type: "object",
+										properties: {
+											id: { type: "string" },
+											name: { type: "string" },
+											dimension: { type: "string", description: "Open semantic dimension chosen by the agent, for example lighting, era, tone, material, or camera texture. Do not route by a local enum." },
+											applicability: { type: "string" },
+											directives: { type: "array", items: { type: "string" } },
+											imagePrompt: { type: "string" },
+											videoPrompt: { type: "string" },
+										},
+										required: ["id", "name", "dimension", "applicability", "directives", "imagePrompt", "videoPrompt"],
+										additionalProperties: false,
+									},
+								},
+								contentExclusions: { type: "array", items: { type: "string" } },
+							},
+							required: ["schemaVersion", "name", "summary", "globalCore", "sections", "contentExclusions"],
+							additionalProperties: false,
+						},
+					},
+					required: ["sourceNodeId", "lookBible"],
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_storyboard_anchor_candidates",
+				description:
+					"List authorized project storyboard anchor candidates as assetId/kind/name/label/description descriptors without image URLs; projectHasAnchorAssets reports whether reusable anchors exist.",
+				parameters: {
+					type: "object",
+					properties: {
+						limit: { type: "number" },
+						scope: { type: "string", enum: ["project", "owner"] },
+					},
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_pipeline_runs_list",
+				description:
+					"List authenticated agent pipeline runs for the current authorized project, newest first, with their durable status and resumable execution evidence.",
+				parameters: {
+					type: "object",
+					properties: { limit: { type: "number", minimum: 1, maximum: 100 } },
+					additionalProperties: false,
+				},
+			},
+			{
+				name: "tapcanvas_pipeline_run_get",
+				description:
+					"Read one authenticated legacy pipeline run by runId within the current user's authorized project scope. 一键成片 Workflow IR 执行必须使用 tapcanvas_execution_get / tapcanvas_execution_node_runs_get 跟踪，不得把 workflow-execution identity 传给本工具。",
+				parameters: {
+					type: "object",
+					properties: { runId: { type: "string" } },
 					required: ["runId"],
 					additionalProperties: false,
 				},
 			},
 		);
 	}
-	if (!flowId) return tools;
+	// Project canvases are addressed by flowId, while chapter canvases are
+	// addressed by chapterId and persist their graph in chapters.canvas_flow.
+	// Requiring a project-root flowId here strips every flow-capable business
+	// tool from a valid chapter chat request, including video orchestration.
 	tools.push(
 		{
 			name: "tapcanvas_storyboard_source_bundle_get",
 			description:
-				"Read a real storyboard source bundle for the current authorized TapCanvas project/flow. Returns project workspace context, the resolved chapter正文 slice, current flow relevant node summaries, and diagnostics.progress/recentShots for locating the next storyboard or single-video step.",
+				"Read an authorized project-flow storyboard source bundle. Returns project context, the resolved chapter正文 slice, relevant flow-node summaries, and progress/recent-shot diagnostics for the supplied bookId.",
 			parameters: {
 				type: "object",
 				properties: {
@@ -6536,7 +5855,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 		{
 			name: "tapcanvas_executions_list",
 			description:
-				"List workflow executions for the current authorized flow. Use when you need recent execution history before inspecting a specific execution.",
+				"List workflow executions for the current authorized flow, bounded by limit.",
 			parameters: {
 				type: "object",
 				properties: {
@@ -6548,7 +5867,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 		{
 			name: "tapcanvas_execution_get",
 			description:
-				"Read one workflow execution by executionId in the current authorized flow scope.",
+				"Read a compact status summary for one workflow execution in the current authorized flow scope. Heavy ProjectContext, asset snapshots, and user input stay server-side; use bounded node/family/attempt inspection tools for additional evidence.",
 			parameters: {
 				type: "object",
 				properties: {
@@ -6587,12 +5906,209 @@ export function buildAgentsBridgeRemoteTools(input: {
 			},
 		},
 		{
-			name: "tapcanvas_flow_get",
+			name: "tapcanvas_workflow_execution_inspect",
 			description:
-				`Read the current TapCanvas flow graph in the authorized project/flow scope. Use this first to inspect existing node objects before patching. Current supported createNodes object types are ${REMOTE_FLOW_CREATE_NODE_TYPES.join(" / ")}. For taskNode, read data.kind from existing nodes instead of inventing unsupported node types.`,
+				"Inspect one durable workflow execution in the current authorized flow. view=family returns the paginated recovery/execution family and aggregate facts; view=attempts returns paginated immutable node-attempt evidence, including frozen execution semantics and provider receipts. Follow nextCursor until null when complete evidence is required.",
 			parameters: {
 				type: "object",
-				properties: {},
+				properties: {
+					executionId: { type: "string", minLength: 1 },
+					view: { type: "string", enum: ["family", "attempts"] },
+					cursor: { type: "string", minLength: 1 },
+					limit: { type: "number", minimum: 1, maximum: 200 },
+				},
+				required: ["executionId", "view"],
+				additionalProperties: false,
+			},
+		},
+		...(equippedWorkflowRunTool ? [equippedWorkflowRunTool] : []),
+		...(input.adminWorkflowAccess === true || input.workflowRecoveryAccess === true ? [{
+			name: "tapcanvas_workflow_resume",
+			description:
+				"Continue the latest physical execution inside the same durable workflow family. For an ordinary failed execution, pass only sourceExecutionId. If the user explicitly authorizes an already-persisted workflow configuration repair for that same failed task, pass definitionCutover={mode:'current_flow'}; the server accepts current node configuration only when node/edge/executor/port topology is unchanged and keeps frozen invocation facts and prior receipts. If the latest member is canceled and the user explicitly says that cancellation was accidental or explicitly asks to continue that canceled task, pass cancellationRevoked=true. When inspection proves the sole active execution is suspended by provider_balance_required and the user explicitly confirms that the same provider balance has been restored, pass providerBalanceRestored=true; this preserves the frozen model and API style. If the user instead explicitly selected the initiating Agent's current model, pass agentModelCutover with that exact model and API style. These recovery modes are mutually exclusive. Recovery preserves completed ancestors and receipts and creates one idempotent member in the same family. Never infer authorization, cancellation revocation or restored balance, and never perform an automatic model fallback.",
+			parameters: buildWorkflowResumeParameters(),
+		}, ...(input.adminWorkflowAccess === true ? [{
+			name: "tapcanvas_workflow_run",
+			description:
+				"Start one persisted admin workflow from an explicit trigger node. idempotencyKey is required so retries resolve to the same durable execution instead of creating duplicate Agent work.",
+			parameters: {
+				type: "object",
+				properties: {
+					triggerNodeId: { type: "string", minLength: 1 },
+					idempotencyKey: { type: "string", minLength: 1 },
+					concurrency: { type: "number", minimum: 1, maximum: 8 },
+					trigger: { type: "string", enum: ["manual", "api", "schedule", "agent"] },
+					replayFromExecutionId: { type: "string", minLength: 1 },
+					startFromNodeId: { type: "string", minLength: 1 },
+					triggerPayload: {
+						type: "object",
+						description: "按次触发参数：媒体执行规格使用 videoModelKey / videoResolution / videoAspectRatio 与 imageModelKey / imageAspectRatio / imageSize；clip 数量与逐段时长只传用户明确指定的结构事实，逐段时长的长度必须等于数量、总和必须等于目标总时长；跨项目调用时产物写回调用者画布并可复用调用者项目资产。",
+						properties: {
+							source: { type: "string", description: "本次源文本；替换工作流默认 inline 源。" },
+							sourceGroupId: { type: "string", description: "调用者当前画布内的源组 id；绑定调用者项目已选节点（文本 + 已就绪图片/视频）作为本次源与参考资产。" },
+							targetDurationSeconds: { type: "number", description: "目标总时长（秒）。" },
+							requestedClipCount: { type: "number", minimum: 1, description: "用户明确指定的物理 clip 数量；未明确指定时必须省略。" },
+							requestedClipDurationsSeconds: { type: "array", minItems: 1, maxItems: 64, items: { type: "number", minimum: 1 }, description: "用户明确指定的逐物理 clip 有序时长（秒）；未逐段指定时必须省略。长度必须等于 requestedClipCount，总和必须等于 targetDurationSeconds。" },
+							videoModelKey: { type: "string", description: "视频模型 key。" },
+							videoResolution: { type: "string", description: "视频模型实时目录支持的精确分辨率。" },
+							videoAspectRatio: { type: "string", description: "视频模型实时目录支持的精确画幅比例。" },
+							imageModelKey: { type: "string", description: "图片模型 key。" },
+							imageAspectRatio: { type: "string", description: "图片模型实时目录支持的精确画幅比例。" },
+							imageSize: { type: "string", description: "图片模型实时目录支持的精确尺寸。" },
+						},
+						additionalProperties: false,
+					},
+				},
+				required: ["triggerNodeId", "idempotencyKey"],
+				additionalProperties: false,
+			},
+		}, {
+			name: "tapcanvas_prompt_library_sync",
+			description:
+				"Administrator-only executor for an editable PromptSyncProtocolV1 produced by upstream workflow nodes. It validates HTTPS origin/robots/discovery/path boundaries, fairly selects a bounded daily batch, preserves source prompt text, deduplicates by source URL and canonical prompt hash, archives every image/video to TapCanvas R2, and refreshes separate image/video market-validated vector roots. Add sources by editing the upstream protocol node; use a trusted isolated JavaScript detail parser only when neither built-in structural adapter applies.",
+			parameters: {
+				type: "object",
+				properties: {
+					protocol: {
+						type: "object",
+						properties: {
+							protocolVersion: { type: "string", const: "tapcanvas.prompt-sync/v1" },
+							batch: {
+								type: "object",
+								properties: {
+									maxItems: { type: "number", minimum: 1, maximum: 50 },
+									strategy: { type: "string", const: "round_robin" },
+								},
+								required: ["maxItems", "strategy"],
+								additionalProperties: false,
+							},
+							sources: {
+								type: "array",
+								minItems: 1,
+								maxItems: 10,
+								items: {
+									type: "object",
+									properties: {
+										id: { type: "string", minLength: 1, maxLength: 80 },
+										displayName: { type: "string", minLength: 1, maxLength: 120 },
+										origin: { type: "string", minLength: 1 },
+										robotsUrl: { type: "string", minLength: 1 },
+										discoveryUrls: { type: "array", minItems: 1, maxItems: 4, items: { type: "string", minLength: 1 } },
+										detailPathPrefix: { type: "string", minLength: 1, maxLength: 240 },
+										detailParser: {
+											type: "object",
+											description: "Either {kind:'builtin', adapter:'youmind-next-flight-v1'|'opennana-jsonld-flight-v1'} or {kind:'javascript', code:'return ParsedPromptSource'}. JavaScript runs in the trusted administrator child-process sandbox with no environment variables.",
+										},
+									},
+									required: ["id", "displayName", "origin", "robotsUrl", "discoveryUrls", "detailPathPrefix", "detailParser"],
+									additionalProperties: false,
+								},
+							},
+						},
+						required: ["protocolVersion", "batch", "sources"],
+						additionalProperties: false,
+					},
+					idempotencyKey: { type: "string", minLength: 1, maxLength: 128 },
+				},
+				required: ["protocol", "idempotencyKey"],
+				additionalProperties: false,
+			},
+		}] : [])] : []),
+		{
+			name: "tapcanvas_image_refs_get",
+				description:
+					"Resolve authorized current-flow image node IDs and current-project asset IDs into name, ID, readiness, and media-type descriptors without storage URLs. Read-only inspection is server-batched and does not change paid model reference limits; paid execution resolves real URLs from the same IDs.",
+				parameters: {
+					type: "object",
+					properties: {
+						nodeIds: {
+							type: "array",
+							items: { type: "string" },
+							maxItems: MAX_IMAGE_REFERENCE_INSPECTION_ITEMS,
+							description: `Current authorized flow image node IDs. Combined nodeIds + assetIds maximum: ${MAX_IMAGE_REFERENCE_INSPECTION_ITEMS}.`,
+						},
+						assetIds: {
+							type: "array",
+							items: { type: "string" },
+							maxItems: MAX_IMAGE_REFERENCE_INSPECTION_ITEMS,
+							description: `Uploaded asset IDs, material asset IDs, or exact material version IDs. Combined nodeIds + assetIds maximum: ${MAX_IMAGE_REFERENCE_INSPECTION_ITEMS}.`,
+						},
+					},
+					additionalProperties: false,
+				},
+		},
+		{
+			name: "tapcanvas_flow_get",
+			description:
+				"Read the authorized flow graph. Without nodeIds it returns filtered node summaries; any nodeIds read defaults to bounded lifecycle/asset facts so stale prompts, shot tables, and textResults history stay out of the model context. Pass fields explicitly when semantic fields are required. Image storage URLs are removed and represented by ID-based mediaReferences. For a request that only asks what is on the current canvas, one flow_get without nodeIds is the complete read path; do not query the material library or execution history unless the user explicitly asks for those separate facts.",
+			parameters: {
+				type: "object",
+				properties: {
+					nodeIds: {
+						type: "array",
+						description:
+							"可选。传 node id 后默认只返回有界生命周期/资产事实，并为已就绪图片附 mediaReferences；需要 prompt、镜头表或其他语义字段时请显式传 fields；不传则返回精简摘要。",
+						items: { type: "string" },
+					},
+					fields: {
+						type: "array",
+						description:
+							"可选，仅配合 nodeIds 生效：只返回 data 里的这些字段(恒含 kind/label/productionLayer)，省 token。例如 [\"prompt\"] 只取镜头表。",
+						items: { type: "string" },
+					},
+					kind: { type: "string", description: "可选过滤(无 nodeIds 时)：只要该 kind 的节点，如 image/video/text/storyboardimage。" },
+					productionLayer: { type: "string", description: "可选过滤：只要该 productionLayer 的节点，如 anchors/design_board/expansion。" },
+					status: { type: "string", description: "可选过滤：只要该 status 的节点；特殊值 \"empty\"=资产节点但未出图/片。" },
+					hasMedia: { type: "boolean", description: "可选过滤：true=只要已出图/片的，false=只要未出的。" },
+					q: { type: "string", description: "可选过滤：子串模糊匹配 label+prompt+镜头表+角色名+场景描述(大小写无关)。" },
+					limit: { type: "number", description: "可选分页(无 nodeIds 时)：最多返回多少个 slim 节点(默认全返；上限 200)。" },
+					offset: { type: "number", description: "可选分页：跳过前 N 个(配 limit 翻页)。" },
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_flow_search",
+			description:
+				"Search authorized flow nodes by content, kind, productionLayer, status, or media readiness. Returns lightweight id/label/kind/productionLayer/status/hasMedia matches plus matched/shown counts, without large data fields.",
+			parameters: {
+				type: "object",
+				properties: {
+					q: { type: "string", description: "子串模糊：对 label+prompt+镜头表+角色名+场景描述 做大小写无关 includes 匹配。" },
+					kind: { type: "string", description: "节点 kind 精确(大小写无关)，如 image/video/text/storyboardimage。" },
+					productionLayer: { type: "string", description: "productionLayer 精确，如 anchors/design_board/expansion。" },
+					status: { type: "string", description: "status 精确；特殊值 \"empty\"=资产节点但未出图/片(无 media 且非 success)。" },
+					hasMedia: { type: "boolean", description: "有无媒体(已出图/片)。" },
+					limit: { type: "number", description: "最多返回多少命中(默认 30，上限 100)。" },
+					offset: { type: "number", description: "跳过前 N 个命中(翻页)。" },
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_node_text_edit",
+			description:
+				"Apply ordered anchored find/replace edits to one text field on an authorized chapter-canvas node. Each find must occur exactly once; zero matches return not_found, multiple matches return ambiguous, and failed edits do not roll back successful edits.",
+			parameters: {
+				type: "object",
+				properties: {
+					nodeId: { type: "string", description: "目标节点 id。" },
+					field: { type: "string", description: "要改的 data 文本字段，默认 'prompt'(也可 'videoPrompt' 等)。" },
+					edits: {
+						type: "array",
+						description: "锚定替换列表，按序应用。每项 {find, replace}：find=要被替换的【唯一】原文片段(逐字)、replace=新内容。",
+						items: {
+							type: "object",
+							properties: {
+								find: { type: "string", description: "当前文本里【恰好出现一次】的原文片段(逐字、含标点)。" },
+								replace: { type: "string", description: "替换成的新内容(可为空=删除该片段)。" },
+							},
+							required: ["find", "replace"],
+							additionalProperties: false,
+						},
+					},
+				},
+				required: ["nodeId", "edits"],
 				additionalProperties: false,
 			},
 		},
@@ -6605,24 +6121,21 @@ export function buildAgentsBridgeRemoteTools(input: {
 					allowOverwrite: {
 						type: "boolean",
 						description:
-							"When false, patchNodeData conflicts on existing non-null fields raise an error instead of silently overwriting.",
+							"true permits intentional replacement of existing non-null node.data fields; otherwise conflicts fail.",
 					},
 					deleteNodeIds: {
 						type: "array",
-						description:
-							"Delete existing nodes by their real node ids. Connected edges are removed automatically.",
+						description: "Real node IDs; connected edges are removed too.",
 						items: { type: "string" },
 					},
 					deleteEdgeIds: {
 						type: "array",
-						description:
-							"Delete existing edges by their real edge ids without deleting nodes.",
+						description: "Real edge IDs; nodes are preserved.",
 						items: { type: "string" },
 					},
 					createNodes: {
 						type: "array",
-						description:
-							"Create new nodes with the real frontend protocol. Supported object types are taskNode and groupNode only.",
+						description: "Create taskNode or groupNode objects.",
 						items: {
 							oneOf: [
 								{
@@ -6633,8 +6146,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 										type: {
 											type: "string",
 											enum: ["taskNode"],
-											description:
-												"General executable/content node. For blank text placeholders, use taskNode with data.kind='text'.",
+											description: "Executable/content node; blank text uses data.kind='text'.",
 										},
 										position: {
 											type: "object",
@@ -6656,143 +6168,132 @@ export function buildAgentsBridgeRemoteTools(input: {
 														"Supported taskNode logical kinds. Reuse only one of these values; do not invent new kinds.",
 												},
 												label: { type: "string" },
-												content: {
+												bookBibleType: {
 													type: "string",
+													enum: ["world", "roster", "redlines", "ip_safe"],
 													description:
-														"Optional plain text content for text-like task nodes.",
+														"Explicit identity for a book-level bible text artifact. Required when creating one of the four world-bible artifacts; labels are not parsed.",
 												},
+												shotTable: {
+													...shotTableNodeDataSchema,
+												},
+											content: {
+												type: "string",
+											},
 												prompt: { type: "string" },
-												structuredPrompt: {
-													type: "object",
-													description:
-														"Optional ImagePromptSpecV2-style JSON mirror of prompt. For chapter-grounded visual nodes with existing references, include referenceBindings and identityConstraints instead of leaving reference reuse implicit.",
+											structuredPrompt: {
+												type: "object",
+												description:
+													"Optional structured mirror of prompt and reference bindings.",
 												},
 												systemPrompt: { type: "string" },
 												negativePrompt: { type: "string" },
-												roleName: {
-													type: "string",
-													description:
-														"Semantic character binding label for this node. Never synthesize from task ids; use the real recurring subject name such as 方源 / 方正.",
+											roleName: {
+												type: "string",
+												description: "Explicit character binding label.",
 												},
-												roleId: {
-													type: "string",
-													description:
-														"Optional stable character graph id aligned with the current book metadata.",
+											sceneName: {
+												type: "string",
+												description: "Explicit scene identity label.",
+											},
+											propName: {
+												type: "string",
+												description: "Explicit prop identity label.",
+											},
+											referenceType: {
+												type: "string",
+												enum: ["character", "scene", "prop", "ensemble", "pose", "blocking"],
+												description:
+													"Explicit reusable asset category. Labels alone never establish identity.",
+											},
+											roleId: {
+												type: "string",
+											},
+											roleCardId: {
+												type: "string",
+											},
+											sourceBookId: {
+												type: "string",
+												description: "Book scope ID for chapter-grounded nodes.",
 												},
-												roleCardId: {
-													type: "string",
-													description:
-														"Optional persisted book/project role card id. Use when the node is bound to an existing role card asset.",
+											materialChapter: {
+												type: "number",
+												description: "Owning chapter number.",
 												},
-												sourceBookId: {
-													type: "string",
-													description:
-														"Book scope id for chapter-grounded nodes. Required when the node should persist back into chapter assets.",
-												},
-												materialChapter: {
-													type: "number",
-													description:
-														"Chapter number that this node belongs to. Prefer the real chapter scope instead of burying it only in free text.",
-												},
-												stateDescription: {
-													type: "string",
-													description:
-														"Character or visual anchor state evidence, e.g. 少年方源，十五岁，神情冷静。 Use this to disambiguate repeated subjects.",
-												},
-												referenceView: {
-													type: "string",
-													enum: ["three_view", "role_card"],
-													description:
-														"When the node itself is a reusable character anchor, mark whether the persisted image is a three-view asset or a generic role-card still.",
-												},
-												scenePropRefId: {
-													type: "string",
-													description:
-														"Optional persisted scene/prop reference id for reusable environment anchor nodes.",
-												},
-												scenePropRefName: {
-													type: "string",
-													description:
-														"Human-readable scene/prop anchor name, e.g. 古月寨学堂 / 春秋蝉木盒.",
-												},
-												visualRefId: {
-													type: "string",
-													description:
-														"Generic reusable visual reference id. Prefer this together with visualRefName/visualRefCategory for scene/prop or spell-fx anchor nodes.",
-												},
-												visualRefName: {
-													type: "string",
-													description:
-														"Human-readable visual reference name for scene/prop/spell anchor nodes.",
-												},
-												visualRefCategory: {
-													type: "string",
-													enum: ["scene_prop", "spell_fx"],
-													description:
-														"Persisted visual reference category. Use scene_prop for reusable场景/道具锚点.",
-												},
-												referenceImages: {
-													type: "array",
-													description:
-														hideStoryboardEditor
-															? "Executable reference image URLs for image/imageEdit/storyboardImage/video/composeVideo nodes. Use this when the current run already has reference images but there is no upstream canvas edge to carry them. If the turn already binds a confirmed authorityBaseFrame or selected reference image, omitting this field requires an explicit createEdges binding instead."
-															: "Executable reference image URLs for image/storyboard/video nodes. Use this when the current run already has reference images but there is no upstream canvas edge to carry them. If the turn already binds a confirmed authorityBaseFrame or selected reference image, omitting this field requires an explicit createEdges binding instead.",
+											stateDescription: {
+												type: "string",
+											},
+											referenceView: {
+												type: "string",
+												enum: ["three_view", "role_card"],
+											},
+											scenePropRefId: {
+												type: "string",
+											},
+											scenePropRefName: {
+												type: "string",
+											},
+											visualRefId: {
+												type: "string",
+											},
+											visualRefName: {
+												type: "string",
+											},
+											visualRefCategory: {
+												type: "string",
+												enum: ["scene_prop", "spell_fx"],
+											},
+											referenceImageNodeIds: {
+												type: "array",
+												description:
+													hideStoryboardEditor
+														? "Authorized image-node IDs; paid execution resolves URLs."
+														: "Authorized image/storyboard-node IDs; paid execution resolves URLs.",
 													items: { type: "string" },
 												},
-												assetInputs: {
-													type: "array",
-													description:
-														"Optional structured visual inputs mirrored from the current chat request. Prefer this when the node must preserve target/reference/character/scene/prop/style roles without inventing local semantics. If the request is character-bound, at least one character role binding is expected unless a real edge carries that role card/reference node. Reusable scene/prop anchors should keep their real semantic role instead of collapsing to a generic reference.",
-													items: {
-														type: "object",
-												properties: {
-													assetId: { type: "string" },
-													assetRefId: { type: "string" },
-													url: { type: "string" },
-													role: { type: "string" },
-													name: { type: "string" },
-															note: { type: "string" },
-														},
-														required: ["url"],
-													},
+											referenceAssetIds: {
+												type: "array",
+												description: "Uploaded/material asset or exact version IDs.",
+													items: { type: "string" },
 												},
-												firstFrameUrl: {
-													type: "string",
-													description:
-														"Explicit first-frame image URL for video / composeVideo nodes.",
+											videoModel: {
+												type: "string",
 												},
-												lastFrameUrl: {
-													type: "string",
-													description:
-														"Explicit last-frame image URL for video / composeVideo nodes.",
+											durationSeconds: {
+												type: "number",
+												description: "Enabled model durationOptions value in seconds.",
+												},
+											videoResolution: {
+												type: "string",
+												description: "Enabled model resolutionOptions value.",
+												},
+											orientation: {
+												type: "string",
+												enum: ["landscape", "portrait"],
+											},
+											imageModel: {
+												type: "string",
+												},
+											audioType: {
+												type: "string",
+												enum: ["speech", "music"],
+											},
+											audioModel: {
+												type: "string",
+											},
+											aspect: {
+												type: "string",
+												description: "Image/video aspect ratio.",
 												},
 												nodeWidth: { type: "number" },
 												nodeHeight: { type: "number" },
 												productionLayer: {
 													type: "string",
-													enum: [
-														"evidence",
-														"constraints",
-														"anchors",
-														"expansion",
-														"execution",
-														"results",
-													],
+													enum: [...PUBLIC_FLOW_PRODUCTION_LAYERS],
 												},
 												creationStage: {
 													type: "string",
-													enum: [
-														"source_understanding",
-														"constraint_definition",
-														"world_anchor_lock",
-														"character_anchor_lock",
-														"shot_anchor_lock",
-														"single_variable_expansion",
-														"approved_keyframe_selection",
-														"video_plan",
-														"video_execution",
-														"result_persistence",
-													],
+													enum: [...PUBLIC_FLOW_CREATION_STAGES],
 												},
 												approvalStatus: {
 													type: "string",
@@ -6812,59 +6313,9 @@ export function buildAgentsBridgeRemoteTools(input: {
 															storyboardEditorEditMode: { type: "boolean" },
 															storyboardEditorCollapsed: { type: "boolean" },
 														}),
-												productionMetadata: {
-													type: "object",
-													description:
-														"Structured chapter-grounded continuity contract. Use on a companion text/storyboardScript node or script patch when locking anchors before bulk visual writes.",
-													properties: {
-														chapterGrounded: { type: "boolean" },
-														lockedAnchors: {
-															type: "object",
-															properties: {
-																character: {
-																	type: "array",
-																	items: { type: "string" },
-																},
-																scene: {
-																	type: "array",
-																	items: { type: "string" },
-																},
-																shot: {
-																	type: "array",
-																	items: { type: "string" },
-																},
-																continuity: {
-																	type: "array",
-																	items: { type: "string" },
-																},
-																missing: {
-																	type: "array",
-																	items: { type: "string" },
-																},
-															},
-															required: [
-																"character",
-																"scene",
-																"shot",
-																"continuity",
-																"missing",
-															],
-														},
-														authorityBaseFrame: {
-															type: "object",
-															properties: {
-																status: {
-																	type: "string",
-																	enum: ["planned", "confirmed"],
-																},
-																source: { type: "string" },
-																reason: { type: "string" },
-																nodeId: { type: "string" },
-															},
-															required: ["status", "source", "reason"],
-														},
-													},
-												},
+												...(inChapterScope
+													? { productionMetadata: chapterGroundedProductionMetadataDef }
+													: {}),
 												...(hideStoryboardEditor
 													? {}
 													: {
@@ -6875,7 +6326,6 @@ export function buildAgentsBridgeRemoteTools(input: {
 																	additionalProperties: true,
 																	properties: {
 																		id: { type: "string" },
-																		imageUrl: { type: "string" },
 																		label: { type: "string" },
 																		prompt: { type: "string" },
 																		sourceKind: { type: "string" },
@@ -6903,8 +6353,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 										type: {
 											type: "string",
 											enum: ["groupNode"],
-											description:
-												"Visual grouping container node. Requires style.width and style.height.",
+											description: "Grouping container; style width/height are required.",
 										},
 										position: {
 											type: "object",
@@ -6940,8 +6389,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 					},
 					createEdges: {
 						type: "array",
-						description:
-							"Create edges between existing or newly created node ids. Use this when the user explicitly asks to connect or attach nodes, especially for reference-image wiring. Each item must include source and target, and may include sourceHandle/targetHandle when the handle matters. Handle ids must match the real frontend protocol exactly.",
+						description: "Create edges by real source/target IDs and optional frontend handle IDs.",
 						items: {
 							type: "object",
 							additionalProperties: true,
@@ -6960,8 +6408,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 					},
 					patchNodeData: {
 						type: "array",
-						description:
-							"Patch data of an existing node id. This never creates nodes and only merges into node.data.",
+						description: "Merge data into existing node IDs; never creates nodes.",
 						items: {
 							type: "object",
 							properties: {
@@ -6973,8 +6420,7 @@ export function buildAgentsBridgeRemoteTools(input: {
 					},
 					appendNodeArrays: {
 						type: "array",
-						description:
-							"Append items into data[key] of an existing node id. This does not target the flow root object.",
+						description: "Append items to an existing node's data[key], not the flow root.",
 						items: {
 							type: "object",
 							properties: {
@@ -6990,18 +6436,1578 @@ export function buildAgentsBridgeRemoteTools(input: {
 			},
 		},
 	);
-	return tools;
+
+	const sharedNodeDef = {
+		type: "object",
+		additionalProperties: true,
+		properties: {
+			id: { type: "string", description: "Optional stable node id; auto-generated if omitted." },
+			type: { type: "string", enum: ["taskNode"], description: "Must be \"taskNode\"." },
+			position: {
+				type: "object",
+				properties: { x: { type: "number" }, y: { type: "number" } },
+				required: ["x", "y"],
+			},
+			parentId: { type: "string" },
+			data: {
+				type: "object",
+				properties: {
+					kind: { type: "string" },
+					label: { type: "string" },
+					prompt: { type: "string", description: "Required — the generation prompt." },
+					negativePrompt: { type: "string" },
+					systemPrompt: { type: "string" },
+					structuredPrompt: { type: "object" },
+				},
+				required: ["kind", "prompt"],
+			},
+		},
+		required: ["type", "data"],
+	} as const;
+
+	// 视频生成专用节点 schema：显式文档化视频特有的 data 字段，否则模型 get_tool_schema 只看到
+	// 通用的 kind/label/prompt（sharedNodeDef），看不见 videoModel/durationSeconds/reference ids/
+	// sourceVideoUrl/sourcePrevTaskId —— 实测导致：①跨镜续写从不传 sourceVideoUrl/
+	// sourcePrevTaskId（"看不见即不填"）②参考图只剩 hono 自动注入的 1 张组内图 ③有时漏设 videoModel
+	// 落到 text_to_video 无默认模型报错。运行时 generate-video-to-canvas.ts 本就读这些字段，只是没文档化。
+	// 注：首帧 firstFrameUrl 已停用（2026-06-26），故事板/关键帧一律走引用 ID 作剧情参考。
+	const videoNodeDef = {
+		...sharedNodeDef,
+		properties: {
+			...sharedNodeDef.properties,
+			data: {
+				type: "object",
+				additionalProperties: true,
+				properties: {
+					...sharedNodeDef.properties.data.properties,
+					kind: { type: "string", description: "video | composeVideo" },
+					label: { type: "string" },
+					prompt: {
+						type: "string",
+						description:
+							"Required — executable video-generation prompt for this node. Creative method and shot construction belong to the loaded agents-cli Skill; this schema only transports the final prompt string.",
+					},
+					negativePrompt: { type: "string" },
+					videoModel: {
+						type: "string",
+						description:
+							"REQUIRED. COPY the exact modelKey the user/plan chose from the enabledVideoModels context — do NOT default to or copy any literal shown here (e.g. pixverse-v6 vs doubao-seedance-2-0-260128 route to completely different upstream channels). Omitting it routes to text-to-video with no default model and HARD-FAILS (model_not_configured). If the group node has data.videoModel pinned, that pin overrides this field at the tool layer — keep them consistent. The official seedance-2-0 channel supports real-person inputs directly — there is NO -face model anymore; never emit doubao-seedance-2.0-face or any -face variant. Keep the SAME model across all shots of one film.",
+					},
+					durationSeconds: {
+						type: "number",
+						description:
+							"Per-clip duration in seconds. DEFAULT to the selected model's maxDuration from enabledVideoModels (longest supported clip) unless this is a remainder/last clip. Must be one of the model's durationOptions.",
+					},
+					videoResolution: { type: "string", description: "e.g. 720p / 1080p — one of the model's resolutionOptions." },
+					aspect: { type: "string", description: "e.g. 9:16 / 16:9. The group's pinned videoAspect is enforced at the tool layer regardless." },
+					referenceImageNodeIds: {
+						type: "array",
+						items: { type: "string" },
+						description:
+							"Canvas image node IDs for cross-shot consistency. Resolve/verify with tapcanvas_image_refs_get; never copy image URLs.",
+					},
+					referenceAssetIds: {
+						type: "array",
+						items: { type: "string" },
+						description:
+							"Uploaded image asset IDs, material asset IDs, or exact material version IDs for cross-shot consistency.",
+					},
+					// 首帧 firstFrameUrl 已停用（2026-06-26 用户拍板「不再使用此功能」）：故事板/关键帧一律走
+					// referenceImages 作剧情参考，不再当字面首帧。镜间连贯靠 referenceImages 状态接力 +
+					// （continuous 逃生口由服务端 orchestrator 自行处理尾帧续写），小T 不再手动设 firstFrameUrl。
+					sourceVideoUrl: {
+						type: "string",
+						description:
+							"⛔续写禁用（2026-07-06 用户拍板：视频输入只有「复刻/v2v」好用、「续写」不好用）——普通分镜续写绝不要传上一镜成片；镜间承接只靠提示词里的退出态状态接力（各镜并发独立、可换机位视角）。本字段仅限复刻/v2v 场景：导演台灰模 v2v 重构、动作迁移（videoReferType=feature）、底片重绘（videoReferType=base）。",
+					},
+					sourcePrevTaskId: {
+						type: "string",
+						description:
+							"⛔续写禁用（同 sourceVideoUrl）——普通分镜不要设置。仅 pixverse 复刻/延展特殊场景与 sourceVideoUrl 配套使用。",
+					},
+				},
+				required: ["kind", "prompt"],
+			},
+		},
+	} as const;
+
+	// 图片生成专用节点 schema：显式文档化引用 ID；真实 URL 只在服务端付费边界解析。
+	// 否则模型 get_tool_schema 只看到 sharedNodeDef 的 kind/label/prompt，看不见参考图字段→「看不见即不填」→
+	// 用户说"基于这张户型图出效果图"时，模型必须保留真实节点/资产身份而不是复制 URL。
+	const imageNodeDataProperties = {
+		...sharedNodeDef.properties.data.properties,
+		kind: {
+			type: "string",
+			enum: ["image", "imageEdit", "storyboardImage"],
+			description: "Exact image node kind; do not invent aliases.",
+		},
+		label: { type: "string" },
+		prompt: { type: "string", description: "Required — the generation prompt." },
+		negativePrompt: { type: "string" },
+		systemPrompt: { type: "string" },
+		structuredPrompt: { type: "object" },
+		imageModel: {
+			type: "string",
+			description: "Exact executionCatalog.models[].modelKey.",
+		},
+		aspect: {
+			type: "string",
+			description: "Exact supported imageOptions.aspectRatioOptions value.",
+		},
+		imageSize: {
+			type: "string",
+			description: "Exact supported imageOptions.imageSizeOptions[].value.",
+		},
+		characterAssetRole: {
+			type: "string",
+			enum: ["identity_anchor", "state_variant"],
+			description:
+				"角色图片资产职责。identity_anchor 是 character-card/v3 的 canonical 身份卡；state_variant 是由精确身份资产 ID 派生的状态卡。该语义只由 agents-cli tapcanvas-character-card 决定。",
+		},
+		characterProfileVersion: {
+			type: "string",
+			enum: ["character-card/v3"],
+			description:
+				"新角色卡唯一结构版本。旧 character-bible/v2、role-card 与 role-portrait 生成入口已删除。",
+		},
+		identityBoardSpec: characterIdentityBoardSpecToolSchema,
+		identityAnchors: {
+			type: "array",
+			items: { type: "string" },
+			description:
+				"由 tapcanvas-character-card 从角色事实编译的可见身份事实；不得由协议层随机补齐。",
+		},
+		prohibitedDrift: {
+			type: "array",
+			items: { type: "string" },
+			description:
+				"仅基于已确认角色事实的禁止偏移项；不得使用模板禁词或固定人脸负向词代替人物设计。",
+		},
+		propAssetRole: {
+			type: "string",
+			enum: ["identity_anchor", "state_variant"],
+			description:
+				"道具图片资产职责。identity_anchor 是 prop-card/v1 canonical 基态；state_variant 必须绑定精确 canonicalAssetId 并只写状态差量。语义只由 agents-cli tapcanvas-prop-card 决定。",
+		},
+		propProfileVersion: {
+			type: "string",
+			enum: ["prop-card/v1"],
+			description: "新道具卡唯一结构版本。",
+		},
+		propBoardSpec: propIdentityBoardSpecToolSchema,
+		propAnchors: {
+			type: "array",
+			items: { type: "string" },
+			description:
+				"由 tapcanvas-prop-card 编译的可见且跨镜稳定的道具身份事实。",
+		},
+		prohibitedPropDrift: {
+			type: "array",
+			items: { type: "string" },
+			description:
+				"仅基于已确认道具事实的不可偏移项；不得使用模板禁词替代物理设计。",
+		},
+		propFunctionSpec: propFunctionSpecToolSchema,
+		sceneAssetRole: {
+			type: "string",
+			enum: ["space_anchor", "lighting_variant", "state_variant"],
+			description:
+				"场景图片资产职责。space_anchor 锁定 canonical 空间；lighting_variant 只改变可证明光相；state_variant 只改变可见场景状态。语义只由 agents-cli tapcanvas-scene-card 决定。",
+		},
+		sceneProfileVersion: {
+			type: "string",
+			enum: ["scene-card/v1"],
+			description:
+				"新场景卡唯一结构版本；旧固定场景 prompt、兼容/借鉴模板与 URL 物化路径已删除。",
+		},
+		sceneAnchors: {
+			type: "array",
+			items: { type: "string" },
+			description:
+				"由 tapcanvas-scene-card 编译的可见空间身份事实，如拓扑、尺度、入口、固定地标、主材质与长期使用痕迹。",
+		},
+		prohibitedSceneDrift: {
+			type: "array",
+			items: { type: "string" },
+			description:
+				"仅基于已确认场景事实的不可偏移项；不得使用模板禁词替代空间设计。",
+		},
+		sceneLightingSpec: sceneLightingSpecToolSchema,
+		waitForResult: {
+			type: "boolean",
+			enum: [false],
+			description:
+				"Agent image generation is async-only. Omit this field or set false. Once accepted, the tool persists running+taskId and returns; use tapcanvas_image_reconcile to collect the same task. true is rejected before paid submission.",
+		},
+		referenceImageNodeIds: {
+			type: "array",
+			items: { type: "string" },
+			description:
+				"图生图/参考图的当前画布图片节点 ID（最多 16 项）。先用 flow_get/flow_search 找节点 ID，并可用 tapcanvas_image_refs_get 验证；禁止复制图片 URL。",
+		},
+		referenceAssetIds: {
+			type: "array",
+			items: { type: "string" },
+			description: "上传图片资产 ID、素材资产 ID或素材具体版本 ID（最多 16 项）。项目全局画风由服务端自动注入。",
+		},
+		referenceAssetBindings: {
+			type: "array",
+			maxItems: 16,
+			description:
+				"Role-aware uploaded/material image bindings. Use this instead of referenceAssetIds when layout/structure and style inputs must remain distinct. layout/content/identity become composition references; style becomes a role='style' asset input. Each assetId may appear once.",
+			items: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					assetId: { type: "string" },
+					role: {
+						type: "string",
+						enum: ["layout", "style", "identity", "content"],
+					},
+					strength: {
+						type: "number",
+						minimum: 0,
+						maximum: 1,
+						description:
+							"Requested influence persisted as provenance and forwarded as asset weight where supported; unsupported providers still receive the role-separated ordered references.",
+					},
+				},
+				required: ["assetId", "role"],
+			},
+		},
+		seed: {
+			type: "integer",
+			description:
+				"Optional explicit image seed forwarded to providers that support it. Omit it for a fresh random variant; use nodes[] to submit up to eight independent variants in one batch.",
+		},
+		styleLockId: {
+			type: "string",
+			description: "当前项目 styleLock.styleId；服务端会按真实项目画风再次确定性回写。",
+		},
+		styleFingerprint: {
+			type: "string",
+			description: "当前项目画风事实的确定性 sha256 指纹；用于禁止复用旧画风或无 provenance 资产。",
+		},
+		styleSource: {
+			type: "string",
+			enum: ["project_style_reference"],
+		},
+		referenceType: {
+			type: "string",
+			enum: ["character", "scene", "prop", "ensemble", "pose", "blocking"],
+			description:
+				"Structured asset category. Reusable character/scene/prop cards must set this together with roleName/sceneName/propName; label is display text and never establishes identity. It never gates image generation.",
+		},
+		roleName: {
+			type: "string",
+			description: "Exact character identity when referenceType='character'.",
+		},
+		sceneName: {
+			type: "string",
+			description: "Exact scene identity when referenceType='scene'.",
+		},
+		propName: {
+			type: "string",
+			description: "Exact prop identity when referenceType='prop'.",
+		},
+		materialIdentity: {
+			type: "object",
+			description:
+				"Optional prop registry metadata. base={mode:'base',canonicalName}; state={mode:'state',canonicalName,canonicalAssetId,stateKey,stateDescription}. Omit it when no canonical prop-state linkage is needed; image generation never requires it.",
+			properties: {
+				mode: { type: "string", enum: ["base", "state"] },
+				canonicalName: { type: "string" },
+				canonicalAssetId: { type: "string" },
+				stateKey: { type: "string" },
+				stateDescription: { type: "string" },
+			},
+			required: ["mode", "canonicalName"],
+			additionalProperties: false,
+		},
+		stateKey: { type: "string" },
+		stateVersionId: {
+			type: "string",
+			description: "Exact immutable state-version identity from visualStateTimeline for a character state anchor.",
+		},
+		stateDescription: { type: "string" },
+		visualStateFacts: {
+			type: "array",
+			description: "Character state anchors only: frozen key/value facts copied exactly from assetRepair.requiredAssets.visualFacts.",
+			items: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					key: { type: "string" },
+					value: { type: "string" },
+				},
+				required: ["key", "value"],
+			},
+		},
+		...(inChapterScope ? { productionMetadata: chapterGroundedProductionMetadataDef } : {}),
+		// Explicit clip handoff metadata. These fields are optional for standalone
+		// images and are the only deterministic bridge from a generated keyframe
+		// to a video clip.
+		clipRunId: {
+			type: "string",
+			description:
+				"Optional exact video run id for a clip-scoped keyframe. Copy the same runId used by the video plan; never derive it from a label.",
+		},
+		clipIndex: {
+			type: "integer",
+			minimum: 0,
+			description:
+				"Optional zero-based clip slot for a clip-scoped keyframe. It must match the target video plan slot exactly.",
+		},
+		storyboardScope: {
+			type: "string",
+			enum: ["clip"],
+			description:
+				"Set to clip only when this image is an explicit keyframe for one video clip; omit for standalone images or master boards.",
+		},
+		storyboardFrameCount: {
+			type: "integer",
+			minimum: 1,
+			maximum: 3,
+			description:
+				"Optional number of visual states carried by this clip keyframe, from 1 to 3. It must agree with the video clip's storyboardFrameCount.",
+		},
+		productionLayer: {
+			type: "string",
+			description:
+				"Optional production layer. For a multi-state clip storyboard use design_board together with storyboardScope=clip.",
+		},
+		creationStage: {
+			type: "string",
+			description:
+				"Set to beat_keyframe when this image is the generated keyframe asset for a video clip.",
+		},
+		assetUsage: {
+			type: "string",
+			enum: ["production", "preview_only"],
+			description:
+				"Asset eligibility for ordinary images. Chapter story-preview boards are created only by tapcanvas_story_preview_orchestrate and are not authored through this schema.",
+		},
+		sourceChapterRevision: {
+			type: "integer",
+			minimum: 0,
+			description: "Chapter canvas revision returned by tapcanvas_project_chapter_update for the narrative visualized by this preview.",
+		},
+		sourceHash: {
+			type: "string",
+			description: "Authoritative source hash returned by tapcanvas_project_chapter_update.",
+		},
+	} as const;
+	const imageNodeDataDef = {
+		type: "object",
+		description:
+			"Image generation data. productionMetadata is optional provenance for chapter-grounded work and is never a generation gate.",
+		additionalProperties: true,
+		properties: imageNodeDataProperties,
+		required: ["kind", "prompt"],
+		...(inChapterScope
+			? {
+				allOf: [{
+					if: {
+						properties: { assetUsage: { const: "preview_only" } },
+						required: ["assetUsage"],
+					},
+					then: { not: { required: ["productionMetadata"] } },
+					else: { required: ["productionMetadata"] },
+				}],
+			}
+			: {}),
+		...(inChapterScope ? {} : { not: { required: ["productionMetadata"] } }),
+	} as const;
+	const imageNodeDef = {
+		...sharedNodeDef,
+		properties: {
+			...sharedNodeDef.properties,
+			data: imageNodeDataDef,
+		},
+	} as const;
+	const batchImageNodeDef = {
+		...imageNodeDef,
+		properties: {
+			...imageNodeDef.properties,
+			data: {
+				...imageNodeDataDef,
+				properties: {
+					...imageNodeDataDef.properties,
+					waitForResult: {
+						type: "boolean",
+						enum: [false],
+						description:
+							"Batch calls are async-only. Omit this field or set false; reconcile the persisted taskId instead of holding one HTTP request open for the whole batch.",
+					},
+				},
+			},
+		},
+	} as const;
+	const basicImageNodeDef = {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			id: sharedNodeDef.properties.id,
+			type: sharedNodeDef.properties.type,
+			position: sharedNodeDef.properties.position,
+			parentId: sharedNodeDef.properties.parentId,
+			data: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					kind: imageNodeDataProperties.kind,
+					label: imageNodeDataProperties.label,
+					prompt: imageNodeDataProperties.prompt,
+					negativePrompt: imageNodeDataProperties.negativePrompt,
+					systemPrompt: imageNodeDataProperties.systemPrompt,
+					imageModel: imageNodeDataProperties.imageModel,
+					aspect: imageNodeDataProperties.aspect,
+					imageSize: imageNodeDataProperties.imageSize,
+					waitForResult: imageNodeDataProperties.waitForResult,
+					referenceImageNodeIds: imageNodeDataProperties.referenceImageNodeIds,
+					referenceAssetIds: imageNodeDataProperties.referenceAssetIds,
+					referenceAssetBindings: imageNodeDataProperties.referenceAssetBindings,
+					seed: imageNodeDataProperties.seed,
+				},
+				required: ["kind", "prompt"],
+			},
+		},
+		required: ["type", "data"],
+	} as const;
+	const imageGenerateExecution = {
+		sideEffect: "paid_generation",
+		retrySafety: "unsafe",
+		executionMode: "exclusive",
+		idempotencyKeyField: null,
+		resultLookupSupported: true,
+	} as const;
+	const compactStoryPreviewBoardDef = {
+		type: "object",
+		additionalProperties: false,
+		description:
+			"专用剧情预览编排器的逐板创作字段。节点结构、精确时间码、板数、章节原文、冻结引用、revision/hash、稳定 seriesId 与最终生图提示词均由服务端从当前章节唯一真源展开。",
+		properties: {
+			openingState: {
+				type: "string",
+				maxLength: 600,
+				description: "本板第一格的起始可见状态；后续每格起始由服务端继承上一格结束，跨板也会继承上一板终态。",
+			},
+			cells: {
+				type: "array",
+				minItems: 1,
+				maxItems: 9,
+				description: "严格按时间顺序提交；不要写 cellIndex/timeRange/合同。每格必须用 subjectRefIds 声明实际可见的冻结引用 ID。格数必须等于服务端时间轴要求。",
+				items: {
+					type: "object",
+					additionalProperties: false,
+					properties: {
+						frame: { type: "string", maxLength: 600, description: "本秒代表帧：人物姿态、持物、相对位置和构图落点。" },
+						mid: { type: "string", maxLength: 600, description: "0.5秒承接动作；写清重心、肢体、武器与视线如何连续移动。" },
+						end: { type: "string", maxLength: 600, description: "本秒结束时可直接交给下一秒继承的完整状态。" },
+						camera: { type: "string", maxLength: 400, description: "景别、机位、观察方向、焦点与连续路径。" },
+						feedback: { type: "string", maxLength: 400, description: "接触、受力、反作用；未接触时写压力或惯性变化。" },
+						environment: { type: "string", maxLength: 400, description: "光、尘、雾、地面或背景相对上一秒的可见变化。" },
+						subjectRefIds: {
+							type: "array",
+							minItems: 1,
+							maxItems: 32,
+							uniqueItems: true,
+							items: { type: "string" },
+							description: "本格实际可见的精确冻结引用 ID；不得根据名称猜测或加入未声明引用。",
+						},
+					},
+					required: ["frame", "mid", "end", "camera", "feedback", "environment", "subjectRefIds"],
+				},
+			},
+		},
+		required: ["boardIndex"],
+	} as const;
+
+	tools.push(
+		...(inChapterScope ? [{
+			name: STORY_PREVIEW_ORCHESTRATOR_TOOL,
+			description: [
+				"Durable chapter story-preview workflow. Use this as the only route for requests to preview the agreed story as real nine-grid images.",
+				"Call mode=begin once. The server computes every board, reuses already submitted boards, and returns a progressCursor whose only allowedNextAction is the first missing put_board_N node.",
+					"Each put_board_N operation has a server-projected schema that locks the exact board and exact cell count. The runtime checkpoints every accepted board and automatically exposes only the next node. Never loop over tapcanvas_image_generate_to_canvas yourself.",
+					"The dynamic schema includes complete canonical source sections for this exact time window plus frozen reference options. Every cell must declare exact subjectRefIds; the server validates IDs and timing without guessing identities from prose.",
+					"Malformed structural content retries only the same put_board_N node. Source fidelity is the agent's same-chain authoring and self-check responsibility. Running/success boards are idempotently reused and never resubmitted for payment.",
+			].join(" "),
+			parameters: {
+				type: "object",
+				description: "Deterministic story-preview graph; operation schemas are loaded one durable frontier node at a time.",
+				properties: {
+					mode: {
+						type: "string",
+						enum: [
+							"begin",
+							"status",
+							...Array.from({ length: STORY_PREVIEW_MAX_BOARDS }, (_, index) => storyPreviewPutBoardMode(index)),
+						],
+					},
+					openingState: compactStoryPreviewBoardDef.properties.openingState,
+					cells: compactStoryPreviewBoardDef.properties.cells,
+				},
+				oneOf: [
+					{
+						properties: { mode: { type: "string", const: "begin" } },
+						required: ["mode"],
+						xExecution: {
+							sideEffect: "none",
+							retrySafety: "safe",
+							executionMode: "parallel_safe",
+							idempotencyKeyField: null,
+							resultLookupSupported: true,
+						},
+					},
+					{
+						properties: { mode: { type: "string", const: "status" } },
+						required: ["mode"],
+						xExecution: {
+							sideEffect: "none",
+							retrySafety: "safe",
+							executionMode: "parallel_safe",
+							idempotencyKeyField: null,
+							resultLookupSupported: true,
+						},
+					},
+					...Array.from({ length: STORY_PREVIEW_MAX_BOARDS }, (_, boardIndex) => ({
+						properties: {
+							mode: { type: "string", const: storyPreviewPutBoardMode(boardIndex) },
+						},
+						required: ["mode", "openingState", "cells"],
+						xExecution: {
+							sideEffect: "paid_generation",
+							retrySafety: "safe",
+							executionMode: "exclusive",
+							idempotencyKeyField: null,
+							resultLookupSupported: true,
+						},
+					})),
+				],
+			},
+		}] : []),
+		{
+			name: "tapcanvas_asset_add_to_canvas",
+			description:
+				"Resolve one uploaded/material image asset ID and create a real previewable image node in the current canvas. Use this after tapcanvas assets upload when the source image itself must be visible and reusable on the workflow. The server persists the private storage URL inside the node, while the model only sends and receives IDs. referenceRole explicitly separates layout/structure, style, identity, and content inputs; it is provenance for later referenceAssetBindings and is never inferred from labels or prompts.",
+			parameters: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					assetId: { type: "string", description: "Exact uploaded/material image asset ID." },
+					referenceRole: {
+						type: "string",
+						enum: ["layout", "style", "identity", "content"],
+						description: "Explicit downstream responsibility of this source image.",
+					},
+					referenceStrength: {
+						type: "number",
+						minimum: 0,
+						maximum: 1,
+						description: "Optional provenance weight requested by the workflow; provider support is model-specific.",
+					},
+					node: {
+						type: "object",
+						additionalProperties: true,
+						properties: {
+							id: { type: "string", description: "Optional stable node ID." },
+							type: { type: "string", enum: ["taskNode"] },
+							position: {
+								type: "object",
+								properties: { x: { type: "number" }, y: { type: "number" } },
+								required: ["x", "y"],
+							},
+							parentId: { type: "string" },
+							data: {
+								type: "object",
+								additionalProperties: true,
+								properties: {
+									kind: { type: "string", enum: ["image"] },
+									label: { type: "string" },
+									nodeWidth: { type: "number" },
+									nodeHeight: { type: "number" },
+									productionLayer: { type: "string", enum: [...PUBLIC_FLOW_PRODUCTION_LAYERS] },
+									creationStage: { type: "string", enum: [...PUBLIC_FLOW_CREATION_STAGES] },
+								},
+								required: ["kind"],
+							},
+						},
+						required: ["type", "position", "data"],
+					},
+				},
+				required: ["assetId", "referenceRole", "node"],
+			},
+		},
+		{
+			name: "tapcanvas_image_generate_to_canvas",
+			description:
+					"Generate an image from a prompt and create a new image node in the current flow. data.kind must be one of: image / imageEdit / storyboardImage. " +
+				"章节剧情预览已由 tapcanvas_story_preview_orchestrate 接管板数、顺序、精确格数、checkpoint、幂等与同链纠错。用户要求完整剧情预览/九宫格预演时必须使用专用工具，本通用生图工具不接受 previewBoard。 " +
+				"For chapter beat keyframes (productionLayer='keyframe' or creationStage='beat_keyframe'), productionMetadata.spatialBlocking=true declares that the current clip truly depends on precise blocking and therefore requires productionMetadata.blockingFrameNodeId plus the exact compositionContract/compositionContractHash returned by tapcanvas_render_blocking_diagram. Character count alone never triggers this semantic decision. The id must resolve to a real blocking_diagram image on the authorized canvas, cover the same canonical characters and scene, carry the same contract/hash and hash-bearing image provenance, and is injected as the first composition reference. The verified contract facts are appended to the paid image request without locally reinterpreting narrative semantics. The whole batch is rejected before any paid submission when any evidence is missing. " +
+				"Clip handoff: when this image is intended for one video clip, also set clipRunId, clipIndex, storyboardScope='clip', creationStage='beat_keyframe', and (for a multi-state image) storyboardFrameCount. The exact run/index metadata is persisted with the image node; commit_beats/add_clips uses it to fill the matching storyboardImageNodeId. Do not expect labels, prompts, node positions, or nearby edges to establish video consumption. If the target run or clip is not known, leave these fields out and treat the image as standalone. " +
+						"【持久异步硬合同·勿当失败】所有 agent 生图在供应商受理后立即返回 status:'running' 并持久化 nodeId/taskId。用 tapcanvas_image_reconcile 对账同一任务直到 status:success；禁止 waitForResult:true，禁止因 running 重复提交。主模型只依据 nodeId/taskId/status，不接收图片存储 URL。 " +
+					"PREFER THIS whenever the user wants to SEE any visual (reference/concept/style/placeholder/mood image): it renders the image to the canvas AND the chat panel. Do NOT use add_node to create an empty placeholder node and ask the user to refresh — this tool does the generation + render. " +
+				"图生图：先用 flow_get/flow_search 找真实图片节点 ID，必要时用 tapcanvas_image_refs_get 验证，再写入 data.referenceImageNodeIds；普通素材卡/版本写入 data.referenceAssetIds。需要严格区分布局/风格/身份/内容职责时改用 data.referenceAssetBindings。省略 seed 会产生新随机变体，多个独立变体用 nodes[] 批量提交。项目全局画风由服务端自动注入。禁止把图片 URL 写进 prompt 或参数。",
+			parameters: {
+				type: "object",
+				properties: {
+					node: {
+						...imageNodeDef,
+						description:
+							"单图 Node spec. data.kind: image | imageEdit | storyboardImage. data.prompt is required. 基于已有图时提交 referenceImageNodeIds/referenceAssetIds。多张独立图请改用 nodes 并发。",
+					},
+					nodes: {
+						type: "array",
+						maxItems: 8,
+						items: batchImageNodeDef,
+						description:
+							"批量并发且仅异步：多张相互独立的图（角色卡/场景卡/故事板等无依赖图）一次性并发提交（服务端并发≤8张），每张先持久化 running+taskId，再由 tapcanvas_image_reconcile 或后台 sweep 收图。与 node 二选一；data.waitForResult 必须省略或为 false，禁止把整批付费任务绑定到长 HTTP 等待。",
+					},
+				},
+				required: [],
+				additionalProperties: false,
+				oneOf: [
+					{
+						properties: {
+							operation: { type: "string", const: "generate" },
+							node: basicImageNodeDef,
+						},
+						required: ["operation", "node"],
+						xExecution: imageGenerateExecution,
+					},
+					{
+						properties: {
+							operation: { type: "string", const: "generate_advanced" },
+						},
+						required: ["operation"],
+						xOptionalProperties: ["node", "nodes"],
+						xExecution: imageGenerateExecution,
+					},
+				],
+			},
+		},
+		{
+			name: "tapcanvas_video_generate_to_canvas",
+			description:
+				"Generate a video from a prompt and create a video node in the current flow. data.kind must be composeVideo or video. Once the upstream task is accepted, the tool persists a running node with the real taskId and immediately returns {nodeId,taskId,status:'running'}; it never blocks the agent connection until rendering completes. tapcanvas_video_reconcile and the background recovery worker write success+videoUrl or failed back to that same node. A running response means accepted, not failed, and must never be resubmitted as a new paid task. " +
+				"ORCHESTRATION(多段成片): data.clipRunId(稳定 run id)+data.clipIndex(0起) additionally select a DETERMINISTIC slot(runId:clip:index). Same clipRunId+clipIndex returns the existing running/success node, never creates -rerun and never repeats billing. clipIndex>0 requires the previous segment readiness facts or returns 409 previous_clip_not_ready.",
+			parameters: {
+				type: "object",
+				properties: {
+					node: {
+						...videoNodeDef,
+						description:
+							"Node spec for the video to generate. data.kind: composeVideo | video. data.prompt is required. Use referenceImageNodeIds/referenceAssetIds for image consistency; never pass image URLs. Reuse the same videoModel across shots.",
+					},
+				},
+				required: ["node"],
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_video_extract_last_frame",
+			description:
+				"抽取视频尾帧、托管并登记为当前项目可复用的图片资产，供下一镜作首帧参考实现链式衔接。给 videoUrl 直接使用；给 nodeId 时从当前 flow 节点的 data.videoUrl 取。返回图片资产名称、reference descriptor 与 referenceAssetIds；不返回图片存储 URL。后续生图/视频把 referenceAssetIds 原样传入，服务端只在付费提交前解析真实 URL。",
+			parameters: {
+				type: "object",
+				properties: {
+					videoUrl: {
+						type: "string",
+						description:
+							"Direct URL of the video to extract the last frame from. Takes precedence over nodeId.",
+					},
+					nodeId: {
+						type: "string",
+						description:
+							"Id of a video node in the current flow; the tool reads its data.videoUrl when videoUrl is not provided.",
+					},
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_video_extract_frames",
+			description:
+				"按 agents 明确给出的时间戳从参考视频抽取关键帧，上传并登记为当前项目可复用的图片资产。适用于角色身份参考、服装/造型与场景证据；工具只执行时间戳抽帧，不替 agent 猜角色或猜时间。给 videoUrl 直接使用；给 nodeId 时从当前 flow 视频节点取。返回 frame time、assetId、referenceId，不返回图片存储 URL。抽取结果默认就是原片 identity_evidence，可通过 tapcanvas_asset_add_to_canvas 直接落到画布并用于续写；只有用户明确要求规范化 character-card/v3 / identity-board/v3 时，才把已核验的 referenceAssetIds 传给角色卡/生图工具。",
+			parameters: {
+				type: "object",
+				properties: {
+					videoUrl: { type: "string", description: "待抽帧视频公网 URL（优先于 nodeId）。" },
+					nodeId: { type: "string", description: "当前 flow 视频节点 id；videoUrl 未提供时从节点解析。" },
+					times: {
+						type: "array",
+						items: { type: "number", minimum: 0 },
+						minItems: 1,
+						maxItems: 24,
+						description: "agents 选定的原片时间戳（秒），去重后按升序抽取。",
+					},
+					roleName: { type: "string", description: "可选：用户已确认的角色名，用于资产命名与身份参考元数据。" },
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_video_concat",
+			description:
+				"S7 拼接：把【已生成】的多段视频按顺序拼成一条完整成片，返回永久 URL 与 concatPolicy。默认是 hard_cut：不重叠画面/声音、不缩短段落时间轴、不自动平均调色。只有导演合同明确需要叠化时，才同时提交正数 xfadeSeconds，并为第 1 段之后的每个 clips[i] 逐缝提交合法 transition；缺任一转场或探测无法执行会显式失败，不会静默改 hard_cut/fade。逐段内切继续用 clips:[{url|nodeId,inSec,outSec}]；成片节奏来自已冻结剪辑决定，不由拼接器二次猜测。",
+			parameters: {
+				type: "object",
+				properties: {
+					clips: {
+						type: "array",
+						items: {
+							type: "object",
+							properties: {
+								url: { type: "string", description: "该段源视频 URL（与 nodeId 二选一）。" },
+								nodeId: {
+									type: "string",
+									description: "该段源视频节点 id（从当前 flow 取 data.videoUrl）。",
+								},
+								inSec: {
+									type: "number",
+									description: "可选：源素材内起点秒（省略=从头）。",
+								},
+								outSec: {
+									type: "number",
+									description: "可选：源素材内终点秒（省略=到尾）；与 inSec 差至少 0.1s。",
+								},
+								transition: {
+									type: "string",
+									description:
+										"可选但受严格合同约束：进入本段的 ffmpeg xfade 转场；第 0 段禁止填写。使用时必须同时给正数 xfadeSeconds，且第 1 段之后每个接缝都要显式填写。",
+								},
+							},
+							additionalProperties: false,
+						},
+						description:
+							"富形态拼接段（按播放顺序，至少 2 段）：每段可指定源区间 [inSec, outSec) 做逐段内切；同一 url/nodeId 可重复出现取不同区间（亚秒冲击簇/打击帧的拼法）。提供时优先于 clipUrls/nodeIds。",
+					},
+					clipUrls: {
+						type: "array",
+						items: { type: "string" },
+						description: "按播放顺序排列的视频 URL 列表（至少 2 个）。与 nodeIds 二选一，优先使用。",
+					},
+					nodeIds: {
+						type: "array",
+						items: { type: "string" },
+						description:
+							"按播放顺序排列的视频节点 id 列表；从当前 flow 节点的 data.videoUrl 解析。clipUrls 未提供时使用。",
+					},
+					aspect: {
+						type: "string",
+						description:
+							"成片目标比例（如 9:16 / 16:9 / 1:1），钉死输出朝向与尺寸，竖屏不会被加横向黑边。应传本次编排统一的 videoAspect；省略则取首片真实尺寸。",
+					},
+					fileName: {
+						type: "string",
+						description: "可选：成片文件名（如 final-20s.mp4）。",
+					},
+					xfadeSeconds: {
+						type: "number",
+						description:
+							"可选：显式叠化秒数，范围 0..1.2。省略或 0=hard_cut；正数=每个接缝必须有 clips[i].transition。",
+					},
+					colorMatch: {
+						type: "boolean",
+						description:
+							"可选：是否执行全片平均 YUV 校正。默认 false；只有导演明确要求统一跨段曝光/色偏且不破坏剧情光色时才设 true。探测失败会显式失败。",
+					},
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_voice_card_dub",
+			description:
+				"【配音卡 → 视频节点 手工配音】给一个视频节点额外合成并 mux 人声：解析 videoUrl + 台词（clipPrompt 引号内对白）+ 指定配音卡（audioType=voice_card，锁定角色音色）→ 豆包 TTS → ffmpeg mux，返回 { videoUrl(配音成片), audioUrl(语音), voiceId, character, dialogue, durationSec }。编排器自动创建的 typed voice_reference/reference_only 连线只表示“该片段用了哪张音色卡”，绝不作为本工具的隐式配音输入，也绝不参与混音；手工配音应显式传 voiceCardNodeId。只有用户确实要执行额外 mux 时，才可使用普通可执行音频边作为省略 voiceCardNodeId 的绑定。拿到 videoUrl 后用 flow_patch 回写到该视频节点的 data.videoUrl。",
+			parameters: {
+				type: "object",
+				properties: {
+					videoNodeId: {
+						type: "string",
+						description: "要配音的视频节点 id（从当前 flow 解析其 videoUrl + 台词 + 绑定的配音卡）。",
+					},
+					voiceCardNodeId: {
+						type: "string",
+						description:
+							"建议必传：显式指定配音卡节点 id。省略时只读取普通可执行直连边；voice_reference/reference_only 血缘边不会触发手工配音。",
+					},
+					dialogue: {
+						type: "string",
+						description:
+							"可选：显式台词文本；省略时读视频节点 data.dialogue，再回退 clipPrompt/prompt 引号内对白。",
+					},
+					videoUrl: {
+						type: "string",
+						description: "可选：显式视频 URL；省略时从视频节点 data.videoUrl / videoResults 解析。",
+					},
+				},
+				required: ["videoNodeId"],
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_hyperframes_render",
+			description:
+				"剪辑师包装层渲染（HTML→MP4）：把你写的单文件 HyperFrames composition（题卡/动态字幕/片头片尾/motion graphics 短片段）服务端 headless Chromium 逐帧渲染成 mp4，托管对象存储后返回 { videoUrl, key, bytes, durationSec }。【边界】只做包装层短片段（建议 ≤15s）——整片组装仍走 tapcanvas_video_concat（ffmpeg，无重编码损耗）；简单字幕/xfade 转场也优先 ffmpeg 路径，本工具用于 ffmpeg drawtext 做不到的动态排版/动画题卡。生成式画面（角色/场景）禁用本工具拼凑，走生图/生视频管线。composition 写法：根元素必须带 data-composition-id + data-width/data-height + data-duration；定时元素加 class=\"clip\" + data-start/data-duration（秒）；CSS keyframes 动画可被逐帧 seek；中文字体用系统 Noto Sans CJK（font-family:'Noto Sans CJK SC',sans-serif）。远程素材（图/视频/音频）必须列进 assets 参数由服务端预下载，HTML 里以 ./assets/<name> 相对路径引用——禁直接写远程 URL（容器出网受限会渲染挂起）。渲出的片段 URL 用 flow_patch 落画布节点或交 video_concat 合回主片。",
+			parameters: {
+				type: "object",
+				properties: {
+					html: {
+						type: "string",
+						description:
+							"完整单文件 composition HTML（含内联 <style>/<script>）。根元素带 data-composition-id/data-width/data-height/data-duration；引用素材一律 ./assets/<name>。",
+					},
+					assets: {
+						type: "array",
+						description:
+							"远程素材清单（≤24 个，总量 ≤200MB）。服务端预下载到项目 assets/ 目录；name 只允许字母数字._-（单层文件名，如 bg.png、clip1.mp4）。",
+						items: {
+							type: "object",
+							properties: {
+								name: {
+									type: "string",
+									description: "落盘文件名（HTML 里以 ./assets/<name> 引用）。",
+								},
+								url: { type: "string", description: "素材的 http(s) URL。" },
+							},
+							required: ["name", "url"],
+							additionalProperties: false,
+						},
+					},
+					fps: {
+						type: "number",
+						description: "帧率（12-60，默认 30）。",
+					},
+					quality: {
+						type: "string",
+						enum: ["draft", "standard", "high"],
+						description: "渲染质量（默认 standard；draft 用于快速预览自检）。",
+					},
+				},
+				required: ["html"],
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_annotate_shot",
+			description:
+				"在一张底图上【确定性精确】叠加导演运镜标注（轨迹箭头 path / 机位取景框 frame / 文字 label），服务端 canvas 按归一化坐标 [0,1] 合成、上传对象存储、返回新图 { imageUrl }。**用于在场景/关键帧图上画出镜头运镜示意（push-in/环绕/摇移/whip-pan 等）作导演分镜沟通文档**——不走 gpt-image-2（那是生成式脑补、不照坐标走、烧额度），本工具按你给的精确坐标毫秒级精确画、可复现。注意：带箭头标注的图是【导演文档】，别当 referenceImages 喂 seedance/pixverse（箭头会被渲进视频画面）。拿到 imageUrl 后用 flow_patch 建节点。",
+			parameters: {
+				type: "object",
+				properties: {
+					sourceImageUrl: {
+						type: "string",
+						description: "底图公网 URL。与 sourceNodeId 二选一，优先使用。",
+					},
+					sourceNodeId: {
+						type: "string",
+						description:
+							"底图所在 flow 节点 id（从 data.imageUrl 解析）。sourceImageUrl 未给时使用。",
+					},
+					annotations: {
+						type: "array",
+						description: "标注数组（≥1）。所有坐标一律归一化 [0,1]，与图实际尺寸解耦。",
+						items: {
+							type: "object",
+							properties: {
+								type: {
+									type: "string",
+									enum: ["path", "frame", "label"],
+									description:
+										"path=运镜轨迹折线(末点带箭头) | frame=机位取景框图标 | label=文字标签",
+								},
+								points: {
+									type: "array",
+									items: { type: "array", items: { type: "number" } },
+									description:
+										"【path 必填】运镜路径点 [[x,y],...]（归一化，≥2 个）；箭头默认开在最后一点，方向=最后一段。",
+								},
+								at: {
+									type: "array",
+									items: { type: "number" },
+									description: "【frame/label 必填】位置 [x,y]（归一化）。",
+								},
+								text: {
+									type: "string",
+									description: "【label 必填】文字（如 PUSH-IN / DOLLY-IN / ORBIT）。",
+								},
+								color: {
+									type: "string",
+									description: "颜色 hex(#ffd34d) 或色名(white)；默认 path 白、label 黄。",
+								},
+								width: { type: "number", description: "path 线宽相对值，默认 5。" },
+								size: { type: "number", description: "frame 大小（归一化），默认 0.06。" },
+								arrowHead: {
+									type: "boolean",
+									description: "path 是否在末点画箭头，默认 true。",
+								},
+								fontSize: {
+									type: "number",
+									description: "label 字号（归一化高度），默认 0.035。",
+								},
+							},
+							additionalProperties: false,
+						},
+					},
+				},
+				required: ["annotations"],
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_render_blocking_diagram",
+			description:
+				"【确定性·俯视站位图(blocking diagram)渲染】把结构化站位数据与 KeyframeCompositionContract 渲染成一张**从正上方看的平面调度示意图**：角色站位/朝向/走位、场景地标、机位/视锥/轴线，以及本镜叙事焦点、环境权重、每个角色的视觉权重/景深层/居中政策/最大画高。服务端按归一化坐标 [0,1] 精确绘制并返回 { imageUrl, compositionContract, compositionContractHash }；图片对象 key 携带同一 hash，供关键帧付费前与 commit_beats 追溯。" +
+				"**它是 3D 导演台(capture_director_scene)的轻量常驻版**——不依赖浏览器在线，任何镜随时出一张准确调度图。用途三合一：①作分镜交付文档的「人物站位」列；②作该镜 generate_storyboard / 视频生成的 role=context 一致性参考(锁谁在画左/画右/面朝谁)；③作 clipPrompt 里轴线/银幕方向措辞的真源。**为什么不用 gpt-image-2 画：站位图的价值是空间真值，生成式脑补会把位置画乱、轴线画反，等于把防漂锚画成噪声。**" +
+				"坐标系：原点左上、x 向右(=银幕左右)、y 向下(=纵深/上下)。先由 agents 判断当前 clip 是否真实依赖精确空间调度，并为该镜给出完整 compositionContract；Hono 不从 prompt 推断焦点。拿到结果后用 flow_patch 新建 image 节点，写 data.productionLayer='blocking_diagram'、data.sceneName、data.productionMetadata.lockedAnchors.character，并把返回的 compositionContract/compositionContractHash 逐字持久化到 data.productionMetadata。关键帧 productionMetadata 必须携带同一合同/hash，并与 beat 共用精确 blockingFrameNodeId。旧站位图、后补字段、只有节点连线或 prompt 声称已使用都不能作为新合同证据。" +
+				"**⭐户型底图两步法(2026-07-06 用户拍板·默认必走)**：①本场景若还没有「俯视底图」节点——先用场景卡图生图转一张俯视平面示意图(prompt 如「根据此场景图绘制俯视平面示意图/top-down floor plan，简洁线稿+色块，标注主要地物名称，无人物」，label「俯视底图｜<场景名>」+ data.sceneName='<场景名>' 出生申报，每场景一张全章复用)；②本工具带 backgroundImageUrl=该底图 URL——符号层(站位/走位/机位/轴线)会叠画在户型底图上，landmarks 坐标与底图地物对齐。这样调度图不再是抽象白纸，模型能把站位映射进真实场景几何。",
+			parameters: {
+				type: "object",
+				properties: {
+					title: { type: "string", description: "图标题(默认「俯视站位图」)。" },
+					backgroundImageUrl: {
+						type: "string",
+						description:
+							"户型底图 URL(本场景的「俯视平面示意图」，由场景卡图生图而来；每场景一张全章复用)。给了则符号层叠画其上(自动压一层半透明纸色保可读)；下载、类型或解码失败会显式终止，禁止自动回落纸感底。",
+					},
+					compositionContract: keyframeCompositionContractDef,
+					durationSeconds: {
+						type: "number",
+						description: "本镜时长(秒)，渲进标题如「(本镜时长: 2s)」。",
+					},
+					width: { type: "number", description: "输出像素宽(320–2048，默认 800)。" },
+					height: { type: "number", description: "输出像素高(240–2048，默认 600)。" },
+					characters: {
+						type: "array",
+						description: "角色站位(≥1)。",
+						items: {
+							type: "object",
+							properties: {
+								name: { type: "string", description: "角色名(标签)。" },
+								at: {
+									type: "array",
+									items: { type: "number" },
+									description: "站位中心 [x,y](归一化)。",
+								},
+								facingTo: {
+									type: "array",
+									items: { type: "number" },
+									description: "朝向：看向的点 [x,y](归一化，优先；如对手/门的位置)。",
+								},
+								facingDeg: {
+									type: "number",
+									description: "朝向角度(度，0=右,90=下,180=左,270=上)；facingTo 未给时用。",
+								},
+								moveTo: {
+									type: "array",
+									items: { type: "number" },
+									description: "走位终点 [x,y](归一化)，画虚线箭头表示该镜内位移。",
+								},
+								color: { type: "string", description: "标记颜色 hex/色名，默认蓝。" },
+							},
+							required: ["name", "at"],
+							additionalProperties: false,
+						},
+					},
+					landmarks: {
+						type: "array",
+						description: "场景地标(墙/门/区域文字)。",
+						items: {
+							type: "object",
+							properties: {
+								kind: {
+									type: "string",
+									enum: ["wall", "door", "area"],
+									description: "wall=墙线 | door=门(带摆动弧) | area=区域文字(如 楼道/房间)",
+								},
+								from: { type: "array", items: { type: "number" }, description: "【wall】起点 [x,y]。" },
+								to: { type: "array", items: { type: "number" }, description: "【wall】终点 [x,y]。" },
+								at: { type: "array", items: { type: "number" }, description: "【door/area】位置 [x,y]。" },
+								orient: {
+									type: "string",
+									enum: ["h", "v"],
+									description: "【door】门洞朝向：h=水平/v=竖直。",
+								},
+								lengthN: { type: "number", description: "【door】门洞长度(归一化，默认 0.12)。" },
+								swing: {
+									type: "string",
+									enum: ["in", "out", "none"],
+									description: "【door】开门方向(默认 in)。",
+								},
+								label: { type: "string", description: "地标文字(如 302门 / 楼道)。" },
+							},
+							required: ["kind"],
+							additionalProperties: false,
+						},
+					},
+					camera: {
+						type: "object",
+						description: "机位(可选)：三角图标 + 视锥扇形。",
+						properties: {
+							at: { type: "array", items: { type: "number" }, description: "机位位置 [x,y]。" },
+							lookAt: { type: "array", items: { type: "number" }, description: "机位看向的点 [x,y](优先)。" },
+							facingDeg: { type: "number", description: "机位朝向角度(度)；lookAt 未给时用。" },
+							fovDeg: { type: "number", description: "视场角(度，默认 50)。" },
+							label: { type: "string", description: "机位标签(默认「机位」)。" },
+						},
+						required: ["at"],
+						additionalProperties: false,
+					},
+					axisLine: {
+						type: "object",
+						description: "180° 轴线(红虚线)。缺省时恰有 2 个角色则自动取两者连线。",
+						properties: {
+							from: { type: "array", items: { type: "number" }, description: "轴线起点 [x,y]。" },
+							to: { type: "array", items: { type: "number" }, description: "轴线终点 [x,y]。" },
+						},
+						required: ["from", "to"],
+						additionalProperties: false,
+					},
+				},
+				required: ["characters", "compositionContract"],
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_video_reconcile",
+			description:
+				"S6 视频精确回收：必须传入 video_generate_to_canvas 返回的 nodeId 与 taskId，只查询并回写这一条视频任务。已完成就原位写回 success+videoUrl 并结算积分，失败就原位写 failed 并退积分，仍在跑则保持不变。返回 {reconciled,failed,stillRunning,postersBackfilled,posterBackfillFailed,details}。禁止用其他节点或任务 ID 猜测调用，禁止因 running 重提付费任务；跨 flow 的批量孤儿恢复只由后台 recovery worker 承担。",
+			parameters: {
+				type: "object",
+				properties: {
+					nodeId: {
+						type: "string",
+						description: "video_generate_to_canvas 返回的真实画布视频节点 ID。",
+					},
+					taskId: {
+						type: "string",
+						description: "同一次提交返回并已持久化到该节点的真实供应商任务 ID。",
+					},
+				},
+				required: ["nodeId", "taskId"],
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_image_reconcile",
+			description:
+				"图片回收（2026-07-16 起自带服务端等待窗）：扫当前 flow 内 status=running/queued 的图片节点(image/imageEdit/storyboardImage)，查上游任务，已完成的回写 success+imageUrl、失败标 error。**还有在跑的任务时服务端内部每 5s 复查、默认最长等 45s（waitSeconds 可调 0~120），收齐或超时才返回**——所以【调一次通常就收齐了，⛔禁止旧式 8~10 连发轮询刷屏】（1K 资产图 30-60s 出图，一次调用覆盖全程；超时未齐再补一次即可）。返回 { reconciled, failed, stillRunning, details }。image_generate_to_canvas 默认提交即返 status:running——拿到 running 不是失败。",
+			parameters: {
+				type: "object",
+				properties: {
+					waitSeconds: {
+						type: "number",
+						description: "还有在跑任务时服务端最长等待秒数（0~120，默认 45）。0=立即返回（旧行为）。",
+					},
+				},
+				additionalProperties: false,
+			},
+		},
+			{
+				name: "tapcanvas_analyze_image",
+				description:
+					"图片理解(vision)：固定使用 gpt-5.6-luna 看懂一张真实图片资产并返回文字描述与无 URL 引用描述。只接受当前 flow 的 nodeId，或当前用户/项目的 assetId（含素材具体版本 ID）；服务端在受控执行边界解析真实 URL，主模型不得读取、复制或回显存储 URL。公开 /public/vision 接口另行支持直接传入 http(s) imageUrl。模型不可用或 ID 无法解析时显式失败，不自动降级。",
+				parameters: {
+					type: "object",
+					properties: {
+						nodeId: {
+							type: "string",
+							description: "当前授权 flow 内具有真实图片资产的节点 ID。与 assetId 二选一。",
+						},
+						assetId: {
+							type: "string",
+							description: "上传图片资产 ID、素材资产 ID，或素材具体版本 ID。与 nodeId 二选一。",
+						},
+					prompt: {
+						type: "string",
+						description: "可选：理解问题/侧重点（如「这是什么产品、颜色材质、卖点」）。省略用默认锚定卡问法。",
+					},
+					},
+					oneOf: [{ required: ["nodeId"] }, { required: ["assetId"] }],
+					additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_analyze_video",
+			description:
+				"只读视频理解：固定使用 doubao-seed-2-0-lite-260428 真实观看一段视频并返回分析文本与可核验 provenance。给 videoUrl 直接用；给 nodeId 从当前 flow 节点的 data.videoUrl 取。真实成片学习还要原样传 status 中的 dramaticCoverage，返回 dramaticCoverageHash 证明模型实际收到该合同。生成后的分析不会删除、覆盖或自动返工已有资产。返回 { text, videoUrl, model, fps, promptHash, analysisHash, segmentCount, analyzedAt, dramaticCoverageHash? }。",
+			parameters: {
+				type: "object",
+				properties: {
+					videoUrl: {
+						type: "string",
+						description: "要理解的视频公网 URL。优先于 nodeId。",
+					},
+					nodeId: {
+						type: "string",
+						description: "当前 flow 内视频节点 id；videoUrl 未提供时从其 data.videoUrl 解析。",
+					},
+					prompt: {
+						type: "string",
+						description: "可选：评估问题/侧重点。省略用默认 QA 问法(真实感/动态/一致/失真/口播)。",
+					},
+					dramaticCoverage: {
+						type: "array",
+						minItems: 1,
+						description:
+							"真实成片学习时必填：从同 run status.executionProvenance.clips 原样提取的 [{clipIndex,dramaticCoverage}]。工具会把事实交给视频理解模型并返回 dramaticCoverageHash；普通视频理解可省略。",
+						items: {
+							type: "object",
+							additionalProperties: false,
+							required: ["clipIndex", "dramaticCoverage"],
+							properties: {
+								clipIndex: { type: "integer", minimum: 0 },
+								dramaticCoverage: { type: "object", additionalProperties: true },
+							},
+						},
+					},
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_decompose_video",
+			description:
+				"视频镜头分解(复刻/二改前置)：把一条参考片自动拆成 ShotTable —— ffprobe 取时长/比例/帧率 → PySceneDetect 切镜头边界(不可用时固定窗口降级) → 每镜抽首/中/尾三关键帧上托管(TOS) → 每镜喂 vision 产出 9 维镜头语言(景别/机位/运镜/焦段/主体/动作/场景/光线/构图)。返回 { shotTable:{version,sourceVideoUrl,totalDurationSec,aspectRatio,fps,mode,detectMethod,shotCount,cuts:[{index,startSec,endSec,durationSec,keyFrames:[{timeSec,url,role}],caption{9维},replicateMode}]} }。复刻视频时先调它吃透原片(分镜真相源)，再据 cuts 逐镜复刻/换主体；ShotTable 仅驻对话上下文(不落库)。给 sourceUrl 直接用；给 nodeId 从当前 flow 视频节点 data.videoUrl 取。",
+			parameters: {
+				type: "object",
+				properties: {
+					sourceUrl: {
+						type: "string",
+						description: "参考视频公网 URL（优先于 nodeId）。",
+					},
+					nodeId: {
+						type: "string",
+						description:
+							"当前 flow 内视频节点 id；sourceUrl 未提供时从其 data.videoUrl 解析。",
+					},
+					mode: {
+						type: "string",
+						enum: ["exact", "swap"],
+						description:
+							"复刻基调：exact=逐镜精确复刻(默认)，帧锁原片；swap=换主体/换货保留镜头语言。写入 ShotTable.mode 及每个 cut.replicateMode，后续可逐镜覆盖。",
+					},
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_distill_director_breakdown",
+			description:
+				"导演拆解(复刻=学习闭环·理解层 ①)：对一条参考片做一次视频理解，产出结构化 DirectorBreakdown：整片 logline、叙事结构、节奏语态、视觉母题、signatureShot，以及逐镜景别、机位、运镜、焦段、主体、动作、场景、光线、构图、剪辑关系与导演意图。ffprobe 补精确总时长、比例和帧率。cast 与 locations 只提供事实清单；需要一致性资产时，角色统一交给 tapcanvas-character-card 生成 character-card/v3，场景与物理打光统一交给 tapcanvas-scene-card 生成 scene-card/v1 + scene-lighting/v1，再以结构化 nodeId/referenceAssetId 绑定。Hono 不提供角色/场景提示词模板、名称查库或 URL 物化旁路。本工具只理解、不抽帧、不复用原片像素；原片仅作对比基准。长片自动切段理解再合并。sourceUrl 优先；否则从当前 flow 的 nodeId 解析视频。",
+			parameters: {
+				type: "object",
+				properties: {
+					sourceUrl: {
+						type: "string",
+						description: "参考视频公网 URL（优先于 nodeId）。",
+					},
+					nodeId: {
+						type: "string",
+						description:
+							"当前 flow 内视频节点 id；sourceUrl 未提供时从其 data.videoUrl 解析。",
+					},
+					writeToCanvas: {
+						type: "boolean",
+						description:
+							"可选：true 且在章节画布会话时，把拆解产物写成画布「拆片卡」text 节点（prompt=人读 markdown 拆片报告、data.directorBreakdown=结构化 JSON 真值），返回 data.canvasNodeId——拆片成为可连边引用的一等画布资产（下游 video 节点作剧情参考）。复刻/对标工作流建议开启；纯问答式拆解可省略。",
+					},
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_video_compare",
+			description:
+				"视频对比QA(复刻=学习闭环 ④)：把【复刻成片】与【原片】各自的导演拆解卡逐维 diff 打分——衡量复刻片对原片导演意图的还原度(叙事/节奏/机位运镜/构图/主体一致性/总体)，列出偏离点 + 可定位到镜号的改进建议。这是「测试&提升」的反馈信号：据 scorecard 决定是否改某镜 StoryPlan 重生。返回 { scorecard:{dims:{narrative,pacing,camera,composition,consistency,overall}各{score:0-100,note},diffs:[],suggestions:[]}, originalBreakdown, replicaBreakdown }。复刻片必给 replicaUrl 或 replicaNodeId；原片基准优先传①已产出的 originalBreakdown(省一次原片理解)，没有则传 originalUrl 现拆。",
+			parameters: {
+				type: "object",
+				properties: {
+					replicaUrl: {
+						type: "string",
+						description: "复刻成片公网 URL（优先于 replicaNodeId）。",
+					},
+					replicaNodeId: {
+						type: "string",
+						description: "复刻成片节点 id；replicaUrl 未提供时从其 data.videoUrl 解析。",
+					},
+					originalUrl: {
+						type: "string",
+						description: "原片公网 URL（作对比基准；与 originalBreakdown 二选一）。",
+					},
+					originalBreakdown: {
+						type: "object",
+						description: "①distill 已产出的原片导演拆解卡(优先；省一次原片理解)。",
+					},
+				},
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_fetch_video_from_url",
+			description:
+				"抓取视频并转存托管(TOS)，返回 { ok, videoUrl:<TOS直链mp4>, sourcePage, title?, durationSec? }。公开抖音作品 URL 走唯一的 Douyin SSR 路径：解析公开分享页的结构化作品数据，校验精确作品 ID、公开状态、ByteDance 媒体域名、响应类型与字节边界；该路径失败时原地返回阶段化 agents_tool_fetch_video_douyin_* 错误，不回退到 yt-dlp。其他观看页使用 yt-dlp 抓取最佳视频流并由 ffmpeg 合并音视频；非零退出统一返回 agents_tool_fetch_video_ytdlp_failed 与有界 stderr 诊断，不根据错误文案猜测 DRM、会员或站点类型。用途：把 web_search 得到的观看页落成 decompose_video / analyze_video 可读取的稳定 TOS 视频 URL。版权合规由用户负责。",
+			parameters: {
+				type: "object",
+				properties: {
+					pageUrl: {
+						type: "string",
+						description:
+							"视频播放/观看页 URL。公开抖音作品使用专用 SSR 解析；B站、YouTube、官方站等其他页面使用 yt-dlp 抓取并转存 TOS。",
+					},
+				},
+				required: ["pageUrl"],
+				additionalProperties: false,
+			},
+		},
+		{
+			name: "tapcanvas_capture_director_scene",
+			description:
+				"组装一个导演台 3D 场景并直接渲染出一张机位占位图（参考图）。在空 3D 空间按三维坐标摆放素体角色、家具道具与单个机位，浏览器离屏渲染后返回 TOS 图 URL，可直接作为出图/故事板的空间构图参考。强烈建议为每个角色设 posePresetId 指定贴合剧情的姿势——缺省是无表演信息的 T-pose 素体。" +
+				`可用姿势预设（id中文名）——${DIRECTOR_POSE_LABELS}。` +
+				`可用道具（id中文名）——${DIRECTOR_PROP_LABELS}。` +
+				"【摆位规范】家具道具为真实米制尺寸、底面落地，禁止放大成墙（uniformScale≤3）、禁止摆在镜头与人物之间；机位 lookAt 指向角色群中点、确保每个具名角色都在画面内——服务端会做视锥+遮挡构图校验，角色出画或被道具完全遮挡会直接拒绝并告知修法。" +
+				"【先建空间再拍镜头】若该场景已有 720° 全景图（isPanoramic 节点），把其 imageUrl 传 scene.skybox 作天空盒——人物/机位摆进真实环境，blocking 帧自带空间方位；无全景图才用 prop-* 空舞台摆场。" +
+				"仅在用户浏览器在线的交互会话可用。重试用同一 requestId（幂等命中），同场景再出一张须换新 requestId。",
+			parameters: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					id: { type: "string", description: "导演台节点稳定 ID（create-if-absent）。格式 agent-<intent>-<batchUlid>-director" },
+					requestId: { type: "string", description: "本次出图的确定性 ID，作幂等域；重试沿用、重出换新" },
+					scene: {
+						type: "object",
+						additionalProperties: false,
+						properties: {
+							characters: {
+								type: "array",
+								items: {
+									type: "object",
+									additionalProperties: false,
+									properties: {
+										id: { type: "string" },
+										name: { type: "string" },
+										modelId: { type: "string", description: "素体：male|female|broad|muscular|slim|teen|child|chibi（或 prop-* 道具、或 http(s) GLB URL）" },
+										position: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+										rotation: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+										uniformScale: { type: "number" },
+										colorHex: { type: "string" },
+										// 注意：枚举/详细说明放工具 description（schema 体积超 defer 阈值会被剥成
+										// 无结构占位，实证导致模型把参数序列化成字符串）。合法 id 由服务端 zod
+										// enum(DIRECTOR_POSE_IDS) 严校验，传错会回吐全表。
+										posePresetId: { type: "string", description: "姿势预设 id（强烈建议设定，缺省=T-pose；完整 id 列表见本工具 description）" },
+										pose: {
+											type: "object",
+											additionalProperties: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+											description: "进阶：逐关节欧拉弧度 {spine|neck|shoulderL|elbowL|shoulderR|elbowR|hipL|kneeL|hipR|kneeR:[x,y,z]}，优先于 posePresetId",
+										},
+									},
+									required: ["id", "name", "modelId", "position"],
+								},
+							},
+							camera: {
+								type: "object",
+								additionalProperties: false,
+								properties: {
+									position: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+									lookAtMode: { type: "string", description: "'manual' 或某个 character.id" },
+									lookAt: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+									fovDeg: { type: "number" },
+								},
+								required: ["position"],
+							},
+							aspect: { type: "string", enum: ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+							// 详细用法见本工具 description「先建空间再拍镜头」段（inline 说明会撑爆 defer 阈值，故精简）。
+							skybox: {
+								type: "string",
+								description: "可选：全景背景图 URL。2:1 等距全景直接作天空盒；非 2:1 普通图前端自适应转环幕穹顶（接缝/极点已优化），也可用",
+							},
+							skyboxYaw: { type: "number", description: "可选：全景背景水平旋转(度 0..360)，转背景取景不动机位" },
+							skyboxPitch: { type: "number", description: "可选：全景地平线俯仰校准(度 -45..45)，用于让背景地面与导演网格对齐" },
+						},
+						required: ["characters", "camera"],
+					},
+				},
+				required: ["id", "requestId", "scene"],
+			},
+		},
+		{
+			name: "tapcanvas_render_director_clip",
+			description:
+				"组装一个导演台 3D 场景 + 关键帧动画，浏览器离屏渲一段 clay 灰模 mp4 样片，产出一个 video 节点（data.sourceVideoUrl 已就绪，可直接作 seedance 视频参考 v2v 重构成电影级成片）。用于需精确控制运镜/物体运动时机的镜头（推轨/环绕/直升机视角/复杂走位）——3D 灰模确定性钉死运动轨迹，真实感全交 seedance，勿对灰模本身做画质要求。" +
+				"【animation 格式】cameras 为 {相机id: {position:[{t,value:[x,y,z]}], lookAt:[{t,value:[x,y,z]}], fovDeg:[{t,value:[度]}]}}（相机 id 用 capture-cam）；characters 为 {角色id: {position:[{t,value:[x,y,z]}], rotation:[{t,value:[x,y,z]}]}}（角色 id 须与 scene.characters[].id 一致）。每条轨道是 [{t,value}] 关键帧数组，t 为秒、value 为数字数组；单关键帧=全程常量，区间内线性插值。durationSeconds 建议 3~5、fps 建议 24。" +
+				"【护栏】animation 及其内部轨道必须是真 JSON 对象/数组，禁止序列化成字符串传入。" +
+				"【骨骼动画 motionClip】animation.characters 每个角色可加 motionClip 让其做连续骨骼动作(优先于静态 posePresetId、自动循环填满时长)：idle/walk/run/agree(点头)/headShake(摇头)/sad_pose/sneak_pose/wave(挥手)；另可加 motionSpeed(默认1)。要让人物在样片里真动起来务必设 motionClip,否则只是定格姿势。**库里没有的动作(跳舞/挥拳/坐下/任意编排)先调 tapcanvas_director_define_motion 编出来(PoseClip 关键帧)再用其 id 当 motionClip;严禁传不存在的名(如凭空 dance)——会静默失败、人不动。**" +
+				"【混合分层动作 motion】(覆盖 motionClip，优先级更高)animation.characters[id].motion={durationSeconds:秒,poseTrack?:[{t:秒,pose:{关节:[x,y,z]弧度}}],poseMask?:关节数组(缺省:有locomotion=上半身spine/neck/shoulderL/elbowL/shoulderR/elbowR,否则全身),locomotion?:{clip:'walk'|'run'|'idle',path?:{waypoints:[[x,z]地面坐标(米),...],mode:'linear'|'curve',closed?:bool},speed?:腿部循环速率倍率(默认1,只调腿动作快慢,不改行进距离;行进距离由path长度÷durationSeconds决定)}}。上半身poseTrack叠在baked腿动作之上；根节点沿path匀速行进、朝向自动跟切线。关节名:spine neck shoulderL elbowL shoulderR elbowR hipL kneeL hipR kneeR。" +
+				"【相机环绕 cameraOrbit】想要镜头运动(对 v2v 是最强运动线索)就设 animation.cameraOrbit:{center:[x,y,z]默认[0,0,0], radius默认6, height默认1.6, degrees默认360(整圈,180=半弧), startDeg默认0, fovDeg默认40, lookAtHeight默认1.3}。每帧算精确圆周比手摆 cameras 关键帧更平滑;设了 cameraOrbit 就不必再写 cameras 轨道。角色可同时保持 motionClip 动作。" +
+				`角色姿势预设 posePresetId 取值同 tapcanvas_capture_director_scene（${DIRECTOR_POSE_LABELS}）。camera.lookAtMode='manual' 或某 character.id；scene.skybox 可传 720° 等距全景图 URL 作天空盒（同 capture 工具）。仅在用户浏览器在线的交互会话可用；重试用同一 requestId（幂等），重渲换新 requestId。`,
+			parameters: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					id: { type: "string", description: "导演台节点稳定 ID（create-if-absent）" },
+					requestId: { type: "string", description: "幂等域 ID；重试沿用、重渲换新" },
+					scene: {
+						type: "object",
+						additionalProperties: false,
+						properties: {
+							characters: {
+								type: "array",
+								items: {
+									type: "object",
+									additionalProperties: false,
+									properties: {
+										id: { type: "string" },
+										name: { type: "string" },
+										modelId: { type: "string", description: "素体 male|female|broad|muscular|slim|teen|child|chibi 或 prop-* 或 GLB URL" },
+										position: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+										rotation: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+										uniformScale: { type: "number" },
+										colorHex: { type: "string" },
+										posePresetId: { type: "string" },
+									},
+									required: ["id", "name", "modelId", "position"],
+								},
+							},
+							camera: {
+								type: "object",
+								additionalProperties: false,
+								properties: {
+									position: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+									lookAtMode: { type: "string" },
+									lookAt: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3 },
+									fovDeg: { type: "number" },
+								},
+								required: ["position"],
+							},
+							aspect: { type: "string", enum: ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+							skybox: { type: "string" },
+							skyboxYaw: { type: "number" },
+							skyboxPitch: { type: "number" },
+						},
+						required: ["characters", "camera"],
+					},
+					animation: {
+						type: "object",
+						additionalProperties: false,
+						properties: {
+							durationSeconds: { type: "number" },
+							fps: { type: "number" },
+							cameras: { type: "object", additionalProperties: true },
+							characters: { type: "object", additionalProperties: true },
+							cameraOrbit: { type: "object", additionalProperties: true },
+						},
+						required: ["durationSeconds", "fps"],
+					},
+				},
+				required: ["id", "requestId", "scene", "animation"],
+			},
+		},
+		{
+			name: "tapcanvas_director_define_motion",
+			description:
+				"定义一段可复用的自定义骨骼动画（PoseClip），存入导演台节点 data.scene.customMotions（同 id 替换、否则追加）。" +
+				"后续在 tapcanvas_render_director_clip 的 animation.characters.<角色id>.motionClip 填该 motion.id，角色就会在样片里做这段自定义动作（优先于 posePresetId、自动循环填满时长）；若传 characterId 则同步把该角色的 motionClip 设为该 id。" +
+				"【关节空间·规范·弧度】joints = spine|neck|shoulderL|elbowL|shoulderR|elbowR|hipL|kneeL|hipR|kneeR；" +
+				"pose 值为 [x,y,z] 欧拉弧度(XYZ顺序，与 capture 工具逐关节 pose 字段完全相同)：spine/neck x+前倾 y+左转 z+右倾；shoulderL z+抬 x-前摆；shoulderR z-抬；elbowL y-弯；elbowR y+弯；hipL/R x-前抬腿；kneeL/R x+弯曲。" +
+				"【例·招手2帧 durationSeconds:1,loop:true】keyframes:[{t:0,pose:{shoulderR:[0,0,-1.22],elbowR:[0,0.79,0]}},{t:0.5,pose:{shoulderR:[0,0,-1.22],elbowR:[0,1.40,0]}}]",
+			parameters: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					id: { type: "string", description: "导演台节点 id" },
+					characterId: { type: "string", description: "可选:把动作直接挂到该角色(设其 motionClip)" },
+					motion: {
+						type: "object",
+						additionalProperties: false,
+						properties: {
+							id: { type: "string" },
+							name: { type: "string" },
+							durationSeconds: { type: "number" },
+							loop: { type: "boolean" },
+							keyframes: { type: "array", items: { type: "object", additionalProperties: true } },
+						},
+						required: ["id", "name", "durationSeconds", "keyframes"],
+					},
+				},
+				required: ["id", "motion"],
+			},
+		},
+		{
+			name: "tapcanvas_director_set_character_motion",
+			description:
+				"把混合分层动作（CharacterMotion）直接写入导演台场景中指定角色的 motion 字段（覆盖原值，优先级高于 motionClip/posePresetId）。" +
+				"适用于 AI 实时编排角色行走路径、骨骼 pose 轨迹等，写入后用户可在动画 tab 直接看到并调整。" +
+				"【motion 字段说明】durationSeconds(必填,秒,>0)；" +
+				"poseTrack?:[{t:秒,pose:{关节:[x,y,z]弧度}}] 关节名同 tapcanvas_director_define_motion；" +
+				"poseMask?:关节名数组(缺省:有locomotion=上半身,否则全身)；" +
+				"locomotion?:{clip:'walk'|'run'|'idle',path?:{waypoints:[[x,z]地面坐标(米),...],mode:'linear'|'curve',closed?:bool},speed?:腿部循环速率倍率(默认1)}。" +
+				"上半身 poseTrack 叠在 baked 腿动作之上；根节点沿 path 匀速行进、朝向自动跟切线。",
+			parameters: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					id: { type: "string", description: "导演台节点 id" },
+					characterId: { type: "string", description: "要设置动作的角色 id（scene.characters[].id）" },
+					motion: {
+						type: "object",
+						additionalProperties: false,
+						description: "CharacterMotion：混合分层动作描述",
+						properties: {
+							durationSeconds: { type: "number", description: "动作总时长（秒），必须 > 0" },
+							poseTrack: {
+								type: "array",
+								description: "骨骼关键帧序列",
+								items: {
+									type: "object",
+									additionalProperties: true,
+									properties: {
+										t: { type: "number", description: "时间点（秒）" },
+										pose: { type: "object", additionalProperties: true, description: "关节 → [x,y,z] 弧度映射" },
+									},
+									required: ["t", "pose"],
+								},
+							},
+							poseMask: {
+								type: "array",
+								items: { type: "string" },
+								description: "只更新哪些关节；缺省：有 locomotion 时=上半身，否则=全身",
+							},
+							locomotion: {
+								type: "object",
+								additionalProperties: false,
+								description: "腿部位移动作",
+								properties: {
+									clip: { type: "string", enum: ["walk", "run", "idle"], description: "基础步态循环" },
+									path: {
+										type: "object",
+										additionalProperties: false,
+										description: "行走路径",
+										properties: {
+											waypoints: {
+												type: "array",
+												items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 },
+												description: "地面坐标序列 [[x,z],...]（米）",
+											},
+											mode: { type: "string", enum: ["linear", "curve"], description: "路径插值方式" },
+											closed: { type: "boolean", description: "是否闭合成循环路径" },
+										},
+										required: ["waypoints", "mode"],
+									},
+									speed: { type: "number", description: "腿部动画循环速率倍率（默认 1）" },
+								},
+								required: ["clip"],
+							},
+						},
+						required: ["durationSeconds"],
+					},
+				},
+				required: ["id", "characterId", "motion"],
+			},
+		},
+		{
+			name: "tapcanvas_master_storyboard_split",
+			description:
+				"大故事板·确定性结构拆板：读取一个已存在的母板节点（taskNode + storyboardImage + productionLayer=master_board），按 masterShotTable.segments 在同一真实画布原子创建 N 个小故事板占位、N 个视频占位、1 个 composeVideo 节点及派生边。节点和边 id 由显式 runId 稳定生成；重复调用只复用结构身份完全一致的节点，id 冲突会显式失败。videoModel 必须来自当前 enabledVideoModels，且每段 durationSeconds 必须匹配该模型实时 durationOptions。此工具不调用模型、不计费、不生成 prompt、不产出媒体，也不代表视频交付完成；成功后主 agent 必须继续调用 image/video prompt specialists，逐节点生成真实资产并完成合成与交付验证。没有 parentGroupId 且母板不在组内时，会创建一个明确标记为 master_storyboard_split 的稳定组。任何缺字段、目录不一致、表结构错误或覆盖冲突都会原样返回 ok:false，禁止本地修补、数字强转或模型默认值。",
+			parameters: {
+				type: "object",
+				properties: {
+					masterBoardNodeId: {
+						type: "string",
+						description: "画布上母板节点的 id（storyboardImage，productionLayer=master_board，data.masterShotTable 必须存在且合法）。",
+					},
+					runId: {
+						type: "string",
+						description: "本次拆板的稳定 runId，作小板/视频/成片节点 id 前缀以保证幂等；同一母板重复拆板用同一 runId 不会重复建节点。",
+					},
+					videoModel: {
+						type: "string",
+						description: "必填：从当前 enabledVideoModels 复制的精确 modelKey；服务端会读取实时 catalog 验证，不提供默认模型。",
+					},
+					aspect: {
+						type: "string",
+						description: "可选：视频宽高比（如 16:9 / 9:16）。不传则从母板节点 data.aspectRatio / data.videoAspect 派生。",
+					},
+					parentGroupId: {
+						type: "string",
+						description: "可选：组节点 id，让小板/视频/成片落进同一组。不传则从母板节点 parentId 派生。",
+					},
+					masterShotTable: {
+						type: "object",
+						description: "可选：直接提交完整结构化镜头表；未传时只读取母板 data.masterShotTable。形状：{title,globalStyleAnchor,characterLocks:[],sceneLocks:[],segments:[{segmentIndex:从0连续递增,beatName,durationSeconds:必须属于所选模型 durationOptions,shots:[{shotNo,景别,构图,运镜,动作,光效,台词,音效}](1-6镜)}]}。服务端不做字符串转数字、不补空字段；若母板已有不同表，不会覆盖，须先用显式 flow_patch 解决冲突。",
+						additionalProperties: true,
+					},
+				},
+				required: ["masterBoardNodeId", "runId", "videoModel"],
+				additionalProperties: false,
+			},
+		},
+	);
+
+	return tools.map(attachRemoteToolExecutionSemantics);
+}
+
+export function inspectAgentsBridgeRemoteToolSurface(
+	input: AgentsBridgeRemoteToolsInput,
+): AgentsBridgeRemoteToolSurfaceResolution<AgentsBridgeRemoteToolDefinition> {
+	return resolveAgentsBridgeRemoteToolSurface({
+		scope: {
+			publicAgentsRequest: input.publicAgentsRequest,
+			projectId: input.canvasProjectId,
+			flowId: input.canvasFlowId,
+			bookId: input.bookId,
+			chapterId: input.chapterId,
+			nodeId: input.canvasNodeId,
+			executionId: input.executionId,
+		},
+		tools: buildAgentsBridgeRemoteToolCatalog(input),
+		disabledCapabilities: input.disabledBuiltInCapabilities,
+	});
+}
+
+export function buildAgentsBridgeRemoteTools(
+	input: AgentsBridgeRemoteToolsInput,
+): AgentsBridgeRemoteToolDefinition[] {
+	return inspectAgentsBridgeRemoteToolSurface(input).tools;
+}
+
+/**
+ * A project-only chat request may arrive before the Web canvas store has
+ * published its current flow id. The agent bridge must not turn that transient
+ * transport omission into a false "image generation is unavailable" result.
+ * Resolving a flow is safe only when the authenticated project has exactly one
+ * owner-visible flow; multiple flows remain an explicit scope gap rather than
+ * being guessed from recency or a label.
+ */
+export function resolveUniqueProjectCanvasFlowId(flowIds: readonly string[]): string | null {
+	const normalized = flowIds
+		.map((flowId) => flowId.trim())
+		.filter((flowId, index, values) => flowId.length > 0 && values.indexOf(flowId) === index);
+	return normalized.length === 1 ? normalized[0] : null;
 }
 
 function isNodeRuntime(): boolean {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const processRef = (globalThis as any)?.process;
+	const processRef = (globalThis as {
+		process?: { versions?: { node?: unknown }; env?: Record<string, string | undefined> };
+	}).process;
 	return !!processRef?.versions?.node;
 }
 
+function readNodeProcessEnv(key: string): string {
+	const processRef = (globalThis as {
+		process?: { env?: Record<string, string | undefined> };
+	}).process;
+	const value = processRef?.env?.[key];
+	return typeof value === "string" ? value : "";
+}
+
 function isConnRefusedError(err: unknown): boolean {
-	const msg = String((err as any)?.message || "");
-	const cause = String((err as any)?.cause?.message || "");
+	const errorRecord = isRecord(err) ? err : null;
+	const causeRecord = isRecord(errorRecord?.cause) ? errorRecord.cause : null;
+	const msg = String(errorRecord?.message || "");
+	const cause = String(causeRecord?.message || "");
 	const combined = `${msg}\n${cause}`.toLowerCase();
 	return combined.includes("econnrefused") || combined.includes("connect refused");
 }
@@ -7016,31 +8022,161 @@ function readBoolEnvFlag(value: unknown): boolean {
 function readAgentsBridgeDebugLog(c: AppContext): boolean {
 	const fromEnv = readBoolEnvFlag(c.env.AGENTS_BRIDGE_DEBUG_LOG);
 	if (fromEnv) return true;
-	const fromProcess = (globalThis as any)?.process?.env?.AGENTS_BRIDGE_DEBUG_LOG;
+	const fromProcess = (globalThis as {
+		process?: { env?: Record<string, string | undefined> };
+	}).process?.env?.AGENTS_BRIDGE_DEBUG_LOG;
 	return readBoolEnvFlag(fromProcess);
 }
 
-function shouldDropOnHeadersTimeout(c: AppContext, request: TaskRequestDto): boolean {
-	const extras = (request as any)?.extras as Record<string, any> | undefined;
-	if (typeof extras?.bridgeDropOnTimeout === "boolean") return extras.bridgeDropOnTimeout;
-	const fromEnv = readBoolEnvFlag(c.env.AGENTS_BRIDGE_DROP_ON_TIMEOUT);
-	if (fromEnv) return true;
-	const fromProcess = (globalThis as any)?.process?.env?.AGENTS_BRIDGE_DROP_ON_TIMEOUT;
-	if (typeof fromProcess !== "undefined") return readBoolEnvFlag(fromProcess);
-	// Default on: timeout-drop avoids whole request failure in long multi-tool runs.
-	return true;
-}
-
 function isHeadersTimeoutError(err: unknown): boolean {
-	const msg = String((err as any)?.message || "");
-	const causeMsg = String((err as any)?.cause?.message || "");
-	const code = String((err as any)?.code || (err as any)?.cause?.code || "");
+	const errorRecord = isRecord(err) ? err : null;
+	const causeRecord = isRecord(errorRecord?.cause) ? errorRecord.cause : null;
+	const msg = String(errorRecord?.message || "");
+	const causeMsg = String(causeRecord?.message || "");
+	const code = String(errorRecord?.code || causeRecord?.code || "");
 	const combined = `${msg}\n${causeMsg}`.toLowerCase();
 	return (
 		combined.includes("headers timeout") ||
 		combined.includes("und_err_headers_timeout") ||
 		code === "UND_ERR_HEADERS_TIMEOUT"
 	);
+}
+
+type AgentsBridgeAdmissionReconciliation = Readonly<{
+	receipt: AgentsBridgeAdmissionReceiptV1;
+	finalResponse: string | null;
+}>;
+
+export function classifyAgentsBridgeAdmissionStatus(input: Readonly<{
+	payload: unknown;
+	publicTurnId: string;
+	sessionId: string;
+	reconciledAt?: string;
+}>): AgentsBridgeAdmissionReconciliation {
+	const root = isRecord(input.payload) ? input.payload : null;
+	const turn = isRecord(root?.turn) ? root.turn : null;
+	const observedTurnId = typeof turn?.turnId === "string" ? turn.turnId.trim() : "";
+	const turnState = typeof turn?.state === "string" && turn.state.trim()
+		? turn.state.trim()
+		: null;
+	const activeTurn = typeof root?.activeTurn === "boolean" ? root.activeTurn : null;
+	const accepted = observedTurnId === input.publicTurnId && turnState !== null && activeTurn !== null;
+	return {
+		receipt: {
+			version: 1,
+			acceptance: accepted ? "accepted" : "unknown",
+			publicTurnId: input.publicTurnId,
+			sessionId: input.sessionId,
+			turnState: accepted ? turnState : null,
+			activeTurn: accepted ? activeTurn : null,
+			reconciledAt: input.reconciledAt ?? new Date().toISOString(),
+		},
+		finalResponse:
+			accepted && typeof turn?.finalResponse === "string" && turn.finalResponse.trim()
+				? turn.finalResponse.trim()
+				: null,
+	};
+}
+
+async function reconcileAgentsBridgeAdmission(input: Readonly<{
+	baseUrl: string;
+	token: string;
+	userId: string;
+	sessionId: string;
+	publicTurnId: string;
+}>): Promise<AgentsBridgeAdmissionReconciliation> {
+	if (!input.sessionId) {
+		return classifyAgentsBridgeAdmissionStatus({
+			payload: null,
+			publicTurnId: input.publicTurnId,
+			sessionId: "<missing>",
+		});
+	}
+	const controller = new AbortController();
+	const timeoutHandle = setTimeout(() => controller.abort(), 10_000);
+	try {
+		const response = await fetch(`${input.baseUrl}/chat/status`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				...buildAgentsBridgeSessionAffinityHeader({
+					userId: input.userId,
+					sessionId: input.sessionId,
+				}),
+				...(input.token ? { Authorization: `Bearer ${input.token}` } : {}),
+			},
+			body: JSON.stringify({ userId: input.userId, sessionId: input.sessionId }),
+			signal: controller.signal,
+		});
+		const payload: unknown = await response.json().catch(() => null);
+		return classifyAgentsBridgeAdmissionStatus({
+			payload: response.ok ? payload : null,
+			publicTurnId: input.publicTurnId,
+			sessionId: input.sessionId,
+		});
+	} catch {
+		return classifyAgentsBridgeAdmissionStatus({
+			payload: null,
+			publicTurnId: input.publicTurnId,
+			sessionId: input.sessionId,
+		});
+	} finally {
+		clearTimeout(timeoutHandle);
+	}
+}
+
+function buildAcceptedPendingAgentsBridgeResponse(
+	reconciliation: AgentsBridgeAdmissionReconciliation,
+): Response {
+	const reasonCode = "agents_bridge_request_accepted_pending";
+	const response: AgentsBridgeChatResponse = {
+		id: `agents_reconciled_${reconciliation.receipt.publicTurnId}`,
+		text: "",
+		trace: {
+			toolCalls: [],
+			turns: [],
+			output: { textChars: 0, preview: "", head: "", tail: "" },
+			summary: {
+				totalToolCalls: 0,
+				succeededToolCalls: 0,
+				failedToolCalls: 0,
+				deniedToolCalls: 0,
+				blockedToolCalls: 0,
+				runMs: 0,
+			},
+			completion: {
+				version: 1,
+				source: "deterministic",
+				terminal: "suspended",
+				allowFinish: true,
+				failureReason: null,
+				rationale: "agents-cli 已受理同一 public turn；当前 HTTP 响应头结果未知，等待 durable status 的后续证据。",
+				successCriteria: [],
+				missingCriteria: ["同一 publicTurnId 的逻辑终态与交付证据"],
+				requiredActions: ["仅对账同一 publicTurnId 的 durable status，禁止重放 /chat"],
+			},
+			runOutcome: {
+				version: 1,
+				terminal: true,
+				status: "suspended",
+				reason: reasonCode,
+			},
+			runtime: {
+				profile: "unknown",
+				registeredToolNames: [],
+				registeredTeamToolNames: [],
+				requiredSkills: [],
+				loadedSkills: [],
+				allowedSubagentTypes: [],
+				requireAgentsTeamExecution: false,
+				admissionReceipt: reconciliation.receipt,
+			},
+		},
+	};
+	return new Response(JSON.stringify(response), {
+		status: 202,
+		headers: { "Content-Type": "application/json" },
+	});
 }
 
 async function createNodeFetchDispatcher(timeoutMs: number): Promise<unknown | null> {
@@ -7050,16 +8186,21 @@ async function createNodeFetchDispatcher(timeoutMs: number): Promise<unknown | n
 		return nodeFetchDispatcherCache.get(key) || null;
 	}
 	try {
-		const undici = (await import("undici")) as any;
-		if (!undici?.Agent) return null;
-		const dispatcher = new undici.Agent({
+		const { Agent } = await import("undici");
+		const dispatcher = new Agent({
 			headersTimeout: key + 15_000,
 			bodyTimeout: key + 15_000,
 		});
 		nodeFetchDispatcherCache.set(key, dispatcher);
 		return dispatcher;
-	} catch {
-		return null;
+	} catch (error) {
+		throw new AppError("Agents bridge HTTP dispatcher 初始化失败", {
+			status: 500,
+			code: "agents_bridge_dispatcher_init_failed",
+			details: {
+				message: error instanceof Error ? error.message : String(error),
+			},
+		});
 	}
 }
 
@@ -7076,15 +8217,18 @@ export async function maybeStartAgentsBridgeOnDemand(c: AppContext): Promise<str
 		if (typeof mod?.maybeAutostartAgentsBridge === "function") {
 			await mod.maybeAutostartAgentsBridge();
 		}
-		const processBase =
-			typeof (globalThis as any)?.process?.env?.AGENTS_BRIDGE_BASE_URL === "string"
-				? String((globalThis as any).process.env.AGENTS_BRIDGE_BASE_URL).trim()
-				: "";
+		const processBase = readNodeProcessEnv("AGENTS_BRIDGE_BASE_URL").trim();
 		if (processBase) {
-			(c.env as any).AGENTS_BRIDGE_BASE_URL = processBase;
+			c.env.AGENTS_BRIDGE_BASE_URL = processBase;
 		}
-	} catch {
-		// best effort: caller will fallback to existing error handling
+	} catch (error) {
+		throw new AppError("Agents bridge 本地启动失败", {
+			status: 503,
+			code: "agents_bridge_autostart_failed",
+			details: {
+				message: error instanceof Error ? error.message : String(error),
+			},
+		});
 	}
 	return readAgentsBridgeBaseUrl(c);
 }
@@ -7094,6 +8238,135 @@ export function readAgentsBridgeToken(c: AppContext): string | null {
 		typeof c.env.AGENTS_BRIDGE_TOKEN === "string" ? c.env.AGENTS_BRIDGE_TOKEN : "";
 	const trimmed = raw.trim();
 	return trimmed ? trimmed : null;
+}
+
+export type AgentsBridgeQueuedMessageReceipt = {
+	accepted: true;
+	queueId: string;
+	mode: "steering" | "follow_up";
+	sessionId: string;
+	activeTurn: boolean;
+};
+
+export function parseAgentsBridgeQueuedMessageReceipt(
+	payload: unknown,
+	input: { mode: "steering" | "follow_up"; sessionId: string },
+): AgentsBridgeQueuedMessageReceipt {
+	if (!payload || typeof payload !== "object") {
+		throw new AppError("Agents queue response is not an object", {
+			status: 502,
+			code: "agents_bridge_queue_invalid_response",
+		});
+	}
+	const receipt = payload as Record<string, unknown>;
+	const queueId = typeof receipt.queueId === "string" ? receipt.queueId.trim() : "";
+	if (receipt.accepted !== true || !queueId) {
+		throw new AppError("Agents queue response is missing an accepted durable queueId", {
+			status: 502,
+			code: "agents_bridge_queue_invalid_response",
+		});
+	}
+	return {
+		accepted: true,
+		queueId,
+		mode: input.mode,
+		sessionId: input.sessionId,
+		activeTurn: receipt.activeTurn === true,
+	};
+}
+
+export async function enqueueAgentsBridgeMessage(
+	c: AppContext,
+	userId: string,
+	input: {
+		sessionId: string;
+		prompt: string;
+		queueMode: "steering" | "follow_up";
+		modelKey?: string;
+		modelAlias?: string;
+		generationProposal?: AgentsBridgeGenerationProposal;
+	},
+): Promise<AgentsBridgeQueuedMessageReceipt> {
+	const effectiveUserId = resolveEffectiveUserId(c, userId);
+	if (!effectiveUserId) {
+		throw new AppError("Unauthorized: missing userId for agents bridge", {
+			status: 401,
+			code: "unauthorized",
+		});
+	}
+	let baseUrl = readAgentsBridgeBaseUrl(c);
+	if (!baseUrl) baseUrl = await maybeStartAgentsBridgeOnDemand(c);
+	if (!baseUrl) {
+		throw new AppError("Agents bridge 未配置（缺少 AGENTS_BRIDGE_BASE_URL）", {
+			status: 400,
+			code: "agents_bridge_not_configured",
+		});
+	}
+	const token = readAgentsBridgeToken(c);
+	const response = await fetch(`${baseUrl}/chat`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			...buildAgentsBridgeSessionAffinityHeader({
+				userId: effectiveUserId,
+				sessionId: input.sessionId,
+			}),
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+		},
+		body: JSON.stringify({
+			userId: effectiveUserId,
+			sessionId: input.sessionId,
+			prompt: input.prompt,
+			queueMode: input.queueMode,
+			...(input.modelKey ? { modelKey: input.modelKey } : {}),
+			...(input.modelAlias ? { modelAlias: input.modelAlias } : {}),
+			...(input.generationProposal ? { generationProposal: input.generationProposal } : {}),
+		}),
+	});
+	const payload: unknown = await response.json().catch(() => null);
+	if (!response.ok) {
+		const errorValue =
+			payload && typeof payload === "object" && "error" in payload
+				? (payload as { error?: unknown }).error
+				: null;
+		const message =
+			typeof errorValue === "string"
+				? errorValue
+				: errorValue && typeof errorValue === "object" && "message" in errorValue
+					? String((errorValue as { message?: unknown }).message || "")
+					: "";
+		throw new AppError(message || `Agents queue request failed: ${response.status}`, {
+			status: response.status,
+			code: "agents_bridge_queue_failed",
+		});
+	}
+	return parseAgentsBridgeQueuedMessageReceipt(payload, {
+		mode: input.queueMode,
+		sessionId: input.sessionId,
+	});
+}
+
+function normalizeModelProtocolFamily(model: string | null | undefined): string {
+	return String(model || "").trim().toLowerCase().split("[", 1)[0];
+}
+
+function deriveOverrideApiStyle(model: string | null | undefined): "responses" | "chat" {
+	const normalized = normalizeModelProtocolFamily(model);
+	if (normalized.startsWith("gpt-")) return "responses";
+	return "chat";
+}
+
+function resolveUserLlmProxyOverride(input: {
+	tapcanvasApiBaseUrl: string;
+	tapcanvasApiKey: string;
+}): { apiKey: string; apiBaseUrl: string } | null {
+	const apiBaseUrl = input.tapcanvasApiBaseUrl.trim().replace(/\/+$/, "");
+	const apiKey = input.tapcanvasApiKey.trim();
+	if (!apiBaseUrl || !apiKey) return null;
+	return {
+		apiKey,
+		apiBaseUrl: `${apiBaseUrl}/agents/llm/v1`,
+	};
 }
 
 export function readAgentsBridgeTimeoutMs(c: AppContext): number {
@@ -7106,12 +8379,13 @@ export function readAgentsBridgeTimeoutMs(c: AppContext): number {
 		// Clamp: 5s ~ 30min
 		return Math.max(5_000, Math.min(1_800_000, Math.floor(n)));
 	}
-	// Default: 10min (agents may call multiple long-running /public/* tasks)
-	return 600_000;
+	// Complete-film tools can spend up to 25 minutes obtaining terminal delivery evidence.
+	// The bridge owns a slightly larger 30-minute ceiling for the final agent self-check/response.
+	return 1_800_000;
 }
 
 function readTimeoutFromRequestExtras(request: TaskRequestDto): number | null {
-	const extras = (request as any)?.extras as Record<string, any> | undefined;
+	const extras = isRecord(request.extras) ? request.extras : null;
 	const raw = extras?.bridgeTimeoutMs;
 	const n = Number(raw);
 	if (!Number.isFinite(n) || n <= 0) return null;
@@ -7131,20 +8405,128 @@ export function isAgentsBridgeEnabled(c: AppContext): boolean {
 	return !!readAgentsBridgeBaseUrl(c);
 }
 
+/**
+ * Build the MemoryCore identity at the authenticated request boundary.
+ *
+ * `userId` is never a deployment default: it is the effective authenticated
+ * user for this request. `activeTeamId` wins over the local single-team
+ * default, so one API process can safely serve multiple teams.
+ */
+export function buildMemoryCoreRequestIdentity(input: {
+	activeTeamId: string;
+	configuredTeamId: string;
+	agentId: string;
+	effectiveUserId: string;
+	sessionId: string;
+	taskId: string;
+}): {
+	teamId: string;
+	agentId: string;
+	userId: string;
+	sessionId: string;
+	taskId: string;
+} {
+	return {
+		teamId: input.activeTeamId || input.configuredTeamId,
+		agentId: input.agentId,
+		userId: input.effectiveUserId,
+		sessionId: input.sessionId,
+		taskId: input.taskId,
+	};
+}
+
 function isPublicAgentsRequest(c: AppContext): boolean {
 	return c.get("publicApi") === true;
 }
 
-function assertPublicAgentsRequestSafe(
+export function assertPublicAgentsRequestSafe(
 	input: {
 		forceLocalResourceViaBash: boolean;
 		privilegedLocalAccess: boolean;
 		localResourcePaths: string[];
-		requiredSkills: string[];
 		autoProjectScopedLocalAccess?: boolean;
+		/** Internal authorization fact; never accepted from a public request body. */
+		trustedDesktopWorkspaceAccess?: boolean;
 	},
 ): void {
-	void input;
+	if (input.trustedDesktopWorkspaceAccess === true) return;
+	if (
+		input.forceLocalResourceViaBash ||
+		input.privilegedLocalAccess ||
+		input.autoProjectScopedLocalAccess === true ||
+		input.localResourcePaths.length > 0
+	) {
+		throw new AppError("Public agents request cannot access local workspace resources", {
+			status: 403,
+			code: "public_agents_local_resource_access_forbidden",
+			details: {
+				forceLocalResourceViaBash: input.forceLocalResourceViaBash,
+				privilegedLocalAccess: input.privilegedLocalAccess,
+				autoProjectScopedLocalAccess: input.autoProjectScopedLocalAccess === true,
+				localResourcePathCount: input.localResourcePaths.length,
+			},
+		});
+	}
+}
+
+type AgentsBridgePendingUserInput = {
+	status: "needs_input";
+	requestId: string;
+	questions: Array<{
+		id: string;
+		header: string;
+		question: string;
+		options: Array<{
+			label: string;
+			description?: string;
+			imageUrl?: string;
+			thumbnailUrl?: string;
+		}>;
+	}>;
+};
+
+// 一般性的 request_user_input 仍需随 /chat 结果透传，用于确实缺少的用户事实、范围或权限。
+// 明确的视频生成请求不会再用该通道做 estimate 后的第二次确认。
+function normalizeAgentsBridgePendingUserInput(raw: unknown): AgentsBridgePendingUserInput | null {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+	const record = raw as Record<string, unknown>;
+	if (record.status !== "needs_input") return null;
+	const requestId = typeof record.requestId === "string" ? record.requestId.trim() : "";
+	if (!requestId) return null;
+	const questions = (Array.isArray(record.questions) ? record.questions : [])
+		.map((item) => {
+			if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+			const q = item as Record<string, unknown>;
+			const id = typeof q.id === "string" ? q.id.trim() : "";
+			const question = typeof q.question === "string" ? q.question.trim() : "";
+			if (!id || !question) return null;
+			const header = typeof q.header === "string" ? q.header.trim() : "";
+			const options = (Array.isArray(q.options) ? q.options : [])
+				.map((opt) => {
+					if (!opt || typeof opt !== "object" || Array.isArray(opt)) return null;
+					const o = opt as Record<string, unknown>;
+					const label = typeof o.label === "string" ? o.label.trim() : "";
+					if (!label) return null;
+					const description =
+						typeof o.description === "string" && o.description.trim() ? o.description.trim() : "";
+					const imageUrl = typeof o.imageUrl === "string" && o.imageUrl.trim() ? o.imageUrl.trim() : "";
+					const thumbnailUrl =
+						typeof o.thumbnailUrl === "string" && o.thumbnailUrl.trim() ? o.thumbnailUrl.trim() : "";
+					return {
+						label,
+						...(description ? { description } : {}),
+						...(imageUrl ? { imageUrl } : {}),
+						...(thumbnailUrl ? { thumbnailUrl } : {}),
+					};
+				})
+				.filter((opt): opt is NonNullable<typeof opt> => !!opt)
+				.slice(0, 12);
+			return { id, header, question, options };
+		})
+		.filter((item): item is NonNullable<typeof item> => !!item)
+		.slice(0, 3);
+	if (questions.length === 0) return null;
+	return { status: "needs_input", requestId, questions };
 }
 
 export async function runAgentsBridgeChatTask(
@@ -7154,15 +8536,54 @@ export async function runAgentsBridgeChatTask(
 	options?: {
 		onStreamEvent?: AgentsBridgeStreamObserver;
 		abortSignal?: AbortSignal;
+		/** Internal-only: durable continuation of an originally authenticated /public/chat turn. */
+		trustedPublicContinuation?: true;
+		/** Internal-only: authorize this worker-owned physical run as its authenticated user. */
+		trustedInternalExecution?: true;
+		/** Internal-only: allowlisted Tanva packaged desktop may execute inside the agents workspace. */
+		trustedDesktopWorkspaceAccess?: true;
+		/** Internal-only: the workflow Agent node executes as the selected role without a delegation hop. */
+		directForcedAgentExecution?: true;
+		/** Internal-only: machine-owned effect fence for a durable continuation. */
+		deniedRemoteTools?: readonly string[];
 	},
 ): Promise<TaskResultDto> {
-	const effectiveUserId = resolveEffectiveUserId(c, userId);
+	const bridgePreludeStartedAt = Date.now();
+	const observabilityStartedAt = new Date().toISOString();
+	const requestId = String(c.get("requestId") || "").trim() || `request_${crypto.randomUUID()}`;
+	const baseEffectiveUserId = resolveEffectiveUserId(c, userId);
+	const extras = isRecord(request.extras) ? request.extras : {};
+	// 宿主终端用户隔离：facade 传 extras.hostUserId（Tanva 当前登录用户 id）时，把它拼进
+	// effectiveUserId 成 `owner:hostUser` 复合串。agents-cli 把整个 userId 当子空间目录名 +
+	// session_key 前缀（sanitizeKey/resolveSessionStoreDir/userMemoryRoot/userSkillsDir），
+	// 于是记忆/自建 skill/learned_profile 自动按宿主终端用户分叉，agents-cli 零改动；知识卡与
+	// 内置 skill 仍全局共享。无 hostUserId（TapCanvas 原生请求）时保持原行为不变。
+	const hostUserIdRaw =
+		typeof extras.hostUserId === "string"
+			? extras.hostUserId.trim()
+			: "";
+	const effectiveUserId =
+		baseEffectiveUserId && hostUserIdRaw
+			? `${baseEffectiveUserId}:${sanitizePathSegmentForAgents(hostUserIdRaw)}`
+			: baseEffectiveUserId;
 	if (!effectiveUserId) {
 		throw new AppError("Unauthorized: missing userId for agents bridge", {
 			status: 401,
 			code: "unauthorized",
 		});
 	}
+	const activeTeamId = String(c.get("activeTeamId") || "").trim();
+	// Local single-team deployments may not receive X-Team-Id from every host
+	// surface. Keep the Memory Hub scope stable in that case; when no explicit
+	// deployment scope is configured, retain the authenticated active team.
+	const configuredMemoryCoreTeamId = readNodeProcessEnv("AGENTS_MEMORY_CORE_TEAM_ID").trim();
+	const configuredMemoryCoreAgentId = readNodeProcessEnv("AGENTS_MEMORY_CORE_AGENT_ID").trim();
+	const memoryCoreAgentId = configuredMemoryCoreAgentId || (
+		(options?.trustedInternalExecution === true || options?.directForcedAgentExecution === true) &&
+		typeof extras.memoryCoreAgentId === "string"
+			? extras.memoryCoreAgentId.trim()
+			: ""
+	);
 
 	let baseUrl = readAgentsBridgeBaseUrl(c);
 	if (!baseUrl) {
@@ -7183,45 +8604,115 @@ export async function runAgentsBridgeChatTask(
 		});
 	}
 
-	const extras = (request.extras || {}) as Record<string, any>;
 	const requestedSystemPrompt =
 		typeof extras.systemPrompt === "string" && extras.systemPrompt.trim()
 			? extras.systemPrompt.trim()
 			: "";
-	const chatContext = normalizeAgentsBridgeChatContext(extras.chatContext);
+	let chatContext = normalizeAgentsBridgeChatContext(extras.chatContext);
 	const canvasProjectId =
-		typeof (extras as any)?.canvasProjectId === "string"
-			? String((extras as any).canvasProjectId).trim()
+		typeof extras.canvasProjectId === "string"
+			? extras.canvasProjectId.trim()
 			: "";
 	const requestedCanvasFlowId =
-		typeof (extras as any)?.canvasFlowId === "string"
-			? String((extras as any).canvasFlowId).trim()
+		typeof extras.canvasFlowId === "string"
+			? extras.canvasFlowId.trim()
 			: "";
 	let canvasFlowId = requestedCanvasFlowId;
-	const publicAgentsRequest = isPublicAgentsRequest(c);
+	const publicAgentsRequest = isPublicAgentsRequest(c) || options?.trustedPublicContinuation === true;
+	const selectedSkillReferenceInput = chatContext.skill?.id && chatContext.skill.source
+		? { id: chatContext.skill.id, source: chatContext.skill.source }
+		: null;
 	const canvasNodeId =
-		typeof (extras as any)?.canvasNodeId === "string"
-			? String((extras as any).canvasNodeId).trim()
+		typeof extras.canvasNodeId === "string"
+			? extras.canvasNodeId.trim()
 			: "";
 	const requestedSessionKey = typeof extras.sessionKey === "string" ? String(extras.sessionKey).trim() : "";
-	if (publicAgentsRequest && canvasProjectId && !canvasFlowId) {
-		const candidateFlows = await listFlowsByOwner(c.env.DB, effectiveUserId, canvasProjectId);
-		const resolvedFlowId =
-			Array.isArray(candidateFlows) && candidateFlows.length > 0 && typeof candidateFlows[0]?.id === "string"
-				? candidateFlows[0].id.trim()
-				: "";
-		if (resolvedFlowId) {
-			canvasFlowId = resolvedFlowId;
-		}
+	const clientPendingId = typeof extras.clientPendingId === "string"
+		? extras.clientPendingId.trim().slice(0, 160)
+		: "";
+	// publicTurnId is the logical task identity minted by the public chat ingress.
+	// requestId only identifies this physical Hono request. The initial request and
+	// every continuation must forward the same logical id, otherwise agents-cli
+	// persists a checkpoint under requestId while recovery queries publicTurnId.
+	const publicTurnId = publicAgentsRequest && typeof extras.publicTurnId === "string"
+		? extras.publicTurnId.trim().slice(0, 200)
+		: "";
+	// 宿主模式：三方画布宿主经 facade 显式传入 capability/context。
+	// 缺省字段保持 TapCanvas 原生模式；显式传入却不符合协议时必须当场 400，禁止静默回退。
+	const hostManifestRaw = (extras as Record<string, unknown>).hostCapabilityManifest;
+	const hostManifestParsed =
+		typeof hostManifestRaw === "undefined"
+			? null
+			: HostCapabilityManifestSchema.safeParse(hostManifestRaw);
+	if (hostManifestParsed && !hostManifestParsed.success) {
+		throw new AppError("hostCapabilityManifest 无效", {
+			status: 400,
+			code: "invalid_host_capability_manifest",
+			details: { issues: hostManifestParsed.error.issues },
+		});
 	}
+	const hostManifest: HostCapabilityManifest | null = hostManifestParsed?.success
+		? hostManifestParsed.data
+		: null;
+	const hostContextRaw = (extras as Record<string, unknown>).hostCanvasContext;
+	const hostContextParsed =
+		typeof hostContextRaw === "undefined"
+			? null
+			: HostCanvasContextSchema.safeParse(hostContextRaw);
+	if (hostContextParsed && !hostContextParsed.success) {
+		throw new AppError("hostCanvasContext 无效", {
+			status: 400,
+			code: "invalid_host_canvas_context",
+			details: { issues: hostContextParsed.error.issues },
+		});
+	}
+	if (hostContextParsed?.success && !hostManifest) {
+		throw new AppError("hostCanvasContext 需要 hostCapabilityManifest", {
+			status: 400,
+			code: "host_canvas_context_without_manifest",
+		});
+	}
+	const hostCanvasContext = hostContextParsed?.success ? hostContextParsed.data : undefined;
+		// 计费会话 id（hono 自有）：透传给 agents-cli → new-api 作 x-tapcanvas-conversation-id，
+		// 供 hono 事后回查这一轮真实 quota 结算积分（见 public-agents-chat 的 chat-billing 接入）。
+		const billingConversationId = typeof extras.billingConversationId === "string"
+			? extras.billingConversationId.trim()
+			: "";
 	const sessionKey = requestedSessionKey;
+	const agentTraceContext = createHonoAgentTraceContext({
+		requestId,
+		threadId: sessionKey || null,
+		capturePolicy: resolveAgentTraceCapturePolicy(c.env.AGENT_TRACE_CAPTURE_POLICY),
+		startedAt: observabilityStartedAt,
+		incomingTraceparent: readRequestHeader(c, "traceparent"),
+	});
+	// Keep the upstream runtime session and observability thread as one normalized fact.
+	// Do not rely on JSON serialization of an optional/nullable property here: agents-cli
+	// validates this contract before it can start the actual agent turn.
+	const upstreamObservabilityContext = {
+		...agentTraceContext.agentsInput,
+		threadId: sessionKey || null,
+	};
 	const requestedBookId = typeof extras.bookId === "string" ? String(extras.bookId).trim() : "";
 	const requestedSelectedReferenceBookId = chatContext.selectedReference?.bookId?.trim() || "";
-	const requestedSelectedReferenceChapterId = chatContext.selectedReference?.chapterId?.trim() || "";
 	const chapterId =
 		(typeof extras.chapterId === "string" ? String(extras.chapterId).trim() : "") ||
 		chatContext.selectedReference?.chapterId?.trim() ||
 		"";
+	if (publicAgentsRequest && canvasProjectId && !canvasFlowId && !chapterId) {
+		const projectFlows = await listFlowsByOwner(c.env.DB, effectiveUserId, canvasProjectId);
+		const resolvedFlowId = resolveUniqueProjectCanvasFlowId(projectFlows.map((flow) => flow.id));
+		if (resolvedFlowId) {
+			canvasFlowId = resolvedFlowId;
+			console.info(
+				`[agents-bridge.scope] resolved unique project canvas projectId=${canvasProjectId} flowId=${canvasFlowId}`,
+			);
+		} else if (projectFlows.length > 1) {
+			console.info(
+				`[agents-bridge.scope] project canvas flow unresolved projectId=${canvasProjectId} candidates=${projectFlows.length}`,
+			);
+		}
+	}
 	const chunkIndex = Number.isFinite(Number(extras.chunkIndex)) ? Math.trunc(Number(extras.chunkIndex)) : null;
 	const groupSize = Number.isFinite(Number(extras.groupSize)) ? Math.trunc(Number(extras.groupSize)) : null;
 	const shotStart = Number.isFinite(Number(extras.shotStart)) ? Math.trunc(Number(extras.shotStart)) : null;
@@ -7229,7 +8720,6 @@ export async function runAgentsBridgeChatTask(
 	const shotNo = Number.isFinite(Number(extras.shotNo)) ? Math.trunc(Number(extras.shotNo)) : null;
 	const diagnosticsLabel =
 		typeof extras.diagnosticsLabel === "string" ? String(extras.diagnosticsLabel).trim() : "";
-	const planOnly = extras.planOnly === true;
 	const forceAssetGeneration = extras.forceAssetGeneration === true;
 	const parsedGenerationContract = parseGenerationContract((extras as Record<string, unknown>).generationContract);
 	if (!parsedGenerationContract.ok) {
@@ -7239,6 +8729,80 @@ export async function runAgentsBridgeChatTask(
 		});
 	}
 	const generationContract: GenerationContract | null = parsedGenerationContract.value;
+	const continuationUserIntentContract = asRecord(extras.userIntentContract);
+	if (typeof extras.userIntentContract !== "undefined" && !continuationUserIntentContract) {
+		throw new AppError("userIntentContract 必须是结构化对象", {
+			status: 400,
+			code: "agents_user_intent_contract_invalid",
+		});
+	}
+	const retrievalContext = (options?.directForcedAgentExecution === true || options?.trustedPublicContinuation === true)
+		? normalizeRetrievalContextV1(extras.retrievalContext)
+		: null;
+	if (
+		(options?.directForcedAgentExecution === true || options?.trustedPublicContinuation === true)
+		&& typeof extras.retrievalContext !== "undefined"
+		&& !retrievalContext
+	) {
+		throw new AppError("retrievalContext 必须符合 retrieval-context/v1", {
+			status: 400,
+			code: "agents_retrieval_context_invalid",
+		});
+	}
+	const continuationTaskReferences = Array.isArray(extras.durableTaskReferences)
+		? extras.durableTaskReferences.filter((item): item is Record<string, unknown> => isRecord(item)).slice(0, 32)
+		: [];
+	const continuationRetrievalCandidateSets = Array.isArray(extras.retrievalCandidateSets)
+		? extras.retrievalCandidateSets
+			.filter((item): item is Record<string, unknown> => isRecord(item))
+			.filter((item) => JSON.stringify(item).length <= 128_000)
+			.slice(-8)
+		: [];
+	const continuationActionRecoveryFacts = Array.isArray(extras.actionRecoveryFacts)
+		? extras.actionRecoveryFacts
+			.filter((item): item is Record<string, unknown> => isRecord(item))
+			.filter((item) => JSON.stringify(item).length <= 512_000)
+			.slice(-16)
+		: [];
+	const continuationMaterializedArtifacts = Array.isArray(extras.trustedMaterializedArtifacts)
+		? extras.trustedMaterializedArtifacts
+			.filter((item): item is Record<string, unknown> => isRecord(item))
+			.filter((item) => JSON.stringify(item).length <= 16_000)
+			.slice(-64)
+		: [];
+	if (
+		typeof extras.trustedMaterializedArtifacts !== "undefined" &&
+		(!Array.isArray(extras.trustedMaterializedArtifacts) ||
+		continuationMaterializedArtifacts.length !== extras.trustedMaterializedArtifacts.length)
+	) {
+		throw new AppError("trustedMaterializedArtifacts 必须是有界结构化数组", {
+			status: 400,
+			code: "agents_materialized_artifacts_invalid",
+		});
+	}
+	if (
+		options?.trustedPublicContinuation !== true &&
+		(
+			continuationUserIntentContract !== null ||
+			extras.userIntentContractLocked === true ||
+			continuationTaskReferences.length > 0
+			|| continuationRetrievalCandidateSets.length > 0
+			|| continuationActionRecoveryFacts.length > 0
+			|| continuationMaterializedArtifacts.length > 0
+		)
+	) {
+		throw new AppError("Continuation state may only be injected by the trusted continuation runner", {
+			status: 403,
+			code: "agents_continuation_state_forbidden",
+		});
+	}
+	// 用户对一般 request_user_input 卡的已点选答案（前端 echo）——透传给 agents-cli
+	// 作 seedAnsweredUserInput，保持跨回合事实连续性。
+	const requestUserInputResponse =
+		(extras as Record<string, unknown>).requestUserInputResponse &&
+		typeof (extras as Record<string, unknown>).requestUserInputResponse === "object"
+			? ((extras as Record<string, unknown>).requestUserInputResponse as Record<string, unknown>)
+			: null;
 	const mode =
 		typeof (extras as Record<string, unknown>).mode === "string" &&
 		String((extras as Record<string, unknown>).mode).trim().toLowerCase() === "auto"
@@ -7250,8 +8814,184 @@ export async function runAgentsBridgeChatTask(
 			: typeof (extras as Record<string, unknown>).response_format !== "undefined"
 				? (extras as Record<string, unknown>).response_format
 				: undefined;
+	const outputContract = options?.directForcedAgentExecution === true &&
+		typeof (extras as Record<string, unknown>).outputContract !== "undefined"
+		? (extras as Record<string, unknown>).outputContract
+		: undefined;
+	const continuationExecutionContractRecord = isRecord(
+		(extras as Record<string, unknown>).continuationExecutionContract,
+	)
+		? (extras as Record<string, unknown>).continuationExecutionContract as Record<string, unknown>
+		: null;
+	const maxOutputTokensRaw = options?.directForcedAgentExecution === true
+		? (extras as Record<string, unknown>).maxOutputTokens
+		: undefined;
+	const maxOutputTokens = typeof maxOutputTokensRaw === "number"
+		&& Number.isInteger(maxOutputTokensRaw)
+		&& maxOutputTokensRaw >= 128
+		&& maxOutputTokensRaw <= 32_768
+		? maxOutputTokensRaw
+		: undefined;
+	if (options?.directForcedAgentExecution === true && maxOutputTokensRaw !== undefined && maxOutputTokens === undefined) {
+		throw new AppError("maxOutputTokens 必须是 128–32768 之间的整数", {
+			status: 400,
+			code: "agents_max_output_tokens_invalid",
+		});
+	}
+	const reasoningEffortRaw = options?.directForcedAgentExecution === true
+		? (extras as Record<string, unknown>).reasoningEffort
+			?? continuationExecutionContractRecord?.reasoningEffort
+		: undefined;
+	const reasoningEffort = reasoningEffortRaw === "none"
+		|| reasoningEffortRaw === "minimal"
+		|| reasoningEffortRaw === "low"
+		|| reasoningEffortRaw === "medium"
+		|| reasoningEffortRaw === "high"
+		|| reasoningEffortRaw === "xhigh"
+		|| reasoningEffortRaw === "max"
+		? reasoningEffortRaw
+		: undefined;
+	if (
+		options?.directForcedAgentExecution === true
+		&& reasoningEffortRaw !== undefined
+		&& reasoningEffort === undefined
+	) {
+		throw new AppError("reasoningEffort 必须是 none/minimal/low/medium/high/xhigh/max 之一", {
+			status: 400,
+			code: "agents_reasoning_effort_invalid",
+		});
+	}
+	const workflowPhysicalAttemptDeadlineAtRaw = options?.directForcedAgentExecution === true
+		? (extras as Record<string, unknown>).workflowPhysicalAttemptDeadlineAt
+			?? continuationExecutionContractRecord?.workflowPhysicalAttemptDeadlineAt
+		: undefined;
+	const workflowPhysicalAttemptDeadlineAt = typeof workflowPhysicalAttemptDeadlineAtRaw === "string"
+		&& workflowPhysicalAttemptDeadlineAtRaw.trim()
+		&& Number.isFinite(Date.parse(workflowPhysicalAttemptDeadlineAtRaw))
+		? workflowPhysicalAttemptDeadlineAtRaw.trim()
+		: undefined;
+	if (
+		options?.directForcedAgentExecution === true
+		&& workflowPhysicalAttemptDeadlineAtRaw !== undefined
+		&& workflowPhysicalAttemptDeadlineAt === undefined
+	) {
+		throw new AppError("workflowPhysicalAttemptDeadlineAt 必须是有效的绝对时间", {
+			status: 400,
+			code: "agents_workflow_physical_attempt_deadline_invalid",
+		});
+	}
+	const skillReferencesPromise = publicAgentsRequest
+		? resolveChatSkillReferences(
+				c,
+				effectiveUserId,
+				selectedSkillReferenceInput,
+		  )
+		: Promise.resolve({
+				selected: null,
+				availableExternalSkills: [],
+		  });
+	const flowReadPromise = publicAgentsRequest && canvasProjectId && canvasFlowId
+		? getFlowForOwner(c.env.DB, canvasFlowId, effectiveUserId)
+		: Promise.resolve(null);
+	const userGenerationPrefsPromise = publicAgentsRequest
+		? loadUserGenerationPrefsContext(baseEffectiveUserId)
+		: Promise.resolve(null);
+	const enabledModelCatalogPromise = publicAgentsRequest
+		? loadPublicChatEnabledModelCatalogSummary(c, baseEffectiveUserId)
+		: Promise.resolve({ summary: null, error: null });
+	const chapterBookScopePromise = publicAgentsRequest && canvasProjectId && chapterId
+		? c.env.DB.chapters.findFirst({
+				where: { id: chapterId, project_id: canvasProjectId },
+				select: { source_book_id: true },
+		  })
+		: Promise.resolve(null);
+	const equippedWorkflowsPromise = publicAgentsRequest && !hostManifest
+		? listEquippedWorkflowCapabilities(c, baseEffectiveUserId, {
+				requiredExecutionVariant: chatContext.requestedWorkflowExecutionVariant,
+		  })
+		: Promise.resolve([]);
+	const disabledSkillsPromise = publicAgentsRequest
+		? listDisabledSkillKeys(c, baseEffectiveUserId)
+		: Promise.resolve([]);
+	const replacedSkillsPromise = publicAgentsRequest
+		? listReplacedSkillKeys(c, baseEffectiveUserId)
+		: Promise.resolve([]);
+	const builtInCapabilityAvailabilityPromise = publicAgentsRequest
+		? getBuiltInCapabilityAvailability(c, baseEffectiveUserId)
+		: Promise.resolve({ systemDisabledKeys: [], userDisabledKeys: [], disabledKeys: [] });
+	const [
+		skillReferences,
+		flow,
+		userGenerationPrefsBlock,
+		enabledModelCatalog,
+		chapterBookScope,
+		equippedWorkflowAttachments,
+		accountDisabledSkills,
+		accountReplacedSkills,
+		builtInCapabilityAvailability,
+	] =
+		await Promise.all([
+			skillReferencesPromise,
+			flowReadPromise,
+			userGenerationPrefsPromise,
+			enabledModelCatalogPromise,
+			chapterBookScopePromise,
+			equippedWorkflowsPromise,
+			disabledSkillsPromise,
+			replacedSkillsPromise,
+			builtInCapabilityAvailabilityPromise,
+		]);
+	const workflowDisabledSkills = options?.directForcedAgentExecution === true
+		? readTrimmedStringArray(extras.disabledSkills).slice(0, 256)
+		: [];
+	const disabledSkills = [...new Set([...accountDisabledSkills, ...workflowDisabledSkills])];
+	const disabledKnowledgeCardIds = options?.directForcedAgentExecution === true
+		? readTrimmedStringArray(extras.disabledKnowledgeCardIds).slice(0, 256)
+		: [];
+	const mountedKnowledgeCardIds = options?.directForcedAgentExecution === true
+		? readTrimmedStringArray(extras.mountedKnowledgeCardIds).slice(0, 64)
+		: [];
+	const rawPromptExampleRetrievalScope = options?.directForcedAgentExecution === true
+		&& extras.promptExampleRetrievalScope
+		&& typeof extras.promptExampleRetrievalScope === "object"
+		&& !Array.isArray(extras.promptExampleRetrievalScope)
+		? extras.promptExampleRetrievalScope as Record<string, unknown>
+		: null;
+	const promptExampleRetrievalScope = rawPromptExampleRetrievalScope
+		&& rawPromptExampleRetrievalScope.version === 3
+		&& (rawPromptExampleRetrievalScope.mediaType === "image" || rawPromptExampleRetrievalScope.mediaType === "video")
+		&& (rawPromptExampleRetrievalScope.searchPolicy === "agent_discretion" || rawPromptExampleRetrievalScope.searchPolicy === "required_non_blocking")
+		&& (rawPromptExampleRetrievalScope.model === undefined || typeof rawPromptExampleRetrievalScope.model === "string")
+		&& Object.keys(rawPromptExampleRetrievalScope).every((key) => new Set(["version", "mediaType", "searchPolicy", "model"]).has(key))
+		? {
+				version: 3 as const,
+				mediaType: rawPromptExampleRetrievalScope.mediaType,
+				searchPolicy: rawPromptExampleRetrievalScope.searchPolicy,
+				...(typeof rawPromptExampleRetrievalScope.model === "string" && rawPromptExampleRetrievalScope.model.trim()
+					? { model: rawPromptExampleRetrievalScope.model.trim() }
+					: {}),
+			}
+		: null;
+	if (rawPromptExampleRetrievalScope && !promptExampleRetrievalScope) {
+		throw new AppError("设计资产提示词案例检索范围无效", {
+			status: 400,
+			code: "prompt_example_retrieval_scope_invalid",
+		});
+	}
+	if (
+		skillReferences.selected?.source === "system" &&
+		disabledSkills.includes(skillReferences.selected.key)
+	) {
+		throw new AppError("所选 Skill 已由当前用户在小T能力舱停用", {
+			status: 409,
+			code: "selected_skill_disabled_by_user",
+			details: { skillKey: skillReferences.selected.key },
+		});
+	}
+	if (publicAgentsRequest) {
+		chatContext = { ...chatContext, skill: skillReferences.selected };
+	}
 	if (publicAgentsRequest && canvasProjectId && canvasFlowId) {
-		const flow = await getFlowForOwner(c.env.DB, canvasFlowId, effectiveUserId);
 		if (!flow || flow.project_id !== canvasProjectId) {
 			throw new AppError("Flow not found", {
 				status: 404,
@@ -7264,19 +9004,18 @@ export async function runAgentsBridgeChatTask(
 			});
 		}
 	}
-	const requestedBookRef = requestedBookId || requestedSelectedReferenceBookId;
-	const explicitProgressSpecified = Boolean(
-		requestedBookId ||
-		chapterId ||
-		requestedSelectedReferenceBookId ||
-		requestedSelectedReferenceChapterId ||
-		shotNo !== null ||
-		chunkIndex !== null ||
-		shotStart !== null ||
-		shotEnd !== null ||
-		typeof chatContext.selectedReference?.shotNo === "number",
-	);
-	const projectBookCandidates: Array<{ bookId: string; title: string }> = [];
+	if (publicAgentsRequest && canvasProjectId && chapterId && !chapterBookScope) {
+		throw new AppError("Chapter not found in current project", {
+			status: 404,
+			code: "project_chapter_not_found",
+			details: { canvasProjectId, chapterId, userId: effectiveUserId },
+		});
+	}
+	const chapterSourceBookId = typeof chapterBookScope?.source_book_id === "string"
+		? chapterBookScope.source_book_id.trim()
+		: "";
+	const requestedBookRef =
+		requestedBookId || requestedSelectedReferenceBookId || chapterSourceBookId;
 	const resolvedBookRef =
 		publicAgentsRequest && canvasProjectId && requestedBookRef
 			? await resolveProjectBookReference({
@@ -7297,8 +9036,13 @@ export async function runAgentsBridgeChatTask(
 		});
 	}
 	const bookId = resolvedBookRef?.bookId || requestedBookId;
-	const novelSingleVideoEvidenceRequired = false;
-	const autoProgressDetectionRequired = false;
+	if (chapterSourceBookId && bookId && chapterSourceBookId !== bookId) {
+		throw new AppError("Chapter source book does not match the requested book", {
+			status: 409,
+			code: "chapter_book_scope_mismatch",
+			details: { chapterId, chapterSourceBookId, requestedBookId: bookId },
+		});
+	}
 	const effectiveChatContext: AgentsBridgeChatContext =
 		resolvedBookRef && chatContext.selectedReference
 			? {
@@ -7309,15 +9053,27 @@ export async function runAgentsBridgeChatTask(
 					},
 			  }
 			: chatContext;
+	const eligibleEquippedWorkflowAttachments = filterEquippedWorkflowsByExecutionVariant(
+		equippedWorkflowAttachments,
+		effectiveChatContext.requestedWorkflowExecutionVariant,
+	);
 	const autoProjectScopedLocalAccess = false;
-	const explicitLocalResourcePathsRaw = Array.isArray(extras.localResourcePaths)
+	const trustedDesktopWorkspaceAccess = options?.trustedDesktopWorkspaceAccess === true;
+	const forceLocalResourceViaBash =
+		trustedDesktopWorkspaceAccess || extras.forceLocalResourceViaBash === true;
+	const projectContextResourcePath =
+		forceLocalResourceViaBash && publicAgentsRequest && canvasProjectId
+			? resolveProjectWorkspaceContextDir(canvasProjectId, effectiveUserId)
+			: "";
+	const explicitLocalResourcePathsRaw =
+		forceLocalResourceViaBash && Array.isArray(extras.localResourcePaths)
 		? extras.localResourcePaths
 				.map((x) => String(x || "").trim())
 				.filter(Boolean)
 				.slice(0, 12)
 		: [];
 	const implicitBookLocalResourcePath =
-		bookId && canvasProjectId
+		forceLocalResourceViaBash && bookId && canvasProjectId
 			? (
 					await resolveReadableBookDirectoryPath({
 						userId: effectiveUserId,
@@ -7326,42 +9082,21 @@ export async function runAgentsBridgeChatTask(
 					})
 			  ) || ""
 			: "";
-	const autoForceLocalResourceViaBash =
-		false &&
-		shouldAutoForceProjectBookLocalRead({
-			publicAgentsRequest,
-			requestKind: request.kind,
-			canvasProjectId,
-			canvasNodeId,
-			planOnly,
-			hasReferenceImages:
-				Array.isArray(extras.referenceImages) &&
-				extras.referenceImages.some((item: unknown) => String(item || "").trim().length > 0),
-			hasAssetInputs:
-				Array.isArray(extras.assetInputs) &&
-				extras.assetInputs.some((item: unknown) => {
-					if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-					return String((item as { url?: unknown }).url || "").trim().length > 0;
-				}),
-			selectedReference: effectiveChatContext.selectedReference,
-			bookId,
-		});
-	const forceLocalResourceViaBash =
-		Boolean(extras.forceLocalResourceViaBash) ||
-		(autoForceLocalResourceViaBash && Boolean(implicitBookLocalResourcePath));
 	const privilegedLocalAccess =
-		publicAgentsRequest || Boolean(extras.privilegedLocalAccess) || autoProjectScopedLocalAccess;
-	const localResourcePathsRaw = [
-		...explicitLocalResourcePathsRaw,
-		...(forceLocalResourceViaBash && implicitBookLocalResourcePath
-			? [implicitBookLocalResourcePath]
-			: []),
-	].slice(0, 12);
+		trustedDesktopWorkspaceAccess ||
+		(forceLocalResourceViaBash && extras.privilegedLocalAccess === true);
+	const localResourcePathsRaw = forceLocalResourceViaBash
+		? Array.from(new Set([
+				...explicitLocalResourcePathsRaw,
+				...(projectContextResourcePath ? [projectContextResourcePath] : []),
+				...(implicitBookLocalResourcePath ? [implicitBookLocalResourcePath] : []),
+		  ])).slice(0, 12)
+		: [];
 	const localResourcePaths = localResourcePathsRaw
 		.map((x) => normalizeLocalResourcePathForAgents(x))
 		.filter((x): x is string => Boolean(x));
 	if (
-		(forceLocalResourceViaBash || privilegedLocalAccess) &&
+		forceLocalResourceViaBash &&
 		localResourcePathsRaw.length > 0 &&
 		localResourcePaths.length !== localResourcePathsRaw.length
 	) {
@@ -7379,10 +9114,38 @@ export async function runAgentsBridgeChatTask(
 				.map((item) => String(item || "").trim())
 				.filter(Boolean)
 				.slice(0, 12)
-		: [];
-	const requiredSkills = normalizeRequiredSkills(extras.requiredSkills);
+			: [];
+	const forcedAgentRole =
+		typeof extras.forcedAgentRole === "string"
+			? extras.forcedAgentRole.trim().slice(0, 64)
+			: "";
+	if (options?.directForcedAgentExecution === true && !forcedAgentRole) {
+		throw new AppError("工作流直接 Agent 执行缺少 forcedAgentRole", {
+			status: 400,
+			code: "workflow_direct_agent_role_required",
+		});
+	}
+	const chapterCanvasIntent = normalizeChapterCanvasIntent(extras.intent);
+	const chapterIntentSourceNodeId =
+		typeof extras.chapterIntentSourceNodeId === "string"
+			? extras.chapterIntentSourceNodeId.trim()
+			: "";
+	const chapterContext = asRecord(extras.chapterContext);
+	if (typeof extras.chapterContext !== "undefined" && !chapterContext) {
+		throw new AppError("chapterContext 必须是结构化对象", {
+			status: 400,
+			code: "agents_chapter_context_invalid",
+		});
+	}
+	const chapterIntentGenerationConfig = asRecord(extras.chapterIntentGenerationConfig);
+	const chapterIntentVariantParams = asRecord(extras.chapterIntentVariantParams);
+	const chapterIntentStyleGuide = asRecord(extras.chapterIntentStyleGuide);
+	const explicitRequiredSkills = normalizeRequiredSkills(extras.requiredSkills);
+	// 委派能力只由调用方显式事实开启；空角色列表不再被解释为“允许全部”。
 	const allowedSubagentTypes = explicitAllowedSubagentTypes;
 	const requireAgentsTeamExecution = extras.requireAgentsTeamExecution === true;
+	const allowAgentsDelegation =
+		requireAgentsTeamExecution || allowedSubagentTypes.length > 0;
 	const chapterGroundedScope =
 		resolveEffectivePublicChatBookChapterScope({
 			mode,
@@ -7393,103 +9156,72 @@ export async function runAgentsBridgeChatTask(
 			chapterId: chapterId || null,
 			chatContext: effectiveChatContext,
 		}) !== null;
+	// Required skills are structural declarations from the caller or a frozen
+	// workflow node. Hono must not infer them from user prose; semantic skill
+	// selection belongs to agents-cli and its progressively disclosed catalog.
+	const requiredSkills = normalizeRequiredSkills(explicitRequiredSkills);
+	// A capability-bay `replaced` row hides a skill as a competing top-level
+	// route, but it must not disable that same skill when the current product
+	// route names it as a required dependency. Direct Workflow execution is a
+	// separate, already-authorized runtime surface: its frozen dependencies are
+	// mounted for this execution only even if the same Skill is disabled as a
+	// top-level chat capability. The account setting itself is never mutated.
+	const replacedSkillSet = new Set(accountReplacedSkills);
+	const requiredSkillSet = new Set(requiredSkills);
+	const runtimeDisabledSkills = disabledSkills.filter(
+		(skill) => !(
+			requiredSkillSet.has(skill)
+			&& (replacedSkillSet.has(skill) || options?.directForcedAgentExecution === true)
+		),
+	);
 	if (publicAgentsRequest) {
 		assertPublicAgentsRequestSafe({
 			forceLocalResourceViaBash,
 			privilegedLocalAccess,
 			localResourcePaths,
-			requiredSkills,
 			autoProjectScopedLocalAccess,
+			trustedDesktopWorkspaceAccess,
 		});
 	}
 	const modelKey = normalizeAgentBridgeModelField(extras.modelKey);
 	const modelAlias = normalizeAgentBridgeModelField(extras.modelAlias);
-	const referenceImages = normalizeAgentsBridgeReferenceImages(extras.referenceImages);
-	const baseAssetInputs = normalizeAgentsBridgeAssetInputs(extras.assetInputs);
-	const executionPlanningDirective = buildPublicChatExecutionPlanningDirective({
-		publicAgentsRequest,
-		requestKind: request.kind,
-		planOnly,
-		canvasProjectId,
-		canvasNodeId,
-		bookId,
-		chapterId,
-		hasReferenceImages: referenceImages.length > 0,
-		hasAssetInputs: baseAssetInputs.length > 0,
-		selectedReference: effectiveChatContext.selectedReference,
-		chapterGroundedScope,
-	});
-	const selectedReferenceProtocolReferenceImages =
+	const callerReferenceImages = normalizeAgentsBridgeReferenceImages(extras.referenceImages);
+	const callerAssetInputs = normalizeAgentsBridgeAssetInputs(extras.assetInputs);
+	const callerSelectedReferenceProtocolImages =
 		collectStoryboardSelectionReferenceImageUrls(
 			effectiveChatContext.selectedReference?.storyboardSelectionContext,
 		);
-	const mentionBoundInjection =
-		publicAgentsRequest && canvasProjectId
-			? await resolveMentionBoundAssetInputs({
-				userId: effectiveUserId,
-				projectId: canvasProjectId,
-				canvasFlowId,
-				prompt: request.prompt,
-				existingAssetInputs: baseAssetInputs,
-			})
-			: { mentions: [], matched: [], missing: [], ambiguous: [], assetInputs: [], referenceImages: [], resolvedMentionKeys: [] };
-	const mentionRoleInjection =
-		publicAgentsRequest && canvasProjectId
-			? await resolveMentionRoleAssetInputs({
-				userId: effectiveUserId,
-				projectId: canvasProjectId,
-				bookId,
-				chapterId,
-				prompt: request.prompt,
-				existingAssetInputs: [...baseAssetInputs, ...mentionBoundInjection.assetInputs],
-				skipMentionKeys: mentionBoundInjection.resolvedMentionKeys,
-			})
-			: { mentions: [], matched: [], missing: [], ambiguous: [], assetInputs: [], referenceImages: [] };
-	const chapterContinuityInjection =
-		publicAgentsRequest && canvasProjectId && bookId && chapterId
-			? await resolveChapterContinuityAssetInputs({
-				c,
-				userId: effectiveUserId,
-				projectId: canvasProjectId,
-				bookId,
-				chapterId,
-				existingAssetInputs: [...baseAssetInputs, ...mentionBoundInjection.assetInputs, ...mentionRoleInjection.assetInputs],
-				mentionMatchedRoleNameKeys: mentionRoleInjection.matched.map((item) => item.roleNameKey),
-			})
-				: {
-					chapter: null,
-					roleNameKeys: [],
-					sceneNameKeys: [],
-					propNameKeys: [],
-					tailFrameUrl: null,
-					assetInputs: [],
-					referenceImages: [],
-					roleReferenceCount: 0,
-					stateEvidenceRoleCount: 0,
-					threeViewRoleCount: 0,
-					missingRoleReferenceNames: [],
-					missingStateRoleNames: [],
-					missingThreeViewRoleNames: [],
-					scenePropReferenceCount: 0,
-				missingScenePropNames: [],
-				reasons: ["chapter_context_absent"],
-			};
-	const assetInputs = [
-		...baseAssetInputs,
-		...mentionBoundInjection.assetInputs,
-		...mentionRoleInjection.assetInputs,
-		...chapterContinuityInjection.assetInputs,
-	];
+	// Hono only forwards caller-provided structured media facts. Prompt mentions,
+	// project assets and chapter continuity are resolved by agents through tools.
+	// An explicitly rejected selected node remains factual context, but its bytes
+	// cannot be forwarded as a model reference. This is a lifecycle-state filter,
+	// not a local judgment of visual or semantic quality.
+	const filteredReferenceMedia = filterRejectedSelectedReferenceMedia({
+		referenceImages: callerReferenceImages,
+		assetInputs: callerAssetInputs,
+		selectedReferenceProtocolImages: callerSelectedReferenceProtocolImages,
+		selectedReference: effectiveChatContext.selectedReference,
+	});
+	const referenceImages = filteredReferenceMedia.referenceImages;
+	const assetInputs = filteredReferenceMedia.assetInputs;
+	const selectedReferenceProtocolReferenceImages =
+		filteredReferenceMedia.selectedReferenceProtocolImages;
+	const mediaSafeSelectedReference: AgentsBridgeChatContext["selectedReference"] =
+		filteredReferenceMedia.selectedReferenceRejected && effectiveChatContext.selectedReference
+		? {
+				...effectiveChatContext.selectedReference,
+				imageUrl: null,
+				sourceUrl: null,
+				storyboardSelectionContext: null,
+			}
+		: effectiveChatContext.selectedReference;
 	const mergedReferenceImages = (() => {
 		const out: string[] = [];
 		const seen = new Set<string>();
 		for (const url of [
 			...referenceImages,
 			...selectedReferenceProtocolReferenceImages,
-			...mentionBoundInjection.referenceImages,
-			...mentionRoleInjection.referenceImages,
-			...chapterContinuityInjection.referenceImages,
-			...assetInputs.map((item) => item.url),
+			...assetInputs.filter((item) => item.mediaType === "image").map((item) => item.url),
 		]) {
 			const trimmed = String(url || "").trim();
 			if (!trimmed || seen.has(trimmed)) continue;
@@ -7501,76 +9233,74 @@ export async function runAgentsBridgeChatTask(
 	const referenceImageSlots = buildReferenceImageSlots({
 		referenceImages: mergedReferenceImages,
 		assetInputs,
-		selectedReference: effectiveChatContext.selectedReference,
+		selectedReference: mediaSafeSelectedReference,
 	});
-	const generationGate = evaluatePublicAgentsGenerationGate({
-		publicAgentsRequest,
-		canvasProjectId,
-		canvasFlowId,
-		referenceImages: mergedReferenceImages,
-		assetInputsCount: assetInputs.length,
-		selectedReferenceImageUrl:
-			effectiveChatContext.selectedReference?.imageUrl?.trim() || "",
-		bookId,
-		chapterId,
+	const selectedPromptSkill =
+		effectiveChatContext.skill?.id && effectiveChatContext.skill.source
+			? {
+					id: effectiveChatContext.skill.id,
+					source: effectiveChatContext.skill.source,
+					key: effectiveChatContext.skill.key,
+					name: effectiveChatContext.skill.name,
+			  }
+			: null;
+	const factualContextPrompt = await buildPublicChatSystemPrompt({
+		chatContext: {
+			generationProposal: effectiveChatContext.generationProposal,
+			currentProjectName: effectiveChatContext.currentProjectName,
+			chatMode: effectiveChatContext.chatMode,
+			creativePhase: effectiveChatContext.creativePhase,
+			currentBookId: bookId || null,
+			currentChapterId: chapterId || null,
+			skill: selectedPromptSkill,
+			referenceImageCount: mergedReferenceImages.length,
+			referenceImageSlots,
+			assetRoleSummary: [...new Set(assetInputs.map((asset) => asset.role))],
+			hasTargetImage: assetInputs.some((asset) => asset.role === "target"),
+			hasSelectedNode: Boolean(canvasNodeId || mediaSafeSelectedReference?.nodeId),
+			...(publicAgentsRequest
+				? {
+					enabledModelCatalogSummary: enabledModelCatalog.summary,
+					enabledModelCatalogSummaryError: enabledModelCatalog.error,
+				}
+				: {}),
+			selectedNodeId: canvasNodeId || mediaSafeSelectedReference?.nodeId || null,
+			selectedNodeLabel: effectiveChatContext.selectedNodeLabel,
+			selectedNodeKind: effectiveChatContext.selectedNodeKind,
+			selectedNodeTextPreview: effectiveChatContext.selectedNodeTextPreview,
+			selectedReference: mediaSafeSelectedReference,
+		},
+		canvasProjectId: canvasProjectId || null,
+		canvasFlowId: canvasFlowId || null,
+		planOnly: request.kind === "prompt_refine",
+		forceAssetGeneration,
 	});
-	const promptPipelineTarget = resolvePromptPipelineTarget({
-		selectedNodeKind: effectiveChatContext.selectedNodeKind,
-		selectedReferenceKind: effectiveChatContext.selectedReference?.kind || null,
-		referenceImageCount: mergedReferenceImages.length,
-	});
-	const promptPipelinePrecheck = buildPromptPipelinePrecheckSnapshot({
-		target: promptPipelineTarget,
-		mentionRoleInjection,
-		chapterContinuityInjection,
-		generationGate,
-		mergedReferenceImages,
-	});
-	const promptPipelineRequestSummary = buildPromptPipelineRequestSummary({
-		target: promptPipelineTarget,
-		precheckSnapshot: promptPipelinePrecheck,
-	});
-	const enabledModelCatalogSummaryResult =
-		publicAgentsRequest && request.kind === "chat"
-			? await loadPublicChatEnabledModelCatalogSummary(c, effectiveUserId)
-			: { summary: null, error: null };
 	const systemPrompt = requestedSystemPrompt;
-	const suppressProductIntegrity = shouldSuppressProductIntegrityConstraint({
-		bookId,
-		chapterId,
-		chatContext: effectiveChatContext,
-		canvasProjectId,
-		canvasFlowId,
-	});
 	const prompt = decoratePromptWithReferenceImages(
 		request.prompt,
 		mergedReferenceImages,
 		assetInputs,
 		referenceImageSlots,
-		effectiveChatContext.selectedReference,
-		{ suppressProductIntegrity },
+		mediaSafeSelectedReference,
 	);
-	const finalSystemPrompt = [systemPrompt].filter(Boolean).join("\n\n");
-	const finalPrompt = prompt;
+	const finalSystemPrompt = systemPrompt || "";
+	// Direct Workflow Agent nodes already carry frozen upstream port facts and
+	// their own typed delivery contract. Injecting the chat UI's chapter canvas
+	// snapshot creates a second, much larger input source and can exhaust the
+	// physical context budget before the first model action. Keep the snapshot for
+	// interactive chat only; workflow nodes use their immutable port projection.
+	const canvasReferenceBlock = options?.directForcedAgentExecution === true
+		? null
+		: buildChapterCanvasReferenceBlock(effectiveChatContext.chapterCanvasReference);
+	const contextBlocks = [canvasReferenceBlock].filter((b): b is string => Boolean(b));
+	const finalPrompt = contextBlocks.length ? `${contextBlocks.join("\n\n")}\n\n${prompt}` : prompt;
 	const debugLogEnabled = readAgentsBridgeDebugLog(c);
-	const requestedMaxTurns = requiredSkills.length
-		? privilegedLocalAccess || forceLocalResourceViaBash
-			? 36
-			: 18
-		: null;
-	const allowedTools: string[] | null = null;
+	const requiredSkillCalls = skillReferences.selected
+		? [skillReferences.selected.key]
+		: [];
 	const resourceWhitelist = null;
 
-	const tapcanvasApiBaseUrl = (() => {
-		const fromEnv = readTapCanvasApiBaseFromEnv(c);
-		if (fromEnv) return fromEnv;
-		try {
-			const url = new URL(c.req.url);
-			return url.origin;
-		} catch {
-			return "";
-		}
-	})();
+	const tapcanvasApiBaseUrl = readTapCanvasApiBaseFromEnv(c);
 	const useRequestAuth = readBoolEnvFlag(c.env.AGENTS_BRIDGE_USE_REQUEST_AUTH);
 	const envTapcanvasApiKey =
 		typeof c.env.TAPCANVAS_API_KEY === "string"
@@ -7578,76 +9308,423 @@ export async function runAgentsBridgeChatTask(
 			: "";
 	const reqAuthorization = (c.req.header("authorization") || "").trim();
 	const reqApiKey = (c.req.header("x-api-key") || "").trim();
-	const tapcanvasApiKey = envTapcanvasApiKey || reqApiKey;
-	const tapcanvasAuthorization =
-		useRequestAuth || !tapcanvasApiKey ? reqAuthorization : "";
-	const remoteTools = buildAgentsBridgeRemoteTools({
-		publicAgentsRequest,
-		canvasProjectId,
-		canvasFlowId,
-		hideStoryboardEditor: publicAgentsRequest,
-	});
-	const canvasCapabilityManifest = buildCanvasCapabilityManifest({
-		remoteTools,
-		hideStoryboardEditor: publicAgentsRequest,
-	});
-	const remoteToolEndpoint =
-		tapcanvasApiBaseUrl && remoteTools.length > 0
-			? `${tapcanvasApiBaseUrl}/public/agents/tools/execute`
+	const internalWorkerToken = String(c.env.INTERNAL_WORKER_TOKEN || "").trim();
+	const browserSessionDelegationApiKey =
+		!reqAuthorization && !reqApiKey && internalWorkerToken
+			? buildInternalApiKey({
+					internalWorkerToken,
+					// effectiveUserId may be `tapcanvasOwner:hostUser` in Tanva host mode.
+					// That composite id is an agents workspace/session partition, not a row in
+					// TapCanvas' users table. Server-to-server credentials must always be
+					// minted for the authenticated TapCanvas owner or every continuation-side
+					// present_file/upload callback is rejected as an unknown user.
+					userId: baseEffectiveUserId,
+					apiKeyId: null,
+			  }) ?? ""
 			: "";
+	const trustedInternalApiKey = buildTrustedInternalExecutionApiKey({
+		trustedInternalExecution: options?.trustedInternalExecution === true,
+		internalWorkerToken,
+		userId: baseEffectiveUserId,
+		apiKeyId: c.get("apiKeyId") ?? null,
+	});
+	if (options?.trustedInternalExecution === true && !trustedInternalApiKey) {
+		throw new AppError("可信内部执行缺少用户委托授权", {
+			status: 500,
+			code: "trusted_internal_execution_auth_unavailable",
+		});
+	}
+	const tapcanvasApiKey =
+		trustedInternalApiKey || browserSessionDelegationApiKey || reqApiKey || envTapcanvasApiKey;
+	const tapcanvasAuthorization =
+		trustedInternalApiKey
+			? ""
+			: useRequestAuth || !tapcanvasApiKey
+				? reqAuthorization
+				: "";
+	const requiredExternalSkillCalls =
+		skillReferences.selected && skillReferences.selected.source !== "system"
+			? requiredSkillCalls
+			: [];
+	const externalSkillAuthorization = internalWorkerToken ? "" : reqAuthorization;
+	const externalSkillApiKey = internalWorkerToken
+		? buildInternalApiKey({
+				internalWorkerToken,
+				userId: baseEffectiveUserId,
+				apiKeyId: c.get("apiKeyId") ?? null,
+		  }) ?? ""
+		: reqApiKey;
+	const externalSkillResolverConfig =
+		tapcanvasApiBaseUrl && (externalSkillAuthorization || externalSkillApiKey)
+			? {
+					endpoint: `${tapcanvasApiBaseUrl}/agents/user-context-assets`,
+					...(externalSkillAuthorization ? { authToken: externalSkillAuthorization } : {}),
+					...(externalSkillApiKey ? { apiKey: externalSkillApiKey } : {}),
+			  }
+			: null;
+	if (requiredExternalSkillCalls.length > 0 && !externalSkillResolverConfig) {
+		throw new AppError("所选用户 Skill 无法按需读取：缺少可信 API 地址或当前用户凭证", {
+			status: 500,
+			code: "external_skill_resolver_unavailable",
+			details: { selectedSkillId: skillReferences.selected?.id ?? null },
+		});
+	}
+	if (
+		skillReferences.selected?.source === "marketplace" &&
+		!internalWorkerToken
+	) {
+		throw new AppError("所选商城 Skill 无法安全读取：缺少内部服务凭证", {
+			status: 500,
+			code: "marketplace_skill_internal_resolver_unavailable",
+			details: { selectedSkillId: skillReferences.selected.id },
+		});
+	}
+	// 生成模式：host（默认）暴露低层 flow_patch，以及 manifest 显式声明的高层 host_tool；
+	// 两者都只把命令交给宿主执行，不在 TapCanvas 数据库落画布结果。
+	// managed/both 尚无真实工具与计费实现，声明它们必须显式失败，不能静默退成 host。
+	assertHostGenerationModeSupported(hostManifest);
+	// 宿主模式：远程工具面仅由宿主 manifest 驱动，不暴露 TapCanvas 自身的 tapcanvas_* 工具集。
+	const tapcanvasRemoteToolSurface = hostManifest
+		? null
+		: inspectAgentsBridgeRemoteToolSurface({
+				publicAgentsRequest,
+				canvasProjectId,
+				canvasFlowId,
+				canvasNodeId,
+				bookId,
+				chapterId,
+				hideStoryboardEditor: publicAgentsRequest,
+				adminWorkflowAccess: isAdminRequest(c),
+				workflowRecoveryAccess:
+					options?.trustedPublicContinuation === true &&
+					continuationTaskReferences.some((reference) =>
+						reference.acceptedAsync === true &&
+						typeof reference.runId === "string" &&
+						reference.runId.trim().length > 0 &&
+						(reference.toolName === "tapcanvas_workflow_run" ||
+							reference.toolName === "tapcanvas_equipped_workflow_run"),
+					),
+				disabledBuiltInCapabilities: builtInCapabilityAvailability.disabledKeys,
+				enabledVideoModelKeys: enabledModelCatalog.summary?.videoModels.map((model) => model.modelKey) ?? [],
+				enabledImageModelKeys: enabledModelCatalog.summary?.imageModels.map((model) => model.modelKey) ?? [],
+				equippedWorkflows: eligibleEquippedWorkflowAttachments.map((attachment) => ({
+					attachmentId: attachment.id,
+					name: attachment.descriptor.name,
+					summary: attachment.descriptor.summary,
+					invocation: attachment.descriptor.invocation,
+					primaryForCapabilities: attachment.primaryForCapabilities,
+				})),
+			  });
+	const baseAvailableRemoteTools = hostManifest
+		? [
+				buildHostFlowPatchTool(hostManifest),
+				...(hostManifest.hostTools?.length ? [buildHostTool(hostManifest)] : []),
+		  ]
+		: tapcanvasRemoteToolSurface?.tools ?? [];
+	const baseAvailableRemoteToolCatalog = tapcanvasRemoteToolSurface?.catalog ?? [];
+	// Story preview remains in the deferred catalog as a durable multi-operation
+	// graph. Promoting the generic image tool to the hot surface would hand board
+	// sequencing and variable-length JSON back to the root model, defeating the
+	// exact per-board frontier projected by tapcanvas_story_preview_orchestrate.
+	const availableRemoteTools = baseAvailableRemoteTools;
+	const availableRemoteToolCatalog = baseAvailableRemoteToolCatalog;
+	if (readAgentsBridgeDebugLog(c)) {
+		console.log(
+			`[agents-bridge.debug] remote-surface direct=${availableRemoteTools.length} ` +
+				`catalog=${availableRemoteToolCatalog.length} ` +
+				`equippedWorkflow=${availableRemoteTools.some((tool) => tool.name === "tapcanvas_equipped_workflow_run") ? "direct" : availableRemoteToolCatalog.some((tool) => tool.name === "tapcanvas_equipped_workflow_run") ? "catalog" : "absent"}`,
+		);
+	}
+	const resolvedToolPolicy = applyAgentExecutionToolPolicy({
+		policy: extras.executionToolPolicy,
+		remoteTools: availableRemoteTools,
+		...(options?.deniedRemoteTools ? { deniedRemoteTools: options.deniedRemoteTools } : {}),
+		...(tapcanvasRemoteToolSurface
+			? {
+					remoteCatalogTools: availableRemoteToolCatalog,
+					optionalDirectTools: tapcanvasRemoteToolSurface.explicitCapabilityTools,
+			  }
+			: {}),
+	});
+	const deferPublicChatDirectTools = shouldDeferPublicChatDirectTools({
+		publicAgentsRequest,
+		requestKind: request.kind,
+		hostManifestPresent: Boolean(hostManifest),
+		canvasNodeId,
+		assetInputCount: assetInputs.length,
+		referenceImageCount: mergedReferenceImages.length,
+		forceAssetGeneration,
+		hasGenerationContract: Boolean(generationContract),
+		// A chapter route is already a concrete production scope even when the
+		// optional prose chapterContext block is absent. Treating it as an empty
+		// chat would drop dynamic equipped-workflow tools from the direct surface
+		// without adding them to the deferred catalog.
+		hasChapterContext: Boolean(chapterContext || chapterId),
+		hasForcedAgentRole: Boolean(forcedAgentRole),
+		requiredSkillCount: requiredSkills.length,
+		hasExplicitToolPolicy: Boolean(extras.executionToolPolicy),
+	});
+	// Equipped workflows are user-visible semantic capabilities, not generic cold
+	// operations. Keep their complete descriptor and exact invocation schema on
+	// the hot surface even for an otherwise context-free public chat. Deferring
+	// this definition truncates the workflow summary before Harness can decide
+	// whether it applies, which makes an all_users built-in effectively invisible.
+	const hasEquippedWorkflowTool = resolvedToolPolicy.remoteTools.some(
+		(tool) => tool.name === "tapcanvas_equipped_workflow_run",
+	);
+	const remoteTools = deferPublicChatDirectTools
+		? resolvedToolPolicy.remoteTools.filter((tool) =>
+			tool.name === "tapcanvas_equipped_workflow_run"
+			|| (hasEquippedWorkflowTool && tool.name === "tapcanvas_workflow_execution_inspect"))
+			.map((tool) => tool.name === "tapcanvas_workflow_execution_inspect"
+				? {
+					...tool,
+					description:
+						"Inspect the first page of one accepted durable workflow execution. Copy executionId and view=family exactly from the equipped-workflow receipt inspection.familyArgs. This exact schema is already loaded: call this tool directly, omit cursor and limit, and do not call tapcanvas_get_tool_schema first. A successful terminal response includes workflowOutputs from authored workflow.output/v1 boundaries; return their user-facing output exactly.",
+					parameters: {
+						type: "object",
+						properties: {
+							executionId: { type: "string", minLength: 1 },
+							view: { type: "string", const: "family" },
+						},
+						required: ["executionId", "view"],
+						additionalProperties: false,
+					},
+				}
+				: tool)
+		: resolvedToolPolicy.remoteTools;
+	// Deferring the hot surface is a representation change, not an authorization
+	// change. Every authenticated direct definition must remain discoverable in
+	// the cold catalog; otherwise an ordinary public chat silently loses core
+	// read/mutation capabilities such as flow_get/flow_patch. The exact schema is
+	// still loaded by name on demand, so this does not restore the large first-turn
+	// schema payload or introduce a second execution path.
+	const remoteToolCatalog = deferPublicChatDirectTools && tapcanvasRemoteToolSurface
+		? [
+			...resolvedToolPolicy.remoteTools
+				.filter((tool) => !remoteTools.some((directTool) => directTool.name === tool.name))
+				.map((tool) => {
+				const metadata = readRemoteToolSurfaceMetadata(tool.name);
+				return {
+					...tool,
+					requiredScope: metadata.requiredScope,
+					capability: metadata.capability,
+				};
+				}),
+			...resolvedToolPolicy.remoteToolCatalog,
+		  ]
+		: resolvedToolPolicy.remoteToolCatalog;
+	const allowedTools = resolvedToolPolicy.allowedTools;
+	const resolvedDirectMeasurement = measureRemoteToolSurface(remoteTools);
+	const resolvedCatalogIndexMeasurement = measureRemoteToolCatalogIndex(remoteToolCatalog);
+	const resolvedVisibleToolNames = new Set([
+		...remoteTools.map((tool) => tool.name),
+		...remoteToolCatalog.map((tool) => tool.name),
+	]);
+	const primaryCapabilityRoutes = resolvedVisibleToolNames.has("tapcanvas_equipped_workflow_run")
+		? buildEquippedWorkflowPrimaryCapabilityRoutes(
+			eligibleEquippedWorkflowAttachments.map((attachment) => ({
+				attachmentId: attachment.id,
+				name: attachment.descriptor.name,
+				summary: attachment.descriptor.summary,
+				invocation: attachment.descriptor.invocation,
+				primaryForCapabilities: attachment.primaryForCapabilities,
+			})),
+		)
+		: [];
+	const equippedWorkflowCapabilities = resolvedVisibleToolNames.has("tapcanvas_equipped_workflow_run")
+		? eligibleEquippedWorkflowAttachments.map((attachment) => ({
+				attachmentId: attachment.id,
+				name: attachment.descriptor.name,
+				summary: attachment.descriptor.summary,
+				invocation: attachment.descriptor.invocation,
+				primaryForCapabilities: attachment.primaryForCapabilities,
+			}))
+		: [];
+	const resolvedHiddenToolCount = tapcanvasRemoteToolSurface
+		? Math.max(
+				0,
+				tapcanvasRemoteToolSurface.before.visibleToolCount - resolvedVisibleToolNames.size,
+			)
+		: 0;
+	console.info(
+		`[agents-bridge.tool-surface] requestId=${requestId} ` +
+			`mode=${hostManifest ? "host" : publicAgentsRequest ? "tapcanvas_public" : "local_code"} ` +
+			`policy=${resolvedToolPolicy.mode} ` +
+			`scopes=${hostManifest ? "host" : tapcanvasRemoteToolSurface?.satisfiedScopes.join(",") || "none"} ` +
+			`direct=${resolvedDirectMeasurement.visibleToolCount} ` +
+			`directDefinitionChars=${resolvedDirectMeasurement.descriptionChars + resolvedDirectMeasurement.schemaChars} ` +
+			`deferred=${deferPublicChatDirectTools ? "true" : "false"} ` +
+			`catalog=${resolvedCatalogIndexMeasurement.visibleToolCount} ` +
+			`catalogNameChars=${resolvedCatalogIndexMeasurement.nameChars} ` +
+			`catalogEnumJsonChars=${resolvedCatalogIndexMeasurement.enumJsonChars} ` +
+			`duplicatedWrapperEnumChars=${resolvedCatalogIndexMeasurement.duplicatedWrapperEnumChars} ` +
+			`hidden=${resolvedHiddenToolCount}`,
+	);
+	if (readAgentsBridgeDebugLog(c)) {
+		console.log(
+			`[agents-bridge.debug] remote-surface-resolved direct=${remoteTools.length} ` +
+				`catalog=${remoteToolCatalog.length} ` +
+				`deferred=${deferPublicChatDirectTools ? "true" : "false"} ` +
+				`equippedWorkflow=${remoteTools.some((tool) => tool.name === "tapcanvas_equipped_workflow_run") ? "direct" : remoteToolCatalog.some((tool) => tool.name === "tapcanvas_equipped_workflow_run") ? "catalog" : "absent"}`,
+		);
+	}
+	assertAgentsRemoteToolCallbackBase({
+		baseUrl: tapcanvasApiBaseUrl,
+		remoteToolCount: remoteTools.length + remoteToolCatalog.length,
+	});
+	// 宿主模式下工具执行回调打到 no-op 端点：真实画布写入由宿主前端消费聊天流里的 tool_calls 完成，
+	// hono-api 不落 TapCanvas 库。
+	const remoteToolEndpoint =
+		tapcanvasApiBaseUrl && remoteTools.length + remoteToolCatalog.length > 0
+			? hostManifest
+				? `${tapcanvasApiBaseUrl}/public/agents/tools/host-execute`
+				: `${tapcanvasApiBaseUrl}/public/agents/tools/execute`
+			: "";
+	const toolSurfaceConfig = hostManifest
+		? {
+				mode: "host" as const,
+				hostUi: [...(hostManifest.ui ?? [])],
+				allowDelegation: false,
+				// Tanva host_ui supports media/artifact cards. This must stay enabled so
+				// document Skills can publish their real PPTX/XLSX via present_file.
+				allowsExternalMedia: true,
+			}
+		: publicAgentsRequest
+			? {
+					mode: "tapcanvas_public" as const,
+					hostUi: [],
+					allowDelegation: allowAgentsDelegation,
+					allowsExternalMedia: true,
+				}
+			: {
+					mode: "local_code" as const,
+					hostUi: [],
+					allowDelegation: allowAgentsDelegation,
+					allowsExternalMedia: true,
+				};
+	const compactPrelude =
+		(toolSurfaceConfig.mode === "host" ||
+			toolSurfaceConfig.mode === "tapcanvas_public") &&
+		!toolSurfaceConfig.allowDelegation;
 	const token = readAgentsBridgeToken(c);
+	const userLlmProxyOverride = resolveUserLlmProxyOverride({
+		tapcanvasApiBaseUrl,
+		tapcanvasApiKey,
+	});
+	const effectiveFinalSystemPrompt = [
+		hostManifest ? renderHostManifestPrompt(hostManifest, hostCanvasContext) : null,
+		finalSystemPrompt,
+		factualContextPrompt,
+		userGenerationPrefsBlock,
+		effectiveChatContext.canvasSummary
+			? `<canvas_overview readonly>${effectiveChatContext.canvasSummary}</canvas_overview>`
+			: null,
+	].filter(Boolean).join("\n\n");
 	const timeoutMs = readTimeoutFromRequestExtras(request) ?? readAgentsBridgeTimeoutMs(c);
-	const dropOnHeadersTimeout = shouldDropOnHeadersTimeout(c, request);
-	const requestAbort = createTimedAbortController(timeoutMs, options?.abortSignal);
+	const admissionTimeoutMs = readAgentsBridgeAdmissionTimeoutMs(c);
+	const requestAbort = createAgentsBridgeRequestDeadlineController({
+		idleTimeoutMs: timeoutMs,
+		admissionTimeoutMs,
+		...(workflowPhysicalAttemptDeadlineAt
+			? { absoluteDeadlineAt: workflowPhysicalAttemptDeadlineAt }
+			: {}),
+		...(options?.abortSignal ? { externalSignal: options.abortSignal } : {}),
+	});
+	const bridgePreludeDurationMs = Math.max(0, Date.now() - bridgePreludeStartedAt);
 	const runOnce = async (): Promise<Response> => {
 		throwIfAbortSignalAborted(requestAbort.signal);
 		const dispatcher = await createNodeFetchDispatcher(timeoutMs);
-		if (debugLogEnabled) {
+	if (debugLogEnabled) {
+		const remoteToolPayloadChars = JSON.stringify({
+			remoteTools: compactRemoteTools(remoteTools),
+			remoteToolCatalog: compactRemoteToolCatalog(remoteToolCatalog),
+		}).length;
+		const canvasReferenceNodeCount = effectiveChatContext.chapterCanvasReference?.nodeCount ?? 0;
+		console.info(
+			`[agents-bridge.debug] request user=${effectiveUserId} kind=${request.kind} timeoutMs=${timeoutMs} skills=${requiredSkills.length} roleSkills=${effectiveChatContext.roleSkillAssignments.length} externalSkills=${skillReferences.availableExternalSkills.length} requiredSkillCalls=${requiredSkillCalls.length} refImages=${mergedReferenceImages.length} assets=${assetInputs.length} localPaths=${localResourcePaths.length} promptChars=${finalPrompt.length} systemChars=${effectiveFinalSystemPrompt.length} modelKey=${modelKey || "n/a"} modelAlias=${modelAlias || "n/a"}`,
+		);
+		console.info(
+			`[agents-bridge.context] canvasNodes=${canvasReferenceNodeCount} canvasReferenceChars=${canvasReferenceBlock?.length ?? 0} remoteToolPayloadChars=${remoteToolPayloadChars} chapterContext=${chapterContext ? "present" : "absent"}`,
+		);
 			console.info(
-				`[agents-bridge.debug] request user=${effectiveUserId} kind=${request.kind} timeoutMs=${timeoutMs} skills=${requiredSkills.length} refImages=${mergedReferenceImages.length} assets=${assetInputs.length} localPaths=${localResourcePaths.length} promptChars=${finalPrompt.length} systemChars=${finalSystemPrompt.length} modelKey=${modelKey || "n/a"} modelAlias=${modelAlias || "n/a"}`,
+				`[agents-bridge.trace] requestId=${requestId} clientPendingId=${clientPendingId || "n/a"} sessionKeyPresent=${sessionKey.length > 0} sessionKeyChars=${sessionKey.length} observabilityThreadIdKind=${upstreamObservabilityContext.threadId === null ? "null" : "string"} observabilityThreadIdChars=${upstreamObservabilityContext.threadId?.length ?? 0}`,
 			);
-			if (mentionBoundInjection.mentions.length > 0) {
-				console.info(
-					`[agents-bridge.debug] mention-asset-injection mentions=${mentionBoundInjection.mentions.join(",") || "n/a"} matched=${mentionBoundInjection.matched.map((item) => item.assetRefId).join(",") || "n/a"} missing=${mentionBoundInjection.missing.join(",") || "n/a"} ambiguous=${mentionBoundInjection.ambiguous.join(",") || "n/a"}`,
-				);
-			}
-			if (mentionRoleInjection.mentions.length > 0) {
-				console.info(
-					`[agents-bridge.debug] mention-role-injection mentions=${mentionRoleInjection.mentions.join(",") || "n/a"} matched=${mentionRoleInjection.matched.map((item) => item.roleName).join(",") || "n/a"} missing=${mentionRoleInjection.missing.join(",") || "n/a"} ambiguous=${mentionRoleInjection.ambiguous.join(",") || "n/a"}`,
-				);
-			}
-			if (chapterContinuityInjection.chapter !== null) {
-				console.info(
-					`[agents-bridge.debug] chapter-continuity chapter=${chapterContinuityInjection.chapter} roles=${chapterContinuityInjection.roleNameKeys.join(",") || "n/a"} scenes=${chapterContinuityInjection.sceneNameKeys.join(",") || "n/a"} props=${chapterContinuityInjection.propNameKeys.join(",") || "n/a"} tail=${chapterContinuityInjection.tailFrameUrl || "n/a"} stateEvidenceRoles=${chapterContinuityInjection.stateEvidenceRoleCount} threeViewRoles=${chapterContinuityInjection.threeViewRoleCount} scenePropRefs=${chapterContinuityInjection.scenePropReferenceCount} missingStateRoles=${chapterContinuityInjection.missingStateRoleNames.join(",") || "n/a"} missingThreeViewRoles=${chapterContinuityInjection.missingThreeViewRoleNames.join(",") || "n/a"} missingSceneProps=${chapterContinuityInjection.missingScenePropNames.join(",") || "n/a"} reasons=${chapterContinuityInjection.reasons.join(",") || "n/a"}`,
-				);
-			}
 			console.info(`[agents-bridge.debug] prompt=${truncateForDebugLog(finalPrompt)}`);
-			if (finalSystemPrompt) {
+			if (effectiveFinalSystemPrompt) {
 				console.info(
-					`[agents-bridge.debug] systemPrompt=${truncateForDebugLog(finalSystemPrompt)}`,
+					`[agents-bridge.debug] systemPrompt=${truncateForDebugLog(effectiveFinalSystemPrompt)}`,
 				);
 			}
 		}
-		const chapterAssetRepairDiagnosticContext =
-			buildChapterAssetRepairDiagnosticContext({
-				workspaceAction: effectiveChatContext.workspaceAction,
-				chapterContinuityInjection,
-			});
-		const init: any = {
+		// Retrieval Sandbox binds candidate receipts to logicalTaskId. The public
+		// turn and logical task are one durable identity, never two parallel ids.
+		const bridgeTurnIdentity = buildAgentsBridgeTurnIdentity(publicTurnId, requestId);
+		const physicalContinuationLeaseTakeover = buildPhysicalContinuationLeaseTakeover({
+			trustedPublicContinuation: options?.trustedPublicContinuation === true,
+			logicalTaskId: bridgeTurnIdentity.logicalTaskId,
+		});
+		const init: RequestInit & { dispatcher?: unknown } = {
 			method: "POST",
 			headers: {
 					"Content-Type": "application/json",
 					Accept: "text/event-stream, application/json",
 					"x-agents-user-id": effectiveUserId,
+					...buildAgentsBridgeSessionAffinityHeader({
+						userId: effectiveUserId,
+						sessionId: sessionKey,
+					}),
+					traceparent: agentTraceContext.traceparent,
+					...(billingConversationId ? { "x-tapcanvas-conversation-id": billingConversationId } : {}),
 					...(token ? { Authorization: `Bearer ${token}` } : {}),
 				},
 				body: JSON.stringify({
 					prompt: finalPrompt,
 					stream: request.kind === "chat",
 					userId: effectiveUserId,
-					...(finalSystemPrompt ? { systemPrompt: finalSystemPrompt } : {}),
+					sessionId: sessionKey,
+					memoryCoreIdentity: {
+						...buildMemoryCoreRequestIdentity({
+							activeTeamId,
+							configuredTeamId: configuredMemoryCoreTeamId,
+							agentId: memoryCoreAgentId,
+							effectiveUserId,
+							sessionId: sessionKey,
+							taskId: requestId,
+						}),
+					},
+					...bridgeTurnIdentity,
+					...(physicalContinuationLeaseTakeover
+						? { physicalContinuationLeaseTakeover }
+						: {}),
+					...(clientPendingId ? { clientPendingId } : {}),
+					turnDisplayText:
+						typeof extras.displayPrompt === "string" && extras.displayPrompt.trim()
+							? extras.displayPrompt.trim()
+							: request.prompt,
+					suppressUserTurnProjection: extras.suppressUserTurnProjection === true,
+					...(extras.resetSession === true && options?.trustedPublicContinuation !== true
+						? { resetSession: true }
+						: {}),
+					observabilityContext: upstreamObservabilityContext,
+					...(userLlmProxyOverride ? {
+						overrideApiKey: userLlmProxyOverride.apiKey,
+						overrideApiBaseUrl: userLlmProxyOverride.apiBaseUrl,
+						overrideApiStyle: deriveOverrideApiStyle(modelAlias ?? modelKey),
+					} : {}),
+					...(effectiveFinalSystemPrompt ? { systemPrompt: effectiveFinalSystemPrompt } : {}),
 					...(typeof responseFormat !== "undefined"
 						? { responseFormat }
+						: {}),
+					...(typeof outputContract !== "undefined"
+						? { outputContract }
+						: {}),
+					...(typeof maxOutputTokens === "number"
+						? { maxOutputTokens }
+						: {}),
+					...(reasoningEffort ? { reasoningEffort } : {}),
+					...(workflowPhysicalAttemptDeadlineAt
+						? { workflowPhysicalAttemptDeadlineAt }
 						: {}),
 					...(allowedTools ? { allowedTools } : {}),
 					...(resourceWhitelist ? { resourceWhitelist } : {}),
@@ -7658,43 +9735,98 @@ export async function runAgentsBridgeChatTask(
 						? { referenceImageSlots }
 						: {}),
 					...(assetInputs.length ? { assetInputs } : {}),
+					...(skillReferences.availableExternalSkills.length
+						? { externalSkills: skillReferences.availableExternalSkills }
+						: {}),
+					...(requiredSkillCalls.length ? { requiredSkillCalls } : {}),
+					...(externalSkillResolverConfig ? { externalSkillResolverConfig } : {}),
 					...(generationContract ? { generationContract } : {}),
-					...(canvasProjectId ? { tapcanvasProjectId: canvasProjectId } : {}),
-					...(canvasFlowId ? { tapcanvasFlowId: canvasFlowId } : {}),
-					...(canvasNodeId ? { tapcanvasNodeId: canvasNodeId } : {}),
+					...(continuationUserIntentContract
+						? { userIntentContract: continuationUserIntentContract }
+						: {}),
+					...(extras.userIntentContractLocked === true
+						? { userIntentContractLocked: true }
+						: {}),
+					...(continuationTaskReferences.length > 0
+						? { durableTaskReferences: continuationTaskReferences }
+						: {}),
+					...(continuationRetrievalCandidateSets.length > 0
+						? { retrievalCandidateSets: continuationRetrievalCandidateSets }
+						: {}),
+					...(continuationActionRecoveryFacts.length > 0
+						? { actionRecoveryFacts: continuationActionRecoveryFacts }
+						: {}),
+					...(continuationMaterializedArtifacts.length > 0
+						? { trustedMaterializedArtifacts: continuationMaterializedArtifacts }
+						: {}),
+					...(requestUserInputResponse ? { requestUserInputResponse } : {}),
 					...(requiredSkills.length ? { requiredSkills } : {}),
+					...(runtimeDisabledSkills.length ? { disabledSkills: runtimeDisabledSkills } : {}),
+					...(mountedKnowledgeCardIds.length ? { mountedKnowledgeCardIds } : {}),
+					...(disabledKnowledgeCardIds.length ? { disabledKnowledgeCardIds } : {}),
+					...(promptExampleRetrievalScope ? { promptExampleRetrievalScope } : {}),
+					...((options?.directForcedAgentExecution === true || options?.trustedPublicContinuation === true)
+						&& typeof extras.retrievalUserRequest === "string"
+						&& extras.retrievalUserRequest.trim()
+						? { retrievalUserRequest: extras.retrievalUserRequest.trim() }
+						: {}),
+					...(retrievalContext ? { retrievalContext } : {}),
+					...(effectiveChatContext.roleSkillAssignments.length
+						? { roleSkillAssignments: effectiveChatContext.roleSkillAssignments }
+						: {}),
+					...(effectiveChatContext.chapterDirectorPersona
+						? { chapterDirectorPersona: effectiveChatContext.chapterDirectorPersona }
+						: {}),
+					...(effectiveChatContext.chapterStyleOverride
+						? { chapterStyleOverride: effectiveChatContext.chapterStyleOverride }
+						: {}),
 					...(allowedSubagentTypes.length ? { allowedSubagentTypes } : {}),
+					...(forcedAgentRole ? { forcedAgentRole } : {}),
+					...(options?.directForcedAgentExecution === true
+						? { executeForcedAgentDirectly: true }
+						: {}),
 					...(requireAgentsTeamExecution ? { requireAgentsTeamExecution: true } : {}),
-					...(requiredSkills.length
+					...(compactPrelude ? { compactPrelude: true } : {}),
+					// 宿主命令必须以原始、可执行参数进入可信 Hono 投影层。
+					// 非宿主模式继续保持默认脱敏；宿主模式只暴露 manifest 驱动的
+					// flow_patch / host_tool，OpenAI facade 会分别做结构校验后再下发。
+					...(hostManifest && remoteTools.some((tool) => tool.name === "flow_patch")
+						? { includeFullToolInput: true }
+						: {}),
+					// 每轮显式替换 direct 与 authorized-deferred 两层能力面；空数组也必须发送，
+					// 防止 agents-cli 会话继承或 union 上一轮的工具。
+					remoteTools: compactRemoteTools(remoteTools),
+					remoteToolCatalog: compactRemoteToolCatalog(remoteToolCatalog),
+					...(primaryCapabilityRoutes.length > 0
+						? { primaryCapabilityRoutes }
+						: {}),
+					...(equippedWorkflowCapabilities.length > 0
+						? { equippedWorkflowCapabilities }
+						: {}),
+					toolSurfaceConfig,
+					remoteToolConfig: remoteToolEndpoint
 						? {
-								maxTurns: requestedMaxTurns,
-								compactPrelude: true,
-						  }
-						: null),
-					...(tapcanvasApiBaseUrl ? { tapcanvasApiBaseUrl } : {}),
-					...(tapcanvasAuthorization ? { tapcanvasAuthorization } : {}),
-					...(tapcanvasApiKey ? { tapcanvasApiKey } : {}),
-					...(remoteTools.length ? { remoteTools } : {}),
-					...(publicAgentsRequest ? { canvasCapabilityManifest } : {}),
-					...(remoteToolEndpoint
-						? {
-								remoteToolConfig: {
 									endpoint: remoteToolEndpoint,
+									fileUploadEndpoint: `${tapcanvasApiBaseUrl}/public/oss/upload`,
 									...(tapcanvasAuthorization ? { authToken: tapcanvasAuthorization } : {}),
 									...(tapcanvasApiKey ? { apiKey: tapcanvasApiKey } : {}),
 									...(canvasProjectId ? { projectId: canvasProjectId } : {}),
 									...(canvasFlowId ? { flowId: canvasFlowId } : {}),
 									...(canvasNodeId ? { nodeId: canvasNodeId } : {}),
-								},
-						  }
-						: {}),
+									...(bookId ? { bookId } : {}),
+									...(chapterId ? { chapterId } : {}),
+									...(publicTurnId ? { publicTurnId } : {}),
+									...(effectiveChatContext.requestedWorkflowExecutionVariant
+										? { requestedWorkflowExecutionVariant: effectiveChatContext.requestedWorkflowExecutionVariant }
+										: {}),
+								}
+						: {},
 					...(forceLocalResourceViaBash ? { forceLocalResourceViaBash: true } : {}),
 					...(privilegedLocalAccess ? { privilegedLocalAccess: true } : {}),
 					...(localResourcePaths.length ? { localResourcePaths } : {}),
 					...(modelKey ? { modelKey } : {}),
 					...(modelAlias ? { modelAlias } : {}),
-					...(sessionKey ? { sessionId: sessionKey } : {}),
-					...(canvasProjectId || canvasNodeId || bookId || chapterId || chunkIndex !== null || groupSize !== null || shotStart !== null || shotEnd !== null || shotNo !== null || diagnosticsLabel || executionPlanningDirective
+					...(canvasProjectId || canvasNodeId || bookId || chapterId || chunkIndex !== null || groupSize !== null || shotStart !== null || shotEnd !== null || shotNo !== null || diagnosticsLabel || chapterCanvasIntent || chapterContext
 						? {
 							diagnosticContext: {
 								source: "agents_bridge",
@@ -7719,21 +9851,23 @@ export async function runAgentsBridgeChatTask(
 								...(effectiveChatContext.workspaceAction
 									? { workspaceAction: effectiveChatContext.workspaceAction }
 									: {}),
+								...(chapterCanvasIntent ? { intent: chapterCanvasIntent } : {}),
+								...(chapterIntentSourceNodeId
+									? { chapterIntentSourceNodeId }
+									: {}),
+								...(chapterContext ? { chapterContext } : {}),
+								...(chapterIntentGenerationConfig
+									? { chapterIntentGenerationConfig }
+									: {}),
+								...(chapterIntentVariantParams
+									? { chapterIntentVariantParams }
+									: {}),
+								...(chapterIntentStyleGuide
+									? { chapterIntentStyleGuide }
+									: {}),
 								...(chapterGroundedScope
 									? { chapterGroundedStoryboardScope: true }
 									: {}),
-								...chapterAssetRepairDiagnosticContext,
-								...(executionPlanningDirective
-									? {
-										planningRequired: executionPlanningDirective.planningRequired,
-										planningMinimumSteps:
-											executionPlanningDirective.planningMinimumSteps,
-										planningChecklistFirst:
-											executionPlanningDirective.checklistFirst,
-										planningReason: executionPlanningDirective.reason,
-									}
-									: {}),
-								promptPipeline: promptPipelineRequestSummary,
 								...(diagnosticsLabel ? { label: diagnosticsLabel } : {}),
 							},
 						}
@@ -7743,6 +9877,14 @@ export async function runAgentsBridgeChatTask(
 			};
 			if (dispatcher) init.dispatcher = dispatcher;
 			const targetUrl = `${baseUrl}/chat`;
+			console.info(
+				JSON.stringify({
+					message: "agents_bridge_performance",
+					requestId,
+					preludeMs: bridgePreludeDurationMs,
+					dispatchReadyMs: Math.max(0, Date.now() - bridgePreludeStartedAt),
+				}),
+			);
 		if (isNodeRuntime()) {
 			try {
 				return await fetch(targetUrl, init);
@@ -7766,24 +9908,44 @@ export async function runAgentsBridgeChatTask(
 		await runAgentsBridgeQueued(c, async () => {
 			try {
 				res = await runOnce();
-			} catch (err: any) {
+			} catch (err: unknown) {
 				throwIfAbortSignalAborted(requestAbort.signal);
+				const errorRecord = isRecord(err) ? err : null;
+				const causeRecord = isRecord(errorRecord?.cause) ? errorRecord.cause : null;
 				const isHeadersTimeout =
-					typeof err?.message === "string" &&
-					err.message.includes("agents_bridge_headers_timeout_non_retriable");
-				if (isHeadersTimeout && dropOnHeadersTimeout) {
+					typeof errorRecord?.message === "string" &&
+					errorRecord.message.includes("agents_bridge_headers_timeout_non_retriable");
+				if (isHeadersTimeout) {
+					const reconciliationPublicTurnId = publicTurnId || requestId;
+					const reconciliation = await reconcileAgentsBridgeAdmission({
+						baseUrl,
+						token: token ?? "",
+						userId: effectiveUserId,
+						sessionId: sessionKey,
+						publicTurnId: reconciliationPublicTurnId,
+					});
 					if (debugLogEnabled) {
 						console.warn(
-							`[agents-bridge.debug] headers-timeout dropped user=${effectiveUserId} kind=${request.kind}`,
+							`[agents-bridge.debug] headers-timeout reconciled user=${effectiveUserId} kind=${request.kind} acceptance=${reconciliation.receipt.acceptance}`,
 						);
 					}
-					throw new AppError("Agents bridge 请求头超时（任务未完成，已停止本轮执行）", {
+					if (reconciliation.receipt.acceptance === "accepted") {
+						res = buildAcceptedPendingAgentsBridgeResponse(reconciliation);
+						return;
+					}
+					throw new AppError("Agents bridge 请求头超时；上游是否受理仍未知，必须对账同一 publicTurnId", {
 						status: 504,
-						code: "agents_bridge_headers_timeout_dropped",
+						code: "agents_bridge_acceptance_unknown",
 						details: {
 							baseUrl,
 							timeoutMs,
-							dropOnHeadersTimeout: true,
+							acceptance: "unknown",
+							publicTurnId: reconciliationPublicTurnId,
+							sessionId: sessionKey || null,
+							recovery: {
+								kind: "status_reconcile",
+								referenceId: reconciliationPublicTurnId,
+							},
 						},
 					});
 				}
@@ -7796,13 +9958,22 @@ export async function runAgentsBridgeChatTask(
 						} else {
 							throw err;
 						}
-					} catch {
-						// fall through to original wrapped error
+					} catch (recoveryError) {
+						if (recoveryError instanceof AppError) throw recoveryError;
+						throw new AppError("Agents bridge 恢复启动失败", {
+							status: 503,
+							code: "agents_bridge_recovery_failed",
+							details: {
+								message: recoveryError instanceof Error
+									? recoveryError.message
+									: String(recoveryError),
+							},
+						});
 					}
 				}
 				if (!res) {
 					const causeMessage =
-						typeof err?.cause?.message === "string" ? err.cause.message : undefined;
+						typeof causeRecord?.message === "string" ? causeRecord.message : undefined;
 					throw new AppError("Agents bridge 网络请求失败（无法连接或已超时）", {
 						status: 502,
 						code: "agents_bridge_fetch_failed",
@@ -7810,16 +9981,22 @@ export async function runAgentsBridgeChatTask(
 							baseUrl,
 							timeoutMs,
 							error: {
-								name: typeof err?.name === "string" ? err.name : undefined,
+								name: typeof errorRecord?.name === "string" ? errorRecord.name : undefined,
 								message:
-									typeof err?.message === "string" ? err.message : String(err || ""),
+									typeof errorRecord?.message === "string"
+										? errorRecord.message
+										: String(err || ""),
 								cause: causeMessage,
 							},
 						},
 					});
 				}
 			}
-		}, requestAbort.signal);
+		}, {
+			signal: requestAbort.signal,
+			...(effectiveUserId ? { userId: effectiveUserId } : {}),
+			priority: workflowPhysicalAttemptDeadlineAt ? "production_deadline" : "standard",
+		});
 
 			if (!res) {
 				throw new AppError("Agents bridge 网络请求失败（无法连接或已超时）", {
@@ -7839,11 +10016,33 @@ export async function runAgentsBridgeChatTask(
 					`[agents-bridge.debug] response failed status=${response.status} body=${truncateForDebugLog(body)}`,
 				);
 			}
-			throw new AppError("Agents bridge 调用失败", {
-				status: 502,
-				code: "agents_bridge_failed",
-				details: {
-					status: response.status,
+			let payload: Record<string, unknown> | null = null;
+			try {
+				payload = asRecord(body ? JSON.parse(body) : null);
+			} catch {
+				payload = null;
+			}
+			const nestedError = asRecord(payload?.error);
+			const upstreamMessage =
+				(typeof payload?.message === "string" && payload.message.trim()
+					? payload.message.trim()
+					: null)
+				?? (typeof payload?.error === "string" && payload.error.trim()
+					? payload.error.trim()
+					: null)
+				?? (typeof nestedError?.message === "string" && nestedError.message.trim()
+					? nestedError.message.trim()
+					: null);
+			const upstreamCode =
+				typeof payload?.code === "string" && payload.code.trim()
+					? payload.code.trim()
+					: "agents_bridge_failed";
+			throw new AppError(upstreamMessage ?? "Agents bridge 调用失败", {
+				status: response.status,
+				code: upstreamCode,
+				terminal: payload?.terminal === true,
+				details: payload?.details ?? {
+					upstreamStatus: response.status,
 					body: body || null,
 				},
 			});
@@ -7855,39 +10054,64 @@ export async function runAgentsBridgeChatTask(
 				? await parseAgentsBridgeSseResponse({
 					response,
 					c,
+					abortSignal: requestAbort.signal,
+					onActivity: requestAbort.confirmAdmission,
 					...(options?.onStreamEvent ? { onEvent: options.onStreamEvent } : {}),
 				})
 				: await response.json().catch(() => null)
 		) as AgentsBridgeChatResponse | null;
 		throwIfAbortSignalAborted(requestAbort.signal);
-		const text = typeof data?.text === "string" ? data.text : "";
+		const text = typeof data?.text === "string" ? data.text.trim() : "";
 		throwIfAbortSignalAborted(requestAbort.signal);
-	const bridgeToolCalls = Array.isArray(data?.trace?.toolCalls)
-		? data!.trace!.toolCalls
+		const pendingUserInput = normalizeAgentsBridgePendingUserInput(data?.pendingUserInput);
+		const bridgeToolCalls = Array.isArray(data?.trace?.toolCalls)
+			? data!.trace!.toolCalls
 				.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item))
 				.slice(0, 200)
-		: [];
+			: [];
 	const normalizedBridgeToolCalls = normalizeBridgeToolCalls(bridgeToolCalls);
+	const durableTaskReferences = collectDurableTaskReferences(normalizedBridgeToolCalls);
+	const actionRecoveryFacts = collectDurableActionRecoveryFacts(normalizedBridgeToolCalls);
 	const assets = Array.isArray(data?.assets)
 		? data.assets
 				.map((asset) => {
 					const rawType = typeof asset?.type === "string" ? asset.type.trim().toLowerCase() : "";
-					const type = rawType === "video" ? "video" : rawType === "image" ? "image" : null;
+					if (rawType !== "video" && rawType !== "image" && rawType !== "audio" && rawType !== "file") {
+						throw new Error(`agents bridge 返回了不支持的资产类型：${rawType || "missing"}`);
+					}
+					const type: "image" | "video" | "audio" | "file" = rawType;
 					const url = typeof asset?.url === "string" ? asset.url.trim() : "";
 					const thumbnailUrl =
 						type === "video" && typeof asset?.thumbnailUrl === "string"
 							? asset.thumbnailUrl.trim()
 							: "";
-					if (!type || !url || !/^https?:\/\//i.test(url)) return null;
+					const fileName = type === "file" && typeof asset?.fileName === "string"
+						? asset.fileName.trim()
+						: "";
+					const mimeType = type === "file" && typeof asset?.mimeType === "string"
+						? asset.mimeType.trim()
+						: "";
+					const assetName = type === "file" && typeof asset?.title === "string"
+						? asset.title.trim()
+						: "";
+					const assetId = type === "file" && typeof asset?.assetId === "string"
+						? asset.assetId.trim()
+						: "";
+					if (!url || !isHttpAssetUrl(url)) {
+						throw new Error("agents bridge 返回了无效的资产 URL");
+					}
 					return {
 						type,
 						url,
-						...(thumbnailUrl && /^https?:\/\//i.test(thumbnailUrl)
+						...(thumbnailUrl && isHttpAssetUrl(thumbnailUrl)
 							? { thumbnailUrl }
 							: {}),
+						...(fileName ? { fileName } : {}),
+						...(mimeType ? { mimeType } : {}),
+						...(assetName ? { assetName } : {}),
+						...(assetId ? { assetId } : {}),
 					};
 				})
-				.filter((asset): asset is { type: "image" | "video"; url: string; thumbnailUrl?: string } => !!asset)
 				.slice(0, 24)
 		: [];
 	const traceOutput =
@@ -7903,7 +10127,9 @@ export async function runAgentsBridgeChatTask(
 				.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item))
 				.slice(0, 24)
 		: [];
-	const traceRuntime = normalizeAgentsRuntimeTraceSummary(data?.trace?.runtime);
+	const llmTermination = summarizeAgentsBridgeLlmTermination(traceTurns);
+	const rawTraceRuntime = isRecord(data?.trace?.runtime) ? data.trace.runtime : null;
+	const traceRuntime = normalizeAgentsRuntimeTraceSummary(rawTraceRuntime);
 	const traceTodoList = normalizeAgentsTodoListTraceSummary(data?.trace?.todoList);
 	const traceTodoEvents = normalizeAgentsTodoEventTraceSummaries(data?.trace?.todoEvents);
 	const tracePlanning =
@@ -7913,13 +10139,122 @@ export async function runAgentsBridgeChatTask(
 			todoEvents: traceTodoEvents,
 		});
 	const traceCompletion = normalizeAgentsCompletionTraceSummary(data?.trace?.completion);
+	const reportedTraceRunOutcome = normalizeAgentsBridgeRunOutcome(data?.trace?.runOutcome);
+	if (!traceRuntime?.physicalRunExit) {
+		throw new AppError("Agents bridge 返回的物理退出合同无效", {
+			status: 502,
+			code: "agents_bridge_physical_run_exit_protocol_invalid",
+		});
+	}
+	const expectedTerminalAuthority = options?.directForcedAgentExecution === true
+		? "workflow_action"
+		: "user_delivery";
+	if (traceRuntime.terminalAuthority !== expectedTerminalAuthority) {
+		throw new AppError("Agents bridge 返回的终态裁决权合同无效", {
+			status: 502,
+			code: "agents_bridge_terminal_authority_protocol_invalid",
+			details: {
+				expected: expectedTerminalAuthority,
+				actual: traceRuntime.terminalAuthority,
+			},
+		});
+	}
+	const authoritativeRunOutcome = projectAgentsBridgeRunOutcomeFromPhysicalExit(
+		traceRuntime.physicalRunExit,
+	);
+	const terminalDeliveryWasReported = rawTraceRuntime?.terminalDelivery !== undefined;
+	if (terminalDeliveryWasReported && !traceRuntime?.terminalDelivery) {
+		throw new AppError("Agents bridge 返回的持久交付终态合同无效", {
+			status: 502,
+			code: "agents_bridge_terminal_delivery_protocol_invalid",
+		});
+	}
+	const traceRunOutcome = authoritativeRunOutcome;
+	const runOutcomeProtocolDrift = Boolean(
+		authoritativeRunOutcome && reportedTraceRunOutcome && (
+			authoritativeRunOutcome.status !== reportedTraceRunOutcome.status ||
+			authoritativeRunOutcome.reason !== reportedTraceRunOutcome.reason
+		),
+	);
+	if (!traceCompletion || !reportedTraceRunOutcome || !traceRunOutcome) {
+		throw new AppError("Agents bridge 返回的任务完成合同无效", {
+			status: 502,
+			code: "agents_bridge_completion_protocol_invalid",
+			details: {
+				requiredContract: "completion@1 + runOutcome@1",
+				completionPresent: Boolean(traceCompletion),
+				runOutcomePresent: Boolean(reportedTraceRunOutcome),
+			},
+		});
+	}
+	const durableTerminalDelivery = traceRuntime.terminalDelivery ?? null;
+	if (durableTerminalDelivery && traceRunOutcome.status !== "succeeded") {
+		throw new AppError("Agents bridge 的持久交付终态与执行出口不一致", {
+			status: 502,
+			code: "agents_bridge_terminal_delivery_outcome_mismatch",
+			details: {
+				durableStatus: durableTerminalDelivery.requestTerminal.status,
+				runOutcomeStatus: traceRunOutcome.status,
+			},
+		});
+	}
 	const semanticTaskSummaryFromToolTrace =
 		normalizeAgentsSemanticTaskSummaryFromToolCalls(normalizedBridgeToolCalls);
-	const semanticTaskSummaryFromText = normalizeAgentsSemanticTaskSummaryFromText(text);
-	const semanticTaskSummary = semanticTaskSummaryFromToolTrace ?? semanticTaskSummaryFromText;
+	const semanticTaskSummaryFromRuntimeIntent =
+		normalizeAgentsSemanticTaskSummaryFromRuntimeIntentContract(
+			traceRuntime?.userIntentContract,
+		);
+	const semanticTaskSummaryFromDurableTerminal = durableTerminalDelivery
+		? normalizeAgentsSemanticTaskSummaryFromRuntimeIntentContract(
+			durableTerminalDelivery.expectedDelivery,
+		)
+		: null;
+	const durableTerminalTaskSummary = durableTerminalDelivery && semanticTaskSummaryFromDurableTerminal
+		? {
+				...semanticTaskSummaryFromDurableTerminal,
+				deliveryEvidence: durableTerminalDelivery.deliveryEvidence,
+				deliveryVerification: durableTerminalDelivery.deliveryVerification,
+		  }
+		: null;
+	const semanticTaskSummary =
+		durableTerminalTaskSummary ??
+		semanticTaskSummaryFromToolTrace ??
+		semanticTaskSummaryFromRuntimeIntent;
+	const semanticTaskSummarySource: PublicChatExpectedDeliverySummary["source"] =
+		durableTerminalTaskSummary
+			? "agents_cli_user_intent_contract"
+			: semanticTaskSummaryFromToolTrace
+			? "agents_cli_tool_trace"
+			: semanticTaskSummaryFromRuntimeIntent
+				? "agents_cli_user_intent_contract"
+				: "none";
+	if (
+		semanticTaskSummaryFromToolTrace?.deliveryEvidence &&
+		semanticTaskSummaryFromToolTrace.deliveryVerification &&
+		!isPublicChatDeliveryEnvelopeStructurallyConsistent({
+			evidence: semanticTaskSummaryFromToolTrace.deliveryEvidence,
+			verification: semanticTaskSummaryFromToolTrace.deliveryVerification,
+			expectedContractHash: readTrimmedString(traceRuntime?.userIntentContract?.contractHash),
+		})
+	) {
+		throw new AppError("Agents bridge 返回的交付信封引用不一致", {
+			status: 502,
+			code: "agents_bridge_delivery_envelope_inconsistent",
+			details: {
+				contractHash: semanticTaskSummaryFromToolTrace.deliveryVerification.contractHash,
+				runtimeContractHash: readTrimmedString(traceRuntime?.userIntentContract?.contractHash),
+			},
+		});
+	}
 	const semanticExecutionIntent = buildAgentsSemanticExecutionIntentSummary({
 		taskSummary: semanticTaskSummary,
-		source: semanticTaskSummaryFromToolTrace ? "tool_trace_output_json" : "task_interrogation_json",
+		source: durableTerminalTaskSummary
+			? "runtime_user_intent_contract"
+			: semanticTaskSummaryFromToolTrace
+			? "tool_trace_output_json"
+			: semanticTaskSummaryFromRuntimeIntent
+				? "runtime_user_intent_contract"
+				: "none",
 	});
 	const canvasPlanDiagnosticsRaw = buildCanvasPlanDiagnostics(text);
 	const toolEvidence = summarizeBridgeToolEvidence(normalizedBridgeToolCalls);
@@ -7933,15 +10268,6 @@ export async function runAgentsBridgeChatTask(
 		outputMode,
 		canvasPlanDiagnostics: canvasPlanDiagnosticsRaw,
 	});
-	const promptPipeline = buildPromptPipelineTraceSummary({
-		target: promptPipelineTarget,
-		precheckSnapshot: promptPipelinePrecheck,
-		toolEvidence,
-		toolCalls: normalizedBridgeToolCalls,
-		text,
-		assetCount: assets.length,
-		canvasPlanDiagnostics,
-	});
 	if (debugLogEnabled) {
 		console.info(
 			`[agents-bridge.debug] response ok user=${effectiveUserId} kind=${request.kind} textChars=${text.length} assets=${assets.length}`,
@@ -7952,37 +10278,14 @@ export async function runAgentsBridgeChatTask(
 		typeof data?.id === "string" && data.id.trim()
 			? data.id.trim()
 			: `task_${crypto.randomUUID()}`;
-	const traceScopeType = canvasProjectId
-		? "project"
-		: chapterId
-			? "chapter"
-			: bookId
-				? "book"
-				: sessionKey
-					? "session"
-					: "user";
-		const traceScopeId = canvasProjectId || chapterId || bookId || sessionKey || effectiveUserId;
-		const requestId = String((c as any).get?.("requestId") || "").trim();
-		const pagePath = readRequestHeader(c, "x-tapcanvas-page-path");
-		const referrerPath = readRequestHeader(c, "x-tapcanvas-referrer-path");
-		const trimmedText = text.trim();
-		const assistantTextPreview = trimmedText
-			? truncateExecutionTraceString(trimmedText, EXECUTION_TRACE_TEXT_PREVIEW_LIMIT)
-			: "";
-		const assistantTextHead = truncateExecutionTraceString(
-			readTraceStringField(traceOutput, "head") || trimmedText.slice(0, 1200),
-			1200,
-		);
-		const assistantTextTail = truncateExecutionTraceString(
-			readTraceStringField(traceOutput, "tail") ||
-				(trimmedText ? trimmedText.slice(Math.max(0, trimmedText.length - 1200)) : ""),
-			1200,
-		);
 		const fallbackSucceededToolCalls = normalizedBridgeToolCalls.filter(
 			(call) => call.status === "succeeded",
 		).length;
 		const fallbackFailedToolCalls = normalizedBridgeToolCalls.filter(
-			(call) => call.status === "failed",
+			(call) => call.status === "failed" && call.severity !== "warning",
+		).length;
+		const fallbackWarningToolCalls = normalizedBridgeToolCalls.filter(
+			(call) => call.severity === "warning",
 		).length;
 		const fallbackDeniedToolCalls = normalizedBridgeToolCalls.filter(
 			(call) => call.status === "denied",
@@ -7996,290 +10299,236 @@ export async function runAgentsBridgeChatTask(
 			succeededToolCalls:
 				readTraceNumberField(traceSummary, "succeededToolCalls") ?? fallbackSucceededToolCalls,
 			failedToolCalls:
-				readTraceNumberField(traceSummary, "failedToolCalls") ?? fallbackFailedToolCalls,
+				Math.max(
+					(readTraceNumberField(traceSummary, "failedToolCalls") ?? fallbackFailedToolCalls) -
+					(readTraceNumberField(traceSummary, "warningToolCalls") ?? fallbackWarningToolCalls),
+					0,
+				),
 			deniedToolCalls:
 				readTraceNumberField(traceSummary, "deniedToolCalls") ?? fallbackDeniedToolCalls,
 			blockedToolCalls:
 				readTraceNumberField(traceSummary, "blockedToolCalls") ?? fallbackBlockedToolCalls,
+			warningToolCalls:
+				readTraceNumberField(traceSummary, "warningToolCalls") ?? fallbackWarningToolCalls,
 			runMs: readTraceNumberField(traceSummary, "runMs") ?? null,
 		};
-		const toolExecutionIssues = summarizeBridgeToolExecutionIssues({
-			toolCalls: normalizedBridgeToolCalls,
-			toolStatusSummary,
-		});
 		const chapterGroundedVisualPreproduction = buildChapterGroundedVisualPreproductionSummary({
 			toolCalls: normalizedBridgeToolCalls,
 			selectedNodeKind: effectiveChatContext.selectedNodeKind,
 		});
-		const chapterAssetPreproductionRequiredCount =
-			resolveChapterPreproductionRequiredAssetCount(chapterContinuityInjection);
 		const expectedDelivery = buildPublicChatExpectedDeliverySummary({
 			taskSummary: semanticTaskSummary,
-			requiresExecutionDelivery: semanticExecutionIntent.requiresExecutionDelivery,
-			forceAssetGeneration,
-			chapterGroundedPromptSpecRequired: chapterGroundedScope,
-			chapterAssetPreproductionRequired: chapterAssetPreproductionRequiredCount > 0,
-			chapterAssetPreproductionCount: chapterAssetPreproductionRequiredCount,
-			selectedNodeKind: effectiveChatContext.selectedNodeKind,
-			selectedReferenceKind: effectiveChatContext.selectedReference?.kind ?? null,
-			workspaceAction: effectiveChatContext.workspaceAction,
+			source: semanticTaskSummarySource,
 		});
 		const deliveryEvidence = buildPublicChatDeliveryEvidence({
+			canonicalItems: semanticTaskSummary?.deliveryEvidence ?? [],
 			assets,
 			toolEvidence,
 			chapterGroundedVisualPreproduction,
 			toolCalls: normalizedBridgeToolCalls,
+			hostManifest: hostManifest ?? null,
+			hostCanvasContext: hostCanvasContext ?? null,
 		});
-		const deliveryVerification = verifyPublicChatDelivery({
-			expected: expectedDelivery,
-			evidence: deliveryEvidence,
-		});
-		const diagnosticFlags = buildDiagnosticFlags({
-			requestKind: request.kind,
-			text,
-			toolEvidence,
-			canvasPlanDiagnostics,
-			outputMode,
-			toolStatusSummary,
-			toolExecutionIssues,
+		const deliveryVerification = semanticTaskSummary?.deliveryVerification ?? null;
+		const publicDeliveryEvidence = hasMaterializedPublicDeliveryEvidence(deliveryEvidence)
+			? deliveryEvidence
+			: null;
+		const publicDeliveryVerification = publicDeliveryEvidence
+			? deliveryVerification
+			: null;
+		const toolExecutionIssues = summarizeBridgeToolExecutionIssues({
 			toolCalls: normalizedBridgeToolCalls,
-			runtimeTrace: traceRuntime,
-			generationGate,
-			forceAssetGeneration,
-			semanticExecutionIntent,
-			planningTrace: tracePlanning,
-			todoListTrace: traceTodoList,
-			autoModeAgentsTeamRequired: Boolean(
-				mode === "auto" &&
-					requireAgentsTeamExecution &&
-					publicAgentsRequest &&
-					canvasProjectId &&
-					canvasFlowId &&
-					!planOnly,
-			),
-			chapterGroundedPromptSpecRequired: chapterGroundedScope,
-			novelSingleVideoEvidenceRequired,
-			autoProgressDetectionRequired,
-			selectedNodeKind: effectiveChatContext.selectedNodeKind,
-			selectedReference: effectiveChatContext.selectedReference,
-			workspaceAction: effectiveChatContext.workspaceAction,
-			referenceImagesCount: mergedReferenceImages.length,
-			assetInputsCount: assetInputs.length,
-			requestAssetInputs: assetInputs,
-			chapterContinuityInjection,
-			chapterGroundedVisualPreproduction,
+			toolStatusSummary,
+			deliveryVerification,
+			deliveryEvidence,
 		});
+		// Hono does not run a parallel semantic, creative, or delivery-verification
+		// pass. The canonical envelope above was verified inside agents-cli; Hono only
+		// projects it and adds deterministic host execution facts for UI/continuation.
+		const diagnosticFlags: DiagnosticFlag[] = runOutcomeProtocolDrift
+			? [{
+				code: "agent_run_outcome_physical_exit_mismatch",
+				severity: "high",
+				title: "Agent 物理退出投影不一致",
+				detail:
+					"已按 TaskStore-backed PhysicalRunExitV1 投影本轮状态；较弱的 runOutcome 未获准覆盖权威任务出口。",
+			}]
+			: [];
 		const agentDecision = buildAgentsBridgeDecision({
 			outputMode,
 			assetCount: assets.length,
 			toolEvidence,
 			canvasPlanDiagnostics,
 		});
-		const turnVerdict = buildAgentsBridgeTurnVerdict({
-			text,
-			assetCount: assets.length,
-			toolEvidence,
-			toolExecutionIssues,
-			canvasPlanDiagnostics,
-			diagnosticFlags,
-			forceAssetGeneration,
-			semanticExecutionIntent,
-			deliveryVerification,
-			completionTrace: traceCompletion,
+		const projectedRequestTerminal = resolveAgentsBridgeRequestTerminal({
+			runOutcome: traceRunOutcome,
+			pendingUserInput: Boolean(pendingUserInput),
 		});
+		const requestTerminal = durableTerminalDelivery?.requestTerminal ?? projectedRequestTerminal;
+		const logicalTaskState = (() => {
+			try {
+				return traceRuntime.terminalAuthority === "workflow_action"
+					? projectWorkflowActionLogicalTaskState({
+							exit: traceRuntime.physicalRunExit,
+							expectedLogicalTaskId: publicTurnId || requestId,
+					  })
+					: projectPublicChatLogicalTaskState({
+							exit: traceRuntime.physicalRunExit,
+							expectedLogicalTaskId: publicTurnId || requestId,
+							deliveryVerified: durableTerminalDelivery !== null,
+					  });
+			} catch (error: unknown) {
+				throw new AppError("Agents bridge 的逻辑任务状态无法提交", {
+					status: 502,
+					code: "agents_bridge_logical_task_state_invalid",
+					details: error instanceof Error ? error.message : String(error),
+				});
+			}
+		})();
+		const hostExecutionHandoff = collectPublicChatHostExecutionHandoffEvidence({
+			manifest: hostManifest ?? null,
+			toolCalls: normalizedBridgeToolCalls,
+		});
+		const turnVerdict = buildAgentsBridgeTurnVerdict(requestTerminal);
 		const canvasMutation = buildAgentsBridgeCanvasMutationSummary(normalizedBridgeToolCalls);
+		const observabilityFinishedAt = new Date().toISOString();
+		let canonicalPersistence: AgentCanonicalPersistenceHealthV1 = {
+			status: "degraded",
+			spanCount: 0,
+			evaluationCount: 0,
+			errorCode: "agents_runtime_observability_missing",
+		};
+		if (traceRuntime?.observability) {
+			try {
+				const workflowKey =
+					typeof extras.workflowKey === "string" && extras.workflowKey.trim()
+						? extras.workflowKey.trim()
+						: `agents_bridge.${request.kind}`;
+				const builtObservability = buildAgentObservabilitySpans({
+					traceContext: agentTraceContext,
+					runtime: traceRuntime.observability,
+					requestFinishedAt: observabilityFinishedAt,
+					scope: {
+						projectId: canvasProjectId || null,
+						bookId: bookId || null,
+						chapterId: chapterId || null,
+						flowId: canvasFlowId || null,
+						nodeId: canvasNodeId || null,
+						label: diagnosticsLabel || null,
+						workflowKey,
+					},
+					modelKey: modelKey || modelAlias || null,
+					toolCalls: normalizedBridgeToolCalls,
+					assets,
+					expectedDelivery,
+					deliveryEvidence,
+					deliveryVerification,
+					turnVerdict,
+					requestTerminal,
+					performanceSnapshot: traceRuntime.performanceSnapshot ?? null,
+				});
+				canonicalPersistence = await persistBuiltAgentObservability(
+					c,
+					effectiveUserId,
+					builtObservability,
+				);
+			} catch (error: unknown) {
+				canonicalPersistence = {
+					status: "degraded",
+					spanCount: 0,
+					evaluationCount: 0,
+					errorCode: "canonical_span_build_failed",
+				};
+				console.error(
+					`[agent-observability] span build degraded trace=${agentTraceContext.traceId} reason=${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		}
 		const bridgeResponseMeta: AgentsBridgeResponseMeta = {
+			traceId: agentTraceContext.traceId,
+			...(modelKey ? { modelKey } : {}),
+			...(modelAlias ? { modelAlias } : {}),
 			...(requestId ? { requestId } : {}),
 			...(sessionKey ? { sessionId: sessionKey } : {}),
 			outputMode,
 			toolEvidence,
 			...(expectedDelivery.active ? { expectedDelivery } : {}),
-			...(deliveryVerification.applicable ? { deliveryVerification } : {}),
-			...(expectedDelivery.active ? { deliveryEvidence } : {}),
-			promptPipeline,
+			...(publicDeliveryVerification ? { deliveryVerification: publicDeliveryVerification } : {}),
+			// Accepted async receipts are internal lifecycle evidence even before an
+			// asset URL exists. The public projection still requires materialization,
+			// while the durable continuation registrar must retain the exact run/task
+			// identity so the suspended logical turn has an owner.
+			...(deliveryEvidence.artifacts.length > 0 || publicDeliveryEvidence
+				? { deliveryEvidence }
+				: {}),
+			...(traceTurns.length > 0 ? { llmTermination } : {}),
 			toolStatusSummary,
+			toolExecutionIssues,
 			diagnosticFlags,
 			canvasPlan: canvasPlanDiagnostics,
 			...(canvasMutation ? { canvasMutation } : {}),
 			agentDecision,
 			...(traceCompletion ? { completionTrace: traceCompletion } : {}),
+			runOutcome: traceRunOutcome,
+			logicalTaskState,
 			...(semanticExecutionIntent.detected ? { semanticExecutionIntent } : {}),
 			...(tracePlanning ? { planningTrace: tracePlanning } : {}),
 			...(traceTodoList ? { todoList: traceTodoList } : {}),
 			...(traceTodoEvents.length > 0 ? { todoEvents: traceTodoEvents } : {}),
 			turnVerdict,
-		};
-		const executionTraceToolCalls = buildExecutionTraceToolCallSummary(normalizedBridgeToolCalls);
-		const compactResponseTrace: Record<string, unknown> = {
-			...(traceOutput
-				? {
-						output: {
-							textChars:
-								typeof traceOutput.textChars === "number" && Number.isFinite(traceOutput.textChars)
-									? traceOutput.textChars
-									: text.length,
-							...(assistantTextPreview ? { preview: assistantTextPreview } : {}),
-							...(assistantTextHead ? { head: assistantTextHead } : {}),
-							...(assistantTextTail ? { tail: assistantTextTail } : {}),
-						},
-				  }
+			requestTerminal,
+			...(hostExecutionHandoff ? { hostExecutionHandoff } : {}),
+			...(durableTaskReferences.length > 0 ? { durableTaskReferences } : {}),
+			...(actionRecoveryFacts.length > 0 ? { actionRecoveryFacts } : {}),
+			...(traceRuntime ? { runtime: traceRuntime } : {}),
+			...(traceRuntime?.executionProvenance
+				? { executionProvenance: traceRuntime.executionProvenance }
 				: {}),
-			...(traceSummary ? { summary: sanitizeExecutionTraceValue(traceSummary) } : {}),
-			...(traceCompletion ? { completion: sanitizeExecutionTraceValue(traceCompletion) } : {}),
-			...(tracePlanning ? { planning: sanitizeExecutionTraceValue(tracePlanning) } : {}),
-			...(traceRuntime ? { runtime: sanitizeExecutionTraceValue(traceRuntime) } : {}),
-			...(traceTodoList ? { todoList: sanitizeExecutionTraceValue(traceTodoList) } : {}),
-			...(traceTodoEvents.length > 0
-				? { todoEvents: sanitizeExecutionTraceValue(traceTodoEvents) }
-				: {}),
-			...(traceTurns.length > 0
-				? {
-						turns: traceTurns.slice(0, 8).map((turn) => ({
-							turn: typeof turn.turn === "number" ? turn.turn : null,
-							textPreview: truncateExecutionTraceString(turn.textPreview, 320),
-							textChars:
-								typeof turn.textChars === "number" && Number.isFinite(turn.textChars)
-									? turn.textChars
-									: null,
-							toolCallCount:
-								typeof turn.toolCallCount === "number" && Number.isFinite(turn.toolCallCount)
-									? turn.toolCallCount
-									: null,
-							toolNames: Array.isArray(turn.toolNames)
-								? turn.toolNames
-										.filter((name): name is string => typeof name === "string" && !!name.trim())
-										.slice(0, 12)
-								: [],
-							finished: turn.finished === true,
-						})),
-				  }
-				: {}),
-		};
-		await writeUserExecutionTrace(c, effectiveUserId, {
-			scopeType: traceScopeType,
-			scopeId: traceScopeId,
-			taskId: id,
-			requestKind: `agents_bridge:${request.kind}`,
-			inputSummary: [
-				canvasProjectId ? `project=${canvasProjectId}` : "",
-				bookId ? `book=${bookId}` : "",
-				chapterId ? `chapter=${chapterId}` : "",
-				chunkIndex !== null ? `chunk=${chunkIndex}` : "",
-				groupSize !== null ? `groupSize=${groupSize}` : "",
-				shotStart !== null && shotEnd !== null ? `shots=${shotStart}-${shotEnd}` : "",
-				shotNo !== null ? `shotNo=${shotNo}` : "",
-				diagnosticsLabel ? `label=${diagnosticsLabel}` : "",
-				`prompt=${String(request.prompt || "").trim().slice(0, 1000)}`,
-			]
-				.filter(Boolean)
-				.join("; "),
-			decisionLog: [
-				`baseUrl=${baseUrl}`,
-				`requiredSkills=${requiredSkills.join(",") || "none"}`,
-				`runtimeProfile=${traceRuntime?.profile || "unknown"}`,
-				`runtimeRegisteredTools=${traceRuntime?.registeredToolNames.length ?? 0}`,
-				`runtimeRegisteredTeamTools=${traceRuntime?.registeredTeamToolNames.join(",") || "none"}`,
-				`runtimeLoadedSkills=${traceRuntime?.loadedSkills.join(",") || "none"}`,
-				`runtimeAllowedSubagentTypes=${traceRuntime?.allowedSubagentTypes.join(",") || "none"}`,
-				`runtimeRequireAgentsTeamExecution=${traceRuntime?.requireAgentsTeamExecution ? "yes" : "no"}`,
-				`planning=${tracePlanning ? `${tracePlanning.hasChecklist ? "present" : "missing"}:${Math.max(tracePlanning.latestStepCount, tracePlanning.maxObservedStepCount)}/${tracePlanning.minimumStepCount}:${tracePlanning.checklistComplete ? "complete" : "open"}` : "none"}`,
-				`todoList=${traceTodoList ? `${traceTodoList.completedCount}/${traceTodoList.totalCount}` : "none"}`,
-				`todoEvents=${traceTodoEvents.length}`,
-				`semanticExecutionIntent=${semanticExecutionIntent.detected ? `${semanticExecutionIntent.taskKind || "unknown"}:${semanticExecutionIntent.requiresExecutionDelivery ? "execute" : "non_execute"}` : "none"}`,
-				"allowedTools=default",
-				`referenceImages=${mergedReferenceImages.length}`,
-				`assetInputs=${assetInputs.length}`,
-				`bridgeToolCalls=${bridgeToolCalls.length}`,
-				`turns=${traceTurns.length}`,
-				`toolStatuses=succeeded:${toolStatusSummary.succeededToolCalls},failed:${toolStatusSummary.failedToolCalls},denied:${toolStatusSummary.deniedToolCalls},blocked:${toolStatusSummary.blockedToolCalls}`,
-				`toolIssueSummary=failed:${toolExecutionIssues.failedToolCalls},denied:${toolExecutionIssues.deniedToolCalls},blocked:${toolExecutionIssues.blockedToolCalls},coordinationBlocked:${toolExecutionIssues.coordinationBlockedToolCalls},actionableBlocked:${toolExecutionIssues.actionableBlockedToolCalls}`,
-				`outputMode=${outputMode}`,
-				`promptPipelineTarget=${promptPipeline.target}`,
-				`promptPipelinePrecheck=${promptPipeline.precheck.status}:${promptPipeline.precheck.reason}`,
-				`promptPipelinePrerequisite=${promptPipeline.prerequisiteGeneration.status}:${promptPipeline.prerequisiteGeneration.reason}`,
-				`promptPipelineGeneration=${promptPipeline.promptGeneration.status}:${promptPipeline.promptGeneration.reason}`,
-				`canvasPlan=${canvasPlanDiagnostics.parseSuccess ? "parsed" : canvasPlanDiagnostics.tagPresent ? "invalid" : "missing"}`,
-				`canvasPlanNodes=${Number(canvasPlanDiagnostics.nodeCount || 0)}`,
-				`expectedDelivery=${expectedDelivery.active ? `${expectedDelivery.kind}:${expectedDelivery.reason}` : "none"}`,
-				`deliveryVerification=${deliveryVerification.status}:${deliveryVerification.code || "ok"}`,
-				`readProjectState=${toolEvidence.readProjectState ? "yes" : "no"}`,
-				`readBookIndex=${toolEvidence.readBookIndex ? "yes" : "no"}`,
-				`readChapter=${toolEvidence.readChapter ? "yes" : "no"}`,
-				`flags=${diagnosticFlags.length}`,
-				`turnVerdict=${turnVerdict.status}:${turnVerdict.reasons.join(",")}`,
-			],
-			toolCalls: executionTraceToolCalls,
-			meta: {
-				provider: "agents_bridge",
-				responseId: id,
-				assetCount: assets.length,
-				textChars: text.length,
-				...(assistantTextPreview ? { assistantTextPreview } : {}),
-				...(assistantTextHead ? { assistantTextHead } : {}),
-				...(assistantTextTail ? { assistantTextTail } : {}),
-				...(requestId ? { requestId } : {}),
-				...(pagePath ? { pagePath } : {}),
-				...(referrerPath ? { referrerPath } : {}),
-				...(canvasProjectId ? { projectId: canvasProjectId } : {}),
-				...(canvasFlowId ? { flowId: canvasFlowId } : {}),
-				...(bookId ? { bookId } : {}),
-				...(chapterId ? { chapterId } : {}),
-				...(chunkIndex !== null ? { chunkIndex } : {}),
-				...(shotStart !== null ? { shotStart } : {}),
-				...(shotEnd !== null ? { shotEnd } : {}),
-				...(groupSize !== null ? { groupSize } : {}),
-				...(shotNo !== null ? { shotNo } : {}),
-				...(diagnosticsLabel ? { label: diagnosticsLabel } : {}),
-				...(sessionKey ? { sessionId: sessionKey } : {}),
-				...(modelKey ? { modelKey } : {}),
-				...(modelAlias ? { modelAlias } : {}),
-				...(traceRuntime ? { agentsRuntime: traceRuntime } : {}),
-				...(traceCompletion ? { agentsCompletion: traceCompletion } : {}),
-				...(tracePlanning ? { agentsPlanning: tracePlanning } : {}),
-				agentsTeamExecution: buildAgentsTeamExecutionSummary({
-					toolCalls: normalizedBridgeToolCalls,
-				}),
-				...bridgeResponseMeta,
-				requestContext: {
-					promptChars: String(request.prompt || "").trim().length,
-					requiredSkills,
-					loadedSkills: traceRuntime?.loadedSkills ?? [],
-					allowedTools: allowedTools ?? [],
-					runtimeProfile: traceRuntime?.profile || "unknown",
-					runtimeRegisteredToolNames: traceRuntime?.registeredToolNames ?? [],
-					runtimeRegisteredTeamToolNames: traceRuntime?.registeredTeamToolNames ?? [],
-					runtimeAllowedSubagentTypes: traceRuntime?.allowedSubagentTypes ?? [],
-					runtimeRequireAgentsTeamExecution: traceRuntime?.requireAgentsTeamExecution === true,
-					runtimeContextTotalChars: traceRuntime?.contextDiagnostics?.totalChars ?? 0,
-					runtimeContextTotalBudgetChars: traceRuntime?.contextDiagnostics?.totalBudgetChars ?? 0,
-					runtimeContextTruncatedSourceIds:
-						traceRuntime?.contextDiagnostics?.sources
-							.filter((source) => source.truncated)
-							.map((source) => source.id) ?? [],
-					runtimePolicySummary: traceRuntime?.policySummary ?? null,
-					referenceImages: mergedReferenceImages.length,
-					referenceImageSlots: summarizeReferenceImageSlotsForTrace(referenceImageSlots),
-					assetInputs: assetInputs.length,
-					maxTurns: requestedMaxTurns,
-					publicAgentsRequest,
-				},
-				responseTrace: compactResponseTrace,
+			observability: {
+				canonicalPersistence,
 			},
-			resultSummary: `mode=${outputMode}; verdict=${turnVerdict.status}; delivery=${deliveryVerification.status}:${deliveryVerification.code || "ok"}; assets=${assets.length}; textChars=${text.length}; tools=${bridgeToolCalls.length}; canvasPlanNodes=${Number(canvasPlanDiagnostics.nodeCount || 0)}`,
-		});
+		};
 		return {
 			id,
 			kind: request.kind,
-			status: "succeeded",
+			status: resolveAgentsBridgeTaskResultStatus(logicalTaskState),
 			assets,
 			raw: {
 				provider: "agents_bridge",
 				vendor: "agents",
 				userId: effectiveUserId,
 				text,
+				...(pendingUserInput ? { pendingUserInput } : {}),
 				meta: bridgeResponseMeta,
 			},
 		};
+	} catch (error: unknown) {
+		const errorRecord = error && typeof error === "object" && !Array.isArray(error)
+			? error as Record<string, unknown>
+			: null;
+		const bridgeErrorCode =
+			typeof errorRecord?.code === "string" && errorRecord.code.trim()
+				? errorRecord.code.trim().slice(0, 160)
+				: "agents_bridge_unhandled_failure";
+		const failureObservability = buildFailedHonoAgentObservability({
+			traceContext: agentTraceContext,
+			requestFinishedAt: new Date().toISOString(),
+			scope: {
+				projectId: canvasProjectId || null,
+				bookId: bookId || null,
+				chapterId: chapterId || null,
+				flowId: canvasFlowId || null,
+				nodeId: canvasNodeId || null,
+				label: diagnosticsLabel || null,
+				workflowKey: typeof extras.workflowKey === "string" && extras.workflowKey.trim()
+					? extras.workflowKey.trim()
+					: `agents_bridge.${request.kind}`,
+			},
+			modelKey: modelKey || modelAlias || null,
+			errorCode: bridgeErrorCode,
+		});
+		await persistBuiltAgentObservability(c, effectiveUserId, failureObservability);
+		throw error;
 	} finally {
 		requestAbort.cleanup();
 	}

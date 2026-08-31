@@ -9,7 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetModelList returns all non-deleted models with every field including kind/capabilities/params_def.
+// GetModelList returns enabled canonical models with every field including
+// kind/capabilities/params_def and authoritative routing_aliases.
 // GET /api/models/list  —  TryUserAuth (anonymous access allowed)
 // Used by internal services (e.g. hono-api) to replace direct SQL access.
 //

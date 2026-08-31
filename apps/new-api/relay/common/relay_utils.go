@@ -25,14 +25,14 @@ type HasImage interface {
 	HasImage() bool
 }
 
-func GetFullRequestURL(baseURL string, requestURL string, channelType int) string {
+func GetFullRequestURL(baseURL string, requestURL string, protocolID string) string {
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
 
 	if strings.HasPrefix(baseURL, "https://gateway.ai.cloudflare.com") {
-		switch channelType {
-		case constant.ChannelTypeOpenAI:
+		switch protocolID {
+		case constant.ProtocolOpenAI:
 			fullRequestURL = fmt.Sprintf("%s%s", baseURL, strings.TrimPrefix(requestURL, "/v1"))
-		case constant.ChannelTypeAzure:
+		case constant.ProtocolAzureOpenAI:
 			fullRequestURL = fmt.Sprintf("%s%s", baseURL, strings.TrimPrefix(requestURL, "/openai/deployments"))
 		}
 	}
@@ -61,6 +61,13 @@ func createTaskError(err error, code string, statusCode int, localError bool) *d
 func storeTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
 	info.Action = action
 	c.Set("task_request", requestObj)
+	// 另存一份「审核前」的不可变原始快照，专供任务日志「入参」展示。
+	// adaptor 后续可能用 SetTaskRequest 覆盖 task_request（如 seedance-2.0 ARK 审核把
+	// http 参考图改写成 asset://），那份改写后的请求不能污染日志里展示的原始请求体。
+	// set-once：只认第一次解析结果。
+	if _, exists := c.Get("task_request_original"); !exists {
+		c.Set("task_request_original", requestObj)
+	}
 }
 func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 	v, exists := c.Get("task_request")
@@ -72,6 +79,26 @@ func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 		return TaskSubmitReq{}, fmt.Errorf("invalid task request type")
 	}
 	return req, nil
+}
+
+// SetTaskRequest 覆盖写回已解析的任务请求（与 storeTaskRequest 用同一 context key）。
+// 供 adaptor 在 ValidateRequestAndSetAction 阶段修改 req（如审核后替换图片为 asset://）后回写，
+// 使后续 BuildRequestBody 的 GetTaskRequest 读到更新值。
+// 注意：只覆盖 task_request，不动 task_request_original（日志展示的原始快照）。
+func SetTaskRequest(c *gin.Context, req TaskSubmitReq) {
+	c.Set("task_request", req)
+}
+
+// GetTaskRequestOriginal 返回客户端发起请求前的原始请求体快照（storeTaskRequest 首次解析时
+// 存入，不受 adaptor 审核改写影响）。专供任务日志「入参」展示，避免拿到 asset:// 等改写后的值。
+// 极端情况下没有快照时回退到当前 task_request，保证不返回空结构。
+func GetTaskRequestOriginal(c *gin.Context) (TaskSubmitReq, error) {
+	if v, exists := c.Get("task_request_original"); exists {
+		if req, ok := v.(TaskSubmitReq); ok {
+			return req, nil
+		}
+	}
+	return GetTaskRequest(c)
 }
 
 func validatePrompt(prompt string) *dto.TaskError {

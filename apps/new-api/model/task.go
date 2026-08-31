@@ -84,17 +84,25 @@ type Properties struct {
 	// see the exact request shape without diving into upstream channel logs.
 	// Populated by controller/relay.go after InitTask, when a TaskSubmitReq is
 	// available in gin context.
-	Size           string `json:"size,omitempty"`
-	Resolution     string `json:"resolution,omitempty"`
-	AspectRatio    string `json:"aspect_ratio,omitempty"`
-	Duration       int    `json:"duration,omitempty"`
-	Seconds        string `json:"seconds,omitempty"`
-	Mode           string `json:"mode,omitempty"`
-	NegativePrompt string `json:"negative_prompt,omitempty"`
+	Size           string   `json:"size,omitempty"`
+	Resolution     string   `json:"resolution,omitempty"`
+	AspectRatio    string   `json:"aspect_ratio,omitempty"`
+	Duration       int      `json:"duration,omitempty"`
+	Seconds        string   `json:"seconds,omitempty"`
+	Mode           string   `json:"mode,omitempty"`
+	NegativePrompt string   `json:"negative_prompt,omitempty"`
 	ReferenceCount int      `json:"reference_count,omitempty"`
 	HasInputRef    bool     `json:"has_input_reference,omitempty"`
 	InputVideoUrl  string   `json:"input_video_url,omitempty"`
 	ReferenceUrls  []string `json:"reference_urls,omitempty"`
+	// ReferenceAudioUrls: metadata.content 里 role=reference_audio 的音频条目（seedance 原生
+	// 对白音色参考）。此前任务日志只提取图片，音频被静默省略——调用方看日志误以为音频没发出去。
+	ReferenceAudioUrls []string `json:"reference_audio_urls,omitempty"`
+	// RequestId links this task back to its request_trace row so the task log can
+	// surface the pristine original request body (where asset:// refs are still the
+	// real https URLs) — reference images are previewable there even when
+	// ReferenceUrls captured post-moderation asset:// placeholders.
+	RequestId string `json:"request_id,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {
@@ -111,7 +119,8 @@ func (m Properties) Value() (driver.Value, error) {
 		m.Size == "" && m.Resolution == "" && m.AspectRatio == "" &&
 		m.Duration == 0 && m.Seconds == "" && m.Mode == "" &&
 		m.NegativePrompt == "" && m.ReferenceCount == 0 && !m.HasInputRef &&
-		m.InputVideoUrl == "" && len(m.ReferenceUrls) == 0 {
+		m.InputVideoUrl == "" && len(m.ReferenceUrls) == 0 &&
+		len(m.ReferenceAudioUrls) == 0 && m.RequestId == "" {
 		return nil, nil
 	}
 	return common.Marshal(m)
@@ -119,6 +128,7 @@ func (m Properties) Value() (driver.Value, error) {
 
 type TaskPrivateData struct {
 	Key            string `json:"key,omitempty"`
+	EgressCellID   string `json:"egress_cell_id,omitempty"`
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
@@ -135,7 +145,8 @@ type TaskBillingContext struct {
 	ModelRatio      float64            `json:"model_ratio,omitempty"`       // 模型倍率
 	OtherRatios     map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
 	OriginModelName string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：无明确上游 usage 时保持预扣额度
+	UserPriceRatio  float64            `json:"user_price_ratio,omitempty"`  // 用户价格倍率快照
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -194,10 +205,11 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	properties := Properties{}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
-		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
-			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
+		if relayInfo.ChannelMeta.ProtocolID == constant.ProtocolTaskGemini ||
+			relayInfo.ChannelMeta.ProtocolID == constant.ProtocolTaskVertex {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
 		}
+		privateData.EgressCellID = relayInfo.ChannelMeta.EgressCellID
 		if relayInfo.UpstreamModelName != "" {
 			properties.UpstreamModelName = relayInfo.UpstreamModelName
 		}

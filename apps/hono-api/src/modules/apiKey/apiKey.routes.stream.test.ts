@@ -36,6 +36,15 @@ describe("agents chat stream helpers", () => {
 	it("forwards canonical content/tool/todo_list events", () => {
 		expect(
 			normalizePublicChatAgentStreamEvent({
+				event: "text.delta",
+				data: { delta: "你好" },
+			}),
+		).toEqual({
+			event: "content",
+			data: { delta: "你好" },
+		});
+		expect(
+			normalizePublicChatAgentStreamEvent({
 				event: "content",
 				data: { delta: "你好" },
 			}),

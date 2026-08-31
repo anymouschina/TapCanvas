@@ -20,6 +20,9 @@ type TaskNodeHeaderProps = {
   showIcon?: boolean
   showStatus?: boolean
   isNew?: boolean
+  /** 紧跟在节点名称后方、随名称长度自适应的徽标（如章锁状态 tag）。 */
+  titleBadge?: React.ReactNode
+  trailingContent?: React.ReactNode
   metaBadges?: Array<{
     label: string
     color: string
@@ -32,7 +35,7 @@ type TaskNodeHeaderProps = {
   labelInputRef: React.Ref<HTMLInputElement>
 }
 
-export function TaskNodeHeader({
+function TaskNodeHeader({
   NodeIcon,
   editing,
   labelDraft,
@@ -49,6 +52,8 @@ export function TaskNodeHeader({
   showIcon = true,
   showStatus = true,
   isNew = false,
+  titleBadge,
+  trailingContent,
   metaBadges = [],
   onLabelDraftChange,
   onCommitLabel,
@@ -58,14 +63,17 @@ export function TaskNodeHeader({
 }: TaskNodeHeaderProps) {
   if (!showMeta) {
     return (
-      <div className="task-node-header task-node-header--compact" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+      <div
+        className="task-node-header task-node-header--compact"
+        style={{ display: 'flex', alignItems: 'center', gap: 6, height: 24, minHeight: 24, marginBottom: 12 }}
+      >
         {showIcon && (
           <div
-            className="task-node-header-icon"
+            className="task-node-header-icon task-node-header-icon--compact"
             style={{
-              width: 40,
-              height: 40,
-              borderRadius: 14,
+              width: 22,
+              height: 22,
+              borderRadius: 7,
               background: iconBadgeBackground,
               boxShadow: iconBadgeShadow,
               display: 'flex',
@@ -76,29 +84,85 @@ export function TaskNodeHeader({
             }}
             title={currentLabel}
           >
-            <NodeIcon className="task-node-header-icon-svg" size={18} />
+            <NodeIcon className="task-node-header-icon-svg" size={13} />
           </div>
         )}
-        <Text
-          className="task-node-header-compact-title"
-          size="sm"
-          fw={600}
-          style={{
-            color: nodeShellText,
-            lineHeight: 1.2,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            minWidth: 0,
-          }}
-          title={currentLabel}
+        <div
+          className="task-node-header-compact-title-slot"
+          style={{ flex: '1 1 auto', minWidth: 0, height: 24, minHeight: 24, display: 'flex', alignItems: 'center' }}
         >
-          {currentLabel}
-        </Text>
+          {editing ? (
+            <TextInput
+              className="task-node-header-compact-input nodrag nopan"
+              ref={labelInputRef}
+              size="xs"
+              value={labelDraft}
+              aria-label="节点名称"
+              onChange={(event) => onLabelDraftChange(event.currentTarget.value)}
+              onBlur={onCommitLabel}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  onCommitLabel()
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  onCancelEdit()
+                }
+              }}
+              styles={{
+                input: {
+                  height: 24,
+                  minHeight: 24,
+                  padding: '2px 6px',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                  color: nodeShellText,
+                },
+              }}
+              style={{ width: '100%', minWidth: 0 }}
+            />
+          ) : (
+            <Text
+              className="task-node-header-compact-title"
+              size="sm"
+              fw={600}
+              style={{
+                width: '100%',
+                color: nodeShellText,
+                fontSize: 14,
+                lineHeight: 1.2,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                cursor: 'text',
+              }}
+              title="点击重命名"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onStartEdit()
+              }}
+            >
+              {currentLabel}
+            </Text>
+          )}
+        </div>
+        {titleBadge}
         {isNew && (
           <Badge className="task-node-header-new-badge" size="xs" radius="md" color="pink" variant="light">
             新建
           </Badge>
+        )}
+        {trailingContent && (
+          <div
+            className="task-node-header-trailing"
+            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
+          >
+            {trailingContent}
+          </div>
         )}
       </div>
     )
@@ -204,6 +268,7 @@ export function TaskNodeHeader({
           )}
         </div>
       </div>
+      {trailingContent}
       {showStatus && statusLabel?.trim() && (
         <div
           className="task-node-header-status"
@@ -220,3 +285,6 @@ export function TaskNodeHeader({
     </div>
   )
 }
+
+const _TaskNodeHeader = React.memo(TaskNodeHeader)
+export { _TaskNodeHeader as TaskNodeHeader }

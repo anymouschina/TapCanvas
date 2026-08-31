@@ -11,6 +11,7 @@ export function buildPublicChatBaseSystemPrompt(input: {
 		input.forceAssetGeneration
 			? "本轮请求显式要求真实资产交付。"
 			: "本轮未附加后端侧资产交付策略。",
+		"计费与积分属于内部执行事实；AI 对话正文和模型目录简报只展示总时长与真实执行状态，不展示价格、积分、片段数或逐段计费。明确生成请求在内部 estimate 后直接 start，不创建二次确认停点。",
 	].filter(Boolean);
 	return ["## Assistant Contract", ...lines].join("\n").trim();
 }

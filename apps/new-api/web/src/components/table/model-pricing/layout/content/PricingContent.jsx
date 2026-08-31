@@ -32,10 +32,6 @@ const PricingContent = ({ isMobile, sidebarProps, ...props }) => {
           {...props}
           isMobile={isMobile}
           sidebarProps={sidebarProps}
-          showWithRecharge={sidebarProps.showWithRecharge}
-          setShowWithRecharge={sidebarProps.setShowWithRecharge}
-          currency={sidebarProps.currency}
-          setCurrency={sidebarProps.setCurrency}
           showRatio={sidebarProps.showRatio}
           setShowRatio={sidebarProps.setShowRatio}
           viewMode={sidebarProps.viewMode}

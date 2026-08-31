@@ -1,11 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { PrismaClient } from "../../types";
-import { execute, queryAll } from "../../db/db";
+import { execute, queryAll, queryOne } from "../../db/db";
 import {
 	appendPublicChatMessage,
+	buildPublicChatTurnEntityId,
 	findPublicChatSessionByKey,
 	listPublicChatMessages,
 	listPublicChatSessionsByPrefix,
+	listPublicChatTurnRuns,
 	resolveOrCreatePublicChatSession,
 } from "../apiKey/public-chat-session.repo";
 import type {
@@ -17,6 +19,14 @@ import type {
 	MemoryStatus,
 	MemoryWriteRequest,
 } from "./memory.schemas";
+import { buildStructuralExecutionTraceWriteRequest } from "./memory.execution-trace-sanitizer";
+import { assertExecutionTraceSchemaReady } from "./execution-trace-schema";
+import {
+	parseAgentExecutionProvenance,
+	type AgentExecutionProvenance,
+} from "../task/agent-execution-provenance";
+
+export const PUBLIC_CHAT_REFERENCE_PROVENANCE_REQUEST_KIND = "public_chat.reference_provenance";
 
 export type MemoryEntryRow = {
 	id: string;
@@ -50,10 +60,13 @@ export type NormalizedMemoryEntry = {
 };
 
 export type MemoryContextConversationItem = {
+	messageId: string;
+	turnId?: string;
 	role: string;
 	content: string;
 	assets: unknown[];
 	createdAt: string;
+	executionProvenance?: AgentExecutionProvenance;
 };
 
 export type ProjectChatArtifactAsset = {
@@ -114,6 +127,18 @@ export type ExecutionTraceRow = {
 	error_code: string | null;
 	error_detail: string | null;
 	created_at: string;
+	status: string;
+	session_key: string | null;
+	workflow_key: string | null;
+	logical_task_id: string | null;
+	root_trace_id: string | null;
+	parent_trace_id: string | null;
+	physical_run_id: string | null;
+	workflow_run_id: string | null;
+	started_at: string;
+	updated_at: string;
+	finished_at: string | null;
+	next_event_seq: number;
 };
 
 export type PersistConversationTurnResult = {
@@ -131,6 +156,37 @@ type PublicChatMessageRow = {
 	assets_json: string | null;
 	created_at: string;
 };
+
+type ConversationReferenceTraceRow = {
+	task_id: string | null;
+	meta_json: string | null;
+};
+
+async function loadConversationReferenceProvenance(
+	db: PrismaClient,
+	userId: string,
+	assistantMessageIds: string[],
+): Promise<Map<string, AgentExecutionProvenance>> {
+	const messageIds = Array.from(new Set(assistantMessageIds.map((id) => id.trim()).filter(Boolean))).slice(0, 40);
+	if (messageIds.length === 0) return new Map();
+	const placeholders = messageIds.map(() => "?").join(", ");
+	const rows = await queryAll<ConversationReferenceTraceRow>(
+		db,
+		`SELECT task_id, meta_json FROM execution_traces
+		 WHERE user_id = ? AND request_kind = ? AND task_id IN (${placeholders})
+		 ORDER BY created_at ASC`,
+		[userId, PUBLIC_CHAT_REFERENCE_PROVENANCE_REQUEST_KIND, ...messageIds],
+	);
+	const provenanceByMessageId = new Map<string, AgentExecutionProvenance>();
+	for (const row of rows) {
+		const messageId = String(row.task_id || "").trim();
+		if (!messageId || !row.meta_json) continue;
+		const meta = parseJson<Record<string, unknown>>(row.meta_json, {});
+		const provenance = parseAgentExecutionProvenance(meta.executionProvenance);
+		if (provenance) provenanceByMessageId.set(messageId, provenance);
+	}
+	return provenanceByMessageId;
+}
 
 type MemorySearchRow = MemoryEntryRow & {
 	search_rank?: number | null;
@@ -165,8 +221,7 @@ export async function ensureMemorySchema(db: PrismaClient): Promise<void> {
       importance REAL NOT NULL DEFAULT 0.6,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      updated_at TEXT NOT NULL
     )`,
 		);
 		await execute(
@@ -222,32 +277,10 @@ export async function ensureMemorySchema(db: PrismaClient): Promise<void> {
 			`CREATE INDEX IF NOT EXISTS idx_memory_links_target
      ON memory_links(target_type, target_id)`,
 		);
-		await execute(
-			db,
-			`CREATE TABLE IF NOT EXISTS execution_traces (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      scope_type TEXT NOT NULL,
-      scope_id TEXT NOT NULL,
-      task_id TEXT,
-      request_kind TEXT NOT NULL,
-      input_summary TEXT NOT NULL,
-      decision_log_json TEXT,
-      tool_calls_json TEXT,
-      meta_json TEXT,
-      result_summary TEXT,
-      error_code TEXT,
-      error_detail TEXT,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    )`,
-		);
-		await execute(
-			db,
-			`CREATE INDEX IF NOT EXISTS idx_execution_traces_user_scope
-     ON execution_traces(user_id, scope_type, scope_id, created_at DESC)`,
-		);
-		await execute(db, `ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS meta_json TEXT`);
+		// host_user_id 隔离后 user_id 会是复合合成 id（owner:hostUser，非真实 users 行）；user_id 在这两张
+		// 表本质是逻辑分区键，不应硬引用 users(id)。去掉遗留库上的外键（新库 CREATE 已不带），否则每个 host
+		// 隔离请求写 trace/记忆都会撞 FK 23503。幂等，部署/重启后首个记忆操作自动自愈存量库（含线上）。
+		await execute(db, `ALTER TABLE memory_entries DROP CONSTRAINT IF EXISTS memory_entries_user_id_fkey`);
 		schemaEnsured = true;
 	})();
 	try {
@@ -400,23 +433,76 @@ async function loadEntriesForScope(
 	return rows.map(normalizeEntryRow);
 }
 
+/**
+ * Session summaries are derived recall state. A conversation reset supersedes
+ * them so the next canonical session snapshot cannot be contaminated by the
+ * previous transcript, while the rows remain available for audit/debugging.
+ */
+export async function supersedeSessionMemoryEntries(
+	db: PrismaClient,
+	input: { userId: string; sessionKey: string; nowIso?: string },
+): Promise<void> {
+	await ensureMemorySchema(db);
+	const userId = String(input.userId || "").trim();
+	const sessionKey = String(input.sessionKey || "").trim();
+	if (!userId || !sessionKey) return;
+	await execute(
+		db,
+		`UPDATE memory_entries
+		 SET status = 'superseded', updated_at = ?
+		 WHERE user_id = ? AND scope_type = 'session' AND scope_id = ? AND status = 'active'`,
+		[input.nowIso ?? new Date().toISOString(), userId, sessionKey],
+	);
+}
+
+/**
+ * A project asset reference is versioned by source_id. When the underlying
+ * asset changes, keep the old reference for auditability but remove it from
+ * active project recall so flows never see stale asset metadata.
+ */
+export async function supersedeProjectAssetMemoryEntries(
+	db: PrismaClient,
+	input: { userId: string; projectId: string; assetId: string; nowIso?: string },
+): Promise<void> {
+	await ensureMemorySchema(db);
+	const userId = String(input.userId || "").trim();
+	const projectId = String(input.projectId || "").trim();
+	const assetId = String(input.assetId || "").trim();
+	if (!userId || !projectId || !assetId) return;
+	await execute(
+		db,
+		`UPDATE memory_entries
+		 SET status = 'superseded', updated_at = ?
+		 WHERE user_id = ? AND scope_type = 'project' AND scope_id = ?
+		   AND memory_type = 'artifact_ref' AND source_kind = 'system_extract'
+		   AND source_id LIKE ? AND status = 'active'`,
+		[input.nowIso ?? new Date().toISOString(), userId, projectId, `project-asset:${assetId}:%`],
+	);
+}
+
 export async function writeMemoryEntries(
 	db: PrismaClient,
 	userId: string,
 	input: MemoryWriteRequest,
+	options?: Readonly<{ entryIds: readonly string[]; idempotent: true }>,
 ): Promise<string[]> {
 	await ensureMemorySchema(db);
+	if (options && options.entryIds.length !== input.entries.length) {
+		throw new Error("memory_entry_id_count_mismatch");
+	}
 	const nowIso = new Date().toISOString();
 	const ids: string[] = [];
-	for (const entry of input.entries) {
-		const id = randomUUID();
+	for (const [index, entry] of input.entries.entries()) {
+		const id = options?.entryIds[index]?.trim() || randomUUID();
+		if (!id) throw new Error("memory_entry_id_required");
 		ids.push(id);
 		await execute(
 			db,
 			`INSERT INTO memory_entries (
         id, user_id, scope_type, scope_id, memory_type, title, summary_text,
         content_json, source_kind, source_id, importance, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			${options?.idempotent ? "ON CONFLICT (id) DO NOTHING" : ""}`,
 			[
 				id,
 				userId,
@@ -435,18 +521,28 @@ export async function writeMemoryEntries(
 			],
 		);
 		for (const tag of entry.tags ?? []) {
+			const tagId = options?.idempotent
+				? `memory-tag:${createHash("sha256").update(`${id}:${tag.trim()}`).digest("hex")}`
+				: randomUUID();
 			await execute(
 				db,
-				`INSERT INTO memory_entry_tags (id, memory_id, tag, created_at) VALUES (?, ?, ?, ?)`,
-				[randomUUID(), id, tag.trim(), nowIso],
+				`INSERT INTO memory_entry_tags (id, memory_id, tag, created_at) VALUES (?, ?, ?, ?)
+				${options?.idempotent ? "ON CONFLICT (id) DO NOTHING" : ""}`,
+				[tagId, id, tag.trim(), nowIso],
 			);
 		}
 		for (const link of entry.links ?? []) {
+			const linkId = options?.idempotent
+				? `memory-link:${createHash("sha256")
+					.update(`${id}:${link.targetType}:${link.targetId}:${link.relation}`)
+					.digest("hex")}`
+				: randomUUID();
 			await execute(
 				db,
 				`INSERT INTO memory_links (id, memory_id, target_type, target_id, relation, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-				[randomUUID(), id, link.targetType, link.targetId, link.relation, nowIso],
+				         VALUES (?, ?, ?, ?, ?, ?)
+				${options?.idempotent ? "ON CONFLICT (id) DO NOTHING" : ""}`,
+				[linkId, id, link.targetType, link.targetId, link.relation, nowIso],
 			);
 		}
 	}
@@ -458,18 +554,30 @@ export async function listExecutionTraces(
 	input: {
 		userId: string;
 		limit: number;
+		traceId?: string;
+		traceFamilyId?: string;
 		scopeType?: string;
 		scopeId?: string;
 		requestKindPrefix?: string;
 	},
 ): Promise<ExecutionTraceRow[]> {
-	await ensureMemorySchema(db);
+	await assertExecutionTraceSchemaReady(db);
 	const limit = Math.max(1, Math.min(200, Math.floor(input.limit)));
 	const clauses = ["user_id = ?"];
 	const params: Array<string | number> = [input.userId];
+	const traceId = String(input.traceId || "").trim();
+	const traceFamilyId = String(input.traceFamilyId || "").trim();
 	const scopeType = String(input.scopeType || "").trim();
 	const scopeId = String(input.scopeId || "").trim();
 	const requestKindPrefix = String(input.requestKindPrefix || "").trim();
+	if (traceId) {
+		clauses.push("id = ?");
+		params.push(traceId);
+	}
+	if (traceFamilyId) {
+		clauses.push("(id = ? OR root_trace_id = ? OR logical_task_id = ?)");
+		params.push(traceFamilyId, traceFamilyId, traceFamilyId);
+	}
 	if (scopeType) {
 		clauses.push("scope_type = ?");
 		params.push(scopeType);
@@ -494,33 +602,61 @@ export async function writeExecutionTrace(
 	db: PrismaClient,
 	userId: string,
 	input: ExecutionTraceWriteRequest,
-): Promise<string> {
-	await ensureMemorySchema(db);
-	const id = randomUUID();
-	await execute(
-		db,
-		`INSERT INTO execution_traces (
+	options?: Readonly<{ traceId: string; idempotent: true }>,
+): Promise<{ id: string; status: "persisted" | "degraded"; errorCode: string | null }> {
+	const id = options?.traceId.trim() || randomUUID();
+	if (!id) throw new Error("execution_trace_id_required");
+	// 执行 trace 是审计副产物；schema 或 insert 失败都必须返回显式 degraded，
+	// 不能在资产已经产出后反向把业务结果改成失败。
+	try {
+		const structuralInput = buildStructuralExecutionTraceWriteRequest(input);
+		await assertExecutionTraceSchemaReady(db);
+		const nowIso = new Date().toISOString();
+		await execute(
+			db,
+			`INSERT INTO execution_traces (
       id, user_id, scope_type, scope_id, task_id, request_kind, input_summary,
-      decision_log_json, tool_calls_json, meta_json, result_summary, error_code, error_detail, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		[
-			id,
-			userId,
-			input.scopeType,
-			input.scopeId,
-			input.taskId?.trim() || null,
-			input.requestKind,
-			input.inputSummary,
-			serializeJson(input.decisionLog ?? []),
-			serializeJson(input.toolCalls ?? []),
-			input.meta ? serializeJson(input.meta) : null,
-			input.resultSummary?.trim() || null,
-			input.errorCode?.trim() || null,
-			input.errorDetail?.trim() || null,
-			new Date().toISOString(),
-		],
-	);
-	return id;
+      decision_log_json, tool_calls_json, meta_json, result_summary, error_code, error_detail, created_at,
+      status, started_at, updated_at, finished_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	${options?.idempotent ? "ON CONFLICT (id) DO NOTHING" : ""}`,
+			[
+				id,
+				userId,
+				structuralInput.scopeType,
+				structuralInput.scopeId,
+				structuralInput.taskId?.trim() || null,
+				structuralInput.requestKind,
+				structuralInput.inputSummary,
+				serializeJson(structuralInput.decisionLog ?? []),
+				serializeJson(structuralInput.toolCalls ?? []),
+				structuralInput.meta ? serializeJson(structuralInput.meta) : null,
+				structuralInput.resultSummary?.trim() || null,
+				structuralInput.errorCode?.trim() || null,
+				structuralInput.errorDetail?.trim() || null,
+				nowIso,
+				structuralInput.errorCode || structuralInput.errorDetail ? "failed" : "succeeded",
+				nowIso,
+				nowIso,
+				nowIso,
+			],
+		);
+	} catch (error) {
+		const errorRecord = error && typeof error === "object" && !Array.isArray(error)
+			? error as Record<string, unknown>
+			: null;
+		const persistenceErrorCode =
+			typeof errorRecord?.code === "string" && errorRecord.code.trim()
+				? errorRecord.code.trim().slice(0, 120)
+				: error instanceof Error && error.message.startsWith("execution_trace_schema_not_ready:")
+					? "execution_trace_schema_not_ready"
+					: "execution_trace_write_failed";
+		console.warn(
+			`[memory] writeExecutionTrace degraded user=${userId} code=${persistenceErrorCode}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return { id, status: "degraded", errorCode: persistenceErrorCode };
+	}
+	return { id, status: "persisted", errorCode: null };
 }
 
 export async function persistConversationTurn(
@@ -528,6 +664,7 @@ export async function persistConversationTurn(
 	input: {
 		userId: string;
 		sessionKey: string;
+		turnId: string;
 		userText: string;
 		assistantText: string;
 		assistantAssets?: unknown[];
@@ -535,6 +672,8 @@ export async function persistConversationTurn(
 ): Promise<PersistConversationTurnResult | null> {
 	await ensureMemorySchema(db);
 	const nowIso = new Date().toISOString();
+	const turnId = input.turnId.trim();
+	if (!turnId) throw new Error("public_chat_turn_id_required");
 	const session =
 		(await findPublicChatSessionByKey(db, {
 			userId: input.userId,
@@ -550,7 +689,12 @@ export async function persistConversationTurn(
 	let userMessageId: string | null = null;
 	let assistantMessageId: string | null = null;
 	if (input.userText.trim()) {
-		userMessageId = randomUUID();
+		userMessageId = buildPublicChatTurnEntityId({
+			kind: "user_message",
+			userId: input.userId,
+			sessionKey: input.sessionKey,
+			turnId,
+		});
 		await appendPublicChatMessage(db, {
 			id: userMessageId,
 			userId: input.userId,
@@ -561,7 +705,12 @@ export async function persistConversationTurn(
 		});
 	}
 	if (input.assistantText.trim()) {
-		assistantMessageId = randomUUID();
+		assistantMessageId = buildPublicChatTurnEntityId({
+			kind: "assistant_message",
+			userId: input.userId,
+			sessionKey: input.sessionKey,
+			turnId,
+		});
 		await appendPublicChatMessage(db, {
 			id: assistantMessageId,
 			userId: input.userId,
@@ -604,10 +753,12 @@ export async function listProjectChatArtifactSessions(
 		? Math.max(1, Math.min(20, Math.trunc(Number(input.limitTurns))))
 		: 6;
 	const sessionKeyPrefix = flowId ? `project:${projectId}:flow:${flowId}` : `project:${projectId}`;
+	// 项目/flow 级产物列表排除章节会话（裸前缀会贪婪命中 project:<pid>:chapter:...）。
 	const sessions = await listPublicChatSessionsByPrefix(db, {
 		userId,
 		sessionKeyPrefix,
 		limit: limitSessions,
+		excludeSessionKeyContains: ":chapter:",
 	});
 	const out: ProjectChatArtifactSession[] = [];
 	for (const session of sessions) {
@@ -728,12 +879,40 @@ export async function buildMemoryContext(
 				sessionId: session.id,
 				limit: recentConversationLimit,
 			});
-			recentMessages = (rows as PublicChatMessageRow[]).map((row) => ({
-				role: row.role,
-				content: row.content,
-				assets: parseJson<unknown[]>(row.assets_json, []),
-				createdAt: row.created_at,
-			}));
+			const turnRuns = await listPublicChatTurnRuns(db, {
+				userId,
+				sessionId: session.id,
+				limit: Math.min(100, recentConversationLimit * 2),
+			});
+			const turnIdByMessageId = new Map<string, string>();
+			for (const run of turnRuns) {
+				const turnId = String(run.request_id || "").trim();
+				if (!turnId) continue;
+				for (const messageId of [run.user_message_id, run.assistant_message_id]) {
+					const normalizedMessageId = String(messageId || "").trim();
+					if (normalizedMessageId) turnIdByMessageId.set(normalizedMessageId, turnId);
+				}
+			}
+			const provenanceByMessageId = await loadConversationReferenceProvenance(
+				db,
+				userId,
+				(rows as PublicChatMessageRow[])
+					.filter((row) => row.role === "assistant")
+					.map((row) => row.id),
+			);
+			recentMessages = (rows as PublicChatMessageRow[]).map((row) => {
+				const executionProvenance = provenanceByMessageId.get(row.id);
+				const turnId = turnIdByMessageId.get(row.id);
+				return {
+					messageId: row.id,
+					...(turnId ? { turnId } : {}),
+					role: row.role,
+					content: row.content,
+					assets: parseJson<unknown[]>(row.assets_json, []),
+					createdAt: row.created_at,
+					...(executionProvenance ? { executionProvenance } : {}),
+				};
+			});
 		}
 	}
 	const chapterArtifactRefs = await loadEntriesForScope(db, userId, "chapter", input.chapterId, ["artifact_ref"], limitPerScope);
@@ -772,4 +951,122 @@ export async function buildMemoryContext(
 		},
 		recentConversation: recentMessages,
 	};
+}
+
+export type PublicProjectConversationMessage = {
+	id: string;
+	role: "user" | "assistant";
+	content: string;
+	assets: ProjectChatArtifactAsset[];
+	createdAt: string;
+};
+
+export type PublicProjectConversationSession = {
+	sessionId: string;
+	sessionKey: string;
+	updatedAt: string;
+	messages: PublicProjectConversationMessage[];
+};
+
+export async function listPublicProjectConversations(
+	db: PrismaClient,
+	input: {
+		userId: string;
+		projectId: string;
+		chapterId?: string;
+		includeChapterSessions?: boolean;
+		limitSessions?: number;
+		limitMessages?: number;
+	},
+): Promise<PublicProjectConversationSession[]> {
+	await ensureMemorySchema(db);
+	const userId = String(input.userId || "").trim();
+	const projectId = String(input.projectId || "").trim().toLowerCase();
+	// Chapter ids are embedded into session keys without case normalization.
+	const chapterId = String(input.chapterId || "").trim();
+	if (!userId || !projectId) return [];
+	const limitSessions = Math.max(1, Math.min(10, input.limitSessions ?? 5));
+	const limitMessages = Math.max(1, Math.min(200, input.limitMessages ?? 80));
+	const sessionKeyPrefix = chapterId
+		? `project:${projectId}:chapter:${chapterId}:`
+		: `project:${projectId}`;
+	// 编辑态项目会话默认与章节会话隔离；公开“制作过程”可显式要求完整项目范围，
+	// 此时同一项目下的项目级与章节级会话都属于交付事实。
+	const excludeChapterSessions = !chapterId && input.includeChapterSessions !== true;
+	const sessions = await listPublicChatSessionsByPrefix(db, {
+		userId,
+		sessionKeyPrefix,
+		limit: limitSessions,
+		...(excludeChapterSessions ? { excludeSessionKeyContains: ":chapter:" } : {}),
+	});
+	const out: PublicProjectConversationSession[] = [];
+	for (const session of sessions) {
+		const rows = await listPublicChatMessages(db, { userId, sessionId: session.id, limit: limitMessages });
+		if (!rows.length) continue;
+		const messages: PublicProjectConversationMessage[] = rows.map((row) => ({
+			id: row.id,
+			role: row.role as "user" | "assistant",
+			content: row.content,
+			assets: normalizeProjectChatArtifactAssets(parseJson<unknown[]>(row.assets_json, [])),
+			createdAt: row.created_at,
+		}));
+		out.push({
+			sessionId: session.id,
+			sessionKey: session.session_key,
+			updatedAt: session.updated_at,
+			messages,
+		});
+	}
+	return out;
+}
+
+export type ChatSessionSummary = {
+	sessionId: string;
+	sessionKey: string;
+	updatedAt: string;
+	firstUserMessage: string | null;
+};
+
+export async function listProjectChatSessionSummaries(
+	db: PrismaClient,
+	input: { userId: string; projectId: string; flowId?: string; chapterId?: string; limit?: number },
+): Promise<ChatSessionSummary[]> {
+	await ensureMemorySchema(db);
+	const userId = String(input.userId || "").trim();
+	const projectId = String(input.projectId || "").trim().toLowerCase();
+	const flowId = String(input.flowId || "").trim().toLowerCase();
+	// 章节 id 不做 lowercase：session key 由前端原样拼入，改写会导致前缀匹配不上。
+	const chapterId = String(input.chapterId || "").trim();
+	if (!userId || !projectId) return [];
+	const limit = Math.max(1, Math.min(20, input.limit ?? 15));
+	const sessionKeyPrefix = chapterId
+		? `project:${projectId}:chapter:${chapterId}`
+		: flowId
+			? `project:${projectId}:flow:${flowId}`
+			: `project:${projectId}`;
+	// 非章节作用域：排除章节会话，避免裸前缀 project:<pid> 贪婪命中章节键
+	// （项目首页/flow 历史菜单不应混入各章节会话）。
+	const sessions = await listPublicChatSessionsByPrefix(db, {
+		userId,
+		sessionKeyPrefix,
+		limit,
+		...(chapterId ? {} : { excludeSessionKeyContains: ":chapter:" }),
+	});
+	const out: ChatSessionSummary[] = [];
+	for (const session of sessions) {
+		const row = await queryOne<{ content: string }>(
+			db,
+			`SELECT content FROM public_chat_messages
+			 WHERE session_id = ? AND role = 'user'
+			 ORDER BY created_at ASC LIMIT 1`,
+			[session.id],
+		);
+		out.push({
+			sessionId: session.id,
+			sessionKey: session.session_key,
+			updatedAt: session.updated_at,
+			firstUserMessage: row?.content?.trim() || null,
+		});
+	}
+	return out;
 }

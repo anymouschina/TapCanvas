@@ -22,7 +22,7 @@ export function resolveStoredTaskId(options?: { taskId?: string | null }): strin
 export function resolveStoredTaskRefKind(
 	kind: TaskRequestDto["kind"],
 ): StoredTaskRefKind | null {
-	if (kind === "text_to_video" || kind === "image_to_video") return "video";
+	if (kind === "text_to_video" || kind === "image_to_video" || kind === "image_to_3d" || kind === "video_enhance" || kind === "video_edit") return "video";
 	if (kind === "text_to_image" || kind === "image_edit") return "image";
 	return null;
 }
@@ -110,8 +110,9 @@ export async function persistStoredTaskResult(
 		nowIso?: string;
 	},
 ): Promise<void> {
-	const completedAt = input.completedAt ?? null;
-	const nowIso = input.nowIso ?? completedAt ?? new Date().toISOString();
+	const nowIso = input.nowIso ?? input.completedAt ?? new Date().toISOString();
+	const terminal = input.result.status === "succeeded" || input.result.status === "failed";
+	const completedAt = input.completedAt ?? (terminal ? nowIso : null);
 	await upsertTaskResult(c.env.DB, {
 		userId: input.userId,
 		taskId: input.taskId,

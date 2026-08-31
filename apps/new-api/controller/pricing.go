@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -46,8 +49,46 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 	return filtered
 }
 
+func projectSupportedEndpoints(
+	pricing []model.Pricing,
+	endpointCatalog map[string]common.EndpointInfo,
+) (map[string]common.EndpointInfo, error) {
+	projected := make(map[string]common.EndpointInfo)
+	for _, item := range pricing {
+		for _, endpointType := range item.SupportedEndpointTypes {
+			key := strings.TrimSpace(string(endpointType))
+			if key == "" {
+				return nil, fmt.Errorf("model %s contains an empty endpoint type", item.ModelName)
+			}
+			if _, exists := projected[key]; exists {
+				continue
+			}
+
+			info, exists := endpointCatalog[key]
+			if !exists {
+				return nil, fmt.Errorf("endpoint %s referenced by model %s is missing", key, item.ModelName)
+			}
+			path := strings.TrimSpace(info.Path)
+			if path == "" {
+				return nil, fmt.Errorf("endpoint %s referenced by model %s has an empty path", key, item.ModelName)
+			}
+			method := strings.ToUpper(strings.TrimSpace(info.Method))
+			if method == "" {
+				return nil, fmt.Errorf("endpoint %s referenced by model %s has an empty method", key, item.ModelName)
+			}
+			projected[key] = common.EndpointInfo{Path: path, Method: method}
+		}
+	}
+	return projected, nil
+}
+
 func GetPricing(c *gin.Context) {
-	pricing := model.GetPricing()
+	catalog, err := model.GetPricingCatalogSnapshotWithError()
+	if err != nil {
+		common.ApiErrorMsg(c, "刷新定价缓存失败: "+err.Error())
+		return
+	}
+	pricing := catalog.Pricing
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
 	groupRatio := map[string]float64{}
@@ -56,14 +97,21 @@ func GetPricing(c *gin.Context) {
 	}
 	var group string
 	if exists {
-		user, err := model.GetUserCache(userId.(int))
-		if err == nil {
-			group = user.Group
-			for g := range groupRatio {
-				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
-				if ok {
-					groupRatio[g] = ratio
-				}
+		resolvedUserID, ok := userId.(int)
+		if !ok {
+			common.ApiErrorMsg(c, "用户 ID 类型无效")
+			return
+		}
+		user, err := model.GetUserCache(resolvedUserID)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		group = user.Group
+		for g := range groupRatio {
+			ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
+			if ok {
+				groupRatio[g] = ratio
 			}
 		}
 	}
@@ -77,14 +125,19 @@ func GetPricing(c *gin.Context) {
 			delete(groupRatio, group)
 		}
 	}
+	supportedEndpoints, err := projectSupportedEndpoints(pricing, catalog.SupportedEndpoints)
+	if err != nil {
+		common.ApiErrorMsg(c, "定价端点协议无效: "+err.Error())
+		return
+	}
 
 	c.JSON(200, gin.H{
 		"success":            true,
 		"data":               pricing,
-		"vendors":            model.GetVendors(),
+		"vendors":            catalog.Vendors,
 		"group_ratio":        groupRatio,
 		"usable_group":       usableGroup,
-		"supported_endpoint": model.GetSupportedEndpointMap(),
+		"supported_endpoint": supportedEndpoints,
 		"auto_groups":        service.GetUserAutoGroup(group),
 		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
@@ -92,20 +145,14 @@ func GetPricing(c *gin.Context) {
 
 func ResetModelRatio(c *gin.Context) {
 	defaultStr := ratio_setting.DefaultModelRatio2JSONString()
-	err := model.UpdateOption("ModelRatio", defaultStr)
-	if err != nil {
+	if err := model.ResetModelRatioToDefault(defaultStr); err != nil {
 		c.JSON(200, gin.H{
 			"success": false,
 			"message": err.Error(),
 		})
 		return
 	}
-	err = ratio_setting.UpdateModelRatioByJSONString(defaultStr)
-	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+	if !refreshPricingAfterWrite(c, "模型倍率已重置") {
 		return
 	}
 	c.JSON(200, gin.H{

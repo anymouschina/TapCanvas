@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -34,7 +35,11 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
-	return nil, errors.New("codex channel: endpoint not supported")
+	if info == nil || info.RelayMode != relayconstant.RelayModeImagesGenerations {
+		return nil, errors.New("codex channel: only /v1/images/generations is supported for images")
+	}
+	c.Set("codex_image_response_format", strings.ToLower(strings.TrimSpace(request.ResponseFormat)))
+	return convertCodexImageGenerationRequest(request)
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
@@ -101,7 +106,10 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	}
 	// codex: store must be false
 	request.Store = json.RawMessage("false")
-	// rm max_output_tokens
+	// ChatGPT's Codex backend rejects the public Responses API field
+	// max_output_tokens. The caller's immutable output budget remains enforced by
+	// agents-cli while consuming the stream; this adapter only removes a field
+	// that the selected upstream protocol deterministically does not support.
 	request.MaxOutputTokens = nil
 	request.Temperature = nil
 	return request, nil
@@ -112,6 +120,9 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if info.RelayMode == relayconstant.RelayModeImagesGenerations {
+		return handleCodexImageGenerationResponse(c, resp)
+	}
 	if info.RelayMode != relayconstant.RelayModeResponses && info.RelayMode != relayconstant.RelayModeResponsesCompact {
 		return nil, types.NewError(errors.New("codex channel: endpoint not supported"), types.ErrorCodeInvalidRequest)
 	}
@@ -135,14 +146,14 @@ func (a *Adaptor) GetChannelName() string {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if info.RelayMode != relayconstant.RelayModeResponses && info.RelayMode != relayconstant.RelayModeResponsesCompact {
+	if info.RelayMode != relayconstant.RelayModeResponses && info.RelayMode != relayconstant.RelayModeResponsesCompact && info.RelayMode != relayconstant.RelayModeImagesGenerations {
 		return "", errors.New("codex channel: only /v1/responses and /v1/responses/compact are supported")
 	}
 	path := "/backend-api/codex/responses"
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		path = "/backend-api/codex/responses/compact"
 	}
-	return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, path, info.ChannelType), nil
+	return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, path, info.ProtocolID), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
@@ -168,16 +179,11 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		return errors.New("codex channel: account_id is required")
 	}
 
-	req.Set("Authorization", "Bearer "+accessToken)
-	req.Set("chatgpt-account-id", accountID)
+	ApplyCLIProxyRequestHeaders(req, accessToken, accountID, info.IsStream)
 
 	if req.Get("OpenAI-Beta") == "" {
 		req.Set("OpenAI-Beta", "responses=experimental")
 	}
-	if req.Get("originator") == "" {
-		req.Set("originator", "codex_cli_rs")
-	}
-
 	// chatgpt.com/backend-api/codex/responses is strict about Content-Type.
 	// Clients may omit it or include parameters like `application/json; charset=utf-8`,
 	// which can be rejected by the upstream. Force the exact media type.
@@ -189,4 +195,11 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	}
 
 	return nil
+}
+
+// ApplyCLIProxyRequestHeaders mirrors the identity and transport headers used by
+// CLIProxyAPI for ChatGPT Codex OAuth requests. Caller-provided values win where
+// CLIProxy also permits overrides.
+func ApplyCLIProxyRequestHeaders(req *http.Header, accessToken string, accountID string, stream bool) {
+	codexauth.ApplyCLIProxyRequestHeaders(req, accessToken, accountID, stream)
 }

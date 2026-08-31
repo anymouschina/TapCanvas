@@ -10,6 +10,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetInternalUsage returns the consumed quota for a tapcanvas conversation, for internal
+// (hono-api) billing. Authed by InternalTokenAuth (shared secret), NOT a user access-token.
+// Query: conversation_id (required), since (optional unix milliseconds — converted to seconds
+// because logs.created_at is unix seconds). Returns { quota }.
+func GetInternalUsage(c *gin.Context) {
+	conversationId := c.Query("conversation_id")
+	if conversationId == "" {
+		common.ApiErrorMsg(c, "conversation_id is required")
+		return
+	}
+	sinceMs, _ := strconv.ParseInt(c.Query("since"), 10, 64)
+	var sinceSec int64
+	if sinceMs > 0 {
+		sinceSec = sinceMs / 1000
+	}
+	quota, err := model.SumConversationQuota(conversationId, sinceSec)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"conversation_id": conversationId,
+		"quota":           quota,
+	})
+}
+
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	logType, _ := strconv.Atoi(c.Query("type"))
@@ -131,7 +157,7 @@ func GetLogsSelfStat(c *gin.Context) {
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
-	quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
+	quotaNum, err := model.SumUsedQuotaSelf(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
 	if err != nil {
 		common.ApiError(c, err)
 		return

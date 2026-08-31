@@ -63,13 +63,11 @@ type responseTask struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	ChannelType int
-	apiKey      string
-	baseURL     string
+	apiKey  string
+	baseURL string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
-	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
 }

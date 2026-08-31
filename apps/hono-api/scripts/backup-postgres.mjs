@@ -6,6 +6,14 @@ import { spawn } from "node:child_process";
 function ensureDatabaseUrl() {
 	const url = String(process.env.DATABASE_URL || "").trim();
 	if (!url) throw new Error("DATABASE_URL is required for postgres backup");
+	const unresolvedPlaceholders = url.match(/\$\{[^}]+\}/g) || [];
+	if (unresolvedPlaceholders.length > 0) {
+		throw new Error(
+			`DATABASE_URL contains unresolved placeholders: ${unresolvedPlaceholders.join(
+				", ",
+			)}. Set DATABASE_URL/DATABASE_URL_DOCKER to a fully expanded PostgreSQL DSN in .env.`,
+		);
+	}
 	return url;
 }
 
@@ -52,6 +60,7 @@ function buildBackupFilePath(dir) {
 
 async function runPgDump(databaseUrl, outFile) {
 	await new Promise((resolve, reject) => {
+		const startedAt = Date.now();
 		const child = spawn(
 			"pg_dump",
 			["--format=custom", "--no-owner", "--no-privileges", "--file", outFile, databaseUrl],
@@ -60,8 +69,20 @@ async function runPgDump(databaseUrl, outFile) {
 				env: process.env,
 			},
 		);
-		child.on("error", reject);
+		const progressTimer = setInterval(() => {
+			const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+			const outputBytes = fs.existsSync(outFile) ? fs.statSync(outFile).size : 0;
+			console.log(
+				`[db] backup in progress: elapsed=${elapsedSeconds}s output_bytes=${outputBytes}`,
+			);
+		}, 30_000);
+		const finish = () => clearInterval(progressTimer);
+		child.on("error", (error) => {
+			finish();
+			reject(error);
+		});
 		child.on("exit", (code) => {
+			finish();
 			if (code === 0) {
 				resolve();
 				return;

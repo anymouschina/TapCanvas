@@ -5,9 +5,15 @@ import { getCookie } from "hono/cookie";
 import { verifyJwtHS256 } from "../jwt";
 import { getPrismaClient } from "../platform/node/prisma";
 import { resolveLocalDevRole } from "../modules/auth/local-admin";
+import { validateAuthSession } from "../modules/auth/auth-session.service";
+import { AppError } from "./error";
+import { resolveApiKeyRowFromRequest } from "../modules/apiKey/apiKey-auth-resolver";
+import { touchApiKeyLastUsedAt } from "../modules/apiKey/apiKey.repo";
 
 export type AuthPayload = {
 	sub: string;
+	sid?: string;
+	tokenUse: "access";
 	login: string;
 	name?: string;
 	avatarUrl?: string | null;
@@ -136,8 +142,17 @@ export async function resolveAuth(
 		config.jwtSecret,
 	);
 
-	if (!payload || !payload.sub) {
+	if (!payload || !payload.sub || payload.tokenUse !== "access") {
 		return null;
+	}
+	const session = await validateAuthSession(payload.sub, payload.sid);
+	if (!session.valid) {
+		const message = session.code === "session_expired"
+			? "登录已过期，请重新登录"
+			: session.code === "session_revoked"
+				? "当前登录设备已被移除"
+				: "登录会话无效，请重新登录";
+		throw new AppError(message, { status: 401, code: session.code });
 	}
 
 	return { token, payload };
@@ -147,14 +162,53 @@ export async function authMiddleware(c: AppContext, next: Next) {
 	const resolved = await resolveAuth(c);
 
 	if (!resolved) {
-		return c.json({ error: "Unauthorized" }, 401);
+		const apiKeyRow = await resolveApiKeyRowFromRequest(c);
+		if (!apiKeyRow) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+
+		const dbState = await tryGetUserDbAuthState(c.env.DB, apiKeyRow.owner_id);
+		if (!dbState) {
+			return c.json({ error: "Unauthorized", code: "api_key_owner_missing" }, 401);
+		}
+		if (dbState.deletedAt) {
+			return c.json({ error: "Account deleted", code: "user_deleted" }, 403);
+		}
+		if (dbState.disabled) {
+			return c.json({ error: "Account disabled", code: "user_disabled" }, 403);
+		}
+
+		c.set("userId", apiKeyRow.owner_id);
+		c.set("apiKeyId", apiKeyRow.id);
+		c.set("apiKeyOwnerId", apiKeyRow.owner_id);
+		c.set("auth", {
+			sub: apiKeyRow.owner_id,
+			login: apiKeyRow.owner_id,
+			role: resolveLocalDevRole(c, dbState.role),
+			hasPassword: dbState.hasPassword,
+		});
+		const billingTeamId = typeof apiKeyRow.billing_team_id === "string"
+			? apiKeyRow.billing_team_id.trim()
+			: "";
+		if (billingTeamId) c.set("apiKeyBillingTeamId", billingTeamId);
+		const teamIdHeader = c.req.header("X-Team-Id");
+		c.set("activeTeamId", teamIdHeader && teamIdHeader.trim() ? teamIdHeader.trim() : null);
+		try {
+			await touchApiKeyLastUsedAt(c.env.DB, apiKeyRow.id, new Date().toISOString());
+		} catch {
+			// Authentication remains valid if the last-used audit write is unavailable.
+		}
+		return next();
 	}
 
 	c.set("userId", resolved.payload.sub);
+	c.set("authSessionId", resolved.payload.sid);
 	c.set("auth", {
 		...resolved.payload,
 		role: resolveLocalDevRole(c, resolved.payload.role),
 	});
+	const teamIdHeader = c.req.header("X-Team-Id");
+	c.set("activeTeamId", teamIdHeader && teamIdHeader.trim() ? teamIdHeader.trim() : null);
 	await ensureUserRow(c, resolved.payload);
 
 	const dbState = await tryGetUserDbAuthState(c.env.DB, resolved.payload.sub);
@@ -180,5 +234,21 @@ export async function authMiddleware(c: AppContext, next: Next) {
 		});
 	}
 
+	return next();
+}
+
+/**
+ * 可选鉴权：有有效 token 就注入 userId（用于公开读路由按 viewer 个性化，如 liked/favorited/following），
+ * 无 token 或校验失败时直接放行，绝不返回 401。
+ */
+export async function optionalAuthMiddleware(c: AppContext, next: Next) {
+	const resolved = await resolveAuth(c).catch(() => null);
+	if (resolved) {
+		c.set("userId", resolved.payload.sub);
+		c.set("auth", {
+			...resolved.payload,
+			role: resolveLocalDevRole(c, resolved.payload.role),
+		});
+	}
 	return next();
 }

@@ -184,11 +184,14 @@ type AliImageParameters struct {
 	Seed             *int   `json:"seed,omitempty"`
 }
 
+// PromptExtendValue 返回是否启用 prompt 智能扩写。
+// 官方默认值为 true（见 https://help.aliyun.com/zh/model-studio/qwen-image-edit-guide）：
+// 客户端未显式传 prompt_extend 时，上游会扩写并据此计费，因此 nil 也按 true 处理。
 func (p *AliImageParameters) PromptExtendValue() bool {
 	if p != nil && p.PromptExtend != nil {
 		return *p.PromptExtend
 	}
-	return false
+	return true
 }
 
 type AliImageInput struct {

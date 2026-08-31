@@ -1,4 +1,5 @@
 import React from 'react'
+import { shallow } from 'zustand/shallow'
 import type {
   ImageResourceSnapshot,
   ResourceKind,
@@ -39,9 +40,17 @@ export function useImageResource(input: UseImageResourceInput): ImageResourceSna
     input.ownerRequestKey
     ?? `${ownerSurface ?? 'task-node-main-image'}:${ownerNodeId ?? 'global'}:${normalizedUrl}:${kind}:${variantKey ?? 'original'}`
   ), [input.ownerRequestKey, ownerNodeId, ownerSurface, normalizedUrl, kind, variantKey])
+  const acquisitionPriorityRef = React.useRef(priority)
   const [resourceId, setResourceId] = React.useState<string | null>(null)
 
   React.useEffect(() => {
+    acquisitionPriorityRef.current = priority
+  }, [priority])
+
+  // useLayoutEffect so acquireImage runs before the first browser paint — this ensures
+  // that resourceId is non-null during the commit that the user sees, allowing cached
+  // renderUrl to be read in the same frame rather than 1-2 frames later.
+  React.useLayoutEffect(() => {
     if (!enabled || !normalizedUrl) {
       setResourceId(null)
       return
@@ -50,7 +59,7 @@ export function useImageResource(input: UseImageResourceInput): ImageResourceSna
       url: normalizedUrl,
       kind,
       variantKey,
-      priority,
+      priority: acquisitionPriorityRef.current,
       requestedSize: input.requestedSize,
       owner: ownerSurface
         ? {
@@ -64,7 +73,7 @@ export function useImageResource(input: UseImageResourceInput): ImageResourceSna
     return () => {
       resourceManager.releaseImage(acquiredId, ownerRequestKey)
     }
-  }, [enabled, kind, normalizedUrl, ownerNodeId, ownerRequestKey, ownerSurface, priority, variantKey, input.requestedSize])
+  }, [enabled, kind, normalizedUrl, ownerNodeId, ownerRequestKey, ownerSurface, variantKey, input.requestedSize])
 
   React.useEffect(() => {
     if (!resourceId) return
@@ -99,5 +108,6 @@ export function useImageResource(input: UseImageResourceInput): ImageResourceSna
       },
       [normalizedUrl, resourceId],
     ),
+    shallow,
   )
 }

@@ -1,24 +1,15 @@
-import { createTapCanvasApp } from "../app";
-import { loadLocalEnvFiles } from "../platform/node/local-env";
-import { createNodeWorkerEnv } from "../platform/node/node-env";
 import { getPrismaClient } from "../platform/node/prisma";
 
 export type RealAuthTestAccount = {
 	id: string;
 	login: string;
-	phone: string;
+	phone: string | null;
 };
 
 type RealAuthLoginResult = {
 	token: string;
 	account: RealAuthTestAccount;
 };
-
-type RealAuthTestApp = Awaited<ReturnType<typeof createTapCanvasApp>>;
-type RealAuthTestEnv = Awaited<ReturnType<typeof createNodeWorkerEnv>>;
-
-let cachedAppPromise: Promise<RealAuthTestApp> | null = null;
-let cachedEnvPromise: Promise<RealAuthTestEnv> | null = null;
 
 function readEnv(name: string): string {
 	return String(process.env[name] || "").trim();
@@ -47,32 +38,35 @@ function normalizePhoneE164(raw: string): string {
 	return `+${digits}`;
 }
 
-function getRealAuthTestApp(): Promise<RealAuthTestApp> {
-	if (!cachedAppPromise) {
-		cachedAppPromise = createTapCanvasApp();
+function getRealAuthTestBaseUrl(): URL {
+	const raw = readRequiredEnv("REAL_AUTH_TEST_BASE_URL");
+	let parsed: URL;
+	try {
+		parsed = new URL(raw);
+	} catch (error: unknown) {
+		throw new Error(
+			`REAL_AUTH_TEST_BASE_URL must be an absolute URL: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
-	return cachedAppPromise;
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+		throw new Error("REAL_AUTH_TEST_BASE_URL must use http or https");
+	}
+	return parsed;
 }
 
-function getRealAuthTestEnv(): Promise<RealAuthTestEnv> {
-	if (!cachedEnvPromise) {
-		loadLocalEnvFiles();
-		cachedEnvPromise = createNodeWorkerEnv();
-	}
-	return cachedEnvPromise;
-}
-
-export async function requestWithRealEnv(
-	input: RequestInfo | URL,
+export async function requestRealAuthApi(
+	path: string,
 	init?: RequestInit,
 ): Promise<Response> {
-	const [app, env] = await Promise.all([getRealAuthTestApp(), getRealAuthTestEnv()]);
-	const request = input instanceof Request ? input : new Request(input, init);
-	return app.fetch(request, env);
+	if (!path.startsWith("/")) {
+		throw new Error("real auth integration request path must start with /");
+	}
+	return fetch(new URL(path, getRealAuthTestBaseUrl()), init);
 }
 
 export function hasRealAuthTestEnv(): boolean {
-	return Boolean(readEnv("REAL_AUTH_TEST_PASSWORD")) &&
+	return Boolean(readEnv("REAL_AUTH_TEST_BASE_URL")) &&
+		Boolean(readEnv("REAL_AUTH_TEST_PASSWORD")) &&
 		(Boolean(readEnv("REAL_AUTH_TEST_LOGIN")) || Boolean(readEnv("REAL_AUTH_TEST_PHONE")));
 }
 
@@ -106,9 +100,6 @@ export async function resolveRealAuthTestAccount(): Promise<RealAuthTestAccount>
 	if (!user) {
 		throw new Error("real auth test account not found in prisma");
 	}
-	if (!user.phone) {
-		throw new Error("real auth test account has no phone");
-	}
 	if (!user.password_hash || !user.password_salt) {
 		throw new Error("real auth test account has no password configured");
 	}
@@ -126,13 +117,13 @@ export async function resolveRealAuthTestAccount(): Promise<RealAuthTestAccount>
 export async function loginAndGetRealToken(): Promise<RealAuthLoginResult> {
 	const password = readRequiredEnv("REAL_AUTH_TEST_PASSWORD");
 	const account = await resolveRealAuthTestAccount();
-	const response = await requestWithRealEnv("http://localhost/auth/phone/password-login", {
+	const response = await requestRealAuthApi("/auth/login", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
 		},
 		body: JSON.stringify({
-			phone: account.phone,
+			username: account.login,
 			password,
 		}),
 	});

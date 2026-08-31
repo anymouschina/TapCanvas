@@ -1,0 +1,9 @@
+.workflow-node-glyph--remote {
+  position: relative;
+  display: block;
+  overflow: hidden;
+}
+
+.workflow-node-glyph--remote img {
+  object-fit: contain;
+}

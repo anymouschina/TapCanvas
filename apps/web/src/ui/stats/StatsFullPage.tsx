@@ -3,39 +3,23 @@ import { Box, Button, Center, Container, Group, SegmentedControl, SimpleGrid, St
 import { IconArrowLeft, IconRefresh, IconUsers } from '@tabler/icons-react'
 import { useAuth } from '../../auth/store'
 import { useIsAdmin } from '../../auth/isAdmin'
-import { getDailyActiveUsers, getRevenueBreakdown, getStats, getVendorApiCallStats, type RevenueBreakdownDto, type VendorApiCallStatDto } from '../../api/server'
+import { getDailyActiveUsers, getStats, getVendorApiCallStats, type StatsDto, type VendorApiCallStatDto } from '../../api/server'
 import { ToastHost, toast } from '../toast'
 import { $ } from '../../canvas/i18n'
-import StatsSystemManagement from './system/StatsSystemManagement'
-import StatsSkillManagement from './skills/StatsSkillManagement'
-import StatsEnterpriseManagement from './enterprise/StatsEnterpriseManagement'
+import StatsTaskLogs from './system/StatsTaskLogs'
 import StatsUserManagement from '../StatsUserManagement'
-import StatsProjectManagement from './projects/StatsProjectManagement'
-import StatsCommerceManagement from './commerce/StatsCommerceManagement'
-import StatsMemoryManagement from './memory/StatsMemoryManagement'
-import { navigateBackOr } from '../../utils/spaNavigate'
-import { buildStudioUrl } from '../../utils/appRoutes'
+import { spaNavigate } from '../../utils/spaNavigate'
+import { buildStudioUrl, LANDING_PATH } from '../../utils/appRoutes'
 import { PanelCard } from '../PanelCard'
 import { InlinePanel } from '../InlinePanel'
 import { IconActionButton } from '../IconActionButton'
 import { StatePanel } from '../StatePanel'
 import { StatusBadge } from '../StatusBadge'
 import CanvasEntryButton from '../CanvasEntryButton'
-
-type StatsSection = 'overview' | 'system' | 'memory' | 'skills' | 'enterprise' | 'users' | 'projects' | 'commerce'
+import { getPathnameForStatsSection, parseStatsSectionFromPathname, type StatsSection } from './statsRoutes'
 
 type DauWindow = '7' | '30'
 type VendorWindow = '7' | '15' | '30'
-type RevenueDisplaySlice = {
-  label: string
-  amountCents: number
-  orderCount: number
-  share: number
-  color: string
-}
-
-const REVENUE_SLICE_COLORS = ['#2563eb', '#0f766e', '#f97316', '#dc2626', '#7c3aed', '#0891b2'] as const
-
 function Sparkline({ values }: { values: number[] }): JSX.Element | null {
   if (!values.length) return null
   const w = 920
@@ -60,12 +44,12 @@ function Sparkline({ values }: { values: number[] }): JSX.Element | null {
     <svg className="stats-sparkline" width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
       <defs className="stats-sparkline-defs">
         <linearGradient className="stats-sparkline-gradient" id="tapcanvas-stats-spark-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop className="stats-sparkline-stop" offset="0%" stopColor="rgba(59,130,246,0.35)" />
-          <stop className="stats-sparkline-stop" offset="100%" stopColor="rgba(59,130,246,0.02)" />
+          <stop className="stats-sparkline-stop" offset="0%" stopColor="rgba(122,129,140,0.35)" />
+          <stop className="stats-sparkline-stop" offset="100%" stopColor="rgba(122,129,140,0.02)" />
         </linearGradient>
       </defs>
       <polyline className="stats-sparkline-area" points={area} fill="url(#tapcanvas-stats-spark-fill)" stroke="none" />
-      <polyline className="stats-sparkline-line" points={points} fill="none" stroke="rgba(59,130,246,0.9)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+      <polyline className="stats-sparkline-line" points={points} fill="none" stroke="rgba(122,129,140,0.9)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   )
 }
@@ -82,117 +66,8 @@ function getErrorMessage(reason: unknown, fallback: string): string {
   return reason instanceof Error && reason.message ? reason.message : fallback
 }
 
-function formatRevenueAmount(amountCents: number, currency: string | null): string {
-  const safeAmount = (Math.max(0, Number(amountCents || 0)) / 100).toFixed(2)
-  const normalizedCurrency = typeof currency === 'string' ? currency.trim().toUpperCase() : ''
-  return normalizedCurrency && normalizedCurrency !== 'CNY' ? `${normalizedCurrency} ${safeAmount}` : `¥${safeAmount}`
-}
-
-function RevenueDonutChart({
-  totalAmountCents,
-  currency,
-  slices,
-}: {
-  totalAmountCents: number
-  currency: string | null
-  slices: RevenueDisplaySlice[]
-}): JSX.Element {
-  const chartSize = 188
-  const radius = 54
-  const center = chartSize / 2
-  const circumference = 2 * Math.PI * radius
-  let offset = 0
-
-  return (
-    <Box
-      className="stats-revenue-donut"
-      style={{
-        position: 'relative',
-        width: chartSize,
-        height: chartSize,
-        flex: '0 0 auto',
-      }}
-    >
-      <svg className="stats-revenue-donut-svg" width={chartSize} height={chartSize} viewBox={`0 0 ${chartSize} ${chartSize}`}>
-        <circle
-          className="stats-revenue-donut-track"
-          cx={center}
-          cy={center}
-          r={radius}
-          fill="none"
-          stroke="rgba(148,163,184,0.18)"
-          strokeWidth="18"
-        />
-        <g className="stats-revenue-donut-segments" transform={`rotate(-90 ${center} ${center})`}>
-          {slices.map((slice) => {
-            const length = Math.max(0, Math.min(circumference, circumference * slice.share))
-            const circle = (
-              <circle
-                key={slice.label}
-                className="stats-revenue-donut-segment"
-                cx={center}
-                cy={center}
-                r={radius}
-                fill="none"
-                stroke={slice.color}
-                strokeWidth="18"
-                strokeLinecap="butt"
-                strokeDasharray={`${length} ${Math.max(0, circumference - length)}`}
-                strokeDashoffset={-offset}
-              />
-            )
-            offset += length
-            return circle
-          })}
-        </g>
-      </svg>
-      <Center
-        className="stats-revenue-donut-center"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          pointerEvents: 'none',
-        }}
-      >
-        <Stack className="stats-revenue-donut-center-stack" gap={1} align="center">
-          <Text className="stats-revenue-donut-center-label" size="xs" c="dimmed">
-            {$('近30日收入')}
-          </Text>
-          <Text className="stats-revenue-donut-center-value" size="sm" fw={800}>
-            {formatRevenueAmount(totalAmountCents, currency)}
-          </Text>
-        </Stack>
-      </Center>
-    </Box>
-  )
-}
-
-function parseStatsSectionFromPathname(pathname: string): StatsSection {
-  const path = String(pathname || '')
-
-  if (path === '/stats' || path === '/stats/' || !path) return 'overview'
-
-  if (!path.startsWith('/stats/')) return 'overview'
-
-  const raw = path.slice('/stats/'.length)
-  const first = raw.split('/').filter(Boolean)[0] || ''
-
-  if (first === 'system') return 'system'
-  if (first === 'memory') return 'memory'
-  if (first === 'skills') return 'skills'
-  if (first === 'model-credits') return 'system'
-  if (first === 'enterprise') return 'enterprise'
-  if (first === 'users') return 'users'
-  if (first === 'projects') return 'projects'
-  if (first === 'commerce') return 'commerce'
-  if (first === 'overview') return 'overview'
-
-  return 'overview'
-}
-
-function getPathnameForStatsSection(section: StatsSection): string {
-  if (section === 'overview') return '/stats'
-  return `/stats/${section}`
+function formatCredits(credits: number): string {
+  return new Intl.NumberFormat('zh-CN').format(credits)
 }
 
 export default function StatsFullPage(): JSX.Element {
@@ -207,12 +82,11 @@ export default function StatsFullPage(): JSX.Element {
   })
 
   const [loading, setLoading] = React.useState(false)
-  const [stats, setStats] = React.useState<{ onlineUsers: number; totalUsers: number; newUsersToday: number } | null>(null)
+  const [stats, setStats] = React.useState<StatsDto | null>(null)
   const [dauDays, setDauDays] = React.useState<DauWindow>('30')
   const [dau, setDau] = React.useState<number[]>([])
   const [vendorDays, setVendorDays] = React.useState<VendorWindow>('7')
   const [vendorStats, setVendorStats] = React.useState<VendorApiCallStatDto[]>([])
-  const [revenue, setRevenue] = React.useState<RevenueBreakdownDto | null>(null)
   const [lastUpdated, setLastUpdated] = React.useState<number | null>(null)
   const studioUrl = React.useMemo(() => buildStudioUrl(), [])
 
@@ -241,11 +115,10 @@ export default function StatsFullPage(): JSX.Element {
   const reload = React.useCallback(async () => {
     setLoading(true)
     try {
-      const [statsRes, dauRes, vendorRes, revenueRes] = await Promise.allSettled([
+      const [statsRes, dauRes, vendorRes] = await Promise.allSettled([
         getStats(),
         getDailyActiveUsers(dauDays === '7' ? 7 : 30),
         getVendorApiCallStats(vendorDays === '15' ? 15 : vendorDays === '30' ? 30 : 7, 60),
-        getRevenueBreakdown(30),
       ])
 
       let anyOk = false
@@ -271,13 +144,6 @@ export default function StatsFullPage(): JSX.Element {
         toast(getErrorMessage(vendorRes.reason, '加载厂商统计失败'), 'error')
       }
 
-      if (revenueRes.status === 'fulfilled') {
-        setRevenue(revenueRes.value)
-        anyOk = true
-      } else {
-        toast(getErrorMessage(revenueRes.reason, '加载收入统计失败'), 'error')
-      }
-
       if (anyOk) setLastUpdated(Date.now())
     } finally {
       setLoading(false)
@@ -288,36 +154,9 @@ export default function StatsFullPage(): JSX.Element {
     void reload()
   }, [reload])
 
-  const revenueDisplaySlices = React.useMemo<RevenueDisplaySlice[]>(() => {
-    const sourceSlices = Array.isArray(revenue?.slices) ? revenue.slices : []
-    if (!sourceSlices.length) return []
-    const maxSlices = 5
-    const visibleSlices = sourceSlices.slice(0, maxSlices)
-    const remainingSlices = sourceSlices.slice(maxSlices)
-    const mergedSlices = remainingSlices.length > 0
-      ? [
-          ...visibleSlices,
-          {
-            label: $('其他'),
-            amountCents: remainingSlices.reduce((sum, slice) => sum + slice.amountCents, 0),
-            orderCount: remainingSlices.reduce((sum, slice) => sum + slice.orderCount, 0),
-            quantity: remainingSlices.reduce((sum, slice) => sum + slice.quantity, 0),
-            share: remainingSlices.reduce((sum, slice) => sum + slice.share, 0),
-          },
-        ]
-      : visibleSlices
-    return mergedSlices.map((slice, index) => ({
-      label: slice.label,
-      amountCents: slice.amountCents,
-      orderCount: slice.orderCount,
-      share: slice.share,
-      color: REVENUE_SLICE_COLORS[index % REVENUE_SLICE_COLORS.length],
-    }))
-  }, [revenue])
-
   const background = isDark
-    ? 'radial-gradient(circle at 0% 0%, rgba(56,189,248,0.14), transparent 60%), radial-gradient(circle at 100% 0%, rgba(37,99,235,0.18), transparent 60%), radial-gradient(circle at 0% 100%, rgba(168,85,247,0.12), transparent 55%), linear-gradient(180deg, #020617 0%, #020617 100%)'
-    : 'radial-gradient(circle at 0% 0%, rgba(59,130,246,0.12), transparent 60%), radial-gradient(circle at 100% 0%, rgba(59,130,246,0.08), transparent 60%), radial-gradient(circle at 0% 100%, rgba(56,189,248,0.08), transparent 55%), linear-gradient(180deg, #eef2ff 0%, #e9efff 100%)'
+    ? 'radial-gradient(circle at 0% 0%, rgba(154,161,172,0.14), transparent 60%), radial-gradient(circle at 100% 0%, rgba(92,99,110,0.18), transparent 60%), radial-gradient(circle at 0% 100%, rgba(168,85,247,0.12), transparent 55%), linear-gradient(180deg, #020617 0%, #020617 100%)'
+    : 'radial-gradient(circle at 0% 0%, rgba(122,129,140,0.12), transparent 60%), radial-gradient(circle at 100% 0%, rgba(122,129,140,0.08), transparent 60%), radial-gradient(circle at 0% 100%, rgba(154,161,172,0.08), transparent 55%), linear-gradient(180deg, #eef2ff 0%, #e9efff 100%)'
 
   if (!isAdmin) {
     return (
@@ -327,8 +166,8 @@ export default function StatsFullPage(): JSX.Element {
           <Stack className="stats-page-stack" gap="md">
             <Group className="stats-page-header" justify="space-between">
               <Title className="stats-page-title" order={3}>{$('看板')}</Title>
-              <Button className="stats-page-back" variant="subtle" onClick={() => navigateBackOr(studioUrl)}>
-                {$('返回')}
+              <Button className="stats-page-back" variant="subtle" onClick={() => spaNavigate(LANDING_PATH)}>
+                {$('回到主页')}
               </Button>
             </Group>
             <PanelCard className="stats-page-card">
@@ -357,9 +196,9 @@ export default function StatsFullPage(): JSX.Element {
                 size="xs"
                 variant="subtle"
                 leftSection={<IconArrowLeft className="stats-page-back-icon" size={14} />}
-                onClick={() => navigateBackOr(studioUrl)}
+                onClick={() => spaNavigate(LANDING_PATH)}
               >
-                {$('返回 TapCanvas')}
+                {$('回到主页')}
               </Button>
               <StatusBadge className="stats-page-admin-badge" tone="neutral" variant="light">
                 admin
@@ -395,45 +234,20 @@ export default function StatsFullPage(): JSX.Element {
               onChange={(v) => setSection(v as StatsSection)}
               data={[
                 { value: 'overview', label: '概览' },
-                { value: 'system', label: '系统管理' },
-                { value: 'memory', label: '记忆调试' },
-                { value: 'skills', label: 'Skill' },
-                { value: 'enterprise', label: '企业管理' },
                 { value: 'users', label: '用户管理' },
-                { value: 'projects', label: '项目管理' },
-                { value: 'commerce', label: '商城管理' },
+                { value: 'task-logs', label: '任务日志' },
               ]}
             />
           </Stack>
         </Box>
 
-        {section === 'system' ? (
-          <Stack className="stats-page-system" gap="md" pb="xl">
-            <StatsSystemManagement className="stats-page-system-management" />
-          </Stack>
-        ) : section === 'memory' ? (
-          <Stack className="stats-page-memory" gap="md" pb="xl">
-            <StatsMemoryManagement className="stats-page-memory-management" />
-          </Stack>
-        ) : section === 'skills' ? (
-          <Stack className="stats-page-skills" gap="md" pb="xl">
-            <StatsSkillManagement className="stats-page-skill-management" />
-          </Stack>
-        ) : section === 'projects' ? (
-          <Stack className="stats-page-projects" gap="md" pb="xl">
-            <StatsProjectManagement className="stats-page-projects-management" />
-          </Stack>
-        ) : section === 'commerce' ? (
-          <Stack className="stats-page-commerce" gap="md" pb="xl">
-            <StatsCommerceManagement className="stats-page-commerce-management" />
-          </Stack>
-        ) : section === 'users' ? (
+        {section === 'users' ? (
           <Stack className="stats-page-users" gap="md" pb="xl">
             <StatsUserManagement className="stats-page-users-management" />
           </Stack>
-        ) : section === 'enterprise' ? (
-          <Stack className="stats-page-enterprise" gap="md" pb="xl">
-            <StatsEnterpriseManagement className="stats-page-enterprise-management" />
+        ) : section === 'task-logs' ? (
+          <Stack className="stats-page-task-logs" gap="md" pb="xl">
+            <StatsTaskLogs className="stats-page-task-logs-management" />
           </Stack>
         ) : loading && !stats ? (
           <Center className="stats-page-loading" mih={260}>
@@ -445,7 +259,12 @@ export default function StatsFullPage(): JSX.Element {
           </Center>
         ) : (
           <Stack className="stats-page-content" gap="md" pb="xl">
-            <Group className="stats-page-metrics" grow>
+            <SimpleGrid
+              className="stats-page-metrics"
+              cols={{ base: 1, xs: 2, md: 3, xl: 5 }}
+              spacing="md"
+              verticalSpacing="md"
+            >
               <InlinePanel className="stats-page-metric">
                 <Group className="stats-page-metric-row" justify="space-between">
                   <Text className="stats-page-metric-label" size="sm" fw={600}>
@@ -470,7 +289,31 @@ export default function StatsFullPage(): JSX.Element {
                   <Text className="stats-page-metric-value" size="sm">{stats.totalUsers}</Text>
                 </Group>
               </InlinePanel>
-            </Group>
+              <InlinePanel className="stats-page-metric stats-page-metric--circulating-credits">
+                <Group className="stats-page-metric-row" justify="space-between">
+                  <Tooltip className="stats-page-metric-tooltip" label={$('所有普通团队与用户个人计费账户的当前剩余积分，包含冻结中的积分。')} withArrow>
+                    <Text className="stats-page-metric-label" size="sm" fw={600}>
+                      {$('流通积分')}
+                    </Text>
+                  </Tooltip>
+                  <Text className="stats-page-metric-value" size="sm">
+                    {formatCredits(stats.circulatingCredits)}
+                  </Text>
+                </Group>
+              </InlinePanel>
+              <InlinePanel className="stats-page-metric stats-page-metric--consumed-credits">
+                <Group className="stats-page-metric-row" justify="space-between">
+                  <Tooltip className="stats-page-metric-tooltip" label={$('所有普通团队与用户个人计费账户的扣减账本累计消耗。')} withArrow>
+                    <Text className="stats-page-metric-label" size="sm" fw={600}>
+                      {$('已消耗积分')}
+                    </Text>
+                  </Tooltip>
+                  <Text className="stats-page-metric-value" size="sm">
+                    {formatCredits(stats.consumedCredits)}
+                  </Text>
+                </Group>
+              </InlinePanel>
+            </SimpleGrid>
 
             <SimpleGrid className="stats-page-overview-grid" cols={{ base: 1, lg: 2 }} spacing="md" verticalSpacing="md">
               <PanelCard className="stats-page-chart">
@@ -508,76 +351,6 @@ export default function StatsFullPage(): JSX.Element {
                 )}
               </PanelCard>
 
-              <PanelCard className="stats-page-revenue">
-                <Group className="stats-page-revenue-header" justify="space-between" align="flex-start" mb={10} gap={10}>
-                  <Stack className="stats-page-revenue-header-copy" gap={2}>
-                    <Text className="stats-page-revenue-title" size="sm" fw={600}>
-                      {$('近30日收入')}
-                    </Text>
-                    <Text className="stats-page-revenue-subtitle" size="xs" c="dimmed">
-                      {$('按已支付订单中的商品标题聚合。')}
-                    </Text>
-                  </Stack>
-                  <Stack className="stats-page-revenue-meta" gap={2} align="flex-end">
-                    <Text className="stats-page-revenue-meta-value" size="sm" fw={700}>
-                      {formatRevenueAmount(revenue?.totalAmountCents ?? 0, revenue?.currency ?? null)}
-                    </Text>
-                    <Text className="stats-page-revenue-meta-label" size="xs" c="dimmed">
-                      {$('付费订单')}: {revenue?.paidOrderCount ?? 0}
-                    </Text>
-                  </Stack>
-                </Group>
-
-                {!revenue || revenue.totalAmountCents <= 0 || revenueDisplaySlices.length === 0 ? (
-                  <Center className="stats-page-revenue-empty" mih={220}>
-                    <Text className="stats-page-revenue-empty-text" size="sm" c="dimmed">
-                      {$('近30日暂无已支付收入。')}
-                    </Text>
-                  </Center>
-                ) : (
-                  <Group className="stats-page-revenue-body" align="center" justify="space-between" gap="lg" wrap="wrap">
-                    <RevenueDonutChart
-                      totalAmountCents={revenue.totalAmountCents}
-                      currency={revenue.currency}
-                      slices={revenueDisplaySlices}
-                    />
-                    <Stack className="stats-page-revenue-legend" gap="xs" style={{ flex: 1, minWidth: 260 }}>
-                      {revenueDisplaySlices.map((slice) => (
-                        <Group key={slice.label} className="stats-page-revenue-legend-item" justify="space-between" gap={10} wrap="nowrap">
-                          <Group className="stats-page-revenue-legend-main" gap={10} wrap="nowrap">
-                            <Box
-                              className="stats-page-revenue-legend-swatch"
-                              style={{
-                                width: 10,
-                                height: 10,
-                                borderRadius: 999,
-                                background: slice.color,
-                                flex: '0 0 auto',
-                              }}
-                            />
-                            <Stack className="stats-page-revenue-legend-copy" gap={0}>
-                              <Text className="stats-page-revenue-legend-label" size="sm" fw={600} lineClamp={1}>
-                                {slice.label}
-                              </Text>
-                              <Text className="stats-page-revenue-legend-subtext" size="xs" c="dimmed">
-                                {$('订单')}: {slice.orderCount}
-                              </Text>
-                            </Stack>
-                          </Group>
-                          <Stack className="stats-page-revenue-legend-metrics" gap={0} align="flex-end">
-                            <Text className="stats-page-revenue-legend-value" size="sm" fw={700}>
-                              {formatRevenueAmount(slice.amountCents, revenue.currency)}
-                            </Text>
-                            <Text className="stats-page-revenue-legend-share" size="xs" c="dimmed">
-                              {(slice.share * 100).toFixed(1)}%
-                            </Text>
-                          </Stack>
-                        </Group>
-                      ))}
-                    </Stack>
-                  </Group>
-                )}
-              </PanelCard>
             </SimpleGrid>
 
             <PanelCard className="stats-page-vendors">

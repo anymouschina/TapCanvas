@@ -76,16 +76,16 @@ export async function composeLabeledReferenceSheetBlob(entries: NamedReferenceEn
         const dx = x + Math.floor((cellW - drawW) / 2)
         const dy = y + Math.floor((cellH - drawH) / 2)
 
-        ctx.fillStyle = '#111827'
+        ctx.fillStyle = '#141416'
         ctx.fillRect(x, y, cellW, cellH)
         ctx.drawImage(loaded.source, dx, dy, drawW, drawH)
-        ctx.strokeStyle = 'rgba(148,163,184,0.55)'
+        ctx.strokeStyle = 'rgba(132,136,142,0.55)'
         ctx.lineWidth = 2
         ctx.strokeRect(x, y, cellW, cellH)
       } catch {
-        ctx.fillStyle = '#111827'
+        ctx.fillStyle = '#141416'
         ctx.fillRect(x, y, cellW, cellH)
-        ctx.strokeStyle = 'rgba(148,163,184,0.4)'
+        ctx.strokeStyle = 'rgba(132,136,142,0.4)'
         ctx.lineWidth = 2
         ctx.strokeRect(x, y, cellW, cellH)
       } finally {
@@ -99,9 +99,9 @@ export async function composeLabeledReferenceSheetBlob(entries: NamedReferenceEn
       const pillHeight = 34
       const pillX = x + cellW - pillWidth - 10
       const pillY = y + cellH - pillHeight - 10
-      ctx.fillStyle = 'rgba(15,23,42,0.88)'
+      ctx.fillStyle = 'rgba(17,18,21,0.88)'
       ctx.fillRect(pillX, pillY, pillWidth, pillHeight)
-      ctx.fillStyle = '#f8fafc'
+      ctx.fillStyle = '#f6f7f8'
       ctx.fillText(label, pillX + 12, pillY + 24)
     }
 

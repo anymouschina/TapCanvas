@@ -660,7 +660,7 @@ export function retrieveRelevantStoryboardPrecedents(input: {
 export function buildStoryboardPrecedentPromptBlock(matches: StoryboardPrecedentMatch[]): string {
 	if (!matches.length) return "";
 	const lines = [
-		"【本地 precedent 摘要库（来自 assets/notes，已压缩为结构化先例，不得照抄原文）】",
+		"【内置 precedent 摘要库（仅含已审查的结构化先例，不得照抄原文）】",
 		"只把这些摘要当作镜头组织与审美取舍的参考，不要把 note 原文整段回填进最终输出。",
 	];
 	for (const match of matches) {

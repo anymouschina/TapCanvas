@@ -1,6 +1,7 @@
 import { execute, queryAll, queryOne } from "../../db/db";
 import type { PrismaClient } from "../../types";
 import { ensureStoryboardSchema } from "../storyboard/storyboard.repo";
+import type { ChapterStyleProfileOverride } from "./chapter.schemas";
 
 export type ChapterRow = {
 	id: string;
@@ -209,6 +210,21 @@ export async function getChapterByIdForOwner(input: {
 	);
 }
 
+export async function getChapterById(input: {
+	db: PrismaClient;
+	chapterId: string;
+}): Promise<ChapterRow | null> {
+	await ensureChapterSchema(input.db);
+	return queryOne<ChapterRow>(
+		input.db,
+		`SELECT *
+		 FROM chapters
+		 WHERE id = ?
+		 LIMIT 1`,
+		[input.chapterId],
+	);
+}
+
 export async function createChapterRow(input: {
 	db: PrismaClient;
 	id: string;
@@ -272,6 +288,7 @@ export async function updateChapterRow(input: {
 	sortOrder?: number;
 	sourceBookId?: string | null;
 	sourceBookChapter?: number | null;
+	styleProfileOverride?: ChapterStyleProfileOverride | null;
 	nowIso: string;
 }): Promise<ChapterRow | null> {
 	await ensureChapterSchema(input.db);
@@ -300,6 +317,14 @@ export async function updateChapterRow(input: {
 	if (input.sourceBookChapter !== undefined) {
 		assignments.push("source_book_chapter = ?");
 		bindings.push(input.sourceBookChapter);
+	}
+	if (input.styleProfileOverride !== undefined) {
+		assignments.push("style_profile_override = ?");
+		bindings.push(
+			input.styleProfileOverride === null
+				? null
+				: JSON.stringify(input.styleProfileOverride),
+		);
 	}
 	bindings.push(input.chapterId, input.ownerId);
 	await execute(
@@ -351,6 +376,56 @@ export async function touchChapterLastWorkedAt(input: {
 		   AND owner_id = ?`,
 		[input.nowIso, input.nowIso, input.nowIso, input.chapterId, input.ownerId],
 	);
+}
+
+export async function upsertChaptersFromBook(input: {
+	db: PrismaClient;
+	ownerId: string;
+	projectId: string;
+	bookId: string;
+	chapters: Array<{
+		chapter: number;
+		title: string;
+		summary?: string | null;
+	}>;
+	nowIso: string;
+}): Promise<number> {
+	await ensureChapterSchema(input.db);
+	let count = 0;
+	for (const ch of input.chapters) {
+		const chapterIndex = Math.max(1, Math.trunc(ch.chapter));
+		const id = `book-${input.bookId}-ch${chapterIndex}`;
+		const sortOrder = chapterIndex * 10;
+		await execute(
+			input.db,
+			`INSERT INTO chapters (
+				id, owner_id, project_id, chapter_index, title, summary, status,
+				sort_order, source_book_id, source_book_chapter, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
+			ON CONFLICT (project_id, chapter_index) DO UPDATE SET
+				title = excluded.title,
+				summary = COALESCE(excluded.summary, chapters.summary),
+				source_book_id = excluded.source_book_id,
+				source_book_chapter = excluded.source_book_chapter,
+				sort_order = excluded.sort_order,
+				updated_at = excluded.updated_at`,
+			[
+				id,
+				input.ownerId,
+				input.projectId,
+				chapterIndex,
+				ch.title,
+				ch.summary || null,
+				sortOrder,
+				input.bookId,
+				chapterIndex,
+				input.nowIso,
+				input.nowIso,
+			],
+		);
+		count++;
+	}
+	return count;
 }
 
 export async function deleteChapterRow(input: {

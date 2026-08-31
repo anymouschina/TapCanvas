@@ -40,8 +40,34 @@ func TestBuildCanonicalModelList(t *testing.T) {
 	if got[0].Description != "canonical row" {
 		t.Fatalf("first description = %q", got[0].Description)
 	}
-	if got[1].ModelName != "veo3.1-fast" {
+	if got[1].ModelName != "veo-3.1" {
 		t.Fatalf("second model_name = %q", got[1].ModelName)
+	}
+}
+
+func TestBuildCanonicalModelListPublishesAuthoritativeRoutingAliases(t *testing.T) {
+	t.Parallel()
+
+	rows := []model.Model{{
+		Id:        21,
+		ModelName: "doubao-seedance-2.0",
+		Kind:      "video",
+	}}
+
+	got := buildCanonicalModelList(rows)
+	if len(got) != 1 {
+		t.Fatalf("buildCanonicalModelList len = %d, want 1", len(got))
+	}
+	wantAlias := "doubao-seedance-2-0-260128"
+	found := false
+	for _, alias := range got[0].RoutingAliases {
+		if alias == wantAlias {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("routing_aliases = %v, missing %q", got[0].RoutingAliases, wantAlias)
 	}
 }
 
@@ -83,8 +109,8 @@ func TestBuildCanonicalModelParamsCatalog(t *testing.T) {
 	if len(gptEntry.Capabilities) != 2 {
 		t.Fatalf("gpt-image-2 capabilities len = %d", len(gptEntry.Capabilities))
 	}
-	if _, ok := got["veo3.1-pro"]; !ok {
-		t.Fatal("missing veo3.1-pro entry")
+	if _, ok := got["veo-3.1"]; !ok {
+		t.Fatal("missing veo-3.1 entry")
 	}
 }
 

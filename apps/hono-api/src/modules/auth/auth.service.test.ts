@@ -2,14 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppContext } from "../../types";
 
 const {
-	grantSignupBonusToPersonalTeam,
+	ensurePersonalBillingTeamOnLogin,
 	signJwtHS256,
 	resolveLocalDevRole,
 	getConfig,
 	fetchWithHttpDebugLog,
+	createAuthSession,
+	bindReferrerOnRegister,
 	prisma,
 } = vi.hoisted(() => ({
-	grantSignupBonusToPersonalTeam: vi.fn(async () => undefined),
+	ensurePersonalBillingTeamOnLogin: vi.fn(async () => undefined),
 	signJwtHS256: vi.fn(async () => "mock-token"),
 	resolveLocalDevRole: vi.fn((_c: AppContext, role: string | null) => role),
 	getConfig: vi.fn(() => ({
@@ -18,17 +20,19 @@ const {
 		githubClientSecret: "gh-secret",
 	})),
 	fetchWithHttpDebugLog: vi.fn(),
+	createAuthSession: vi.fn(async () => ({
+		id: "session-test-1",
+		ttlSeconds: 7 * 24 * 60 * 60,
+	})),
+	bindReferrerOnRegister: vi.fn(async () => ({ bound: false, reason: "missing_ref_code" })),
 	prisma: {
 		email_login_codes: {
 			findFirst: vi.fn(),
 			update: vi.fn(),
 		},
-		phone_login_codes: {
-			findFirst: vi.fn(),
-			updateMany: vi.fn(),
-		},
 		users: {
 			findFirst: vi.fn(),
+			findMany: vi.fn(),
 			findUnique: vi.fn(),
 			create: vi.fn(),
 			update: vi.fn(),
@@ -41,7 +45,7 @@ vi.mock("../../platform/node/prisma", () => ({
 }));
 
 vi.mock("../team/team.service", () => ({
-	grantSignupBonusToPersonalTeam,
+	ensurePersonalBillingTeamOnLogin,
 }));
 
 vi.mock("../../jwt", () => ({
@@ -59,12 +63,18 @@ vi.mock("../../config", () => ({
 vi.mock("../../httpDebugLog", () => ({
 	fetchWithHttpDebugLog,
 }));
+
+vi.mock("./auth-session.service", () => ({
+	createAuthSession,
+}));
+
+vi.mock("../referral/referral.service", () => ({
+	bindReferrerOnRegister,
+}));
 import {
 	exchangeGithubCode,
-	loginWithPhonePassword,
-	setPasswordForAuthenticatedUser,
+	loginWithCredentials,
 	verifyEmailLoginCode,
-	verifyPhoneLoginCode,
 } from "./auth.service";
 import { createPasswordRecord } from "./password";
 
@@ -102,7 +112,12 @@ describe("auth login bonus wiring", () => {
 		});
 		resolveLocalDevRole.mockImplementation((_c: AppContext, role: string | null) => role);
 		signJwtHS256.mockResolvedValue("mock-token");
-		grantSignupBonusToPersonalTeam.mockResolvedValue(undefined);
+		createAuthSession.mockResolvedValue({
+			id: "session-test-1",
+			ttlSeconds: 7 * 24 * 60 * 60,
+		});
+		bindReferrerOnRegister.mockResolvedValue({ bound: false, reason: "missing_ref_code" });
+		ensurePersonalBillingTeamOnLogin.mockResolvedValue(undefined);
 		prisma.email_login_codes.findFirst.mockResolvedValue({
 			id: "otp_email_1",
 			code_salt: "salt-1",
@@ -110,13 +125,6 @@ describe("auth login bonus wiring", () => {
 			expires_at: "2099-01-01T00:00:00.000Z",
 		});
 		prisma.email_login_codes.update.mockResolvedValue(undefined);
-		prisma.phone_login_codes.findFirst.mockResolvedValue({
-			id: "otp_phone_1",
-			code_salt: "salt-1",
-			code_hash: VALID_CODE_HASH,
-			created_at: "2099-01-01T00:00:00.000Z",
-		});
-		prisma.phone_login_codes.updateMany.mockResolvedValue({ count: 1 });
 		prisma.users.create.mockResolvedValue(undefined);
 		prisma.users.update.mockResolvedValue(undefined);
 		prisma.users.findFirst.mockResolvedValue(null);
@@ -134,12 +142,31 @@ describe("auth login bonus wiring", () => {
 		);
 
 		expect(prisma.users.create).toHaveBeenCalledTimes(1);
-		expect(grantSignupBonusToPersonalTeam).toHaveBeenCalledTimes(1);
-		expect(grantSignupBonusToPersonalTeam).toHaveBeenCalledWith(
+		expect(ensurePersonalBillingTeamOnLogin).toHaveBeenCalledTimes(1);
+		expect(ensurePersonalBillingTeamOnLogin).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.stringMatching(/^email_/),
 		);
-		expect(result).toMatchObject({ token: "mock-token" });
+		expect(result).toMatchObject({
+			token: "mock-token",
+			refreshToken: "mock-token",
+			accessTokenExpiresInSeconds: 30 * 60,
+			refreshTokenExpiresInSeconds: 7 * 24 * 60 * 60,
+		});
+		expect(createAuthSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.stringMatching(/^email_/),
+		);
+		expect(signJwtHS256).toHaveBeenCalledWith(
+			expect.objectContaining({ sid: "session-test-1", tokenUse: "access" }),
+			"test-secret",
+			30 * 60,
+		);
+		expect(signJwtHS256).toHaveBeenCalledWith(
+			expect.objectContaining({ sid: "session-test-1", tokenUse: "refresh" }),
+			"test-secret",
+			7 * 24 * 60 * 60,
+		);
 	});
 
 	it("still runs bonus reconciliation on repeat email login without recreating user", async () => {
@@ -155,7 +182,7 @@ describe("auth login bonus wiring", () => {
 
 		expect(prisma.users.create).not.toHaveBeenCalled();
 		expect(prisma.users.update).toHaveBeenCalled();
-		expect(grantSignupBonusToPersonalTeam).toHaveBeenCalledTimes(1);
+		expect(ensurePersonalBillingTeamOnLogin).toHaveBeenCalledTimes(1);
 	});
 
 	it("does not clear existing role on repeat email login", async () => {
@@ -198,7 +225,7 @@ describe("auth login bonus wiring", () => {
 
 		expect(fetchWithHttpDebugLog).toHaveBeenCalledTimes(3);
 		expect(prisma.users.create).toHaveBeenCalledTimes(1);
-		expect(grantSignupBonusToPersonalTeam).toHaveBeenCalledWith(
+		expect(ensurePersonalBillingTeamOnLogin).toHaveBeenCalledWith(
 			expect.anything(),
 			"12345",
 		);
@@ -208,36 +235,12 @@ describe("auth login bonus wiring", () => {
 		});
 	});
 
-	it("grants signup bonus immediately when phone login creates a user", async () => {
-		prisma.users.findUnique
-			.mockResolvedValueOnce(null)
-			.mockResolvedValueOnce({ role: null, password_hash: null });
-
-		const result = await verifyPhoneLoginCode(
-			createContext(),
-			"13800138000",
-			"123456",
-		);
-
-		expect(prisma.phone_login_codes.updateMany).toHaveBeenCalledTimes(1);
-		expect(prisma.users.create).toHaveBeenCalledTimes(1);
-		expect(grantSignupBonusToPersonalTeam).toHaveBeenCalledTimes(1);
-		expect(grantSignupBonusToPersonalTeam).toHaveBeenCalledWith(
-			expect.anything(),
-			expect.stringMatching(/^phone_/),
-		);
-		expect(result).toMatchObject({
-			token: "mock-token",
-			user: expect.objectContaining({ login: "phone_8000", phone: "+8613800138000", hasPassword: false }),
-		});
-	});
-
-	it("supports phone password login when password is configured", async () => {
-		const passwordRecord = await createPasswordRecord("12345678");
-		prisma.users.findFirst.mockResolvedValue({
-			id: "phone_user_1",
-			login: "phone_8000",
-			name: "phone_8000",
+	it("supports username password login when password is configured", async () => {
+		const passwordRecord = await createPasswordRecord("123456");
+		prisma.users.findMany.mockResolvedValue([{
+			id: "tapcanvas_admin",
+			login: "admin",
+			name: "TapCanvas Admin",
 			avatar_url: null,
 			email: null,
 			phone: "+8613800138000",
@@ -245,65 +248,20 @@ describe("auth login bonus wiring", () => {
 			disabled: 0,
 			password_hash: passwordRecord.hash,
 			password_salt: passwordRecord.salt,
-		});
-		prisma.users.findUnique.mockResolvedValue({ role: null, password_hash: passwordRecord.hash });
+		}]);
+		prisma.users.findUnique.mockResolvedValue({ role: "admin", password_hash: passwordRecord.hash });
 
-		const result = await loginWithPhonePassword(
+		const result = await loginWithCredentials(
 			createContext(),
-			"13800138000",
-			"12345678",
+			"admin",
+			"123456",
 		);
 
 		expect(prisma.users.update).toHaveBeenCalled();
 		expect(result).toMatchObject({
 			token: "mock-token",
-			user: expect.objectContaining({ login: "phone_8000", hasPassword: true }),
+			user: expect.objectContaining({ login: "admin", hasPassword: true, role: "admin" }),
 		});
 	});
 
-	it("sets password for authenticated phone user and returns refreshed auth payload", async () => {
-		const context = {
-			...createContext(),
-			get: (key: string) => {
-				if (key === "auth") {
-					return {
-						sub: "phone_user_1",
-						login: "phone_8000",
-						phone: "+8613800138000",
-					};
-				}
-				return undefined;
-			},
-		} as AppContext;
-
-		prisma.users.findUnique
-			.mockResolvedValueOnce({
-				id: "phone_user_1",
-				login: "phone_8000",
-				name: "phone_8000",
-				avatar_url: null,
-				email: null,
-				phone: "+8613800138000",
-				guest: 0,
-				disabled: 0,
-				deleted_at: null,
-			})
-			.mockResolvedValueOnce({ role: null, password_hash: "new-password-hash" });
-
-		const result = await setPasswordForAuthenticatedUser(context, "12345678");
-
-		expect(prisma.users.update).toHaveBeenCalledWith(
-			expect.objectContaining({
-				where: { id: "phone_user_1" },
-				data: expect.objectContaining({
-					password_hash: expect.any(String),
-					password_salt: expect.any(String),
-				}),
-			}),
-		);
-		expect(result).toMatchObject({
-			token: "mock-token",
-			user: expect.objectContaining({ hasPassword: true, phone: "+8613800138000" }),
-		});
-	});
 });

@@ -43,12 +43,26 @@ export const PromptSampleParseRequestSchema = z.object({
 
 export const LlmNodePresetTypeSchema = z.enum(["text", "image", "video"]);
 
+export const LlmNodePresetStyleReferenceSchema = z
+	.object({
+		styleId: z.string().optional(),
+		categories: z.array(z.string()).optional(),
+		tags: z.array(z.string()).optional(),
+		era: z.string().optional(),
+		region: z.string().optional(),
+		ethnicity: z.string().optional(),
+		medium: z.string().optional(),
+	})
+	.strict();
+
 export const LlmNodePresetSchema = z.object({
 	id: z.string(),
 	title: z.string(),
 	type: LlmNodePresetTypeSchema,
 	prompt: z.string(),
 	description: z.string().optional(),
+	referenceImageUrl: z.string().url().optional(),
+	styleReference: LlmNodePresetStyleReferenceSchema.optional(),
 	scope: z.enum(["base", "user"]),
 	enabled: z.boolean().optional(),
 	sortOrder: z.number().int().nullable().optional(),
@@ -63,6 +77,8 @@ export const CreateLlmNodePresetRequestSchema = z.object({
 	type: LlmNodePresetTypeSchema,
 	prompt: z.string(),
 	description: z.string().optional(),
+	referenceImageUrl: z.string().url().nullable().optional(),
+	styleReference: LlmNodePresetStyleReferenceSchema.optional(),
 });
 
 export type CreateLlmNodePresetRequestDto = z.infer<
@@ -76,6 +92,8 @@ export const UpsertAdminLlmNodePresetRequestSchema = z
 		type: LlmNodePresetTypeSchema,
 		prompt: z.string(),
 		description: z.string().nullable().optional(),
+		referenceImageUrl: z.string().url().nullable().optional(),
+		styleReference: LlmNodePresetStyleReferenceSchema.optional(),
 		enabled: z.boolean().optional(),
 		sortOrder: z.number().int().nullable().optional(),
 	})

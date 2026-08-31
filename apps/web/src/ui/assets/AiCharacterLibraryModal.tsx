@@ -15,6 +15,7 @@ import {
   Checkbox,
   ScrollArea,
 } from '@mantine/core'
+import { ManagedImage } from '../../domain/resource-runtime/components/ManagedImage'
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -24,9 +25,13 @@ import {
 } from '@tabler/icons-react'
 import {
   listAiCharacterLibraryCharacters,
+} from '../../api/server'
+import {
+  buildCharacterBibleFromDto,
+  buildCharacterReferenceImages,
   type AiCharacterLibraryCharacterDto,
   type AiCharacterLibrarySyncStateDto,
-} from '../../api/server'
+} from '@tapcanvas/character-bible-protocol'
 
 type CharacterFilterState = {
   gender: string
@@ -73,12 +78,8 @@ function getCharacterDisplayName(character: AiCharacterLibraryCharacterDto): str
 }
 
 function buildCharacterSummary(character: AiCharacterLibraryCharacterDto): string {
-  return [
-    normalizeText(character.gender),
-    normalizeText(character.age_group),
-    normalizeText(character.physique),
-    normalizeText(character.temperament),
-  ].filter(Boolean).join(' · ')
+  const bible = buildCharacterBibleFromDto(character)
+  return [bible.gender, bible.ageGroup, bible.physique, bible.temperament].filter(Boolean).join(' · ')
 }
 
 function CharacterGalleryTile(input: {
@@ -90,7 +91,14 @@ function CharacterGalleryTile(input: {
   return (
     <div className={`${input.className} ai-character-library-gallery-tile-button`}>
       {src ? (
-        <img className="ai-character-library-gallery-image" src={src} alt={input.label} />
+        <ManagedImage
+          className="ai-character-library-gallery-image"
+          src={src}
+          alt={input.label}
+          ownerSurface="asset-library"
+          ownerRequestKey={`character-gallery:${src}`}
+          priority="visible"
+        />
       ) : (
         <Center className="ai-character-library-gallery-image ai-character-library-image--empty">
           <Text className="ai-character-library-image-empty-label" size="xs" c="dimmed">
@@ -394,6 +402,14 @@ export function AiCharacterLibraryModal(props: AiCharacterLibraryModalProps): JS
 
   const detailTitle = selectedCharacter ? getCharacterDisplayName(selectedCharacter) : 'AI角色库'
   const syncMetaLabel = syncState?.lastSyncedAt ? `已同步到本地 · ${syncState.lastSyncedAt}` : '本地角色库'
+  const selectedCharacterBible = React.useMemo(
+    () => (selectedCharacter ? buildCharacterBibleFromDto(selectedCharacter) : null),
+    [selectedCharacter],
+  )
+  const selectedCharacterReferenceImages = React.useMemo(
+    () => (selectedCharacter ? buildCharacterReferenceImages(selectedCharacter) : []),
+    [selectedCharacter],
+  )
 
   return (
     <Modal
@@ -585,10 +601,13 @@ export function AiCharacterLibraryModal(props: AiCharacterLibraryModalProps): JS
                             >
                               <div className="ai-character-library-card-media">
                                 {normalizeText(character.full_body_image_url) ? (
-                                  <img
+                                  <ManagedImage
                                     className="ai-character-library-card-image"
                                     src={character.full_body_image_url}
                                     alt={getCharacterDisplayName(character)}
+                                    ownerSurface="asset-library"
+                                    ownerRequestKey={`character-card:${characterId}`}
+                                    priority="visible"
                                   />
                                 ) : (
                                   <Center className="ai-character-library-card-image ai-character-library-image--empty">
@@ -687,52 +706,55 @@ export function AiCharacterLibraryModal(props: AiCharacterLibraryModalProps): JS
                   </ActionIcon>
                 </Group>
               </div>
-              <div className="ai-character-library-detail-content">
-                <div className="ai-character-library-detail-gallery">
-                  <div className="ai-character-library-detail-gallery-top">
+                <div className="ai-character-library-detail-content">
+                  <div className="ai-character-library-detail-gallery">
+                    <div className="ai-character-library-detail-gallery-top">
+                      <CharacterGalleryTile
+                        className="ai-character-library-gallery-card ai-character-library-gallery-card--portrait"
+                        label="角色立绘"
+                        url={selectedCharacterBible?.importedImages.fullBody || ''}
+                      />
+                      <CharacterGalleryTile
+                        className="ai-character-library-gallery-card ai-character-library-gallery-card--closeup"
+                        label="肖像特写"
+                        url={selectedCharacterBible?.importedImages.closeup || ''}
+                      />
+                      <CharacterGalleryTile
+                        className="ai-character-library-gallery-card ai-character-library-gallery-card--expression"
+                        label="表情九宫格"
+                        url={selectedCharacterBible?.importedImages.expression || ''}
+                      />
+                    </div>
                     <CharacterGalleryTile
-                      className="ai-character-library-gallery-card ai-character-library-gallery-card--portrait"
-                      label="角色立绘"
-                      url={selectedCharacter.full_body_image_url}
+                      className="ai-character-library-gallery-card ai-character-library-gallery-card--three-view"
+                      label="三视图"
+                      url={selectedCharacterBible?.importedImages.threeView || ''}
                     />
-                    <CharacterGalleryTile
-                      className="ai-character-library-gallery-card ai-character-library-gallery-card--closeup"
-                      label="肖像特写"
-                      url={selectedCharacter.closeup_image_url}
-                    />
-                    <CharacterGalleryTile
-                      className="ai-character-library-gallery-card ai-character-library-gallery-card--expression"
-                      label="表情九宫格"
-                      url={selectedCharacter.expression_image_url}
-                    />
+                    <Text className="ai-character-library-detail-gallery-meta" size="xs" c="dimmed">
+                      已收录参考图 {selectedCharacterReferenceImages.length} / 4
+                    </Text>
                   </div>
-                  <CharacterGalleryTile
-                    className="ai-character-library-gallery-card ai-character-library-gallery-card--three-view"
-                    label="三视图"
-                    url={selectedCharacter.three_view_image_url}
-                  />
-                </div>
-                <div className="ai-character-library-detail-side">
-                  <Stack className="ai-character-library-detail-side-stack" gap="lg">
-                    <div className="ai-character-library-detail-attributes">
-                      <Text className="ai-character-library-detail-section-title" fw={700}>
+                  <div className="ai-character-library-detail-side">
+                    <Stack className="ai-character-library-detail-side-stack" gap="lg">
+                      <div className="ai-character-library-detail-attributes">
+                        <Text className="ai-character-library-detail-section-title" fw={700}>
                         角色属性
                       </Text>
                       <div className="ai-character-library-detail-attr-grid">
                         {[
-                          ['大类', selectedCharacter.era],
-                          ['文化区域', selectedCharacter.cultural_region],
-                          ['时代', selectedCharacter.time_period],
-                          ['性别', selectedCharacter.gender],
-                          ['年龄段', selectedCharacter.age_group],
-                          ['物种', selectedCharacter.species],
-                          ['体格', selectedCharacter.physique],
-                          ['身高', selectedCharacter.height_level],
-                          ['肤色', selectedCharacter.skin_color],
-                          ['发长', selectedCharacter.hair_length],
-                          ['发色', selectedCharacter.hair_color],
-                          ['气质', selectedCharacter.temperament],
-                          ['场景', selectedCharacter.scene],
+                          ['大类', selectedCharacterBible?.era],
+                          ['文化区域', selectedCharacterBible?.culturalRegion],
+                          ['时代', selectedCharacterBible?.timePeriod],
+                          ['性别', selectedCharacterBible?.gender],
+                          ['年龄段', selectedCharacterBible?.ageGroup],
+                          ['物种', selectedCharacterBible?.species],
+                          ['体格', selectedCharacterBible?.physique],
+                          ['身高', selectedCharacterBible?.heightLevel],
+                          ['肤色', selectedCharacterBible?.skinColor],
+                          ['发长', selectedCharacterBible?.hairLength],
+                          ['发色', selectedCharacterBible?.hairColor],
+                          ['气质', selectedCharacterBible?.temperament],
+                          ['场景', selectedCharacterBible?.scene],
                         ].map(([label, value]) => (
                           <div key={`${label}-${value}`} className="ai-character-library-detail-attr-item">
                             <Text className="ai-character-library-detail-attr-label" c="dimmed">
@@ -751,7 +773,7 @@ export function AiCharacterLibraryModal(props: AiCharacterLibraryModalProps): JS
                         辨识特征
                       </Text>
                       <Text className="ai-character-library-detail-copy">
-                        {normalizeText(selectedCharacter.distinctive_features) || '未填写'}
+                        {normalizeText(selectedCharacterBible?.distinctiveFeatures) || '未填写'}
                       </Text>
                     </div>
 
@@ -760,12 +782,21 @@ export function AiCharacterLibraryModal(props: AiCharacterLibraryModalProps): JS
                         着装描述
                       </Text>
                       <Text className="ai-character-library-detail-copy">
-                        {normalizeText(selectedCharacter.outfit) || '未填写'}
+                        {normalizeText(selectedCharacterBible?.outfit) || '未填写'}
+                      </Text>
+                    </div>
+
+                    <div className="ai-character-library-detail-copy-block">
+                      <Text className="ai-character-library-detail-section-title" fw={700}>
+                        身份提示
+                      </Text>
+                      <Text className="ai-character-library-detail-copy">
+                        {normalizeText(selectedCharacterBible?.identityHint) || '未填写'}
                       </Text>
                     </div>
 
                     <div className="ai-character-library-detail-badges">
-                      {[selectedCharacter.filter_worldview, selectedCharacter.filter_theme, selectedCharacter.appearance_background]
+                      {[selectedCharacterBible?.filterWorldview, selectedCharacterBible?.filterTheme, selectedCharacterBible?.appearanceBackground]
                         .map((value) => normalizeText(value))
                         .filter(Boolean)
                         .map((value) => (

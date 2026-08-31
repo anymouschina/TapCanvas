@@ -34,6 +34,7 @@ export const useModelsData = () => {
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [searching, setSearching] = useState(false);
   const [modelCount, setModelCount] = useState(0);
+  const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
 
   // Modal states
   const [showEdit, setShowEdit] = useState(false);
@@ -251,24 +252,27 @@ export const useModelsData = () => {
   };
 
   // Search models with keyword and vendor
-  const searchModels = async () => {
+  const searchModels = async (page = 1, size = pageSize) => {
+    // onSubmit / 事件回调可能传入非数字的首参（如表单 values），归一化避免污染分页参数
+    const targetPage = typeof page === 'number' ? page : 1;
+    const targetSize = typeof size === 'number' ? size : pageSize;
     const { searchKeyword = '', searchVendor = '' } = getFormValues();
 
     if (searchKeyword === '' && searchVendor === '') {
       // If keyword is blank, load models instead
-      await loadModels(1, pageSize);
+      await loadModels(targetPage, targetSize);
       return;
     }
 
     setSearching(true);
     try {
       const res = await API.get(
-        `/api/models/search?keyword=${searchKeyword}&vendor=${searchVendor}&p=1&page_size=${pageSize}`,
+        `/api/models/search?keyword=${searchKeyword}&vendor=${searchVendor}&p=${targetPage}&page_size=${targetSize}`,
       );
       const { success, message, data } = res.data;
       if (success) {
         const newPageData = extractItems(data);
-        setActivePage(data.page || 1);
+        setActivePage(data.page || targetPage);
         setModelCount(data.total || newPageData.length);
         setModelFormat(newPageData);
         if (data.vendor_counts) {
@@ -330,7 +334,13 @@ export const useModelsData = () => {
   // Handle page change
   const handlePageChange = (page) => {
     setActivePage(page);
-    loadModels(page, pageSize, activeVendorKey);
+    const { searchKeyword = '', searchVendor = '' } = getFormValues();
+    if (searchKeyword === '' && searchVendor === '') {
+      loadModels(page, pageSize, activeVendorKey);
+    } else {
+      // 翻页时保留搜索关键字 / 供应商筛选条件
+      searchModels(page, pageSize);
+    }
   };
 
   // Reload models when activeVendorKey changes
@@ -342,7 +352,13 @@ export const useModelsData = () => {
   const handlePageSizeChange = async (size) => {
     setPageSize(size);
     setActivePage(1);
-    await loadModels(1, size, activeVendorKey);
+    const { searchKeyword = '', searchVendor = '' } = getFormValues();
+    if (searchKeyword === '' && searchVendor === '') {
+      await loadModels(1, size, activeVendorKey);
+    } else {
+      // 改变每页数量时保留搜索关键字 / 供应商筛选条件
+      await searchModels(1, size);
+    }
   };
 
   // Handle row click and styling
@@ -408,6 +424,51 @@ export const useModelsData = () => {
     }
   };
 
+  const batchUpdateModelStatus = async (status) => {
+    if (selectedKeys.length === 0) {
+      showError(t('请至少选择一个模型'));
+      return false;
+    }
+    if (status !== 0 && status !== 1) {
+      showError(t('模型状态只能是启用或禁用'));
+      return false;
+    }
+
+    setBatchStatusUpdating(true);
+    try {
+      const ids = selectedKeys.map((selectedModel) => selectedModel.id);
+      const res = await API.patch('/api/models/status', { ids, status });
+      const { success, message, data } = res.data || {};
+      if (!success) {
+        showError(message || t('批量更新模型状态失败'));
+        return false;
+      }
+
+      const updatedCount = data?.updated_count ?? 0;
+      const selectedIDSet = new Set(ids);
+      setModels((currentModels) =>
+        currentModels.map((currentModel) =>
+          selectedIDSet.has(currentModel.id)
+            ? { ...currentModel, status }
+            : currentModel,
+        ),
+      );
+      setSelectedKeys([]);
+      showSuccess(
+        status === 1
+          ? t('已启用 {{count}} 个模型', { count: updatedCount })
+          : t('已禁用 {{count}} 个模型', { count: updatedCount }),
+      );
+      return true;
+    } catch (error) {
+      console.error(error);
+      showError(t('批量更新模型状态失败'));
+      return false;
+    } finally {
+      setBatchStatusUpdating(false);
+    }
+  };
+
   // Copy text helper
   const copyText = async (text) => {
     try {
@@ -459,6 +520,7 @@ export const useModelsData = () => {
     refresh,
     manageModel,
     batchDeleteModels,
+    batchUpdateModelStatus,
     copyText,
 
     // Pagination
@@ -469,6 +531,7 @@ export const useModelsData = () => {
     // UI state
     compactMode,
     setCompactMode,
+    batchStatusUpdating,
 
     // Vendor data
     vendors,

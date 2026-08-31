@@ -26,10 +26,21 @@ export function resolveAiChatReloadAutoRunPlan(input: {
 } {
   const focusNodeIds = dedupeNodeIds(input.newNodeIds)
   if (input.failedTurn) {
+    const executableNodeIds = dedupeNodeIds(
+      Array.isArray(input.traceCanvasMutation?.executableNodeIds)
+        ? input.traceCanvasMutation.executableNodeIds
+        : [],
+    )
+    const executableNodeIdSet = new Set(executableNodeIds)
+    const autoRunNewNodeIds = focusNodeIds.filter((nodeId) => executableNodeIdSet.has(nodeId))
+    const newNodeIdSet = new Set(autoRunNewNodeIds)
     return {
       focusNodeIds,
-      autoRunNewNodeIds: [],
-      autoRunPatchedNodeIds: [],
+      // A failed terminal claim does not invalidate already-persisted, structurally
+      // executable canvas work. Resume only IDs backed by successful flow-patch
+      // evidence; node-level readiness checks still guard the actual execution.
+      autoRunNewNodeIds,
+      autoRunPatchedNodeIds: executableNodeIds.filter((nodeId) => !newNodeIdSet.has(nodeId)),
     }
   }
 

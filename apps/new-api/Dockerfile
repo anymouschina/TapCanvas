@@ -15,7 +15,9 @@ ARG https_proxy=
 ARG no_proxy=
 ARG all_proxy=
 
-FROM ${BUN_IMAGE} AS builder
+# --platform=$BUILDPLATFORM：在宿主原生架构(arm64 Mac)实例化，不进 QEMU。
+# web 产物平台无关（且 SKIP_WEB_BUILD=1 时只校验宿主预构建的 dist），无需 target 架构。
+FROM --platform=$BUILDPLATFORM ${BUN_IMAGE} AS builder
 
 ARG NPM_REGISTRY
 ARG SKIP_WEB_BUILD
@@ -39,15 +41,23 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
 WORKDIR /build
 COPY ./web .
 COPY ./VERSION .
+# SKIP_WEB_BUILD=1（默认部署路径）：用宿主机原生预构建的 web/dist（COPY ./web 已带入）。
+#   web 前端产物平台无关，宿主机(arm64 Mac)原生 bun run build 又快又有充足内存，避开 QEMU
+#   amd64 模拟下 vite build 的 OOM(ResourceExhausted)。产物随后 go:embed 进二进制，镜像自包含。
+# SKIP_WEB_BUILD=0：镜像内 bun install + vite build（仅在原生 amd64 构建机上可行；QEMU 模拟会 OOM）。
+# 注意：RUN 续行内禁止插 # 注释（拼成单行后会把后续命令一并注释掉）。
 RUN if [ "${SKIP_WEB_BUILD}" = "1" ]; then \
-      mkdir -p /build/dist && \
-      printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><title>new-api</title></head><body><div id="root"></div></body></html>' > /build/dist/index.html; \
+      test -f /build/dist/index.html || { echo "SKIP_WEB_BUILD=1 需要预构建好的 web/dist：请先在宿主机 cd apps/new-api/web && bun install && bun run build" >&2; exit 1; }; \
+      echo "[build] 使用宿主预构建的 web/dist，跳过镜像内 vite build"; \
     else \
       test -f bun.lock || { echo "web/bun.lock is required when SKIP_WEB_BUILD!=1" >&2; exit 1; } && \
+      NPM_CONFIG_REGISTRY="${NPM_REGISTRY}" bun install --frozen-lockfile && \
       DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) bun run build; \
     fi
 
-FROM ${GO_IMAGE} AS builder2
+# --platform=$BUILDPLATFORM：go 编译器跑在宿主原生架构(arm64)，靠 GOARCH=$TARGETARCH 交叉编译出
+# 目标 amd64 二进制（CGO_ENABLED=0 纯 Go）。避开 QEMU 模拟 amd64 跑 go build 的 SIGSEGV(modindex.dirHash)。
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder2
 
 ARG GO_PROXY
 ARG HTTP_PROXY

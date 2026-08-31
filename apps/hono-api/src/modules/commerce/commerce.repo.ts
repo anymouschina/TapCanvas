@@ -48,12 +48,19 @@ export type SubscriptionRow = {
 	id: string;
 	owner_id: string;
 	plan_code: string;
-	source_order_id: string | null;
 	status: string;
 	start_at: string;
 	end_at: string;
+	billing_cycle: string;
 	duration_days: number;
 	daily_limit: number;
+	monthly_credits: number;
+	daily_gift_credits: number;
+	concurrency_limit: number;
+	capacity_label: string;
+	credit_grant_count: number;
+	credit_grants_issued: number;
+	next_credit_grant_at: string | null;
 	timezone: string;
 	created_at: string;
 	updated_at: string;
@@ -69,15 +76,6 @@ export type SubscriptionDailyQuotaRow = {
 	used_count: number;
 	created_at: string;
 	updated_at: string;
-};
-
-export type RechargePackageRow = {
-	product_id: string;
-	title: string;
-	subtitle: string | null;
-	currency: string;
-	price_cents: number;
-	config_json: string | null;
 };
 
 export type DetailPageSampleRow = {
@@ -123,51 +121,16 @@ export async function listDictionaryRows(db: PrismaClient, ownerId: string | und
 	});
 }
 
-export async function listRechargePackageRows(db: PrismaClient, ownerId?: string): Promise<RechargePackageRow[]> {
-	void db;
-	const rows = await getPrismaClient().products.findMany({
-		where: {
-			...(ownerId ? { owner_id: ownerId } : {}),
-			status: "active",
-			product_entitlements: {
-				some: {
-					...(ownerId ? { owner_id: ownerId } : {}),
-					entitlement_type: "points_topup",
-				},
-			},
-		},
-		orderBy: [{ price_cents: "asc" }, { created_at: "asc" }],
-		select: {
-			id: true,
-			title: true,
-			subtitle: true,
-			currency: true,
-			price_cents: true,
-			product_entitlements: {
-				where: {
-					...(ownerId ? { owner_id: ownerId } : {}),
-					entitlement_type: "points_topup",
-				},
-				select: { config_json: true },
-				take: 1,
-			},
-		},
-	});
-	return rows.map((row) => ({
-		product_id: row.id,
-		title: row.title,
-		subtitle: row.subtitle,
-		currency: row.currency,
-		price_cents: row.price_cents,
-		config_json: row.product_entitlements[0]?.config_json ?? null,
-	}));
-}
-
 export async function getDictionaryById(db: PrismaClient, ownerId: string, id: string): Promise<DictionaryRow | null> {
 	void db;
 	return getPrismaClient().commerce_dictionaries.findFirst({
 		where: { owner_id: ownerId, id },
 	});
+}
+
+export async function getDictionaryByIdAnyOwner(db: PrismaClient, id: string): Promise<DictionaryRow | null> {
+	void db;
+	return getPrismaClient().commerce_dictionaries.findUnique({ where: { id } });
 }
 
 export async function upsertDictionaryRow(db: PrismaClient, input: {
@@ -269,6 +232,7 @@ export async function updatePointsAccountAndInsertLedger(db: PrismaClient, input
 	note: string | null;
 	idempotencyKey: string;
 	nowIso: string;
+	apiKeyId?: string | null;
 }): Promise<void> {
 	void db;
 	await getPrismaClient().$transaction(async (tx) => {
@@ -312,6 +276,7 @@ export async function updatePointsAccountAndInsertLedger(db: PrismaClient, input
 				note: input.note,
 				idempotency_key: input.idempotencyKey,
 				created_at: input.nowIso,
+				api_key_id: input.apiKeyId ?? null,
 			},
 		});
 	});
@@ -370,7 +335,6 @@ export async function insertSubscription(db: PrismaClient, input: {
 	id: string;
 	ownerId: string;
 	planCode: string;
-	sourceOrderId: string | null;
 	status: string;
 	startAt: string;
 	endAt: string;
@@ -385,7 +349,6 @@ export async function insertSubscription(db: PrismaClient, input: {
 			id: input.id,
 			owner_id: input.ownerId,
 			plan_code: input.planCode,
-			source_order_id: input.sourceOrderId,
 			status: input.status,
 			start_at: input.startAt,
 			end_at: input.endAt,
@@ -518,53 +481,6 @@ export async function consumeDailyQuota(db: PrismaClient, input: {
 				created_at: input.nowIso,
 			},
 		});
-	});
-}
-
-export async function getOrderEntitlementLog(db: PrismaClient, ownerId: string, orderItemId: string, entitlementType: string): Promise<{ id: string } | null> {
-	void db;
-	return getPrismaClient().order_entitlements.findFirst({
-		where: {
-			owner_id: ownerId,
-			order_item_id: orderItemId,
-			entitlement_type: entitlementType,
-		},
-		select: { id: true },
-	});
-}
-
-export async function insertOrderEntitlementLog(db: PrismaClient, input: {
-	id: string;
-	ownerId: string;
-	orderId: string;
-	orderItemId: string;
-	productId: string;
-	entitlementType: string;
-	status: string;
-	resultJson: string | null;
-	nowIso: string;
-}): Promise<void> {
-	void db;
-	await getPrismaClient().order_entitlements.upsert({
-		where: {
-			order_item_id_entitlement_type: {
-				order_item_id: input.orderItemId,
-				entitlement_type: input.entitlementType,
-			},
-		},
-		create: {
-			id: input.id,
-			owner_id: input.ownerId,
-			order_id: input.orderId,
-			order_item_id: input.orderItemId,
-			product_id: input.productId,
-			entitlement_type: input.entitlementType,
-			status: input.status,
-			result_json: input.resultJson,
-			created_at: input.nowIso,
-			updated_at: input.nowIso,
-		},
-		update: {},
 	});
 }
 

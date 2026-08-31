@@ -21,6 +21,10 @@ import (
 // GetFileTypeFromUrl 获取文件类型，返回 mime type， 例如 image/jpeg, image/png, image/gif, image/bmp, image/tiff, application/pdf
 // 如果获取失败，返回 application/octet-stream
 func GetFileTypeFromUrl(c *gin.Context, url string, reason ...string) (string, error) {
+	if mt := mimeTypeFromURLWithoutFetch(url); mt != "" {
+		return mt, nil
+	}
+
 	response, err := DoDownloadRequest(url, []string{"get_mime_type", strings.Join(reason, ", ")}...)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("fail to get file type from url: %s, error: %s", url, err.Error()))
@@ -131,6 +135,29 @@ func GetFileTypeFromUrl(c *gin.Context, url string, reason ...string) (string, e
 
 	// Fallback
 	return "application/octet-stream", nil
+}
+
+func mimeTypeFromURLWithoutFetch(rawURL string) string {
+	cleanedURL := rawURL
+	if q := strings.Index(cleanedURL, "?"); q != -1 {
+		cleanedURL = cleanedURL[:q]
+	}
+	if hash := strings.Index(cleanedURL, "#"); hash != -1 {
+		cleanedURL = cleanedURL[:hash]
+	}
+	if slash := strings.LastIndex(cleanedURL, "/"); slash != -1 && slash+1 < len(cleanedURL) {
+		last := cleanedURL[slash+1:]
+		if dot := strings.LastIndex(last, "."); dot != -1 && dot+1 < len(last) {
+			ext := strings.ToLower(last[dot+1:])
+			if ext != "" {
+				mt := GetMimeTypeByExtension(ext)
+				if mt != "application/octet-stream" {
+					return mt
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // GetFileBase64FromUrl 从 URL 获取文件的 base64 编码数据

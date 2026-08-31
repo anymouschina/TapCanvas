@@ -10,14 +10,13 @@ import { useUIStore } from '../ui/uiStore'
 import { normalizeProductionNodeMetaRecord } from '../canvas/productionMeta'
 import { getTaskNodeCoreType, normalizeTaskNodeKind } from '../canvas/nodes/taskNodeSchema'
 import { normalizeStoryboardNodeData } from '../canvas/nodes/taskNode/storyboardEditor'
-import { getDefaultModel } from '../config/models'
 
 /**
  * Canvas操作服务层
  * 将AI Function Calling转换为实际的canvas操作
  */
 
-const REMOTE_RUN_KINDS = new Set(['image', 'video', 'storyboard'])
+const REMOTE_RUN_KINDS = new Set(['image', 'video', 'storyboard', 'audio'])
 
 const CREATIVE_PROMPT_KINDS = new Set(['image'])
 
@@ -373,7 +372,7 @@ export class CanvasService {
       : undefined
     const normalizedKind = normalizeTaskNodeKind(rawType) || normalizeTaskNodeKind(configKind)
     if (!normalizedKind) {
-      throw new Error('当前 taskNode 只保留 text / image / imageEdit / storyboard / video 五类节点')
+      throw new Error('不支持的 taskNode kind：请使用能力清单中已注册的节点类型')
     }
 
     const label = params.label?.trim() || CanvasService.defaultLabelForType(normalizedKind)
@@ -425,6 +424,8 @@ export class CanvasService {
     if (normalizedKind === 'imageEdit') return '图片编辑'
     if (normalizedKind === 'storyboard') return '分镜编辑'
     if (normalizedKind === 'video') return '视频'
+    if (normalizedKind === 'videoAnalysis') return '视频分析'
+    if (normalizedKind === 'shotTable') return '分镜表'
     return type
   }
 
@@ -892,13 +893,48 @@ export class CanvasService {
   }
 
   static async reflowLayout(params: {
-    scope?: 'canvas' | 'topLevelGroups' | 'group'
+    scope?: 'canvas' | 'topLevelGroups' | 'group' | 'sortedColumn'
     targetGroupId?: string
     focusNodeId?: string
   } = {}): Promise<FunctionResult> {
     try {
-      const scope = params.scope === 'group' || params.scope === 'topLevelGroups' ? params.scope : 'canvas'
+      const scope = params.scope === 'group' || params.scope === 'topLevelGroups' || params.scope === 'sortedColumn'
+        ? params.scope
+        : 'canvas'
       const store = useRFStore.getState()
+
+      if (scope === 'sortedColumn') {
+        // 按 productionLayer/kind 排序后垂直单列摆放，不创建任何新节点
+        const KIND_ORDER: Record<string, number> = {
+          novelDoc: 0, text: 1, storyboardScript: 2, image: 3, storyboardImage: 3,
+          video: 4, composeVideo: 4, audio: 5,
+        }
+        const topLevel = store.nodes.filter(n => !(n as any).parentId && n.type !== 'groupNode')
+        const sorted = [...topLevel].sort((a, b) => {
+          const ka = KIND_ORDER[(a.data as any)?.kind ?? a.type ?? ''] ?? 99
+          const kb = KIND_ORDER[(b.data as any)?.kind ?? b.type ?? ''] ?? 99
+          if (ka !== kb) return ka - kb
+          return (a.position?.y ?? 0) - (b.position?.y ?? 0)
+        })
+        const ORIGIN_X = 100
+        const GAP_Y = 60
+        let cursorY = 100
+        useRFStore.setState((s) => {
+          const nodeMap = new Map(s.nodes.map(n => [n.id, n]))
+          sorted.forEach(n => {
+            const node = nodeMap.get(n.id)
+            if (!node) return
+            const h = (node as any).measured?.height ?? (node.data as any)?.nodeHeight ?? 200
+            nodeMap.set(n.id, { ...node, position: { x: ORIGIN_X, y: cursorY } })
+            cursorY += h + GAP_Y
+          })
+          return { nodes: [...nodeMap.values()] }
+        })
+        return {
+          success: true,
+          data: { message: `已按类型单列排布 ${sorted.length} 个节点`, scope, movedCount: sorted.length },
+        }
+      }
 
       if (scope === 'group') {
         const targetGroupId = CanvasService.normalizeGroupId(params.targetGroupId)
@@ -986,6 +1022,7 @@ export class CanvasService {
         label: node.data.label,
         kind: node.data.kind,
         position: node.position,
+        parentId: (node as any).parentId ?? null,
         config: node.data.config
       }))
 
@@ -1073,6 +1110,32 @@ export class CanvasService {
   }
 
 
+  static async createGroup(params: {
+    nodeIds: string[]
+    name?: string
+  }): Promise<FunctionResult> {
+    try {
+      const { createGroupForNodeIds } = useRFStore.getState()
+      const nodeIds = Array.isArray(params.nodeIds) ? params.nodeIds.filter(Boolean) : []
+      if (nodeIds.length === 0) {
+        return { success: false, error: 'nodeIds 不能为空' }
+      }
+      const groupId = createGroupForNodeIds(nodeIds, params.name)
+      if (!groupId) {
+        return { success: false, error: '打组失败，可能节点不存在或已在其他组内' }
+      }
+      return {
+        success: true,
+        data: { groupId, message: `已将 ${nodeIds.length} 个节点打组为「${params.name || groupId}」` },
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '打组失败',
+      }
+    }
+  }
+
   /**
    * 生成默认节点位置
    */
@@ -1099,15 +1162,15 @@ export class CanvasService {
     return data
   }
 
-  private static sanitizeModels(kind: string | undefined, data: Record<string, any>): Record<string, any> {
+  private static sanitizeModels(kind: string | undefined, data: Record<string, unknown>): Record<string, unknown> {
     const next = { ...data }
     if (kind === 'image' || kind === 'imageEdit') {
-      const fallbackModel = getDefaultModel(kind === 'imageEdit' ? 'imageEdit' : 'image')
       const model =
         typeof next.imageModel === 'string' && next.imageModel.trim()
           ? next.imageModel.trim()
-          : fallbackModel
-      next.imageModel = model
+          : ''
+      if (model) next.imageModel = model
+      else delete next.imageModel
       delete next.imageModelVendor
     }
     if (kind === 'video' || kind === 'composeVideo') {
@@ -1137,4 +1200,5 @@ export const functionHandlers = {
   runDag: CanvasService.runDag,
   formatAll: CanvasService.formatAll,
   canvas_smartLayout: CanvasService.smartLayout,
+  createGroup: CanvasService.createGroup,
 } as const

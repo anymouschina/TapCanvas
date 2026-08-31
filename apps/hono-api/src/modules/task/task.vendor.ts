@@ -35,4 +35,3 @@ export function shouldUseGrsaiDrawPollingForImageTask(vendor: string): boolean {
 	if (raw.startsWith("apimart-") || raw.startsWith("apimart:")) return true;
 	return false;
 }
-

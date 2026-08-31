@@ -44,7 +44,6 @@ const OtherSetting = () => {
     [LEGAL_USER_AGREEMENT_KEY]: '',
     [LEGAL_PRIVACY_POLICY_KEY]: '',
     SystemName: '',
-    Logo: '',
     Footer: '',
     About: '',
     HomePageContent: '',
@@ -77,7 +76,6 @@ const OtherSetting = () => {
     [LEGAL_USER_AGREEMENT_KEY]: false,
     [LEGAL_PRIVACY_POLICY_KEY]: false,
     SystemName: false,
-    Logo: false,
     HomePageContent: false,
     About: false,
     Footer: false,
@@ -169,19 +167,6 @@ const OtherSetting = () => {
     }
   };
 
-  // 个性化设置 - Logo
-  const submitLogo = async () => {
-    try {
-      setLoadingInput((loadingInput) => ({ ...loadingInput, Logo: true }));
-      await updateOption('Logo', inputs.Logo);
-      showSuccess('Logo 已更新');
-    } catch (error) {
-      console.error('Logo 更新失败', error);
-      showError('Logo 更新失败');
-    } finally {
-      setLoadingInput((loadingInput) => ({ ...loadingInput, Logo: false }));
-    }
-  };
   // 个性化设置 - 首页内容
   const submitOption = async (key) => {
     try {
@@ -434,15 +419,6 @@ const OtherSetting = () => {
                 loading={loadingInput['SystemName']}
               >
                 {t('设置系统名称')}
-              </Button>
-              <Form.Input
-                label={t('Logo 图片地址')}
-                placeholder={t('在此输入 Logo 图片地址')}
-                field={'Logo'}
-                onChange={handleInputChange}
-              />
-              <Button onClick={submitLogo} loading={loadingInput['Logo']}>
-                {t('设置 Logo')}
               </Button>
               <Form.TextArea
                 label={t('首页内容')}

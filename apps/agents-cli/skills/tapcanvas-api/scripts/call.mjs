@@ -9,6 +9,7 @@ const defaultConfigPath = path.join(skillRoot, "config.json");
 
 const ENDPOINTS = {
   chat: { method: "POST", path: "/public/agents/chat", needsPayload: true },
+  agentTool: { method: "POST", path: "/public/agents/tools/execute", needsPayload: true },
   draw: { method: "POST", path: "/public/draw", needsPayload: true },
   vision: { method: "POST", path: "/public/vision", needsPayload: true },
   video: { method: "POST", path: "/public/video", needsPayload: true },
@@ -99,10 +100,16 @@ function buildUrl(baseUrl, endpointKey, endpoint, args) {
   return `${baseUrl}${endpoint.path}`;
 }
 
-function buildHeaders(apiKey, payload) {
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-  };
+function buildHeaders(apiKey, payload, devBypassToken, sessionCookie, origin) {
+  const headers = {};
+  if (devBypassToken) {
+    headers["x-tap-dev-bypass"] = devBypassToken;
+  } else if (sessionCookie) {
+    headers.Cookie = sessionCookie;
+    if (origin) headers.Origin = origin;
+  } else {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
   if (payload !== null) {
     headers["Content-Type"] = "application/json";
   }
@@ -125,12 +132,15 @@ function printHelp() {
       "TapCanvas unified API caller",
       "",
       "Required:",
-      "  --endpoint <chat|draw|vision|video|taskResult|flows|flowGet|flowPatch>",
+      "  --endpoint <chat|agentTool|draw|vision|video|taskResult|flows|flowGet|flowPatch>",
       "",
       "Optional config overrides:",
       "  --config <path>",
       "  --apiBaseUrl <url>",
       "  --apiKey <key>",
+      "  --devBypassToken <token>  explicit local-dev authentication only",
+      "  --sessionCookie <cookie>   explicit browser-session authentication only",
+      "  --origin <origin>          required origin for browser-session calls",
       "",
       "Payload:",
       "  --payload '<json>'",
@@ -160,12 +170,20 @@ async function main() {
   const apiKey = String(
     args.apiKey || config.apiKey || process.env.TAPCANVAS_API_KEY || "",
   ).trim();
+  const devBypassToken = String(args.devBypassToken || "").trim();
+  const sessionCookie = String(
+    args.sessionCookie || process.env.TAPCANVAS_SESSION_COOKIE || "",
+  ).trim();
+  const origin = String(args.origin || process.env.TAPCANVAS_SESSION_ORIGIN || "").trim();
 
   if (!apiBaseUrl) {
     throw new Error("Missing apiBaseUrl. Fill tapcanvas-api/config.json or pass --apiBaseUrl.");
   }
-  if (!apiKey) {
-    throw new Error("Missing apiKey. Fill tapcanvas-api/config.json or pass --apiKey.");
+  if (!apiKey && !devBypassToken && !sessionCookie) {
+    throw new Error("Missing authentication. Configure apiKey, devBypassToken, or sessionCookie.");
+  }
+  if (sessionCookie && !origin) {
+    throw new Error("Missing origin for sessionCookie authentication.");
   }
 
   const payload = parsePayload(args);
@@ -179,7 +197,7 @@ async function main() {
   const url = buildUrl(apiBaseUrl, endpointKey, endpoint, args);
   const response = await fetch(url, {
     method: endpoint.method,
-    headers: buildHeaders(apiKey, payload),
+    headers: buildHeaders(apiKey, payload, devBypassToken, sessionCookie, origin),
     ...(payload !== null ? { body: JSON.stringify(payload) } : {}),
   });
 

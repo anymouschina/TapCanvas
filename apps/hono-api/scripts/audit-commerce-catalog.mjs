@@ -61,7 +61,7 @@ async function main() {
       where: {
         product_entitlements: {
           some: {
-            entitlement_type: { in: ['points_topup', 'monthly_quota', 'openclaw_subscription'] },
+            entitlement_type: { in: ['points_topup', 'membership'] },
           },
         },
       },

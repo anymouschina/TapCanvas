@@ -44,28 +44,52 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	}
 }
 
-func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
+// isAdaptiveThinkingClaude 标记应默认走 adaptive thinking 的现代 Claude 模型
+// （Opus 4.6/4.7/4.8）。这些模型在重型 agentic 大上下文下若 thinking-off 易退化成
+// token 重复死循环；4.7/4.8 还是 adaptive-only（拒绝 enabled+budget_tokens 与采样参数）。
+func isAdaptiveThinkingClaude(model string) bool {
+	return strings.HasPrefix(model, "claude-opus-4-6") ||
+		strings.HasPrefix(model, "claude-opus-4-7") ||
+		strings.HasPrefix(model, "claude-opus-4-8") ||
+		strings.HasPrefix(model, "claude-sonnet-4-6")
+}
+
+// passThroughImageURL: 为 true 时，http(s) 图片直接以 type:url 交给上游抓取，不下载转 base64。
+// 仅当上游支持 url 图片源且图为公网可达直链时由调用方开启（直连 Anthropic / right.codes）；
+// AWS Bedrock / Vertex 不支持抓取任意 URL，必须传 false 走 base64。
+func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRequest, passThroughImageURL bool) (*dto.ClaudeRequest, error) {
 	claudeTools := make([]any, 0, len(textRequest.Tools))
 
 	for _, tool := range textRequest.Tools {
+		claudeTool := dto.Tool{
+			Name:        tool.Function.Name,
+			Description: tool.Function.Description,
+		}
+		claudeTool.InputSchema = make(map[string]interface{})
+		// OpenAI allows omitting `parameters` (or sending {}) for zero-argument
+		// tools, and nil JSON-schema members are legal; copy what is present
+		// instead of emitting `properties: null` / `required: null`.
 		if params, ok := tool.Function.Parameters.(map[string]any); ok {
-			claudeTool := dto.Tool{
-				Name:        tool.Function.Name,
-				Description: tool.Function.Description,
-			}
-			claudeTool.InputSchema = make(map[string]interface{})
-			if params["type"] != nil {
-				claudeTool.InputSchema["type"] = params["type"].(string)
-			}
-			claudeTool.InputSchema["properties"] = params["properties"]
-			claudeTool.InputSchema["required"] = params["required"]
-			for s, a := range params {
-				if s == "type" || s == "properties" || s == "required" {
+			for key, value := range params {
+				if value == nil {
 					continue
 				}
-				claudeTool.InputSchema[s] = a
+				claudeTool.InputSchema[key] = value
 			}
-			claudeTools = append(claudeTools, &claudeTool)
+		}
+		// Anthropic Messages API requires input_schema.type ("object").
+		if _, ok := claudeTool.InputSchema["type"]; !ok {
+			claudeTool.InputSchema["type"] = "object"
+		}
+		claudeTools = append(claudeTools, &claudeTool)
+	}
+
+	// tools 缓存断点：在最后一个内置函数工具上打 cache_control。工具定义大且稳定（agents-cli 固定顺序
+	// 输出），是缓存前缀的第一段（顺序 tools→system→messages）；缓存它省掉每轮重复 prefill 工具 schema。
+	// 仅当工具数组逐轮字节稳定时才命中；不稳定也无害（不命中、不报错）。
+	if n := len(claudeTools); n > 0 {
+		if lastTool, ok := claudeTools[n-1].(*dto.Tool); ok {
+			lastTool.CacheControl = json.RawMessage(`{"type":"ephemeral"}`)
 		}
 	}
 
@@ -239,6 +263,33 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 	}
 
+	// 现代 Claude（Opus 4.6/4.7/4.8）兜底归一化：
+	//  1) 默认开 adaptive thinking —— plain `claude-opus-4-8`（agents-cli 小T 核心走这）原本无任何
+	//     enable-thinking 路径（effort/-thinking 后缀分支只认 4.6/4.7），thinking-off 跑重型 agentic
+	//     大上下文(>100K tokens)会退化成 token 重复死循环（实测 ch311 分镜师吐 "court"×N 撞满 max_tokens）。
+	//  2) 4.7/4.8 是 adaptive-only：把上面按旧规则(reasoning_effort/-thinking)误设的 enabled+budget_tokens
+	//     收敛成 adaptive(+effort)，否则上游 400。
+	//  3) 4.7/4.8 拒绝 temperature/top_p/top_k（400），删掉。
+	if isAdaptiveThinkingClaude(claudeRequest.Model) {
+		if claudeRequest.Thinking == nil || claudeRequest.Thinking.Type == "enabled" {
+			claudeRequest.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
+			if claudeRequest.OutputConfig == nil {
+				effort := "medium" // 默认 medium：adaptive thinking 不过度吃 max_tokens 预算
+				// （否则 thinking 占满后大型 tool_use 参数 JSON 被截断），也对齐 bridge 的 reasoning 档位意图。
+				switch textRequest.ReasoningEffort {
+				case "low", "medium", "high":
+					effort = textRequest.ReasoningEffort
+				}
+				claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effort))
+			}
+		}
+		if strings.HasPrefix(claudeRequest.Model, "claude-opus-4-7") || strings.HasPrefix(claudeRequest.Model, "claude-opus-4-8") {
+			claudeRequest.Temperature = nil
+			claudeRequest.TopP = nil
+			claudeRequest.TopK = nil
+		}
+	}
+
 	if textRequest.Stop != nil {
 		// stop maybe string/array string, convert to array string
 		switch textRequest.Stop.(type) {
@@ -270,7 +321,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		if message.Role == "assistant" && message.ToolCalls != nil {
 			fmtMessage.ToolCalls = message.ToolCalls
 		}
-		if lastMessage.Role == message.Role && lastMessage.Role != "tool" {
+		// lastMessage.ToolCalls != nil 时禁止合并：合并会删掉上一条消息，其 tool_use
+		// 随之丢失，历史中对应的 tool_result 变孤儿 → Anthropic 400。
+		if lastMessage.Role == message.Role && lastMessage.Role != "tool" && lastMessage.ToolCalls == nil {
 			if lastMessage.IsStringContent() && message.IsStringContent() {
 				fmtMessage.SetStringContent(strings.Trim(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()), "\""))
 				// delete last message
@@ -377,27 +430,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 							})
 						}
 					default:
-						source := mediaMessage.ToFileSource()
-						if source == nil {
-							continue
-						}
-						base64Data, mimeType, err := service.GetBase64Data(c, source, "formatting image for Claude")
+						claudeMediaMessage, err := convertClaudeMediaContent(
+							c,
+							mediaMessage,
+							passThroughImageURL,
+						)
 						if err != nil {
-							return nil, fmt.Errorf("get file data failed: %s", err.Error())
+							return nil, err
 						}
-						claudeMediaMessage := dto.ClaudeMediaMessage{
-							Source: &dto.ClaudeMessageSource{
-								Type: "base64",
-							},
-						}
-						if strings.HasPrefix(mimeType, "application/pdf") {
-							claudeMediaMessage.Type = "document"
-						} else {
-							claudeMediaMessage.Type = "image"
-						}
-
-						claudeMediaMessage.Source.MediaType = mimeType
-						claudeMediaMessage.Source.Data = base64Data
 						claudeMediaMessages = append(claudeMediaMessages, claudeMediaMessage)
 						continue
 					}
@@ -405,10 +445,23 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 
 				if message.ToolCalls != nil {
 					for _, toolCall := range message.ParseToolCalls() {
+						// 参数解析失败时绝不能丢弃 tool_use：历史里它的 tool_result 还在，
+						// 丢了会触发 Anthropic "unexpected tool_use_id in tool_result" 400，
+						// 且坏参数已持久化在会话历史中 → 会话永久打不通。
+						// 空参数（无参工具流式累积常见产物）按 {} 处理；非法 JSON 包进 _raw 保底。
 						inputObj := make(map[string]any)
-						if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &inputObj); err != nil {
-							common.SysLog("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
-							continue
+						argsText := strings.TrimSpace(toolCall.Function.Arguments)
+						if argsText == "" {
+							argsText = "{}"
+						}
+						if err := common.Unmarshal([]byte(argsText), &inputObj); err != nil {
+							common.SysLog("tool call function arguments is not a map[string]any (kept as _raw): " + fmt.Sprintf("%v", toolCall.Function.Arguments))
+							inputObj = map[string]any{"_raw": toolCall.Function.Arguments}
+						}
+						if inputObj == nil {
+							// arguments 为 "null" 时 Unmarshal 成功但 map 为 nil，
+							// 序列化成 input:null 同样会被 Anthropic 拒，补成空对象。
+							inputObj = map[string]any{}
 						}
 						claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
 							Type:  "tool_use",
@@ -424,14 +477,91 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 	}
 
-	// 设置累积的system消息
+	// system 缓存断点：OpenAI-format 调用方（agents-cli）没有 cache_control 概念，由此处统一注入。
+	// 若 system 含动态边界标记（agents-cli 注入 __SYSTEM_PROMPT_DYNAMIC_BOUNDARY__），把它切成
+	// [stable][dynamic] 两块、断点只打稳定块——动态内容（per-turn 上下文、query-RAG 知识）放其后不进缓存，
+	// 避免每轮把整段 ~143K system 按全价重写（实测旧版 cache_read≈0）。无标记时退回「整段 system 打断点」。
 	if len(systemMessages) > 0 {
+		var stableIdx int
+		systemMessages, stableIdx = splitSystemAtDynamicBoundary(systemMessages)
+		if stableIdx >= 0 {
+			systemMessages[stableIdx].CacheControl = json.RawMessage(`{"type":"ephemeral"}`)
+		}
 		claudeRequest.System = systemMessages
+	}
+
+	// 会话历史增量缓存：除 system 外，再在「最后一条消息的最后一个 block」打第二个 cache_control 断点。
+	// 这样每轮把当轮完整历史（含累积的 tool_use/tool_result）写成一个缓存前缀，下一轮整段历史按
+	// ~10% 价命中读取——否则 system 之下的历史每轮都全价 prefill 且只增不减（agentic 长跑的主要成本）。
+	// Anthropic 自动读取最长已缓存前缀，故无需每轮断点对齐；总断点 ≤2，远低于 4 个上限。
+	if n := len(claudeMessages); n > 0 {
+		setMessageCacheBreakpoint(&claudeMessages[n-1])
 	}
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
 	return &claudeRequest, nil
+}
+
+// setMessageCacheBreakpoint 在一条 Claude 消息的最后一个内容 block 上打 ephemeral 缓存断点。
+// cache_control 只能挂在内容 block 上：纯字符串内容先转成单个 text block 再挂；已是 block 数组则
+// 挂到最后一个；空/未知内容直接跳过（退回仅 system 缓存的旧行为，安全无副作用）。
+func setMessageCacheBreakpoint(msg *dto.ClaudeMessage) {
+	ephemeral := json.RawMessage(`{"type":"ephemeral"}`)
+	switch content := msg.Content.(type) {
+	case string:
+		if content == "" {
+			return
+		}
+		msg.Content = []dto.ClaudeMediaMessage{{
+			Type:         "text",
+			Text:         common.GetPointer[string](content),
+			CacheControl: ephemeral,
+		}}
+	case []dto.ClaudeMediaMessage:
+		if len(content) == 0 {
+			return
+		}
+		content[len(content)-1].CacheControl = ephemeral
+		msg.Content = content
+	}
+}
+
+// systemPromptDynamicBoundary 与 agents-cli 的 SYSTEM_PROMPT_DYNAMIC_BOUNDARY 必须逐字一致。
+// 标记之前=逐字节稳定前缀（进缓存），之后=按轮/按查询变化的动态内容（不进缓存）。
+const systemPromptDynamicBoundary = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"
+
+// splitSystemAtDynamicBoundary 在含边界标记的 system 块处把数组切成 [stable...][dynamic...]，剥离标记，
+// 返回新数组与「应打缓存断点的稳定块下标」（= 边界前最后一个稳定块）。
+// 无标记时返回原数组与最后一块下标（退回旧行为：整段 system 进缓存）。空文本稳定块/无内容返回 -1（不打）。
+func splitSystemAtDynamicBoundary(blocks []dto.ClaudeMediaMessage) ([]dto.ClaudeMediaMessage, int) {
+	for i, b := range blocks {
+		if b.Text == nil {
+			continue
+		}
+		idx := strings.Index(*b.Text, systemPromptDynamicBoundary)
+		if idx < 0 {
+			continue
+		}
+		stableText := strings.TrimRight((*b.Text)[:idx], "\n ")
+		dynamicText := strings.TrimLeft((*b.Text)[idx+len(systemPromptDynamicBoundary):], "\n ")
+		out := make([]dto.ClaudeMediaMessage, 0, len(blocks)+1)
+		out = append(out, blocks[:i]...) // 标记块之前的块（若有）原样保留为稳定前缀
+		stableIdx := -1
+		if stableText != "" {
+			out = append(out, dto.ClaudeMediaMessage{Type: "text", Text: common.GetPointer[string](stableText)})
+			stableIdx = len(out) - 1
+		} else if len(out) > 0 {
+			stableIdx = len(out) - 1
+		}
+		if dynamicText != "" {
+			out = append(out, dto.ClaudeMediaMessage{Type: "text", Text: common.GetPointer[string](dynamicText)})
+		}
+		out = append(out, blocks[i+1:]...) // 标记块之后的块全部归入动态区，不打断点
+		return out, stableIdx
+	}
+	// 无边界标记：退回旧行为，断点打在最后一块。
+	return blocks, len(blocks) - 1
 }
 
 func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCompletionsStreamResponse {

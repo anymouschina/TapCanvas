@@ -85,6 +85,12 @@ func runCodexCredentialAutoRefreshOnce() {
 			}
 			scanned++
 			if ch.ChannelInfo.IsMultiKey {
+				n, refreshErr := RefreshCodexChannelMultiKeyCredentials(ctx, ch.Id, codexCredentialRefreshThreshold, now)
+				if refreshErr != nil {
+					logger.LogWarn(ctx, fmt.Sprintf("codex credential auto-refresh: channel_id=%d name=%s multi-key refresh failed: %v", ch.Id, ch.Name, refreshErr))
+					continue
+				}
+				refreshed += n
 				continue
 			}
 
@@ -123,15 +129,10 @@ func runCodexCredentialAutoRefreshOnce() {
 	}
 
 	if refreshed > 0 {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logger.LogWarn(ctx, fmt.Sprintf("codex credential auto-refresh: InitChannelCache panic: %v", r))
-				}
-			}()
-			model.InitChannelCache()
-		}()
 		ResetProxyClientCache()
+		if err := model.RefreshChannelCache(); err != nil {
+			logger.LogWarn(ctx, "codex credential auto-refresh: credentials saved but channel cache refresh failed: "+err.Error())
+		}
 	}
 
 	if common.DebugEnabled {

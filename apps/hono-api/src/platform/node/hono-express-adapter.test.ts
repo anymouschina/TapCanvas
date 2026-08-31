@@ -69,7 +69,7 @@ describe("mountHonoToExpress", () => {
 			{
 				headers: { host: "localhost" },
 				method: "GET",
-				url: "/auth/phone/verify",
+				url: "/auth/login",
 			},
 			res,
 		);

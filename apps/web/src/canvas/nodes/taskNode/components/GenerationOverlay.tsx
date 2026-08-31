@@ -5,6 +5,7 @@ type GenerationOverlayProps = {
   visible: boolean
   status: 'idle' | 'queued' | 'running' | 'success' | 'error' | 'canceled'
   progress?: number | null
+  label?: string
 }
 
 function clampProgress(value: unknown): number | null {
@@ -13,13 +14,14 @@ function clampProgress(value: unknown): number | null {
   return Math.max(0, Math.min(100, num))
 }
 
-export function GenerationOverlay({ visible, status, progress }: GenerationOverlayProps) {
+export function GenerationOverlay({ visible, status, progress, label: explicitLabel }: GenerationOverlayProps) {
   if (!visible) return null
   const pct = clampProgress(progress)
-  const label =
+  const label = explicitLabel || (
     status === 'queued' ? '排队中' :
     status === 'running' ? '生成中' :
     '处理中'
+  )
   const showProgressBar = pct !== null && status !== 'queued'
 
   return (

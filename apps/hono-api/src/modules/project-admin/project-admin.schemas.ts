@@ -7,6 +7,8 @@ export const AdminProjectSchema = z.object({
 	ownerId: z.string().nullable(),
 	owner: z.string().nullable(),
 	ownerName: z.string().nullable(),
+	cloneCount: z.number().int().nonnegative(),
+	sortWeight: z.number().int(),
 	flowCount: z.number().int().nonnegative(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
@@ -40,4 +42,5 @@ export const AdminUpdateProjectRequestSchema = z.object({
 	templateTitle: z.string().trim().max(200).optional(),
 	templateDescription: z.string().trim().max(1000).optional(),
 	templateCoverUrl: z.string().trim().max(2000).optional(),
+	sortWeight: z.number().int().min(-9999).max(9999).optional(),
 });

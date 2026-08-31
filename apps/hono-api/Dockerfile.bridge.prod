@@ -1,0 +1,94 @@
+# syntax=docker.io/docker/dockerfile:1.7
+#
+# agents-bridge 生产镜像——多阶段「只打构建包」：
+#   base    : 系统依赖 + pnpm（builder/runtime 共享，只装一次）
+#   builder : 装依赖 + COPY 源码 + tsc 编译出 dist（src/tsconfig 只活在这一层）
+#   runtime : 只取 dist + node_modules + DeepSeek Harness overlay/skills；
+#             不含 src/ 源码、不含 tsconfig → 镜像无法逆向出 TS 源码。
+#
+# 注：bridge 不渲染 hyperframes（剪辑包装层在 api 镜像里），故不装 chromium。
+#     ffmpeg/scenedetect 保留——bridge 也会编排出图出视频/analyze_video。
+#   skills 与 harness/tapcanvas.patch.yml 是当前 Bridge 的运行期依赖；旧自研 runtime 的
+#   knowledge、agent-definitions、packages 与配置补丁不再进入镜像。
+#
+# 构建（仓库根执行）：
+#   docker buildx build --platform linux/amd64 \
+#     -f apps/hono-api/Dockerfile.bridge.prod -t <registry>/tapcanvas/agents-bridge:<tag> --push .
+
+ARG DOCKERHUB_REGISTRY=docker.io
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG APT_MIRROR=mirrors.aliyun.com
+
+# ─────────────────────────── base：系统依赖（builder/runtime 共享）───────────────────────────
+FROM ${DOCKERHUB_REGISTRY}/node:22-bookworm-slim AS base
+
+# FROM 之前的全局 ARG 在 stage 内不可见，FROM 之后还要用的必须重声明（否则国内镜像源失效）。
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG APT_MIRROR=mirrors.aliyun.com
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
+# bridge 也会编排出图出视频/调 ffmpeg、analyze_video 等，系统依赖与 api 镜像一致（不含 chromium）。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+  mirror="${APT_MIRROR:-mirrors.aliyun.com}" \
+  && printf "deb http://%s/debian bookworm main\n" "$mirror" > /etc/apt/sources.list \
+  && printf "deb http://%s/debian bookworm-updates main\n" "$mirror" >> /etc/apt/sources.list \
+  && printf "deb http://%s/debian-security bookworm-security main\n" "$mirror" >> /etc/apt/sources.list \
+  && rm -f /etc/apt/sources.list.d/debian.sources \
+  && apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
+  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+  && mkdir -p /usr/share/postgresql-common/pgdg \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg \
+  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
+  && apt-get install -y --no-install-recommends postgresql-client-16 python3 python-is-python3 python3-pip python3-openpyxl unzip file fonts-noto-cjk ffmpeg libgl1-mesa-glx \
+  && rm -rf /var/lib/apt/lists/* \
+  # PIL 用 pip 装 pillow（wheel）而非 apt 的 python3-pil：后者 py3compile 在 Apple Silicon 跨架构
+  # QEMU 模拟下偶发 SIGSEGV 致构建失败；pillow wheel 不跑 py3compile，规避之。
+  && pip install --no-cache-dir --break-system-packages --retries 5 --timeout 60 \
+    -i "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" 'scenedetect[opencv]' yt-dlp pillow
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="${PNPM_HOME}:${PATH}"
+ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
+ENV npm_config_registry="${NPM_REGISTRY}" PNPM_CONFIG_REGISTRY="${NPM_REGISTRY}" PNPM_STORE_DIR="/pnpm/store"
+RUN /usr/bin/env -i PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+      npm_config_registry="${NPM_REGISTRY}" npm install -g pnpm@10.8.1
+
+# ─────────────────────────── builder：装依赖 + 编译（src 只活在这一层）───────────────────────────
+FROM base AS builder
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+WORKDIR /opt/agents-cli
+
+COPY apps/agents-cli/package.json apps/agents-cli/pnpm-lock.yaml apps/agents-cli/tsconfig.json ./
+# Bridge 不声明 install 生命周期脚本；依赖脚本仍按生产镜像策略禁用，安装结果由
+# frozen lock、TypeScript build 和 Harness profile 握手共同验证。
+RUN --mount=type=cache,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --ignore-scripts --child-concurrency=1 --network-concurrency=1 --registry "${NPM_REGISTRY}"
+
+COPY apps/agents-cli/src ./src
+# 当前 tsconfig 是唯一编译真源；测试文件也必须通过严格类型检查。
+RUN pnpm exec tsc -p tsconfig.json
+
+# ─────────────────────────── runtime：只打构建包（无 src / 无 tsconfig）───────────────────────────
+FROM base AS runtime
+WORKDIR /opt/agents-cli
+
+# 编译产物与依赖。
+COPY --from=builder /opt/agents-cli/node_modules ./node_modules
+COPY --from=builder /opt/agents-cli/dist ./dist
+COPY --from=builder /opt/agents-cli/package.json ./package.json
+COPY apps/agents-cli/harness ./harness
+COPY apps/agents-cli/skills ./skills
+COPY apps/agents-cli/knowledge ./knowledge
+
+# ── 运行期工作区：Harness 会话状态由部署方通过 DSH_HOME 持久化 ──
+ENV AGENTS_WORKSPACE_ROOT=/runtime/workspace
+RUN mkdir -p /runtime/workspace
+WORKDIR /runtime/workspace
+
+ENV NODE_ENV=production
+EXPOSE 8799
+CMD ["node", "/opt/agents-cli/dist/cli/index.js", "serve", "--host", "0.0.0.0", "--port", "8799"]

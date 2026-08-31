@@ -35,6 +35,7 @@ const UserArea = ({
   isLoading,
   isMobile,
   isSelfUseMode,
+  isRegistrationEnabled,
   logout,
   navigate,
   t,
@@ -142,52 +143,28 @@ const UserArea = ({
       </div>
     );
   } else {
-    const showRegisterButton = !isSelfUseMode;
-
-    const commonSizingAndLayoutClass =
-      'flex items-center justify-center !py-[10px] !px-1.5';
-
-    const loginButtonSpecificStyling =
-      '!bg-semi-color-fill-0 dark:!bg-semi-color-fill-1 hover:!bg-semi-color-fill-1 dark:hover:!bg-gray-700 transition-colors';
-    let loginButtonClasses = `${commonSizingAndLayoutClass} ${loginButtonSpecificStyling}`;
-
-    let registerButtonClasses = `${commonSizingAndLayoutClass}`;
-
-    const loginButtonTextSpanClass =
-      '!text-xs !text-semi-color-text-1 dark:!text-gray-300 !p-1.5';
-    const registerButtonTextSpanClass = '!text-xs !text-white !p-1.5';
-
-    if (showRegisterButton) {
-      if (isMobile) {
-        loginButtonClasses += ' !rounded-full';
-      } else {
-        loginButtonClasses += ' !rounded-l-full !rounded-r-none';
-      }
-      registerButtonClasses += ' !rounded-r-full !rounded-l-none';
-    } else {
-      loginButtonClasses += ' !rounded-full';
-    }
+    const showRegisterButton = isRegistrationEnabled && !isSelfUseMode;
 
     return (
-      <div className='flex items-center'>
-        <Link to='/login' className='flex'>
+      <div className='tc-user-actions flex items-center gap-2'>
+        <Link to='/login' className='tc-user-actions__link flex'>
           <Button
-            theme='borderless'
+            theme='light'
             type='tertiary'
-            className={loginButtonClasses}
+            className='tc-user-actions__login'
           >
-            <span className={loginButtonTextSpanClass}>{t('登录')}</span>
+            <span className='tc-user-actions__text'>{t('登录')}</span>
           </Button>
         </Link>
         {showRegisterButton && (
-          <div className='hidden md:block'>
-            <Link to='/register' className='flex -ml-px'>
+          <div className='tc-user-actions__register-wrap'>
+            <Link to='/register' className='tc-user-actions__link flex'>
               <Button
                 theme='solid'
                 type='primary'
-                className={registerButtonClasses}
+                className='tc-user-actions__register'
               >
-                <span className={registerButtonTextSpanClass}>{t('注册')}</span>
+                <span className='tc-user-actions__text'>{t('注册')}</span>
               </Button>
             </Link>
           </div>

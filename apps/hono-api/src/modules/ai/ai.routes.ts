@@ -76,7 +76,9 @@ aiRouter.get("/node-presets", async (c) => {
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const q = c.req.query("q") || undefined;
 	const type = c.req.query("type") || undefined;
-	const items = await listLlmNodePresets(c, userId, { q, type });
+	const scope = c.req.query("scope") || undefined;
+	const limit = c.req.query("limit") || undefined;
+	const items = await listLlmNodePresets(c, userId, { q, type, scope, limit });
 	return c.json(items.map((item) => LlmNodePresetSchema.parse(item)));
 });
 

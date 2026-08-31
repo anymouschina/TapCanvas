@@ -1,0 +1,11 @@
+# 生成命令（在 apps/media-worker 下）：
+#   go run github.com/bufbuild/buf/cmd/buf@v1.50.0 generate ../../packages/proto
+# 产物提交进仓库（gen/），Docker 构建与 CI 无需 protoc/buf 工具链。
+version: v2
+plugins:
+  - local: ["go", "run", "google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.1"]
+    out: gen
+    opt: paths=source_relative
+  - local: ["go", "run", "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1"]
+    out: gen
+    opt: paths=source_relative

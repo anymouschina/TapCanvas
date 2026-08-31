@@ -1,146 +1,228 @@
 import React from 'react'
-import type { Node, NodeProps } from '@xyflow/react'
-import { Position, NodeResizeControl, NodeToolbar, useStore } from '@xyflow/react'
-import { useRFStore } from '../store'
+import { createPortal } from 'react-dom'
+import {
+  createImageOperationState,
+  updateImageOperationParameters,
+  type ImageOperationExecution,
+  type ImageOperationKind,
+  type ImageOperationSpec,
+} from '@tapcanvas/image-operation-protocol'
+import { readSbaNodePresentation } from '@tapcanvas/storyboard-adventure-protocol'
+import type { Edge, Node, NodeProps } from '@xyflow/react'
+import { Position, NodeResizeControl, NodeToolbar, useStore, useReactFlow } from '@xyflow/react'
+import { isCanvasNodeDragActive, useRFStore } from '../store'
 import { useUIStore } from '../../ui/uiStore'
 import { ASSET_REFRESH_EVENT, notifyAssetRefresh } from '../../ui/assetEvents'
-import { ActionIcon, Group, Paper, Popover, Button, Text, Stack, TextInput, Textarea, Select, Loader, Badge, Slider, Modal, Tooltip, Switch, useMantineColorScheme, useMantineTheme } from '@mantine/core'
+import { ActionIcon, Group, Paper, Popover, Button, Text, Stack, TextInput, Select, Badge, Tooltip } from '@mantine/core'
 import {
-  IconArrowsDiagonal2,
   IconAdjustments,
-  IconBold,
   IconBulb,
   IconCamera,
-  IconColorSwatch,
-  IconItalic,
-  IconList,
-  IconListNumbers,
-  IconPalette,
   IconPhotoSearch,
   IconRefresh,
-  IconSeparatorHorizontal,
-  IconUsers,
   IconLayoutGrid,
-  IconTarget,
+  IconGrid3x3,
+  IconBorderAll,
+  IconSparkles,
+  IconScissors,
+  IconFocusCentered,
+  IconMaximize,
+  IconScreenshot,
+  IconPanoramaHorizontal,
+  IconMoodSmile,
+  IconArrowNarrowLeft,
+  IconCrop,
+  IconPencil,
+  IconRotate,
+  IconMovie,
+  IconArrowMergeBoth,
+  IconApps,
+  IconPhotoSpark,
+  IconFolderPlus,
+  IconMusic,
+  IconBadgeHd,
+  IconRepeat,
+  IconTimeline,
+  IconSubtitlesOff,
+  IconArrowsSplit,
+  IconUserOff,
+  IconDots,
 } from '@tabler/icons-react'
 import {
-  createAgentPipelineRun,
-  createServerAsset,
-  executeAgentPipelineRun,
-  getProjectBookIndex,
-  listProjectBooks,
-  listProjectBookStoryboardHistory,
-  fetchPublicTaskResult,
+  fetchPublicTaskResultWithAuth,
   listProjectRoleCardAssets,
   listServerAssets,
-  markDraftPromptUsed,
   recoverUploadedServerAssetFile,
   runPublicTask,
-  suggestDraftPrompts,
-  upsertProjectBookRoleCard,
-  upsertProjectBookVisualRef,
-  upsertProjectRoleCardAsset,
-  updateServerAssetData,
+  runTaskByVendor,
+  runVisionTask,
+  llmChat,
   uploadServerAssetFile,
-  createLlmNodePreset,
-  listLlmNodePresets,
-  type LlmNodePresetDto,
-  type LlmNodePresetType,
+  uploadExternalImageToOss,
+  fetchProxiedImageBlob,
+  fetchAssetDownloadBlob,
+  upsertCanvasIndexRef,
   type PromptSampleDto,
-  type ProjectBookStoryboardHistoryDto,
   type ServerAssetDto,
+  type UserGenerationPrefsDto,
 } from '../../api/server'
+import { type ModelOption, type NodeKind } from '../../config/models'
 import {
-  getDefaultModel,
-  getModelLabel,
-  type ModelOption,
-  type NodeKind,
-} from '../../config/models'
-import {
+  constrainImageModelCatalogConfigByPricing,
   parseImageModelCatalogConfig,
-  formatVideoOptionLabel,
+  constrainVideoModelCatalogConfigByPricing,
+  DEFAULT_VIDEO_REFERENCE_IMAGE_LIMIT,
   parseVideoModelCatalogConfig,
   type ImageModelControlBinding,
-  type ImageModelCatalogConfig,
   type VideoModelControlBinding,
-  type VideoModelCatalogConfig,
 } from '../../config/modelCatalogMeta'
 import {
   getModelOptionRequestAlias,
   findModelOptionByIdentifier,
-  resolveExecutableImageModel,
   useModelOptions,
+  useModelOptionsState,
 } from '../../config/useModelOptions'
 import { resolveModelGenerationCredits } from '../../config/modelPricing'
-import {
-  StoryboardScene,
-  createScene,
-  normalizeStoryboardScenes,
-  serializeStoryboardScenes,
-  STORYBOARD_DURATION_STEP,
-  STORYBOARD_MIN_DURATION,
-  STORYBOARD_MAX_DURATION,
-  STORYBOARD_MAX_TOTAL_DURATION,
-  totalStoryboardDuration,
-  scenesAreEqual,
-  STORYBOARD_DEFAULT_DURATION,
-  enforceStoryboardTotalLimit,
-} from './storyboardUtils'
+import { resolveVideoInputPosterUrl } from './taskNode/videoPosterUrl'
+import { resolveDefaultCatalogModelOption } from './taskNode/defaultCatalogModel'
 import { getTaskNodeCoreType, getTaskNodeSchema, normalizeTaskNodeKind } from './taskNodeSchema'
 import { buildTaskNodeFeatureFlags, type TaskNodeFeatureFlags } from './taskNode/features'
 import {
-  applyMentionFallback,
   computeHandleLayout,
   extractTextFromTaskResult,
   genTaskNodeId,
-  isDynamicHandlesConfig,
   isStaticHandlesConfig,
   MAX_VEO_REFERENCE_IMAGES,
-  MAX_FRAME_ANALYSIS_SAMPLES,
   normalizeVeoReferenceUrls,
+  HANDLE_HORIZONTAL_OFFSET,
+  getVisualNodeDefaults,
+  getTextNodeSize,
+  TEXT_NODE_DEFAULT_HEIGHT,
+  TEXT_NODE_DEFAULT_WIDTH,
+  TEXT_NODE_MAX_HEIGHT,
+  TEXT_NODE_MAX_WIDTH,
+  TEXT_NODE_MIN_HEIGHT,
+  TEXT_NODE_MIN_WIDTH,
+  fitVisualSizeToNatural,
 } from './taskNodeHelpers'
-import { PromptSampleDrawer } from '../components/PromptSampleDrawer'
 import { toast } from '../../ui/toast'
 import { DEFAULT_REVERSE_PROMPT_INSTRUCTION } from '../constants'
 import { CANVAS_CONFIG } from '../utils/constants'
-import { resourceManager } from '../../domain/resource-runtime'
+import { ManagedImage, resourceManager } from '../../domain/resource-runtime'
+import { useResourceRuntimeStore } from '../../domain/resource-runtime/store/resourceRuntimeStore'
 import { getPendingUploadHandlesByOwnerNodeId, useUploadRuntimeStore } from '../../domain/upload-runtime/store/uploadRuntimeStore'
 import { captureFramesAtTimes } from '../../utils/videoFrameExtractor'
 import { appendDownloadSuffix, downloadUrl } from '../../utils/download'
-import { getAuthToken } from '../../auth/store'
+import { hasAuthSession } from '../../auth/store'
 import { dedupeLocalFiles } from '../../utils/localUploadDedup'
 import { normalizeOrientation, type Orientation } from '../../utils/orientation'
 import { buildVideoBillingSpecKey, normalizeVideoResolution } from '../../utils/videoBillingSpec'
+import { isKlingV3OmniVideoModel, normalizeKlingVideoReferType } from '../../utils/klingV3'
 import { buildVideoDurationPatch, readVideoDurationSeconds } from '../../utils/videoDuration'
-import { usePoseEditor } from './taskNode/PoseEditor'
+import { withCanvasGenerationContext } from '../../runner/generationAssetContext'
 import { useImageViewEditor, type ImageViewEditorApplyPayload } from './taskNode/ImageViewEditor'
+import { PanoramicViewer, PANORAMIC_DEFAULT_CAMERA } from './taskNode/PanoramicViewer'
+import type { PanoramicCameraState, PanoramicViewerHandle } from './taskNode/PanoramicViewer'
+import { PanoramicMultiAngleEditor, FOUR_VIEW_ANGLES, TWELVE_VIEW_ANGLES, multiAngleFovToZoom } from './taskNode/PanoramicMultiAngleEditor'
+import {
+  buildLibTvLightingOperationParameters,
+  cameraFovToImageDistance,
+  findClosestLightDirection,
+  LIBTV_MAIN_LIGHT_DIRECTIONS,
+  LIBTV_RIM_LIGHT_DIRECTIONS,
+} from './taskNode/imageViewEditorContract'
+import { createMaskEditSourcePng } from './taskNode/maskEditAssets'
+import { parseGridSplitSelectedCells, sortGridSplitCells, type GridSplitCell } from './taskNode/gridSplitCells'
+import { isTapCanvasHostedUploadUrl } from './taskNode/hostedUploadUrl'
 import { TaskNodeHandles } from './taskNode/components/TaskNodeHandles'
-import { TopToolbar } from './taskNode/components/TopToolbar'
+import { TopToolbar, type ToolbarMenuItem } from './taskNode/components/TopToolbar'
+import { LibTvImageToolbarIcon } from './taskNode/components/LibTvImageToolbarIcon'
+import { CAMERA_BODIES, type CinematicCameraValue } from './taskNode/cameraControlContract'
+import {
+  useProjectImageSettingsStore,
+  useProjectImageSettings,
+  mergeChapterCreativeOverrideIntoProjectImageSettings,
+} from '../projectImageSettingsStore'
 import { TaskNodeHeader } from './taskNode/components/TaskNodeHeader'
-import { ControlChips } from './taskNode/components/ControlChips'
+import type { MediaPromptLibraryKind } from './taskNode/components/MediaPromptLibraryModal'
+import {
+  findLibTvImagePreset,
+  LIBTV_IMAGE_NINE_GRID_PRESET_KEYS,
+  type LibTvImagePreset,
+} from './taskNode/libTvImagePresets'
+import {
+  LIBTV_IMAGE_GRID_SPLIT_ACTIONS,
+  LIBTV_IMAGE_HD_ACTIONS,
+  LIBTV_IMAGE_NINE_GRID_ICONS,
+  LIBTV_IMAGE_PORTRAIT_ACTIONS,
+} from './taskNode/libTvImageToolbar'
+import {
+  buildCharacterFissionNodeDraft,
+  type CharacterFissionDraft,
+} from './taskNode/characterFissionContract'
+import { buildMediaGenerationSettings } from './taskNode/mediaGenerationSettings'
 import { StatusBanner } from './taskNode/components/StatusBanner'
 import { GenerationOverlay } from './taskNode/components/GenerationOverlay'
-import { PromptSection, type MentionSuggestionItem } from './taskNode/components/PromptSection'
-import { StructuredPromptSection } from './taskNode/components/StructuredPromptSection'
-import { UpstreamReferenceStrip } from './taskNode/components/UpstreamReferenceStrip'
-import { VideoContent } from './taskNode/components/VideoContent'
-import { TextContent } from './taskNode/components/TextContent'
-import { resolveTextNodePlainText, type TextNodeDisplaySource } from './taskNode/textNodeContent'
-import { VeoImageModal } from './taskNode/components/VeoImageModal'
-import { VideoResultModal } from './taskNode/VideoResultModal'
-import { renderFeatureBlocks } from './taskNode/featureRenderers'
-import { REMOTE_IMAGE_URL_REGEX, normalizeClipRange, pickOnlyBookId, syncDraftWithExternalValue } from './taskNode/utils'
-import { runNodeRemote } from '../../runner/remoteRunner'
+import type { Image3DParams } from './taskNode/components/Image3DPanel'
+import type { EnhanceParams } from './taskNode/components/VideoEnhancePanel'
+import { computeEnhanceSpecKey } from './taskNode/components/enhanceSpecKey'
+import type { MentionSuggestionItem } from './taskNode/components/PromptSection'
+import { buildPersistedPromptAssetMentionRefs } from './taskNode/persistedPromptAssetMentions'
+import { readVideoClipIndex, readVideoClipRunId } from '../videoClipCanvasFacts'
+import { requestVideoClipAgentAction } from '../videoClipAgentAction'
+import { readWorkflowCanvasPorts, workflowPortHandleId } from '../workflowCanvasPorts'
+import { buildWorkflowAgentReferenceHandles } from '../workflowAgentReferenceHandles'
+import type { SegmentRemakeRange } from './taskNode/components/SegmentRemakeContent'
+import type { MediaEmptyAction } from './taskNode/components/MediaEmptyState'
+import { consumeMediaEmptyAction } from './taskNode/mediaEmptyActionRuntime'
 import {
-  appendReferenceAliasSlotPrompt,
+  convertPlainTextToHtml,
+  resolveTextNodeLatestResult,
+  resolveTextNodePlainText,
+  withTextNodeAlpha,
+  type TextNodeDisplaySource,
+} from './taskNode/textNodeContent'
+import type { VideoMarkerDraft } from './taskNode/components/VideoMarkerToolbar'
+import { createVideoMarker, normalizeVideoMarkers, validateVideoMarkerRange } from './taskNode/videoMarkers'
+import {
+  buildRetainedVideoSurfaceKey,
+  readRetainedVideoPlaybackSnapshot,
+} from './taskNode/components/retainedVideoSurface'
+import { uploadCanvasImageBlob } from './directorConsole/uploadCanvasImageBlob'
+import { useTaskNodeTheme } from './taskNode/useTaskNodeTheme'
+import { renderFeatureBlocks } from './taskNode/featureRenderers'
+import type { ShotTableAssetReference } from './taskNode/shotTable/ShotTableAssetPicker'
+import type { ComposeVideoSource } from './taskNode/components/useVideoCompose'
+import { buildComposeInitialPatch, buildComposeUrlSwapPatch } from './taskNode/components/composeWriteback'
+import { INTENT_ACTIONS } from './taskNode/intentActions'
+import { dispatchIntent } from '../dispatchIntent'
+import { readNodeModelPrefs, saveNodeModelPrefs } from '../nodeModelPrefs'
+import { DEFAULT_GENERATION_PREFS, updateRecentGenerationPrefs } from '../../config/generationPrefs'
+import { resolveIntentChapterContext } from './taskNode/intentChapterContext'
+import { useIntentLifecycle } from '../intentLifecycle'
+import type { ChapterCanvasIntent } from '@tapcanvas/chapter-canvas-intents'
+import { REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
+import {
   buildAssetRefId,
-  buildNamedReferenceEntries,
-  mergeReferenceAssetInputs,
 } from '../../runner/assetReference'
-import { uploadMergedReferenceSheet } from '../../runner/referenceSheet'
 import { runNodeDagToTarget } from '../../runner/dag'
-import { BASE_DURATION_OPTIONS, MINIMAX_DURATION_OPTIONS, SAMPLE_OPTIONS, STORYBOARD_DURATION_OPTION, VEO_DURATION_OPTIONS } from './taskNode/constants'
-import type { FrameSample } from './taskNode/types'
+import { isModerationFailure } from '../../runner/taskErrorClassifier'
+import { collectUpstreamComposeAudioTracks } from '../../runner/collectUpstreamComposeSources'
+import {
+  AUDIO_EMOTION_OPTIONS,
+  AUDIO_LYRICS_MODE_OPTIONS,
+  AUDIO_VOICE_OPTIONS,
+  DOUBAO_LOUDNESS_RATE_OPTIONS,
+  DOUBAO_PITCH_RATE_OPTIONS,
+  DOUBAO_SPEECH_RATE_OPTIONS,
+} from './taskNode/audioControlOptions'
+import { SAMPLE_OPTIONS } from './taskNode/constants'
+import {
+  buildCharacterBibleFromDto,
+  buildCharacterReferenceImages,
+  type AiCharacterLibraryCharacterDto,
+} from '@tapcanvas/character-bible-protocol'
+
 import {
   buildDefaultStoryboardEditorData,
   buildStoryboardEditorPatch,
@@ -150,29 +232,19 @@ import {
   type StoryboardEditorGrid,
 } from './taskNode/storyboardEditor'
 import {
-  STORYBOARD_SELECTION_PROTOCOL_VERSION,
-  normalizeStoryboardReferenceBindings,
   normalizeStoryboardSelectionContext,
-  type StoryboardReferenceBinding,
   type StoryboardSelectionContext,
 } from '@tapcanvas/storyboard-selection-protocol'
-import type { PublicFlowAnchorBindingKind } from '@tapcanvas/flow-anchor-bindings'
 import {
   getNodeProductionMeta,
-  inferProductionNodeMeta,
   readChapterGroundedProductionMetadata,
 } from '../productionMeta'
 import {
-  DEFAULT_CANVAS_RESIZE_SIZE,
   DEFAULT_IMAGE_EDIT_SIZE,
-  IMAGE_EDIT_SIZE_OPTIONS,
-  normalizeCanvasResizeSize,
   normalizeImageEditSize,
   parseImageEditSizeDimensions,
-  resolveImageEditSizeOption,
   toAspectRatioFromImageEditSize,
 } from './taskNode/imageEditSize'
-import { appendImageEditFocusGuidePrompt } from './taskNode/imageEditFocusGuide'
 import {
   collectOrderedUpstreamReferenceItems,
   extractNodePrimaryAssetReference,
@@ -184,52 +256,106 @@ import { resolveCompiledImagePrompt, resolveImagePromptExecution } from './taskN
 import { refineStructuredImagePrompt } from './taskNode/structuredPromptRefine'
 import imageViewControlsModule from '@tapcanvas/image-view-controls'
 import {
-  resolvePrimarySemanticAnchorBinding,
   resolveSemanticNodeRoleBinding,
-  resolveSemanticNodeVisualReferenceBinding,
-  upsertSemanticNodeAnchorBinding,
 } from '../utils/semanticBindings'
 import { useCanvasRenderContext } from '../CanvasRenderContext'
+import { useWorkflowNodeInspectorStore } from '../workflowNodeInspectorStore'
+import type { VideoContinuationSubmit } from './taskNode/VideoContinuationPanel'
+import type { VideoToolEditorMode } from './taskNode/VideoToolEditorPanel'
+import type { VideoSeparationOutput } from './taskNode/videoSeparation'
+import type { EmotionApplyRequest } from './taskNode/EmotionPanel'
+import { buildLibTvEmotionPrompt } from './taskNode/emotionModel'
+import { cropImageBlobToNormalizedRect, normalizedRectToPixelBoundingBox } from './taskNode/portraitSelection'
+import type { ElementEditSubmit } from './taskNode/ElementEditEditor'
+import type { PortraitTextureSelection } from './taskNode/PortraitTextureEditor'
+import {
+  normalizePortraitTextureStrength,
+  PORTRAIT_TEXTURE_DEFAULT_STRENGTH,
+} from './taskNode/portraitTextureContract'
+import {
+  createImageOperationForSource,
+  createPresetImageOperation,
+  readImageOperationSourceRevision,
+} from './taskNode/imageOperationFactory'
+import { createCenteredOutpaintAssets } from './taskNode/outpaintAssets'
+import type { TaskNodeType } from './taskNode/taskNodeTypes'
+import { areTaskNodePropsEqual } from './taskNode/taskNodePropsEqual'
+import {
+  buildImageBillingSpecKeyForOption,
+  formatImageQualityOptionLabel,
+  formatImageResolutionOptionLabel,
+  getTaskNodeModelDisplayLabel,
+  isCatalogAudioType,
+  normalizeImageAspect,
+  normalizeImageQualitySetting,
+  normalizeImageResolutionSetting,
+  pickImageAspectValue,
+  pickImageQualityValue,
+  pickImageResolutionValue,
+  pickImageSizeValue,
+  pickVideoDurationValue,
+  pickVideoOrientationValue,
+  pickVideoResolutionValue,
+  pickVideoSizeValue,
+  readCatalogTags,
+  readCatalogTagValue,
+  resolveVideoOrientationValue,
+} from './taskNode/mediaModelControls'
+import {
+  ImagePresetConfirmPortal,
+  PanoramicConfirmPortal,
+} from './taskNode/components/TaskNodeConfirmPortals'
+import {
+  LazyCharacterFissionEditorPortal,
+  LazyCameraControlPanel,
+  LazyDoubaoVoicePicker,
+  LazyAiCharacterLibraryModal,
+  LazyAnnotationEditor,
+  LazyCropOverlayEditor,
+  LazyElementEditEditor,
+  LazyEmotionPanel,
+  LazyExpandPanel,
+  LazyGridCustomPicker,
+  LazyHdUpscalePanel,
+  LazyImage3DPanel,
+  LazyImagePickerModal,
+  LazyIntentConfigModal,
+  LazyIntentActionGroup,
+  LazyLibTvMediaQuickActions,
+  LazyLibTvPresetLibrary,
+  LazyMaskDrawingEditor,
+  LazyMediaPromptLibraryModal,
+  LazyModel3DOverlay,
+  LazyPortraitTextureEditor,
+  LazyPortraitTextureControls,
+  LazyPromptSection,
+  LazyPromptSampleDrawer,
+  LazyRotatePanel,
+  LazySaveToLibraryModal,
+  LazySegmentRemakeContent,
+  LazyStructuredPromptSection,
+  LazyStyleImagePickerModal,
+  LazyVeoImageModal,
+  LazyVideoComposeEditorModal,
+  LazyVideoContent,
+  LazyVideoContinuationPanel,
+  LazyVideoEnhancePanel,
+  LazyVideoMarkerToolbar,
+  LazyVideoResultModal,
+  LazyVideoContinuityInspector,
+  LazyVideoToolEditorPanel,
+  LazyVideoTrimEditor,
+  LazyWorkflowPresetSelector,
+  LazyControlChips,
+  LazyTaskNodeTextInlineToolbar,
+  LazyTextContent,
+} from './taskNode/components/lazyTaskNodeFeatures'
 
 const {
   hasActiveImageCameraControl,
-  hasActiveImageLightingRig,
   normalizeImageCameraControl,
   normalizeImageLightingRig,
 } = imageViewControlsModule
-
-type Data = {
-  label: string
-  kind?: string
-  status?: 'idle' | 'queued' | 'running' | 'success' | 'error' | 'canceled'
-  progress?: number
-  aiChatPlanCreatedAt?: string
-  aiChatPlanIsNew?: boolean
-}
-
-function escapeTextNodeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
-function convertPlainTextToHtml(value: string): string {
-  return value
-    .split('\n')
-    .map((line) => `<p>${escapeTextNodeHtml(line)}</p>`)
-    .join('')
-}
-
-function formatImageResolutionOptionLabel(label: string, value: string, priceLabel?: string): string {
-  const trimmedValue = String(value || '').trim()
-  const trimmedLabel = String(label || '').trim()
-  const baseLabel =
-    trimmedLabel.endsWith('输出') && trimmedValue
-      ? trimmedValue
-      : trimmedLabel || trimmedValue
-  return formatVideoOptionLabel(baseLabel, priceLabel)
-}
 
 type HeaderMetaBadge = {
   label: string
@@ -243,7 +369,15 @@ type ToolbarMetaAction = {
   icon: JSX.Element
   onClick: () => void
   active?: boolean
+  loading?: boolean
+  disabled?: boolean
+  showLabel?: boolean
+  badge?: React.ReactNode
 }
+
+// 打光 / 调整角度统一走 gemini-3.1-flash-image-preview：它支持参考图编辑，
+// 且使用仅由分辨率决定的 image:{resolution} 计费规格。
+const RELIGHT_MODEL_KEY = 'gemini-3.1-flash-image-preview'
 
 const PRODUCTION_LAYER_LABELS: Record<string, string> = {
   evidence: '证据',
@@ -275,16 +409,6 @@ const APPROVAL_STATUS_BADGE_COLORS: Record<string, string> = {
   rejected: 'red',
 }
 
-const UI_ANCHOR_ELIGIBLE_KINDS = new Set([
-  'image',
-  'imageEdit',
-  'textToImage',
-  'storyboardImage',
-  'novelStoryboard',
-  'imageFission',
-])
-
-export type TaskNodeType = Node<Data, 'taskNode'>
 type TaskNodeImageResult = {
   url: string
   title?: string
@@ -299,45 +423,123 @@ type TaskNodeImageResult = {
   storyboardSelectionContext?: StoryboardSelectionContext
 }
 
-function normalizeStoryboardSelectionProtocolGroupSize(
-  value: unknown,
-): StoryboardSelectionContext['groupSize'] | undefined {
-  const numeric = Math.trunc(Number(value))
-  if (numeric === 1 || numeric === 4 || numeric === 9 || numeric === 25) {
-    return numeric
-  }
-  return undefined
+type HostedEditedImageAsset = {
+  url: string
+  assetId: string
 }
 
-function buildStoryboardSelectionContextOrThrow(
-  input: Omit<StoryboardSelectionContext, 'version'>,
-): StoryboardSelectionContext {
-  const normalized = normalizeStoryboardSelectionContext({
-    version: STORYBOARD_SELECTION_PROTOCOL_VERSION,
-    ...input,
+function readServerAssetHostedUrl(asset: ServerAssetDto): string {
+  const rawData = asset.data
+  const data = rawData && typeof rawData === 'object' && !Array.isArray(rawData)
+    ? rawData as Record<string, unknown>
+    : {}
+  const url = typeof data.url === 'string' ? data.url.trim() : ''
+  return REMOTE_IMAGE_URL_REGEX.test(url) ? url : ''
+}
+
+function getImageFileExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase()
+  if (normalized.includes('jpeg') || normalized.includes('jpg')) return 'jpg'
+  if (normalized.includes('webp')) return 'webp'
+  if (normalized.includes('gif')) return 'gif'
+  if (normalized.includes('avif')) return 'avif'
+  return 'png'
+}
+
+function normalizeUploadFilePrefix(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || 'edited-image'
+}
+
+async function createBlobSha256Hex(blob: Blob): Promise<string> {
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) {
+    throw new Error('当前浏览器缺少图片上传去重所需的摘要能力')
+  }
+  const digest = await subtle.digest('SHA-256', await blob.arrayBuffer())
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+async function canvasToImageBlob(
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality?: number,
+): Promise<Blob> {
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob)
+          return
+        }
+        reject(new Error('图片导出失败'))
+      },
+      type,
+      quality,
+    )
   })
-  if (!normalized) {
-    throw new Error('分镜选择协议构造失败')
+}
+
+async function dataUrlToImageBlob(dataUrl: string): Promise<Blob> {
+  const response = await fetch(dataUrl)
+  if (!response.ok) throw new Error('读取截图结果失败')
+  const blob = await response.blob()
+  const mimeType = (blob.type || '').split(';')[0].trim().toLowerCase()
+  if (!mimeType.startsWith('image/')) {
+    throw new Error('截图结果不是图片资源')
   }
-  return normalized
+  return blob
 }
 
-function buildStoryboardChunkScript(shotItems: Array<{ shotNo: number; script: string }>): string {
-  return shotItems
-    .map((item) => `镜头 ${item.shotNo}：${item.script}`)
-    .join('\n')
+async function loadImageElementFromBlob(blob: Blob): Promise<{ image: HTMLImageElement; objectUrl: string }> {
+  const objectUrl = URL.createObjectURL(blob)
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.crossOrigin = 'anonymous'
+      el.onload = () => resolve(el)
+      el.onerror = reject
+      el.src = objectUrl
+    })
+    return { image, objectUrl }
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl)
+    throw error
+  }
 }
 
-function buildReplayStoryboardChunkId(input: {
-  taskId: string
-  chunkId?: string | null
-  chunkIndex: number
-}): string {
-  const normalizedChunkId = String(input.chunkId || '').trim()
-  if (normalizedChunkId) return normalizedChunkId.slice(0, 200)
-  const normalizedTaskId = String(input.taskId || '').trim() || 'task'
-  return `task-${normalizedTaskId}-chunk-${input.chunkIndex}`.slice(0, 200)
+async function cropGridSplitCellBlob(input: {
+  image: HTMLImageElement
+  rows: number
+  cols: number
+  cell: GridSplitCell
+}): Promise<Blob> {
+  const cw = Math.round(input.image.naturalWidth / input.cols)
+  const ch = Math.round(input.image.naturalHeight / input.rows)
+  const sx = Math.round((input.cell.col * input.image.naturalWidth) / input.cols)
+  const sy = Math.round((input.cell.row * input.image.naturalHeight) / input.rows)
+  const canvas = document.createElement('canvas')
+  canvas.width = cw
+  canvas.height = ch
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Canvas 初始化失败')
+  context.drawImage(input.image, sx, sy, cw, ch, 0, 0, cw, ch)
+  return await canvasToImageBlob(canvas, 'image/jpeg', 0.95)
 }
+
+function buildHostedImageResult(asset: HostedEditedImageAsset, title: string): TaskNodeImageResult {
+  return {
+    url: asset.url,
+    title,
+    assetId: asset.assetId,
+  }
+}
+
 type TaskNodeVideoResult = {
   id?: string
   url: string
@@ -348,16 +550,8 @@ type TaskNodeVideoResult = {
   assetName?: string | null
   duration?: number
   createdAt?: string
-  clipRange?: { start: number; end: number } | null
   model?: string | null
   remixTargetId?: string | null
-}
-
-type AdoptedAssetMetadata = {
-  index: number
-  url: string
-  adoptedAt: string
-  progress: number | null
 }
 
 type CharacterRef = {
@@ -370,6 +564,9 @@ type CharacterRef = {
   assetId?: string | null
   assetRefId?: string | null
   assetName?: string | null
+  mentionAliases?: readonly string[]
+  assetRole?: 'style' | 'reference'
+  isConnected?: boolean
 }
 const EMPTY_CHARACTER_REFS: CharacterRef[] = []
 
@@ -393,18 +590,6 @@ function readPrimaryReferenceAssetUrl(record: Record<string, unknown>): string {
     if (url) return url
   }
   return readUrl(record.videoThumbnailUrl) || readUrl(record.videoUrl)
-}
-
-function getTaskNodeModelDisplayLabel(
-  option: Pick<ModelOption, 'label' | 'modelAlias' | 'modelKey' | 'value'> | null | undefined,
-): string {
-  const alias = typeof option?.modelAlias === 'string' ? option.modelAlias.trim() : ''
-  if (alias) return alias
-  const modelKey = typeof option?.modelKey === 'string' ? option.modelKey.trim() : ''
-  if (modelKey) return modelKey
-  const label = typeof option?.label === 'string' ? option.label.trim() : ''
-  if (label) return label
-  return typeof option?.value === 'string' ? option.value.trim() : ''
 }
 
 const projectRoleRefsPromiseByProjectId = new Map<string, Promise<CharacterRef[]>>()
@@ -498,42 +683,7 @@ function invalidateProjectMentionRefCaches(projectId: string): void {
   projectRoleRefsPromiseByProjectId.delete(normalizedProjectId)
   projectAssetMentionRefsPromiseByProjectId.delete(normalizedProjectId)
 }
-const DEFAULT_IMAGE_ASPECT_RATIO = '16:9'
-const TEXT_NODE_DEFAULT_WIDTH = 380
-const TEXT_NODE_MIN_WIDTH = 340
-const TEXT_NODE_MAX_WIDTH = 620
-const TEXT_NODE_DEFAULT_HEIGHT = 360
-const TEXT_NODE_MIN_HEIGHT = 240
-const TEXT_NODE_MAX_HEIGHT = 680
-const UNIFIED_STORYBOARD_SKILL = 'tapcanvas-storyboard-expert'
-const UNIFIED_STORYBOARD_SYSTEM_HINT = [
-  `必须先通过 Skill 工具加载 ${UNIFIED_STORYBOARD_SKILL}，再执行分镜输出。`,
-  '请遵守该技能中的连续性、风格锁定与生产计划约束。',
-].join('\n')
-const NODE_KINDS: ReadonlySet<NodeKind> = new Set<NodeKind>([
-  'text',
-  'novelDoc',
-  'scriptDoc',
-  'storyboardScript',
-  'image',
-  'imageEdit',
-  'cameraRef',
-  'storyboardImage',
-  'novelStoryboard',
-  'storyboardShot',
-  'imageFission',
-  'mosaic',
-  'video',
-  'composeVideo',
-  'storyboard',
-  'audio',
-  'subtitle',
-  'character',
-])
-const toNodeKind = (value?: string): NodeKind | undefined => {
-  if (!value) return undefined
-  return NODE_KINDS.has(value as NodeKind) ? (value as NodeKind) : undefined
-}
+const DEFAULT_IMAGE_NODE_REFERENCE_IMAGE_LIMIT = 12
 const areCharacterRefsEqual = (a: CharacterRef[], b: CharacterRef[]) => {
   if (a === b) return true
   if (a.length !== b.length) return false
@@ -548,6 +698,26 @@ const areCharacterRefsEqual = (a: CharacterRef[], b: CharacterRef[]) => {
   return true
 }
 
+type RFStoreSnapshot = ReturnType<typeof useRFStore.getState>
+
+function useStableRFStoreSelection<T>(
+  selector: (state: RFStoreSnapshot) => T,
+  equals: (left: T, right: T) => boolean,
+): T {
+  const cachedRef = React.useRef<{ value: T } | null>(null)
+  const stableSelector = React.useMemo(
+    () => (state: RFStoreSnapshot): T => {
+      const next = selector(state)
+      const cached = cachedRef.current
+      if (cached && equals(cached.value, next)) return cached.value
+      cachedRef.current = { value: next }
+      return next
+    },
+    [equals, selector],
+  )
+  return useRFStore(stableSelector)
+}
+
 const EMPTY_UPSTREAM_REFERENCE_ITEMS: OrderedUpstreamReferenceItem[] = []
 
 type NodeResizeEndParams = {
@@ -555,138 +725,20 @@ type NodeResizeEndParams = {
   height?: number
 }
 
+type MediaNaturalSize = {
+  width: number
+  height: number
+  url: string
+}
+
 type ToolbarMappedControl = {
   key: string
-  binding: VideoModelControlBinding | ImageModelControlBinding
+  // 'videoReferType' 是节点级自定义控件（kling-v3-omni 动作迁移开关），不走 params_def 绑定。
+  binding: VideoModelControlBinding | ImageModelControlBinding | 'videoReferType'
   title: string
   summary: string
   options: ReadonlyArray<{ value: string; label: string; disabled?: boolean }>
   onChange: (value: string) => void
-}
-
-function normalizeImageAspect(value: unknown): string {
-  const raw = typeof value === 'string' ? value.trim() : ''
-  if (!raw || raw.toLowerCase() === 'auto') return DEFAULT_IMAGE_ASPECT_RATIO
-  return raw
-}
-
-function normalizeImageSizeSetting(value: unknown): string {
-  return typeof value === 'string' ? value.trim().replace(/\s+/g, '') : ''
-}
-
-function normalizeImageResolutionSetting(value: unknown): string {
-  return typeof value === 'string' ? value.trim().replace(/\s+/g, '') : ''
-}
-
-function pickImageAspectValue(config: ImageModelCatalogConfig | null, current: string): string | null {
-  if (!config) return null
-  const normalizedCurrent = normalizeImageAspect(current)
-  const allowed = config.aspectRatioOptions.map((option) => option.value)
-  if (allowed.length) {
-    if (normalizedCurrent && allowed.includes(normalizedCurrent)) return normalizedCurrent
-    if (config.defaultAspectRatio && allowed.includes(config.defaultAspectRatio)) {
-      return config.defaultAspectRatio
-    }
-    return allowed[0] ?? null
-  }
-  return config.defaultAspectRatio || null
-}
-
-function pickImageSizeValue(config: ImageModelCatalogConfig | null, current: string): string | null {
-  if (!config) return null
-  const normalizedCurrent = normalizeImageSizeSetting(current)
-  const allowed = config.imageSizeOptions.map((option) => option.value)
-  if (allowed.length) {
-    if (normalizedCurrent && allowed.includes(normalizedCurrent)) return normalizedCurrent
-    if (config.defaultImageSize && allowed.includes(config.defaultImageSize)) {
-      return config.defaultImageSize
-    }
-    return allowed[0] ?? null
-  }
-  return config.defaultImageSize || null
-}
-
-function pickImageResolutionValue(config: ImageModelCatalogConfig | null, current: string): string | null {
-  if (!config) return null
-  const normalizedCurrent = normalizeImageResolutionSetting(current)
-  const allowed = config.resolutionOptions.map((option) => option.value)
-  if (allowed.length) {
-    if (normalizedCurrent && allowed.includes(normalizedCurrent)) return normalizedCurrent
-    return allowed[0] ?? null
-  }
-  return null
-}
-
-function pickVideoDurationValue(config: VideoModelCatalogConfig | null, current: number): number | null {
-  if (!config || !config.durationOptions.length) return null
-  const allowed = config.durationOptions.map((option) => option.value)
-  if (allowed.includes(current)) return current
-  if (typeof config.defaultDurationSeconds === 'number' && allowed.includes(config.defaultDurationSeconds)) {
-    return config.defaultDurationSeconds
-  }
-  return allowed[0] ?? null
-}
-
-function pickVideoSizeValue(config: VideoModelCatalogConfig | null, current: string): string | null {
-  if (!config || !config.sizeOptions.length) return null
-  const normalizedCurrent = current.trim().replace(/\s+/g, '')
-  const allowed = config.sizeOptions.map((option) => option.value)
-  if (normalizedCurrent && allowed.includes(normalizedCurrent)) return normalizedCurrent
-  if (config.defaultSize && allowed.includes(config.defaultSize)) return config.defaultSize
-  return allowed[0] ?? null
-}
-
-function pickVideoResolutionValue(config: VideoModelCatalogConfig | null, current: string): string | null {
-  if (!config || !config.resolutionOptions.length) return null
-  const normalizedCurrent = normalizeVideoResolution(current)
-  const allowed = config.resolutionOptions.map((option) => option.value)
-  if (normalizedCurrent && allowed.includes(normalizedCurrent)) return normalizedCurrent
-  if (config.defaultResolution && allowed.includes(config.defaultResolution)) {
-    return config.defaultResolution
-  }
-  return allowed[0] ?? null
-}
-
-function pickVideoOrientationValue(config: VideoModelCatalogConfig | null, current: Orientation): Orientation | null {
-  if (!config || !config.orientationOptions.length) return null
-  const allowed = config.orientationOptions.map((option) => option.value)
-  if (allowed.includes(current)) return current
-  if (config.defaultOrientation && allowed.includes(config.defaultOrientation)) return config.defaultOrientation
-  return allowed[0] ?? null
-}
-
-function inferOrientationFromAspect(value: string): Orientation | null {
-  const raw = value.trim()
-  if (!raw) return null
-  const match = raw.match(/^(\d+)\s*[:/xX]\s*(\d+)$/)
-  if (!match) return null
-  const width = Number(match[1])
-  const height = Number(match[2])
-  if (!Number.isFinite(width) || !Number.isFinite(height)) return null
-  return height > width ? 'portrait' : 'landscape'
-}
-
-function resolveVideoOrientationValue(params: {
-  currentOrientation: unknown
-  size: string
-  aspect: string
-  config: VideoModelCatalogConfig | null
-}): Orientation {
-  const normalizedSize = params.size.trim().replace(/\s+/g, '')
-  const sizeRule = normalizedSize && params.config
-    ? params.config.sizeOptions.find((option) => option.value === normalizedSize) || null
-    : null
-  if (sizeRule?.orientation) return sizeRule.orientation
-  if (sizeRule?.aspectRatio) {
-    const inferredFromSizeRule = inferOrientationFromAspect(sizeRule.aspectRatio)
-    if (inferredFromSizeRule) return inferredFromSizeRule
-  }
-  const inferredFromAspect = inferOrientationFromAspect(params.aspect)
-  if (inferredFromAspect) return inferredFromAspect
-  if (typeof params.currentOrientation === 'string' && params.currentOrientation.trim()) {
-    return normalizeOrientation(params.currentOrientation)
-  }
-  return 'landscape'
 }
 
 function toMentionUsername(raw: unknown): string {
@@ -713,61 +765,6 @@ function extractPromptMentionUsernames(raw: unknown): string[] {
     if (out.length >= 12) break
   }
   return out
-}
-
-type MentionRefConflictInput = {
-  candidate: string
-  roleRefs?: readonly CharacterRef[]
-  assetRefs?: readonly CharacterRef[]
-}
-
-type MentionRefConflict = {
-  kind: 'role_name_conflict' | 'asset_ref_conflict'
-  mention: string
-  displayName: string
-}
-
-function findMentionRefConflict(input: MentionRefConflictInput): MentionRefConflict | null {
-  const mention = toMentionUsername(input.candidate)
-  if (!mention) return null
-  const mentionKey = mention.toLowerCase()
-  const findDisplayName = (refs: readonly CharacterRef[] | undefined): string | null => {
-    if (!Array.isArray(refs)) return null
-    for (const ref of refs) {
-      const username = toMentionUsername(ref?.username)
-      if (!username || username.toLowerCase() !== mentionKey) continue
-      const displayName = String(ref?.displayName || ref?.rawLabel || username).trim()
-      return displayName || username
-    }
-    return null
-  }
-  const roleDisplayName = findDisplayName(input.roleRefs)
-  if (roleDisplayName) {
-    return {
-      kind: 'role_name_conflict',
-      mention,
-      displayName: roleDisplayName,
-    }
-  }
-  const assetDisplayName = findDisplayName(input.assetRefs)
-  if (assetDisplayName) {
-    return {
-      kind: 'asset_ref_conflict',
-      mention,
-      displayName: assetDisplayName,
-    }
-  }
-  return null
-}
-
-function inferNodePresetType(input: {
-  isVideoNode: boolean
-  hasImage: boolean
-  hasImageResults: boolean
-}): LlmNodePresetType {
-  if (input.isVideoNode) return 'video'
-  if (input.hasImage || input.hasImageResults) return 'image'
-  return 'text'
 }
 
 function extractStoryboardFirstFrameCandidates(
@@ -893,8 +890,8 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const color =
     status === 'success' ? '#16a34a' :
     status === 'error' ? '#ef4444' :
-    status === 'canceled' ? '#475569' :
-    status === 'running' ? '#8b5cf6' :
+    status === 'canceled' ? '#3e4044' :
+    status === 'running' ? '#7c828e' :
     status === 'queued' ? '#f59e0b' : 'rgba(127,127,127,.6)'
   const statusLabel =
     status === 'success' ? '已完成' :
@@ -902,91 +899,39 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     status === 'canceled' ? '已取消' :
     status === 'running' ? '生成中' :
     status === 'queued' ? '排队中' : '待命'
-  const { colorScheme } = useMantineColorScheme()
-  const theme = useMantineTheme()
-  const isDarkUi = colorScheme === 'dark'
-  const rgba = (color: string, alpha: number) => typeof theme.fn?.rgba === 'function' ? theme.fn.rgba(color, alpha) : color
-  const accentPrimary = theme.colors.blue?.[isDarkUi ? 4 : 6] || '#4c6ef5'
-  const accentSecondary = theme.colors.cyan?.[isDarkUi ? 4 : 5] || '#22d3ee'
-  const nodeShellBackground = isDarkUi ? 'rgba(15,20,28,0.96)' : 'rgba(255,255,255,0.98)'
-  const nodeShellBorder = isDarkUi ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(15,23,42,0.08)'
-  const nodeShellShadow = isDarkUi
-    ? '0 18px 36px rgba(0, 0, 0, 0.5)'
-    : '0 16px 32px rgba(15, 23, 42, 0.12)'
-  const nodeShellGlow = '0 0 0 rgba(0, 0, 0, 0)'
-  const nodeShellText = isDarkUi ? theme.white : (theme.colors.gray?.[9] || '#111321')
-  const quickActionBackgroundActive = isDarkUi ? rgba(accentPrimary, 0.25) : rgba(accentPrimary, 0.12)
-  const quickActionIconColor = rgba(nodeShellText, 0.55)
-  const quickActionIconActive = accentPrimary
-  const quickActionHint = rgba(nodeShellText, 0.55)
-  const mediaOverlayBackground = isDarkUi ? 'rgba(4, 7, 16, 0.92)' : 'rgba(246, 248, 255, 0.95)'
-  const mediaOverlayText = nodeShellText
-  const toolbarBackground = isDarkUi ? 'rgba(4, 7, 16, 0.9)' : 'rgba(255,255,255,0.96)'
-  const toolbarShadow = isDarkUi ? '0 22px 45px rgba(0,0,0,0.6)' : '0 22px 50px rgba(15,23,42,0.14)'
-  const subtleOverlayBackground = isDarkUi ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.05)'
-  const mediaFallbackSurface = isDarkUi ? 'rgba(3,6,12,0.92)' : 'rgba(244,247,255,0.95)'
-  const mediaFallbackText = isDarkUi ? rgba(theme.colors.gray?.[4] || '#94a3b8', 0.85) : rgba(theme.colors.gray?.[6] || '#64748b', 0.85)
-  const videoSurface = isDarkUi ? 'rgba(11, 16, 28, 0.9)' : 'rgba(236, 241, 255, 0.9)'
-  const inlineDividerColor = rgba(nodeShellText, 0.12)
-  const sleekChipBorderColor = rgba(nodeShellText, 0.08)
-  const toolbarButtonBorderColor = rgba(nodeShellText, 0.12)
-  const summaryChipStyles = React.useMemo(() => ({
-    borderRadius: 999,
-    background: isDarkUi ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
-    color: nodeShellText,
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '4px 10px',
-    fontWeight: 600,
-    fontSize: 12,
-    height: 30,
-    lineHeight: 1.1,
-    letterSpacing: 0.25,
-  }), [isDarkUi, nodeShellText])
-  const controlValueStyle = React.useMemo(() => ({
-    fontSize: 12,
-    fontWeight: 600,
-    color: nodeShellText,
-  }), [nodeShellText])
-  const sleekChipBase = React.useMemo(() => ({
-    padding: '6px 12px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    fontSize: 12,
-    fontWeight: 500,
-    color: nodeShellText,
-    lineHeight: 1.2,
-    whiteSpace: 'nowrap',
-    borderRadius: 999,
-    background: isDarkUi ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.03)',
-  }), [isDarkUi, nodeShellText, sleekChipBorderColor])
-  const toolbarActionIconStyles = React.useMemo(() => ({
-    root: {
-      width: 32,
-      height: 32,
-      borderRadius: 12,
-      background: isDarkUi ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.03)',
-      color: nodeShellText,
-      padding: 0,
-    },
-    icon: {
-      fontSize: 16,
-    },
-  }), [isDarkUi, nodeShellText, toolbarButtonBorderColor])
-  const galleryCardBackground = isDarkUi ? 'rgba(7,12,24,0.96)' : 'rgba(255,255,255,0.96)'
-
-  const placeholderIconColor = nodeShellText
-  const iconBadgeBackground = isDarkUi ? rgba(accentPrimary, 0.2) : rgba(accentPrimary, 0.12)
-  const iconBadgeShadow = isDarkUi ? '0 10px 20px rgba(0,0,0,0.35)' : '0 10px 20px rgba(15,23,42,0.1)'
-  const darkContentBackground = isDarkUi ? 'rgba(9,13,20,0.92)' : 'rgba(246,248,255,0.95)'
-  const darkCardShadow = isDarkUi ? '0 12px 24px rgba(0, 0, 0, 0.4)' : '0 12px 24px rgba(15, 23, 42, 0.1)'
-  const lightContentBackground = isDarkUi ? 'rgba(9,14,28,0.3)' : 'rgba(227,235,255,0.7)'
+  const {
+    isDarkUi,
+    themeWhite,
+    rgba,
+    accentPrimary,
+    nodeShellBorder,
+    nodeShellShadow,
+    nodeShellText,
+    mediaOverlayBackground,
+    mediaOverlayText,
+    toolbarBackground,
+    toolbarShadow,
+    subtleOverlayBackground,
+    mediaFallbackSurface,
+    mediaFallbackText,
+    videoSurface,
+    inlineDividerColor,
+    galleryCardBackground,
+    iconBadgeBackground,
+    iconBadgeShadow,
+    darkCardShadow,
+    summaryChipStyles,
+    controlValueStyle,
+    sleekChipBase,
+    toolbarActionIconStyles,
+  } = useTaskNodeTheme()
 
   const kind = normalizeTaskNodeKind(typeof data?.kind === 'string' ? data.kind : null) || 'text'
+  const isWorkflowPresetSelectorNode = (data as Record<string, unknown>)?.workflowPresetSelectorVersion === 2
+  const draftByAgent = Boolean((data as any)?.draftByAgent)
   const coreKind = getTaskNodeCoreType(kind)
+  const isCharacterReferenceNode = coreKind === 'image'
+    && String((data as Record<string, unknown>)?.referenceType || '').trim().toLowerCase() === 'character'
   const productionMeta = React.useMemo(
     () => getNodeProductionMeta({ type: 'taskNode', data }),
     [data],
@@ -995,7 +940,10 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     () => readChapterGroundedProductionMetadata((data as Record<string, unknown>)?.productionMetadata),
     [data],
   )
-  const isCameraRefNode = false
+  const sbaPresentation = React.useMemo(
+    () => readSbaNodePresentation(data as Record<string, unknown>),
+    [data],
+  )
   const schema = React.useMemo(() => getTaskNodeSchema(kind), [kind])
   const NodeIcon = schema.icon
   const featureFlags = React.useMemo<TaskNodeFeatureFlags>(
@@ -1003,12 +951,8 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     [schema, kind],
   )
   const {
-    isStoryboardNode,
-    isComposerNode,
-    isMosaicNode,
     hasImage,
     hasImageResults,
-    hasAnchorBinding,
     hasImageUpload: supportsImageUpload,
     hasReversePrompt: supportsReversePrompt,
     hasVideo,
@@ -1016,42 +960,50 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     hasAudio: isAudioNode,
     hasSubtitle: isSubtitleNode,
     hasCharacter: isCharacterNode,
-    hasSystemPrompt,
     hasModelSelect,
     hasSampleCount,
     hasAspect,
     hasImageSize,
     hasOrientation,
     hasDuration,
-    hasTextResults,
     hasStoryboardEditor,
-    supportsSubflowHandles,
   } = featureFlags
-  const isProjectDocNode = false
-  const isPlainTextNode = coreKind === 'text'
+  const isVideoAnalysisNode = kind === 'videoAnalysis'
+  const isShotTableNode = kind === 'shotTable'
+  const isWorkflowStageNode = kind === 'workflowStage'
+  const isWorkflowTriggerNode = kind === 'workflowTrigger'
+  const isStructuredWorkflowNode = isVideoAnalysisNode || isShotTableNode || isWorkflowStageNode || isWorkflowTriggerNode
+  const isPlainTextNode = coreKind === 'text' && !isStructuredWorkflowNode
   const isVideoNode = coreKind === 'video'
-  const isStoryboardEditorNode = hasStoryboardEditor
-  const presetType = React.useMemo<LlmNodePresetType>(
-    () => inferNodePresetType({ isVideoNode, hasImage, hasImageResults }),
-    [hasImage, hasImageResults, isVideoNode],
+  const isSegmentRemakeNode = isVideoNode && (data as Record<string, unknown>).segmentRemake === true
+  const isOrchestratedVideoClip = isVideoNode && Boolean(readVideoClipRunId(data))
+  const referenceImageLimitRef = React.useRef(
+    isVideoNode
+      ? DEFAULT_VIDEO_REFERENCE_IMAGE_LIMIT
+      : DEFAULT_IMAGE_NODE_REFERENCE_IMAGE_LIMIT,
   )
-  const isInnerStoryboardShotNode = false
-  const targets: { id: string; type: string; pos: Position }[] = []
-  const sources: { id: string; type: string; pos: Position }[] = []
+  const isVideoComposeNode = kind === 'videoCompose'
+  const isStoryboardEditorNode = hasStoryboardEditor
+  const targets: { id: string; type: string; pos: Position; label?: string }[] = []
+  const sources: { id: string; type: string; pos: Position; label?: string }[] = []
   const schemaHandles = schema.handles
-  if (isDynamicHandlesConfig(schemaHandles)) {
-    if (supportsSubflowHandles) {
-      const io = (data as any)?.io as {
-        inputs?: { id: string; type: string; label?: string }[]
-        outputs?: { id: string; type: string; label?: string }[]
-      } | undefined
-      if (io?.inputs?.length) {
-        io.inputs.forEach((p) => targets.push({ id: `in-${p.type}`, type: p.type, pos: Position.Left }))
-      }
-      if (io?.outputs?.length) {
-        io.outputs.forEach((p) => sources.push({ id: `out-${p.type}`, type: p.type, pos: Position.Right }))
-      }
-    }
+  const workflowPorts = isWorkflowStageNode || isWorkflowTriggerNode
+    ? readWorkflowCanvasPorts(data as Record<string, unknown>)
+    : null
+  const workflowNodeData = data as Record<string, unknown>
+  if (workflowPorts) {
+    workflowPorts.inputs.forEach((portId) => targets.push({
+      id: workflowPortHandleId('input', portId),
+      type: 'workflow',
+      pos: Position.Left,
+      label: portId,
+    }))
+    workflowPorts.outputs.forEach((portId) => sources.push({
+      id: workflowPortHandleId('output', portId),
+      type: 'workflow',
+      pos: Position.Right,
+      label: portId,
+    }))
   } else if (isStaticHandlesConfig(schemaHandles)) {
     schemaHandles.targets?.forEach((handle) => {
       targets.push({
@@ -1071,10 +1023,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     targets.push({ id: 'in-any', type: 'any', pos: Position.Left })
     sources.push({ id: 'out-any', type: 'any', pos: Position.Right })
   }
-  if (isInnerStoryboardShotNode) {
-    targets.length = 0
-    sources.length = 0
-  }
+  const referenceHandles = buildWorkflowAgentReferenceHandles(workflowNodeData)
+  targets.push(...referenceHandles.targets)
+  sources.push(...referenceHandles.sources)
   const handleLayoutMap = computeHandleLayout([...targets, ...sources])
   const wideHandleBase: React.CSSProperties = {
     position: 'absolute',
@@ -1092,25 +1043,26 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const defaultOutputType = sources[0]?.type || 'any'
 
   const [editing, setEditing] = React.useState(false)
-  const updateNodeLabel = useRFStore(s => s.updateNodeLabel)
-  const openSubflow = useUIStore(s => s.openSubflow)
-  const setActivePanel = useUIStore(s => s.setActivePanel)
-  const currentProject = useUIStore(s => s.currentProject)
-  const openWebCutVideoEditModal = useUIStore(s => s.openWebCutVideoEditModal)
-  const edgeRoute = useUIStore(s => s.edgeRoute)
-  const viewOnly = useUIStore(s => s.viewOnly)
+  const [isAspectTransitioning, setIsAspectTransitioning] = React.useState(false)
+  const aspectTransitionTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Actions are module-level stable refs in Zustand — subscribing creates 13 wasted listeners per node.
+  // Read directly from getState() instead; the values are guaranteed identical across renders.
+  const updateNodeLabel = useRFStore.getState().updateNodeLabel
+  const { currentProject, viewOnly } = useCanvasRenderContext()
+  const nodeReadOnly = viewOnly || (data as { readOnly?: unknown } | undefined)?.readOnly === true
   const canvasReferencePicker = useUIStore(s => s.canvasReferencePicker)
-  const openCanvasReferencePicker = useUIStore(s => s.openCanvasReferencePicker)
-  const closeCanvasReferencePicker = useUIStore(s => s.closeCanvasReferencePicker)
-  const syncCreationSessionCheckpoint = useUIStore(s => s.syncCreationSessionCheckpoint)
-  const failCreationSession = useUIStore(s => s.failCreationSession)
-  const runSelected = useRFStore(s => s.runSelected)
-  const cancelNodeExecution = useRFStore(s => s.cancelNode)
-  const setNodeStatus = useRFStore(s => s.setNodeStatus)
-  const updateNodeData = useRFStore(s => s.updateNodeData)
-  const deleteEdge = useRFStore(s => s.deleteEdge)
-  const appendLog = useRFStore(s => s.appendLog)
-  const addNode = useRFStore(s => s.addNode)
+  const openCanvasReferencePicker = useUIStore.getState().openCanvasReferencePicker
+  const closeCanvasReferencePicker = useUIStore.getState().closeCanvasReferencePicker
+  const syncCreationSessionCheckpoint = useUIStore.getState().syncCreationSessionCheckpoint
+  const failCreationSession = useUIStore.getState().failCreationSession
+  const runSelected = useRFStore.getState().runSelected
+  const cancelNodeExecution = useRFStore.getState().cancelNode
+  const setNodeStatus = useRFStore.getState().setNodeStatus
+  const updateNodeData = useRFStore.getState().updateNodeData
+  const appendLog = useRFStore.getState().appendLog
+  const addNode = useRFStore.getState().addNode
+  const inheritUpstreamConnections = useRFStore.getState().inheritUpstreamConnections
+  const setCanvasViewLocked = useRFStore.getState().setCanvasViewLocked
   const rawPrompt = (data as any)?.prompt as string | undefined
   const imagePromptExecutionState = React.useMemo(() => {
     try {
@@ -1162,168 +1114,157 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       setPrompt(rawPrompt)
     }
   }, [rawPrompt])
+  const storyboardEditorInitRef = React.useRef(false)
   React.useEffect(() => {
-    if (!isStoryboardEditorNode) return
+    if (!isStoryboardEditorNode || storyboardEditorInitRef.current) return
     const record = data as Record<string, unknown>
     const hasStoryboardEditorShape =
       Array.isArray(record.storyboardEditorCells) &&
       typeof record.storyboardEditorGrid === 'string' &&
       typeof record.storyboardEditorAspect === 'string'
-    if (hasStoryboardEditorShape) return
-    updateNodeData(id, buildDefaultStoryboardEditorData())
-  }, [data, id, isStoryboardEditorNode, updateNodeData])
+    storyboardEditorInitRef.current = true
+    if (!hasStoryboardEditorShape) {
+      updateNodeData(id, buildDefaultStoryboardEditorData())
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStoryboardEditorNode, id, updateNodeData])
   const textFontSize = Math.max(12, Math.min(48, Number((data as any)?.textFontSize) || 16))
   const textFontWeight = Math.max(300, Math.min(800, Number((data as any)?.textFontWeight) || 500))
-  const textColor = String((data as any)?.textColor || (isDarkUi ? '#f8fafc' : '#0f172a'))
+  const textColor = String((data as any)?.textColor || (isDarkUi ? '#f6f7f8' : '#131316'))
   const textBackgroundColor = String((data as any)?.textBackgroundColor || (isDarkUi ? 'rgba(12,17,28,0.88)' : 'rgba(248,250,255,0.95)'))
-  const [aspect, setAspect] = React.useState<string>(normalizeImageAspect((data as any)?.aspect))
-  const [imageSize, setImageSize] = React.useState<string>((data as any)?.imageSize || '1K')
+  const [aspect, setAspect] = React.useState<string>(() => {
+    const dataAspect = (data as Record<string, unknown>)?.aspect
+    const fallbackAspect = isVideoNode
+      ? readNodeModelPrefs().videoAspect || DEFAULT_GENERATION_PREFS.videoAspect
+      : undefined
+    return normalizeImageAspect(dataAspect ?? fallbackAspect)
+  })
+  const [imageSize, setImageSize] = React.useState<string>(() =>
+    (data as any)?.imageSize || readNodeModelPrefs().imageSize || DEFAULT_GENERATION_PREFS.imageSize,
+  )
   const [imageResolution, setImageResolution] = React.useState<string>(
     normalizeImageResolutionSetting((data as any)?.imageResolution ?? (data as any)?.resolution ?? ''),
+  )
+  const [imageQuality, setImageQuality] = React.useState<string>(
+    normalizeImageQualitySetting((data as Record<string, unknown>)?.imageQuality),
   )
   const [imageEditSize, setImageEditSize] = React.useState<string>(() =>
     kind === 'imageEdit'
       ? normalizeImageEditSize((data as Record<string, unknown>)?.imageEditSize ?? (data as Record<string, unknown>)?.size)
       : DEFAULT_IMAGE_EDIT_SIZE,
   )
-  const [canvasResizeSize, setCanvasResizeSize] = React.useState<string>(() =>
-    normalizeCanvasResizeSize((data as Record<string, unknown>)?.canvasResizeSize ?? DEFAULT_CANVAS_RESIZE_SIZE),
-  )
-  const [scale, setScale] = React.useState<number>((data as any)?.scale || 1)
   const [sampleCount, setSampleCount] = React.useState<number>((data as any)?.sampleCount || 1)
-  const [storyboardScenes, setStoryboardScenes] = React.useState<StoryboardScene[]>(() =>
-    isStoryboardNode
-      ? enforceStoryboardTotalLimit(
-          normalizeStoryboardScenes(
-            (data as any)?.storyboardScenes,
-            (data as any)?.storyboard || (data as any)?.prompt || '',
-          ),
-        )
-      : [],
-  )
-  const [storyboardNotes, setStoryboardNotes] = React.useState<string>(() =>
-    isStoryboardNode ? ((data as any)?.storyboardNotes || '') : '',
-  )
-  const [storyboardTitle, setStoryboardTitle] = React.useState<string>(() =>
-    isStoryboardNode ? ((data as any)?.storyboardTitle || data?.label || '') : '',
-  )
-  const lastStoryboardSerializedRef = React.useRef<string | null>(null)
-
-  // 文本节点的系统提示词状态（保留兼容旧数据，不再在 UI 直接展示）
-  const rawStoryboardScenes = (data as any)?.storyboardScenes
-  const rawStoryboardString = (data as any)?.storyboard || (data as any)?.prompt || ''
-  const rawStoryboardNotes = (data as any)?.storyboardNotes || ''
-  const rawStoryboardTitle = (data as any)?.storyboardTitle || data?.label || ''
-
-  React.useEffect(() => {
-    if (!isStoryboardNode) return
-    if (rawStoryboardString && rawStoryboardString === lastStoryboardSerializedRef.current) {
-      return
-    }
-    const normalized = enforceStoryboardTotalLimit(
-      normalizeStoryboardScenes(rawStoryboardScenes, rawStoryboardString),
-    )
-    if (!scenesAreEqual(normalized, storyboardScenes)) {
-      setStoryboardScenes(normalized)
-    }
-    if (rawStoryboardNotes !== storyboardNotes) {
-      setStoryboardNotes(rawStoryboardNotes)
-    }
-    if (rawStoryboardTitle !== storyboardTitle) {
-      setStoryboardTitle(rawStoryboardTitle)
-    }
-  }, [
-    isStoryboardNode,
-    rawStoryboardScenes,
-    rawStoryboardString,
-    rawStoryboardNotes,
-    rawStoryboardTitle,
-    storyboardScenes,
-    storyboardNotes,
-    storyboardTitle,
-  ])
-
-  React.useEffect(() => {
-    if (!isStoryboardNode) return
-    const serialized = serializeStoryboardScenes(storyboardScenes, {
-      title: storyboardTitle,
-      notes: storyboardNotes,
-    })
-    if (lastStoryboardSerializedRef.current !== serialized) {
-      lastStoryboardSerializedRef.current = serialized
-      updateNodeData(id, {
-        storyboardScenes,
-        storyboardNotes,
-        storyboardTitle,
-        storyboard: serialized,
-      })
-    }
-  }, [id, isStoryboardNode, storyboardScenes, storyboardNotes, storyboardTitle, updateNodeData])
-
-  React.useEffect(() => {
-    if (!isStoryboardNode) {
-      lastStoryboardSerializedRef.current = null
-    }
-  }, [isStoryboardNode])
-
-  const storyboardTotalDuration = React.useMemo(
-    () => (isStoryboardNode ? totalStoryboardDuration(storyboardScenes) : 0),
-    [isStoryboardNode, storyboardScenes],
-  )
-
-  const rawSystemPrompt = (data as any)?.systemPrompt as string | undefined
-  const [systemPrompt, setSystemPrompt] = React.useState<string>(() => {
-    if (typeof rawSystemPrompt === 'string' && rawSystemPrompt.trim().length > 0) {
-      return rawSystemPrompt
-    }
-    return '你是一个提示词优化助手。请在保持核心意图不变的前提下，把下面的提示词补全为更具体、更可执行的版本；优先明确主体数量、空间关系、前中后景、镜头与构图、光线与材质细节。除非用户明确要求精简，否则不要主动缩短；避免引入血腥、残酷暴力或肢解等直观血腥描写，可用暗示和留白代替。'
+  // 单次点击生成份数（视频节点）：>1 时克隆同节点并行执行，继承上下游连线
+  const [runCount, setRunCount] = React.useState<number>(() => {
+    const raw = Number((data as any)?.runCount)
+    return Number.isFinite(raw) && raw >= 1 ? Math.min(8, Math.floor(raw)) : 1
   })
-
-  const rawShowSystemPrompt = (data as any)?.showSystemPrompt as boolean | undefined
-  const [showSystemPrompt, setShowSystemPrompt] = React.useState<boolean>(() => {
-    if (typeof rawShowSystemPrompt === 'boolean') return rawShowSystemPrompt
-    // 默认关闭系统提示词，由用户手动开启
-    return false
-  })
-
-  React.useEffect(() => {
-    if (typeof rawSystemPrompt === 'string') {
-      setSystemPrompt(rawSystemPrompt)
-    }
-  }, [rawSystemPrompt])
-
-  React.useEffect(() => {
-    if (typeof rawShowSystemPrompt === 'boolean' && rawShowSystemPrompt !== showSystemPrompt) {
-      setShowSystemPrompt(rawShowSystemPrompt)
-    }
-  }, [rawShowSystemPrompt, showSystemPrompt])
-
-  React.useEffect(() => {
-    if (typeof rawSystemPrompt !== 'string' || !rawSystemPrompt.trim()) {
-      if (systemPrompt && systemPrompt.trim()) {
-        updateNodeData(id, { systemPrompt })
+  // Zustand runs every selector after every store update, including each drag
+  // position frame. Keep the subscribed selector O(1); derive inbound edges
+  // only when the edges collection actually changes. The previous selector
+  // filtered all edges once per mounted TaskNode on every drag frame.
+  const canvasEdges = useRFStore((state) => state.edges)
+  const edgesForCharacters = React.useMemo(
+    () => canvasEdges.filter((edge) => edge.target === id),
+    [canvasEdges, id],
+  )
+  const upstreamVideosDuringDragRef = React.useRef<ComposeVideoSource[]>([])
+  const upstreamVideosSelector = React.useMemo(() => {
+    let lastNodes: ReturnType<typeof useRFStore.getState>['nodes'] | null = null
+    let lastEdges: ReturnType<typeof useRFStore.getState>['edges'] | null = null
+    let lastResult: ComposeVideoSource[] = []
+    return (
+      (s: RFStoreSnapshot): ComposeVideoSource[] => {
+        if (!isVideoComposeNode || isOrchestratedVideoClip) return lastResult
+        if (isCanvasNodeDragActive()) return upstreamVideosDuringDragRef.current
+        if (s.nodes === lastNodes && s.edges === lastEdges) return lastResult
+        const incoming = s.edges.filter((e) => e.target === id)
+        const results: ComposeVideoSource[] = []
+        for (const edge of incoming) {
+          const srcNode = s.nodes.find((n) => n.id === edge.source)
+          if (!srcNode) continue
+          const srcData: any = srcNode.data || {}
+          const srcSchema = getTaskNodeSchema(srcData?.kind)
+          if (srcSchema.category !== 'video') continue
+          const vr = Array.isArray(srcData.videoResults) ? srcData.videoResults : []
+          const idx = typeof srcData.videoPrimaryIndex === 'number' ? srcData.videoPrimaryIndex : 0
+          const primary = vr[idx] || vr[0]
+          const url: string | undefined = primary?.url || srcData.videoUrl
+          if (url) {
+            results.push({
+              url,
+              title: primary?.title || (srcData.label as string | undefined) || undefined,
+              thumbnailUrl: (primary?.thumbnailUrl as string | undefined) || undefined,
+              durationSec: typeof primary?.duration === 'number'
+                ? primary.duration
+                : typeof srcData.videoDuration === 'number' ? srcData.videoDuration : undefined,
+              dialoguePrompt: typeof srcData.prompt === 'string' && srcData.prompt.trim() ? srcData.prompt : undefined,
+            })
+          }
+        }
+        // 【cut 模式无连线兜底】整片成片节点与 N 段 clip 常只靠 clipRunId 关联、无 edge（用户要的「不依赖
+        // 前端 DAG」）。边收不到 clip 时，按本成片节点的 clipRunId 收齐同 run 的 video 节点、按 clipIndex 排序，
+        // 让用户点「合成视频」时收得到源（根治：run=concatenated 但成片节点 clips_ready 无 videoUrl 的回写缺口）。
+        if (results.length < 2) {
+          const selfNode = s.nodes.find((n) => n.id === id)
+          const runId = (selfNode?.data as any)?.clipRunId
+          if (runId) {
+            const byRun: ComposeVideoSource[] = []
+            s.nodes
+              .filter((n) => {
+                const d: any = n.data || {}
+                return (
+                  n.id !== id &&
+                  d.clipRunId === runId &&
+                  typeof d.clipIndex === 'number' &&
+                  getTaskNodeSchema(d?.kind).category === 'video'
+                )
+              })
+              .sort((a, b) => ((a.data as any)?.clipIndex ?? 0) - ((b.data as any)?.clipIndex ?? 0))
+              .forEach((n) => {
+                const d: any = n.data || {}
+                const vr = Array.isArray(d.videoResults) ? d.videoResults : []
+                const idx = typeof d.videoPrimaryIndex === 'number' ? d.videoPrimaryIndex : 0
+                const primary = vr[idx] || vr[0]
+                const url: string | undefined = primary?.url || d.videoUrl
+                if (url) {
+                  byRun.push({
+                    url,
+                    title: primary?.title || (d.label as string | undefined) || undefined,
+                    thumbnailUrl: (primary?.thumbnailUrl as string | undefined) || undefined,
+                    durationSec: typeof primary?.duration === 'number'
+                      ? primary.duration
+                      : typeof d.videoDuration === 'number' ? d.videoDuration : undefined,
+                    dialoguePrompt: typeof d.prompt === 'string' && d.prompt.trim() ? d.prompt : undefined,
+                  })
+                }
+              })
+            if (byRun.length > results.length) {
+              lastNodes = s.nodes
+              lastEdges = s.edges
+              lastResult = byRun
+              return lastResult
+            }
+          }
+        }
+        lastNodes = s.nodes
+        lastEdges = s.edges
+        lastResult = results
+        upstreamVideosDuringDragRef.current = results
+        return lastResult
       }
-    }
-  }, [id, updateNodeData])
-
-  const handleSystemPromptChange = React.useCallback(
-    (next: string) => {
-      setSystemPrompt(next)
-      updateNodeData(id, { systemPrompt: next })
-    },
-    [id, updateNodeData],
-  )
-
-  const handleSystemPromptToggle = React.useCallback(
-    (next: boolean) => {
-      setShowSystemPrompt(next)
-      updateNodeData(id, { showSystemPrompt: next })
-    },
-    [id, updateNodeData],
-  )
-  const edgesForCharacters = useRFStore(s => s.edges)
+    )
+  }, [id, isOrchestratedVideoClip, isVideoComposeNode])
+  // useRFStore is created with Zustand's standard `create`; returning a fresh
+  // array from its selector makes useSyncExternalStore see a new snapshot on
+  // every render. Cache by the structural nodes/edges identities instead of
+  // relying on a second equality argument that this hook does not own.
+  const upstreamVideos = useRFStore(upstreamVideosSelector)
+  const [composeEditorOpen, setComposeEditorOpen] = React.useState(false)
   const fileRef = React.useRef<HTMLInputElement|null>(null)
+  const pendingImageUploadActionRef = React.useRef<'image-to-image' | 'image-upscale' | null>(null)
   const imageUrl = (data as any)?.imageUrl as string | undefined
+  const imageServerAssetId = (data as any)?.serverAssetId as string | undefined
   const nodeHasUploadIntent = useUploadRuntimeStore(
     React.useCallback((state) => state.activeNodeImageUploadIds.includes(id), [id]),
   )
@@ -1336,11 +1277,11 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       [id],
     ),
   )
+  upstreamVideosDuringDragRef.current = upstreamVideos
   const nodeHasPendingUploads = nodePendingUploadCount > 0
   const isUploadingImage = nodeHasUploadIntent || nodeHasPendingUploads
   const [reversePromptLoading, setReversePromptLoading] = React.useState(false)
-  const poseStickmanUrl = (data as any)?.poseStickmanUrl as string | undefined
-  const poseReferenceImages = (data as any)?.poseReferenceImages as string[] | undefined
+  const reversePromptInFlightRef = React.useRef(false)
   const imageResults = React.useMemo<TaskNodeImageResult[]>(() => {
     const raw = (data as any)?.imageResults as Array<Record<string, unknown>> | undefined
     if (raw && Array.isArray(raw) && raw.length > 0) {
@@ -1370,11 +1311,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const persistedImagePrimaryIndexRaw = (data as any)?.imagePrimaryIndex
   const persistedImagePrimaryIndex =
     typeof persistedImagePrimaryIndexRaw === 'number' ? persistedImagePrimaryIndexRaw : null
-  const [imageExpanded, setImageExpanded] = React.useState(false)
   const [imagePrimaryIndex, setImagePrimaryIndex] = React.useState<number>(() =>
     persistedImagePrimaryIndex !== null ? persistedImagePrimaryIndex : 0,
   )
-  const [imageSelectedIndex, setImageSelectedIndex] = React.useState(0)
   const hasPrimaryImage = React.useMemo(
     () => imageResults.some((img) => typeof img?.url === 'string' && img.url.trim().length > 0),
     [imageResults]
@@ -1388,111 +1327,11 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     const fallback = imageResults.find((img) => typeof img?.url === 'string' && img.url.trim().length > 0)
     return fallback?.url ?? null
   }, [hasPrimaryImage, imagePrimaryIndex, imageResults])
-  const adoptedImageMetadata = React.useMemo<AdoptedAssetMetadata | null>(() => {
-    const raw = (data as { adoptedImageAsset?: unknown } | undefined)?.adoptedImageAsset
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-    const candidate = raw as Record<string, unknown>
-    const url = typeof candidate.url === 'string' ? candidate.url.trim() : ''
-    if (!url) return null
-    const rawIndex = typeof candidate.index === 'number' && Number.isFinite(candidate.index) ? Math.max(0, Math.trunc(candidate.index)) : -1
-    const resolvedIndex = imageResults[rawIndex]?.url === url
-      ? rawIndex
-      : imageResults.findIndex((item) => item.url === url)
-    if (resolvedIndex < 0) return null
-    return {
-      index: resolvedIndex,
-      url,
-      adoptedAt: typeof candidate.adoptedAt === 'string' ? candidate.adoptedAt : '',
-      progress: typeof candidate.progress === 'number' && Number.isFinite(candidate.progress) ? candidate.progress : null,
-    }
-  }, [data, imageResults])
-  const adoptedImageIndex = adoptedImageMetadata?.index ?? null
-  const isPrimaryImageAdopted = adoptedImageIndex !== null && adoptedImageIndex === imagePrimaryIndex
-  const [assetBindingId, setAssetBindingId] = React.useState<string>(() => {
-    const explicit = String((data as any)?.assetRefId || '').trim()
-    if (explicit) return explicit
-    const primaryImage = Array.isArray((data as any)?.imageResults) ? (data as any).imageResults[0] : null
-    const primaryVideo = Array.isArray((data as any)?.videoResults) ? (data as any).videoResults[0] : null
-    return String(primaryImage?.assetRefId || primaryVideo?.assetRefId || (data as any)?.assetId || '').trim()
-  })
-  const primarySemanticAnchor = React.useMemo(() => resolvePrimarySemanticAnchorBinding(data), [data])
   const semanticRoleBinding = React.useMemo(() => resolveSemanticNodeRoleBinding(data), [data])
-  const [anchorBindingKind, setAnchorBindingKind] = React.useState<PublicFlowAnchorBindingKind>(
-    () => primarySemanticAnchor?.kind || 'character',
-  )
-  const [anchorBindingLabel, setAnchorBindingLabel] = React.useState<string>(
-    () => String(primarySemanticAnchor?.label || resolveSemanticNodeRoleBinding(data).roleName || '').trim(),
-  )
-  const [bindAnchorLoading, setBindAnchorLoading] = React.useState(false)
   const autoRoleResolvedRef = React.useRef<string>('')
-  const lastAnchorBindingExternalLabelRef = React.useRef<string>(
-    String(primarySemanticAnchor?.label || resolveSemanticNodeRoleBinding(data).roleName || '').trim(),
-  )
-  const lastAnchorBindingExternalKindRef = React.useRef<PublicFlowAnchorBindingKind>(
-    primarySemanticAnchor?.kind || 'character',
-  )
-  const rawRoleName = String(semanticRoleBinding.roleName || '').trim()
-  const rawAnchorLabel = String(primarySemanticAnchor?.label || rawRoleName || '').trim()
-  const inferredRoleName = React.useMemo(() => inferRoleNameFromTaskNode({
-    roleName: semanticRoleBinding.roleName,
-    label: (data as any)?.label,
-    prompt: (data as any)?.prompt,
-  }), [semanticRoleBinding.roleName, (data as any)?.label, (data as any)?.prompt])
 
   React.useEffect(() => {
-    const nextDraft = syncDraftWithExternalValue({
-      previousExternalValue: lastAnchorBindingExternalLabelRef.current,
-      nextExternalValue: rawAnchorLabel,
-      currentDraft: anchorBindingLabel,
-    })
-    lastAnchorBindingExternalLabelRef.current = rawAnchorLabel
-    if (nextDraft !== anchorBindingLabel) {
-      setAnchorBindingLabel(nextDraft)
-    }
-  }, [anchorBindingLabel, rawAnchorLabel])
-
-  React.useEffect(() => {
-    const nextKind = primarySemanticAnchor?.kind || 'character'
-    if (lastAnchorBindingExternalKindRef.current !== nextKind) {
-      lastAnchorBindingExternalKindRef.current = nextKind
-      setAnchorBindingKind(nextKind)
-    }
-  }, [primarySemanticAnchor?.kind])
-
-  React.useEffect(() => {
-    const rawImageResults = Array.isArray((data as any)?.imageResults) ? (data as any).imageResults : []
-    const rawVideoResults = Array.isArray((data as any)?.videoResults) ? (data as any).videoResults : []
-    const primaryImage = rawImageResults[0] || null
-    const primaryVideo = rawVideoResults[0] || null
-    const nextBindingId =
-      String((data as any)?.assetRefId || '').trim() ||
-      String(primaryImage?.assetRefId || primaryVideo?.assetRefId || (data as any)?.assetId || '').trim()
-    if (nextBindingId && nextBindingId !== assetBindingId) {
-      setAssetBindingId(nextBindingId)
-    }
-  }, [assetBindingId, data])
-
-  React.useEffect(() => {
-    if (!inferredRoleName) return
-    if (!anchorBindingLabel.trim()) {
-      setAnchorBindingLabel(inferredRoleName)
-    }
-    if (!rawRoleName) {
-      updateNodeData(id, {
-        roleName: inferredRoleName,
-        anchorBindings: upsertSemanticNodeAnchorBinding({
-          existing: (data as Record<string, unknown>)?.anchorBindings,
-          next: {
-            kind: 'character',
-            label: inferredRoleName,
-            sourceBookId: String((data as Record<string, unknown>)?.sourceBookId || '').trim() || null,
-          },
-        }),
-      })
-    }
-  }, [anchorBindingLabel, data, id, inferredRoleName, rawRoleName, updateNodeData])
-
-  React.useEffect(() => {
+    if (viewOnly) return
     const projectId = String(currentProject?.id || '').trim()
     const roleNameRaw = inferRoleNameFromTaskNode({
       roleName: semanticRoleBinding.roleName,
@@ -1576,20 +1415,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
             patch.status = 'success'
           }
         }
-        if (resolvedRoleName || roleCardId || roleId || roleImage) {
-          patch.anchorBindings = upsertSemanticNodeAnchorBinding({
-            existing: (data as Record<string, unknown>)?.anchorBindings,
-            next: {
-              kind: 'character',
-              label: resolvedRoleName || rawRoleName || null,
-              refId: roleCardId || null,
-              entityId: roleId || null,
-              imageUrl: roleImage || null,
-              sourceBookId: String((data as Record<string, unknown>)?.sourceBookId || '').trim() || null,
-              referenceView: 'three_view',
-            },
-          })
-        }
         if (Object.keys(patch).length > 0) {
           updateNodeData(id, patch)
         }
@@ -1601,47 +1426,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     return () => {
       canceled = true
     }
-  }, [currentProject?.id, data, id, semanticRoleBinding.roleCardId, semanticRoleBinding.roleId, semanticRoleBinding.roleName, updateNodeData])
-
-  const primaryImageForAnchorBinding = React.useMemo(() => {
-    const fromResults =
-      imageResults[imagePrimaryIndex] && typeof imageResults[imagePrimaryIndex].url === 'string'
-        ? String(imageResults[imagePrimaryIndex].url).trim()
-        : ''
-    const fromNode = typeof (data as any)?.imageUrl === 'string' ? String((data as any).imageUrl).trim() : ''
-    return fromResults || fromNode || ''
-  }, [data, imagePrimaryIndex, imageResults])
-
-  const anchorBindStatusText = React.useMemo(() => {
-    const anchorKind = String(primarySemanticAnchor?.kind || '').trim()
-    const anchorLabel = String(primarySemanticAnchor?.label || '').trim()
-    const anchorRefId = String(primarySemanticAnchor?.refId || '').trim()
-    if (!anchorKind && !anchorLabel && !anchorRefId) return ''
-    const anchorKindLabel =
-      anchorKind === 'character'
-        ? '角色'
-        : anchorKind === 'scene'
-          ? '场景'
-          : anchorKind === 'prop'
-            ? '道具'
-            : anchorKind === 'shot'
-              ? '分镜'
-              : anchorKind === 'story'
-                ? '剧情'
-                : anchorKind === 'asset'
-                  ? '资产'
-                  : anchorKind === 'context'
-                    ? '上下文'
-                    : anchorKind === 'authority_base_frame'
-                      ? '权威基底帧'
-                      : anchorKind
-    const parts: string[] = []
-    if (anchorKindLabel) parts.push(`当前锚点：${anchorKindLabel}`)
-    if (anchorLabel) parts.push(`名称：${anchorLabel}`)
-    if (primarySemanticAnchor?.referenceView === 'three_view') parts.push('参考视图：三视图')
-    if (anchorRefId) parts.push(`引用ID：${anchorRefId}`)
-    return parts.join(' · ')
-  }, [primarySemanticAnchor])
+  }, [currentProject?.id, data, id, semanticRoleBinding.roleCardId, semanticRoleBinding.roleId, semanticRoleBinding.roleName, updateNodeData, viewOnly])
 
   const legacyImagePrimaryIndex = React.useMemo(() => {
     if (!imageUrl) return null
@@ -1668,8 +1453,75 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     setImagePrimaryIndex((prev) => Math.max(0, Math.min(total - 1, prev)))
   }, [persistedImagePrimaryIndex, legacyImagePrimaryIndex, imageResults.length])
 
+  // 场景/角色参考图生成完成后，将 imageUrl 同步到服务端 canvas-index.json，供无 bookId 的 intent 复用
+  const canvasIndexSyncedRef = React.useRef<string>('')
+  React.useEffect(() => {
+    // 只读浏览（分享/制作过程，未登录）下不得写 canvas-index：owner-scoped 接口会 401。
+    if (viewOnly) return
+    // 角色裂变是待确认的设计候选，不得在生成成功时自动登记为 canonical 角色参考。
+    if ((data as Record<string, unknown>).skipCanvasIndexSync === true) return
+    if (status !== 'success') return
+    const refType = String((data as any)?.referenceType || '').trim().toLowerCase()
+    if (refType !== 'character' && refType !== 'scene') return
+    const url = (primaryImageUrl || '').trim()
+    if (!url) return
+    const projectId = String(currentProject?.id || '').trim()
+    if (!projectId) return
+    const name = (
+      refType === 'character'
+        ? String((data as any)?.characterName || (data as any)?.label || '').trim()
+        : String((data as any)?.label || '').trim()
+    )
+    if (!name) return
+    const syncKey = `${id}::${url}`
+    if (canvasIndexSyncedRef.current === syncKey) return
+    canvasIndexSyncedRef.current = syncKey
+    upsertCanvasIndexRef({
+      projectId,
+      nodeId: id,
+      sourceNodeId: String((data as any)?.sourceNodeId || '').trim() || undefined,
+      referenceType: refType as 'character' | 'scene',
+      name,
+      imageUrl: url,
+      prompt: String((data as any)?.prompt || '').trim() || undefined,
+      modelKey: String((data as any)?.imageModel || '').trim() || undefined,
+      imageSize: String((data as any)?.imageSize || '').trim() || undefined,
+      creationStage: String((data as any)?.creationStage || '').trim() || undefined,
+    }).catch(() => {})
+  }, [status, primaryImageUrl, currentProject?.id, data, id, viewOnly])
+
+  // Auto-upload third-party external images to OSS when imageUrl is an http(s) URL but has no serverAssetId yet.
+  // Already-hosted TapCanvas upload URLs may lose serverAssetId in old persisted flows; do not re-upload them on refresh.
+  const ossUploadInProgressRef = React.useRef(false)
+  React.useEffect(() => {
+    if (!imageUrl) return
+    if (imageServerAssetId) return
+    if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) return
+    if (isTapCanvasHostedUploadUrl(imageUrl)) return
+    if (ossUploadInProgressRef.current) return
+    const projectId = String(currentProject?.id || '').trim()
+    ossUploadInProgressRef.current = true
+    uploadExternalImageToOss(imageUrl, {
+      name: `node-img-${id}-${Date.now()}.jpg`,
+      ...(projectId ? { projectId } : {}),
+      ownerNodeId: id,
+    })
+      .then(({ url, assetId }) => {
+        updateNodeData(id, { imageUrl: url, serverAssetId: assetId })
+      })
+      .catch(() => {
+        // Silently ignore — image stays as-is, user can retry manually
+      })
+      .finally(() => {
+        ossUploadInProgressRef.current = false
+      })
+  // Only re-run when imageUrl or serverAssetId identity changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageUrl, imageServerAssetId])
+
   const onReversePrompt = React.useCallback(async () => {
     if (!supportsReversePrompt) return
+    if (reversePromptInFlightRef.current) return
 
     const targetUrl = (
       primaryImageUrl ||
@@ -1684,11 +1536,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }
 
     try {
+      reversePromptInFlightRef.current = true
       setReversePromptLoading(true)
-      const ui = useUIStore.getState()
-      const apiKey = (ui.publicApiKey || '').trim()
-      const token = getAuthToken()
-      if (!apiKey && !token) {
+      if (!hasAuthSession()) {
         toast('请先登录后再试', 'error')
         return
       }
@@ -1699,7 +1549,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           return { url: normalized }
         }
         if (normalized.startsWith('blob:')) {
-          if (!token) return null
           try {
             const res = await fetch(normalized)
             if (!res.ok) return null
@@ -1735,19 +1584,16 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       if (resolved.assetId) {
         updateNodeData(id, { imageUrl: resolved.url, serverAssetId: resolved.assetId })
       }
-      const persist = ui.assetPersistenceEnabled
-      const taskRes = await runPublicTask(apiKey, {
-        request: {
-          kind: 'image_to_prompt',
-          prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
-          extras: {
-            imageUrl: resolved.url,
-            nodeId: id,
-            persistAssets: persist,
-          },
-        },
+      // Align with the project's style-recognition pipeline: route through the
+      // unified /tasks endpoint with kind=image_to_prompt so this run shares
+      // billing, vendor selection, and vendor_call_log with PoseEditor's depth
+      // analyzer. Hard-coded direct calls via /agents/llm/v1/chat/completions
+      // bypassed all of that.
+      const taskRes = await runVisionTask({
+        imageUrl: resolved.url,
+        prompt: DEFAULT_REVERSE_PROMPT_INSTRUCTION,
       })
-      const nextPrompt = extractTextFromTaskResult(taskRes.result)
+      const nextPrompt = extractTextFromTaskResult(taskRes).trim()
       if (nextPrompt) {
         setPrompt(nextPrompt)
         updateNodeData(id, { prompt: nextPrompt })
@@ -1759,6 +1605,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       const message = typeof error?.message === 'string' ? error.message : '反推提示词失败'
       toast(message, 'error')
     } finally {
+      reversePromptInFlightRef.current = false
       setReversePromptLoading(false)
     }
   }, [supportsReversePrompt, primaryImageUrl, imageResults, imagePrimaryIndex, imageUrl, id, updateNodeData, setPrompt])
@@ -1769,9 +1616,11 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   )
 
   const videoUrl = ((data as any)?.videoUrl as string | undefined) ?? null
-  const videoThumbnailUrl = ((data as any)?.videoThumbnailUrl as string | undefined) ?? null
+  const rawVideoThumbnailUrl = (data as { videoThumbnailUrl?: unknown })?.videoThumbnailUrl
+  const videoThumbnailUrl = typeof rawVideoThumbnailUrl === 'string' && rawVideoThumbnailUrl.trim()
+    ? rawVideoThumbnailUrl.trim()
+    : resolveVideoInputPosterUrl(data)
   const videoTitle = ((data as any)?.videoTitle as string | undefined) ?? null
-  const videoTokenId = ((data as any)?.videoTokenId as string | undefined) || null
   const [videoPromptGenerationLoading, setVideoPromptGenerationLoading] = React.useState(false)
 
   // Video history results (similar to imageResults)
@@ -1783,7 +1632,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         assetId: typeof item?.assetId === 'string' && item.assetId.trim() ? item.assetId.trim() : null,
         assetRefId: typeof item?.assetRefId === 'string' && item.assetRefId.trim() ? item.assetRefId.trim() : null,
         assetName: typeof item?.assetName === 'string' && item.assetName.trim() ? item.assetName.trim() : null,
-        clipRange: normalizeClipRange(item?.clipRange),
       }))
     }
     const single = videoUrl
@@ -1792,7 +1640,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           thumbnailUrl: videoThumbnailUrl,
           title: videoTitle,
           duration: (data as any)?.videoDuration,
-          clipRange: normalizeClipRange((data as any)?.clipRange),
           remixTargetId: (data as any)?.remixTargetId || null,
         }
       : null
@@ -1812,110 +1659,16 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     setVideoPrimaryIndex((prev) => (prev === clamped ? prev : clamped))
   }, [persistedVideoPrimaryIndex, videoResults.length])
   const hasPrimaryVideo = Boolean(videoResults[videoPrimaryIndex]?.url || videoUrl)
-  const adoptedVideoMetadata = React.useMemo<AdoptedAssetMetadata | null>(() => {
-    const raw = (data as { adoptedVideoAsset?: unknown } | undefined)?.adoptedVideoAsset
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-    const candidate = raw as Record<string, unknown>
-    const url = typeof candidate.url === 'string' ? candidate.url.trim() : ''
-    if (!url) return null
-    const rawIndex = typeof candidate.index === 'number' && Number.isFinite(candidate.index) ? Math.max(0, Math.trunc(candidate.index)) : -1
-    const resolvedIndex = videoResults[rawIndex]?.url === url
-      ? rawIndex
-      : videoResults.findIndex((item) => item.url === url)
-    if (resolvedIndex < 0) return null
-    return {
-      index: resolvedIndex,
-      url,
-      adoptedAt: typeof candidate.adoptedAt === 'string' ? candidate.adoptedAt : '',
-      progress: typeof candidate.progress === 'number' && Number.isFinite(candidate.progress) ? candidate.progress : null,
-    }
-  }, [data, videoResults])
-  const adoptedVideoIndex = adoptedVideoMetadata?.index ?? null
-  const isPrimaryVideoAdopted = adoptedVideoIndex !== null && adoptedVideoIndex === videoPrimaryIndex
-  const videoClipRange = React.useMemo(() => {
-    const fromResult = normalizeClipRange((videoResults[videoPrimaryIndex] as any)?.clipRange)
-    if (fromResult) return fromResult
-    return normalizeClipRange((data as any)?.clipRange)
-  }, [data, videoPrimaryIndex, videoResults])
-  const [videoSelectedIndex, setVideoSelectedIndex] = React.useState(0)
-  const frameSampleUrlsRef = React.useRef<string[]>([])
-  const [frameSamples, setFrameSamples] = React.useState<FrameSample[]>([])
-  const [frameCaptureLoading, setFrameCaptureLoading] = React.useState(false)
-
-  const cleanupFrameSamples = React.useCallback(() => {
-    frameSampleUrlsRef.current.forEach((u) => {
-      try {
-        URL.revokeObjectURL(u)
-      } catch {
-        // ignore
-      }
-    })
-    frameSampleUrlsRef.current = []
-    setFrameSamples([])
-  }, [])
-
-  React.useEffect(() => {
-    return () => {
-      cleanupFrameSamples()
-    }
-  }, [cleanupFrameSamples])
-
-	  const handleCaptureVideoFrames = React.useCallback(async () => {
-	    const src = videoResults[videoPrimaryIndex]?.url || videoUrl
-	    if (!src) {
-	      toast('当前没有可用的视频链接', 'error')
-	      return
-	    }
-    const duration = videoResults[videoPrimaryIndex]?.duration
-    const sampleTimes = (() => {
-      if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) {
-        const durationSeconds = Math.max(1, duration)
-        const floorSeconds = Math.floor(durationSeconds)
-        const times: number[] = []
-        const step = floorSeconds + 1 > MAX_FRAME_ANALYSIS_SAMPLES
-          ? Math.ceil((floorSeconds + 1) / MAX_FRAME_ANALYSIS_SAMPLES)
-          : 1
-        for (let t = 0; t <= floorSeconds; t += step) {
-          times.push(Number(t.toFixed(2)))
-        }
-        if (!times.includes(Number(durationSeconds.toFixed(2)))) {
-          times.push(Number(durationSeconds.toFixed(2)))
-        }
-        return times
-      }
-      return [1]
-    })().filter((t, idx, arr) => Number.isFinite(t) && t >= 0 && arr.indexOf(t) === idx)
-
-    setFrameCaptureLoading(true)
-    cleanupFrameSamples()
-    try {
-      const { frames } = await captureFramesAtTimes({ type: 'url', url: src }, sampleTimes)
-      frameSampleUrlsRef.current = frames.map((f) => f.objectUrl)
-      setFrameSamples(
-        frames.map((f) => ({
-          url: f.objectUrl,
-          time: f.time,
-          blob: f.blob,
-          remoteUrl: null,
-          description: null,
-          describing: false,
-        })),
-      )
-      if (!frames.length) {
-        toast('未能抽取到有效帧，可能受跨域或视频格式限制', 'error')
-      } else {
-        toast(`已抽取 ${frames.length} 帧`, 'success')
-      }
-    } catch (err: any) {
-      console.error('captureFramesAtTimes error', err)
-      const message =
-        (err?.message as string | undefined) ||
-        '抽帧失败，可能是跨域或视频格式不支持'
-      toast(message, 'error')
-	    } finally {
-	      setFrameCaptureLoading(false)
-	    }
-	  }, [cleanupFrameSamples, videoPrimaryIndex, videoResults, videoUrl])
+  const [videoMarkerOpen, setVideoMarkerOpen] = React.useState(false)
+  const [videoMarkerSaving, setVideoMarkerSaving] = React.useState(false)
+  const [videoMarkerPlayback, setVideoMarkerPlayback] = React.useState<{
+    currentTime: number
+    duration: number | null
+  }>({ currentTime: 0, duration: null })
+  const videoMarkers = React.useMemo(
+    () => normalizeVideoMarkers((data as Record<string, unknown>).videoMarkers),
+    [data],
+  )
 
 	  // 旧版基于 Sora 的角色创建能力已移除（不再依赖前端配置 Token/厂商）。
 
@@ -1927,55 +1680,28 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const [characterRewriteLoading, setCharacterRewriteLoading] = React.useState(false)
   const [characterRewriteError, setCharacterRewriteError] = React.useState<string | null>(null)
 
-  const promptSuggestMode = useUIStore(s => s.promptSuggestMode)
-  const [promptSuggestions, setPromptSuggestions] = React.useState<string[]>([])
-  const [activeSuggestion, setActiveSuggestion] = React.useState(0)
-  const suggestionsAllowed = promptSuggestMode !== 'off' && !isVideoNode
-  const [suggestionsEnabled, setSuggestionsEnabled] = React.useState(() => suggestionsAllowed)
   const [promptSamplesOpen, setPromptSamplesOpen] = React.useState(false)
+  const [stylePickerOpen, setStylePickerOpen] = React.useState(false)
+  const [styleImagePickerOpen, setStyleImagePickerOpen] = React.useState(false)
+  const [mediaPromptLibraryKind, setMediaPromptLibraryKind] = React.useState<MediaPromptLibraryKind | null>(null)
+  const [characterLibraryOpen, setCharacterLibraryOpen] = React.useState(false)
+  const [cameraControlOpen, setCameraControlOpen] = React.useState(false)
   const [mediaFocusOptionsOpen, setMediaFocusOptionsOpen] = React.useState(false)
-  const [presetModalOpen, setPresetModalOpen] = React.useState(false)
-  const [presetSaving, setPresetSaving] = React.useState(false)
-  const [presetItems, setPresetItems] = React.useState<LlmNodePresetDto[]>([])
-  const [presetLoading, setPresetLoading] = React.useState(false)
-  const [selectedPresetId, setSelectedPresetId] = React.useState<string | null>(
-    () => {
-      const value = (data as any)?.llmPresetId
-      return typeof value === 'string' && value.trim() ? value : null
-    },
-  )
-  const [newPresetTitle, setNewPresetTitle] = React.useState('')
-  const [newPresetPrompt, setNewPresetPrompt] = React.useState('')
-  const [newPresetType, setNewPresetType] = React.useState<LlmNodePresetType>('text')
-  const suggestTimeout = React.useRef<number | null>(null)
-  const lastResult = (data as any)?.lastResult as { preview?: { type?: string; value?: string } } | undefined
-  const lastText =
-    lastResult && lastResult.preview && lastResult.preview.type === 'text'
-      ? String(lastResult.preview.value || '')
-      : ''
-  const rawTextResults =
-    ((data as any)?.textResults as { text: string }[] | undefined) || []
-  const textResults =
-    rawTextResults.length > 0
-      ? rawTextResults
-      : lastText
-        ? [{ text: lastText }]
-        : []
-  const latestTextResult =
-    textResults.length > 0 && typeof textResults[textResults.length - 1]?.text === 'string'
-      ? String(textResults[textResults.length - 1].text).trim()
-      : ''
-  const docPreviewText = isProjectDocNode
-    ? (latestTextResult || String(prompt || '').trim())
-    : ''
-  const [compareOpen, setCompareOpen] = React.useState(false)
-  const [materialSaving, setMaterialSaving] = React.useState(false)
-  const [modelKey, setModelKey] = React.useState<string>(
-    (data as any)?.geminiModel || getDefaultModel((coreKind === 'image' ? 'image' : coreKind) as NodeKind),
-  )
-  const defaultCanvasImageModel = kind === 'imageEdit' ? getDefaultModel('imageEdit') : getDefaultModel('image')
-  const [imageModel, setImageModel] = React.useState<string>((data as any)?.imageModel || defaultCanvasImageModel)
-  const [videoModel, setVideoModel] = React.useState<string>((data as any)?.videoModel || 'veo3.1-fast')
+  const latestTextResult = resolveTextNodeLatestResult(data as TextNodeDisplaySource)
+  const [modelKey, setModelKey] = React.useState<string>(() => {
+    const value = (data as Record<string, unknown>).geminiModel
+    return typeof value === 'string' ? value.trim() : ''
+  })
+  const [imageModel, setImageModel] = React.useState<string>(() => {
+    const value = (data as Record<string, unknown>).imageModel
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    return String(readNodeModelPrefs().imageModel || DEFAULT_GENERATION_PREFS.imageModel).trim()
+  })
+  const [videoModel, setVideoModel] = React.useState<string>(() => {
+    const value = (data as Record<string, unknown>).videoModel
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    return String(readNodeModelPrefs().videoModel || DEFAULT_GENERATION_PREFS.videoModel).trim()
+  })
   const [videoHd, setVideoHd] = React.useState<boolean>(() => {
     const raw = (data as any)?.videoHd
     return typeof raw === 'boolean' ? raw : false
@@ -1987,16 +1713,24 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         : {}
     return readVideoDurationSeconds(
       dataRecord,
-      isStoryboardNode ? STORYBOARD_MAX_TOTAL_DURATION : 15,
+      15,
     )
   })
+  const [videoGenerateAudio, setVideoGenerateAudio] = React.useState<boolean>(
+    () => (data as Record<string, unknown>)?.videoGenerateAudio !== false,
+  )
   const [videoSize, setVideoSize] = React.useState<string>(() => {
     const raw = typeof (data as any)?.videoSize === 'string' ? String((data as any).videoSize).trim() : ''
     return raw.replace(/\s+/g, '')
   })
   const [videoResolution, setVideoResolution] = React.useState<string>(() => {
     const dataRecord = data as Record<string, unknown>
-    return normalizeVideoResolution(dataRecord.videoResolution ?? dataRecord.resolution)
+    return normalizeVideoResolution(
+      dataRecord.videoResolution
+      ?? dataRecord.resolution
+      ?? readNodeModelPrefs().videoResolution
+      ?? DEFAULT_GENERATION_PREFS.videoResolution,
+    )
   })
   const [orientation, setOrientation] = React.useState<Orientation>(() => {
     const dataRecord = data as Record<string, unknown>
@@ -2051,10 +1785,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       aspect: toAspectRatioFromImageEditSize(nextSize),
     })
   }, [data, id, imageEditSize, kind, updateNodeData])
-  React.useEffect(() => {
-    const next = normalizeCanvasResizeSize((data as Record<string, unknown>)?.canvasResizeSize ?? canvasResizeSize)
-    setCanvasResizeSize((prev) => (prev === next ? prev : next))
-  }, [(data as Record<string, unknown>)?.canvasResizeSize, canvasResizeSize])
   const [veoReferenceImages, setVeoReferenceImages] = React.useState<string[]>(() =>
     normalizeVeoReferenceUrls((data as any)?.veoReferenceImages),
   )
@@ -2072,82 +1802,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }
     return null
   }, [videoResults, videoPrimaryIndex, videoDuration])
-
-  const handleSaveProjectMaterial = React.useCallback(async () => {
-    if (!isProjectDocNode) return
-    const projectId = typeof currentProject?.id === 'string' ? currentProject.id.trim() : ''
-    if (!projectId) {
-      toast('请先选择项目，再保存文档素材', 'warning')
-      return
-    }
-
-    const latestText =
-      textResults.length > 0 && typeof textResults[textResults.length - 1]?.text === 'string'
-        ? String(textResults[textResults.length - 1].text).trim()
-        : ''
-    const promptText = typeof prompt === 'string' ? prompt.trim() : ''
-    const content = latestText || promptText
-    if (!content) {
-      toast('当前没有可保存的文本内容', 'warning')
-      return
-    }
-
-    const nowIso = new Date().toISOString()
-    const inferChapter = (input: string): number | null => {
-      const m = String(input || '').match(/第\s*([0-9]{1,4})\s*章/)
-      if (!m) return null
-      const n = Number(m[1])
-      if (!Number.isFinite(n) || n <= 0) return null
-      return Math.trunc(n)
-    }
-    const chapterFromDataRaw = Number((data as any)?.materialChapter ?? (data as any)?.chapter)
-    const chapterFromData =
-      Number.isFinite(chapterFromDataRaw) && chapterFromDataRaw > 0
-        ? Math.trunc(chapterFromDataRaw)
-        : null
-    const inferredChapter = chapterFromData || inferChapter(String((data as any)?.label || '')) || inferChapter(content.slice(0, 80))
-    const materialData = {
-      kind,
-      content,
-      prompt: promptText || null,
-      textResults,
-      chapter: inferredChapter,
-      sourceNodeId: id,
-      flowId: useUIStore.getState().currentFlow?.id || null,
-      savedAt: nowIso,
-    }
-
-    const materialAssetIdRaw = (data as any)?.materialAssetId
-    const materialAssetId = typeof materialAssetIdRaw === 'string' ? materialAssetIdRaw.trim() : ''
-
-    setMaterialSaving(true)
-    try {
-      let savedId = materialAssetId
-      if (savedId) {
-        const updated = await updateServerAssetData(savedId, materialData)
-        savedId = updated.id
-      } else {
-        const created = await createServerAsset({
-          name: `${(data as any)?.label || '文档'}-${new Date().toLocaleString()}`,
-          projectId,
-          data: materialData,
-        })
-        savedId = created.id
-      }
-
-      updateNodeData(id, {
-        materialAssetId: savedId,
-        materialProjectId: projectId,
-        materialChapter: inferredChapter,
-        materialSavedAt: nowIso,
-      })
-      toast('已保存到项目素材', 'success')
-    } catch (error: any) {
-      toast(error?.message || '保存项目素材失败', 'error')
-    } finally {
-      setMaterialSaving(false)
-    }
-  }, [isProjectDocNode, currentProject?.id, textResults, prompt, kind, id, data, updateNodeData])
 
   React.useEffect(() => {
     const next = normalizeVeoReferenceUrls((data as any)?.veoReferenceImages)
@@ -2183,17 +1837,17 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     data,
     isAudioNode,
   ])
-  const { selectedNodeCount } = useCanvasRenderContext()
-  const isSingleSelectionActive = Boolean(selected && !dragging && selectedNodeCount <= 1)
+  const { selectedNodeCount, isBoxSelecting } = useCanvasRenderContext()
+  const isSingleSelectionActive = Boolean(selected && !dragging && !isBoxSelecting && selectedNodeCount <= 1)
   const wantsCharacterRefs = isSingleSelectionActive
-  const characterRefs = useRFStore(
+  const characterRefs = useStableRFStoreSelection(
     React.useCallback((s): CharacterRef[] => {
       if (!wantsCharacterRefs) return EMPTY_CHARACTER_REFS
       const results: CharacterRef[] = []
       s.nodes.forEach((node) => {
         const nodeKind = (node.data as any)?.kind
         const nodeSchema = getTaskNodeSchema(nodeKind)
-        if (!(nodeSchema.category === 'character' || nodeSchema.features.includes('character'))) return
+        if (!nodeSchema.features.includes('character')) return
         const payload: any = node.data || {}
         const usernameRaw =
           payload.characterUsername ||
@@ -2206,7 +1860,15 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           payload.displayName ||
           payload.label ||
           (username ? `@${username}` : node.id)
-        results.push({ nodeId: node.id, username, displayName, rawLabel: payload.label || '' })
+        const assetUrl = readPrimaryReferenceAssetUrl(payload)
+        results.push({
+          nodeId: node.id,
+          username,
+          displayName,
+          rawLabel: payload.label || '',
+          source: 'character',
+          assetUrl: assetUrl || null,
+        })
       })
       return results.filter((ref) => ref.username || ref.displayName)
     }, [wantsCharacterRefs]),
@@ -2265,9 +1927,13 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }
     return Array.from(byUsername.values())
   }, [characterRefs, projectRoleRefs])
-  const canvasAssetMentionRefs = useRFStore(
+  const canvasAssetMentionRefs = useStableRFStoreSelection(
     React.useCallback((s): CharacterRef[] => {
       if (!wantsCharacterRefs) return EMPTY_CHARACTER_REFS
+      const directSourceIds = new Set<string>()
+      for (const edge of s.edges) {
+        if (edge.target === id) directSourceIds.add(edge.source)
+      }
       const results: CharacterRef[] = []
       s.nodes.forEach((node) => {
         if (node.id === id) return
@@ -2317,6 +1983,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
               username,
             ).trim() || username,
           assetName: String(displayName || username).trim() || username,
+          isConnected: directSourceIds.has(node.id),
         })
       })
       return results.filter((ref) => ref.username)
@@ -2326,7 +1993,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const [projectAssetMentionRefs, setProjectAssetMentionRefs] = React.useState<CharacterRef[]>(EMPTY_CHARACTER_REFS)
   React.useEffect(() => {
     const projectId = String(currentProject?.id || '').trim()
-    if (!projectId || !wantsCharacterRefs) {
+    if (viewOnly || !projectId || !wantsCharacterRefs) {
       setProjectAssetMentionRefs(EMPTY_CHARACTER_REFS)
       return
     }
@@ -2343,7 +2010,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     return () => {
       canceled = true
     }
-  }, [currentProject?.id, projectRoleRefsVersion, wantsCharacterRefs])
+  }, [currentProject?.id, projectRoleRefsVersion, wantsCharacterRefs, viewOnly])
   const mergedAssetMentionRefs = React.useMemo(() => {
     const byUsername = new Map<string, CharacterRef>()
     for (const ref of canvasAssetMentionRefs) {
@@ -2358,224 +2025,30 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }
     return Array.from(byUsername.values())
   }, [canvasAssetMentionRefs, projectAssetMentionRefs])
-  const handleBindPrimaryAnchor = React.useCallback(async () => {
-    const projectId = typeof currentProject?.id === 'string' ? currentProject.id.trim() : ''
-    const anchorKind = anchorBindingKind
-    const anchorLabel = anchorBindingLabel.trim()
-    const imageUrl = primaryImageForAnchorBinding
-    const nodeData = data && typeof data === 'object' && !Array.isArray(data)
-      ? data as Record<string, unknown>
-      : {}
-    const sourceBookId = typeof nodeData.sourceBookId === 'string' ? nodeData.sourceBookId.trim() : ''
-    const parsePositiveNumber = (value: unknown): number | undefined => {
-      const numeric = Number(value)
-      return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : undefined
-    }
-    const chapter = parsePositiveNumber(nodeData.materialChapter) ?? parsePositiveNumber(nodeData.chapter)
-    const stateDescription =
-      typeof nodeData.stateDescription === 'string' && nodeData.stateDescription.trim()
-        ? nodeData.stateDescription.trim()
-        : undefined
-    const semanticRoleBinding = resolveSemanticNodeRoleBinding(nodeData)
-    const semanticVisualBinding = resolveSemanticNodeVisualReferenceBinding(nodeData)
-    if (!anchorLabel) {
-      toast('请先填写锚点名称', 'warning')
-      return
-    }
-    if (!imageUrl) {
-      toast('当前节点还没有可用主图，请先生成图片后再绑定', 'warning')
-      return
-    }
-    if (bindAnchorLoading) return
-    setBindAnchorLoading(true)
-    try {
-      let resolvedSourceBookId = sourceBookId
-      if (!resolvedSourceBookId && projectId) {
-        resolvedSourceBookId = pickOnlyBookId(await listProjectBooks(projectId))
-      }
-
-      if (anchorKind === 'character') {
-        const assetConflict = findMentionRefConflict({
-          candidate: anchorLabel,
-          assetRefs: mergedAssetMentionRefs,
-        })
-        if (assetConflict) {
-          toast(`绑定失败：@${assetConflict.mention} 已被资产引用占用（${assetConflict.displayName}）`, 'error')
-          return
-        }
-
-        const referenceView = semanticRoleBinding.referenceView || 'three_view'
-        const nextRoleRefUrls = Array.from(
-          new Set([
-            ...(Array.isArray(nodeData.roleCardReferenceImages)
-              ? (nodeData.roleCardReferenceImages as unknown[]).map((item) => String(item || '').trim()).filter(Boolean)
-              : []),
-            imageUrl,
-          ]),
-        ).slice(0, 8)
-
-        if (!projectId) {
-          updateNodeData(id, {
-            roleName: anchorLabel,
-            ...(resolvedSourceBookId ? { sourceBookId: resolvedSourceBookId } : null),
-            referenceView,
-            roleCardReferenceImages: nextRoleRefUrls,
-            anchorBindings: upsertSemanticNodeAnchorBinding({
-              existing: nodeData.anchorBindings,
-              next: {
-                kind: 'character',
-                label: anchorLabel,
-                sourceBookId: resolvedSourceBookId || null,
-                sourceNodeId: id,
-                imageUrl,
-                referenceView,
-              },
-            }),
-          })
-          toast(`已绑定角色锚点：${anchorLabel}`, 'success')
-          return
-        }
-
-        const saved = await upsertProjectRoleCardAsset(projectId, {
-          cardId: String(nodeData.roleCardId || '').trim() || undefined,
-          roleId: String(nodeData.roleId || '').trim() || undefined,
-          roleName: anchorLabel,
-          nodeId: id,
-          prompt: prompt?.trim() || undefined,
-          status: 'generated',
-          modelKey: String(nodeData.modelKey || nodeData.imageModel || '').trim() || undefined,
-          imageUrl,
-          ...(referenceView === 'three_view' ? { threeViewImageUrl: imageUrl } : null),
-        })
-        let syncedRoleCardId = String(saved?.data?.cardId || saved?.id || '').trim()
-        if (resolvedSourceBookId) {
-          const bookSaved = await upsertProjectBookRoleCard(projectId, resolvedSourceBookId, {
-            cardId: syncedRoleCardId || undefined,
-            roleId: String(saved?.data?.roleId || '').trim() || undefined,
-            roleName: anchorLabel,
-            ...(stateDescription ? { stateDescription } : {}),
-            ...(typeof chapter === 'number' ? { chapter } : {}),
-            nodeId: id,
-            prompt: prompt?.trim() || undefined,
-            status: 'generated',
-            modelKey: String(nodeData.modelKey || nodeData.imageModel || '').trim() || undefined,
-            imageUrl,
-            ...(referenceView === 'three_view' ? { threeViewImageUrl: imageUrl } : null),
-          })
-          syncedRoleCardId = String(bookSaved?.cardId || syncedRoleCardId).trim()
-        }
-
-        updateNodeData(id, {
-          roleName: anchorLabel,
-          ...(saved?.data?.roleId ? { roleId: saved.data.roleId } : null),
-          ...(syncedRoleCardId ? { roleCardId: syncedRoleCardId } : null),
-          ...(resolvedSourceBookId ? { sourceBookId: resolvedSourceBookId } : null),
-          referenceView,
-          roleCardReferenceImages: nextRoleRefUrls,
-          anchorBindings: upsertSemanticNodeAnchorBinding({
-            existing: nodeData.anchorBindings,
-            next: {
-              kind: 'character',
-              label: anchorLabel,
-              refId: syncedRoleCardId || null,
-              entityId: String(saved?.data?.roleId || '').trim() || null,
-              sourceBookId: resolvedSourceBookId || null,
-              sourceNodeId: id,
-              imageUrl,
-              referenceView,
-            },
-          }),
-        })
-        notifyAssetRefresh()
-        if (resolvedSourceBookId) {
-          toast(`已绑定角色锚点并同步到工作台：${anchorLabel}`, 'success')
-        } else {
-          toast(`已绑定角色锚点：${anchorLabel}；当前节点缺少唯一书籍上下文，未同步到书籍 roleCards`, 'info')
-        }
-        return
-      }
-
-      if (anchorKind === 'scene' || anchorKind === 'prop') {
-        if (projectId && resolvedSourceBookId) {
-          const saved = await upsertProjectBookVisualRef(projectId, resolvedSourceBookId, {
-            refId: semanticVisualBinding.refId || undefined,
-            category: 'scene_prop',
-            name: anchorLabel,
-            ...(typeof chapter === 'number' ? { chapter } : {}),
-            ...(stateDescription ? { stateDescription } : {}),
-            nodeId: id,
-            prompt: prompt?.trim() || undefined,
-            status: 'generated',
-            modelKey: String(nodeData.modelKey || nodeData.imageModel || '').trim() || undefined,
-            imageUrl,
-          })
-          updateNodeData(id, {
-            ...(resolvedSourceBookId ? { sourceBookId: resolvedSourceBookId } : null),
-            visualRefId: saved.refId,
-            visualRefName: anchorLabel,
-            visualRefCategory: 'scene_prop',
-            scenePropRefId: saved.refId,
-            scenePropRefName: anchorLabel,
-            anchorBindings: upsertSemanticNodeAnchorBinding({
-              existing: nodeData.anchorBindings,
-              next: {
-                kind: anchorKind,
-                label: anchorLabel,
-                refId: saved.refId,
-                sourceBookId: resolvedSourceBookId,
-                sourceNodeId: id,
-                imageUrl,
-                category: 'scene_prop',
-              },
-            }),
-          })
-          notifyAssetRefresh()
-          toast(`已绑定${anchorKind === 'scene' ? '场景' : '道具'}锚点并同步到工作台：${anchorLabel}`, 'success')
-          return
-        }
-
-        updateNodeData(id, {
-          ...(resolvedSourceBookId ? { sourceBookId: resolvedSourceBookId } : null),
-          scenePropRefName: anchorLabel,
-          visualRefName: anchorLabel,
-          visualRefCategory: 'scene_prop',
-          anchorBindings: upsertSemanticNodeAnchorBinding({
-            existing: nodeData.anchorBindings,
-            next: {
-              kind: anchorKind,
-              label: anchorLabel,
-              sourceBookId: resolvedSourceBookId || null,
-              sourceNodeId: id,
-              imageUrl,
-              category: 'scene_prop',
-            },
-          }),
-        })
-        toast(`已绑定${anchorKind === 'scene' ? '场景' : '道具'}锚点：${anchorLabel}`, 'success')
-        return
-      }
-
-      updateNodeData(id, {
-        ...(resolvedSourceBookId ? { sourceBookId: resolvedSourceBookId } : null),
-        anchorBindings: upsertSemanticNodeAnchorBinding({
-          existing: nodeData.anchorBindings,
-          next: {
-            kind: anchorKind,
-            label: anchorLabel,
-            sourceBookId: resolvedSourceBookId || null,
-            sourceNodeId: id,
-            imageUrl,
-          },
-        }),
+  const shotTableAssetReferences = React.useMemo<ShotTableAssetReference[]>(() => {
+    const references = new Map<string, ShotTableAssetReference>()
+    const append = (ref: CharacterRef): void => {
+      const username = String(ref.username || '').trim()
+      if (!username) return
+      const source = ref.nodeId.startsWith('project-') ? 'project' : 'canvas'
+      const key = `${source}:${ref.nodeId}:${ref.assetId ?? ''}:${username.toLocaleLowerCase()}`
+      if (references.has(key)) return
+      references.set(key, {
+        id: key,
+        username,
+        displayName: String(ref.displayName || ref.rawLabel || username).trim(),
+        source,
+        nodeId: source === 'canvas' ? ref.nodeId : null,
+        assetUrl: ref.assetUrl ?? null,
+        assetId: ref.assetId ?? null,
+        assetRefId: ref.assetRefId ?? username,
+        assetName: String(ref.assetName || ref.displayName || username).trim(),
       })
-      toast(`已绑定锚点：${anchorLabel}`, 'success')
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : '绑定锚点失败'
-      toast(errorMessage || '绑定锚点失败', 'error')
-    } finally {
-      setBindAnchorLoading(false)
     }
-  }, [anchorBindingKind, anchorBindingLabel, bindAnchorLoading, currentProject?.id, data, id, mergedAssetMentionRefs, primaryImageForAnchorBinding, prompt, updateNodeData])
+    mergedCharacterRefs.forEach(append)
+    mergedAssetMentionRefs.forEach(append)
+    return Array.from(references.values())
+  }, [mergedAssetMentionRefs, mergedCharacterRefs])
   const primaryMediaUrl = React.useMemo(() => {
     switch (primaryMedia) {
       case 'image':
@@ -2605,113 +2078,20 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     videoResults,
     videoPrimaryIndex,
   ])
-  const primaryBindableAsset = React.useMemo(() => {
-    if (primaryMedia === 'image') {
-      const current = imageResults[imagePrimaryIndex] || imageResults[0] || null
-      const directUrl = typeof (data as any)?.imageUrl === 'string' ? String((data as any).imageUrl).trim() : ''
-      const directAssetId = typeof (data as any)?.assetId === 'string' ? String((data as any).assetId).trim() : ''
-      const directAssetRefId = typeof (data as any)?.assetRefId === 'string' ? String((data as any).assetRefId).trim() : ''
-      const directAssetName = typeof (data as any)?.assetName === 'string' ? String((data as any).assetName).trim() : ''
-      const url = current?.url || directUrl
-      if (!url) return null
-      return {
-        kind: 'image' as const,
-        url,
-        assetId: current?.assetId || directAssetId || null,
-        assetRefId: current?.assetRefId || directAssetRefId || null,
-        assetName: current?.assetName || current?.title || directAssetName || String((data as any)?.label || '').trim() || null,
-      }
-    }
-    if (primaryMedia === 'video') {
-      const current = videoResults[videoPrimaryIndex] || videoResults[0] || null
-      const directUrl = typeof (data as any)?.videoUrl === 'string' ? String((data as any).videoUrl).trim() : ''
-      const directAssetId = typeof (data as any)?.assetId === 'string' ? String((data as any).assetId).trim() : ''
-      const directAssetRefId = typeof (data as any)?.assetRefId === 'string' ? String((data as any).assetRefId).trim() : ''
-      const directAssetName = typeof (data as any)?.assetName === 'string' ? String((data as any).assetName).trim() : ''
-      const url = current?.url || directUrl
-      if (!url) return null
-      return {
-        kind: 'video' as const,
-        url,
-        assetId: current?.assetId || directAssetId || null,
-        assetRefId: current?.assetRefId || directAssetRefId || null,
-        assetName: current?.assetName || current?.title || directAssetName || String((data as any)?.label || '').trim() || null,
-      }
-    }
-    return null
-  }, [data, imagePrimaryIndex, imageResults, primaryMedia, videoPrimaryIndex, videoResults])
-  const assetBindStatusText = React.useMemo(() => {
-    const parts: string[] = []
-    const currentRefId = String((data as any)?.assetRefId || primaryBindableAsset?.assetRefId || '').trim()
-    const currentAssetId = String((data as any)?.assetId || primaryBindableAsset?.assetId || '').trim()
-    if (currentRefId) parts.push(`引用ID：${currentRefId}`)
-    if (currentAssetId) parts.push(`资产ID：${currentAssetId}`)
-    return parts.join(' · ')
-  }, [data, primaryBindableAsset])
-  const handleBindPrimaryAssetReference = React.useCallback(() => {
-    const nextRefId = toMentionUsername(assetBindingId)
-    if (!nextRefId) {
-      toast('请先填写引用ID', 'warning')
-      return
-    }
-    if (!primaryBindableAsset?.url) {
-      toast('当前节点还没有可绑定的图片或视频结果', 'warning')
-      return
-    }
-    const roleConflict = findMentionRefConflict({
-      candidate: nextRefId,
-      roleRefs: projectRoleRefs,
-    })
-    if (roleConflict) {
-      toast(`绑定失败：@${roleConflict.mention} 已被角色卡占用（${roleConflict.displayName}）`, 'error')
-      return
-    }
-    const nextAssetName = primaryBindableAsset.assetName || String((data as any)?.label || '').trim() || nextRefId
-    const patch: Record<string, unknown> = {
-      assetRefId: nextRefId,
-      ...(primaryBindableAsset.assetId ? { assetId: primaryBindableAsset.assetId } : null),
-      assetName: nextAssetName,
-    }
-    if (primaryBindableAsset.kind === 'image') {
-      const nextResults = imageResults.length
-        ? imageResults.map((item, index) => index === imagePrimaryIndex
-          ? {
-              ...item,
-              ...(primaryBindableAsset.assetId ? { assetId: primaryBindableAsset.assetId } : null),
-              assetRefId: nextRefId,
-              assetName: nextAssetName,
-            }
-          : item)
-        : [{
-            url: primaryBindableAsset.url,
-            ...(primaryBindableAsset.assetId ? { assetId: primaryBindableAsset.assetId } : null),
-            assetRefId: nextRefId,
-            assetName: nextAssetName,
-          }]
-      patch.imageResults = nextResults
-    } else if (primaryBindableAsset.kind === 'video') {
-      const nextResults = videoResults.length
-        ? videoResults.map((item, index) => index === videoPrimaryIndex
-          ? {
-              ...item,
-              ...(primaryBindableAsset.assetId ? { assetId: primaryBindableAsset.assetId } : null),
-              assetRefId: nextRefId,
-              assetName: nextAssetName,
-            }
-          : item)
-        : [{
-            url: primaryBindableAsset.url,
-            ...(primaryBindableAsset.assetId ? { assetId: primaryBindableAsset.assetId } : null),
-            assetRefId: nextRefId,
-            assetName: nextAssetName,
-          }]
-      patch.videoResults = nextResults
-    }
-    updateNodeData(id, patch)
-    setAssetBindingId(nextRefId)
-    toast(`已绑定引用ID：@${nextRefId}`, 'success')
-  }, [assetBindingId, data, id, imagePrimaryIndex, imageResults, primaryBindableAsset, projectRoleRefs, updateNodeData, videoPrimaryIndex, videoResults])
   const handleMentionApplied = React.useCallback((item: MentionSuggestionItem) => {
+    if (
+      item.nodeId &&
+      !item.nodeId.startsWith('mention:') &&
+      !item.nodeId.startsWith('upstream-ref:')
+    ) {
+      const rfState = useRFStore.getState()
+      const alreadyConnected = rfState.edges.some(
+        (e) => e.source === item.nodeId && e.target === id,
+      )
+      if (!alreadyConnected) {
+        rfState.onConnect({ source: item.nodeId!, target: id, sourceHandle: null, targetHandle: null })
+      }
+    }
     if (item.source !== 'asset') return
     const assetBinding = item.assetBinding
     if (!assetBinding?.url) return
@@ -2725,7 +2105,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       : []
     const nextReferenceImages = existingReferenceImages.includes(assetBinding.url)
       ? existingReferenceImages
-      : [...existingReferenceImages, assetBinding.url].slice(0, 12)
+      : [...existingReferenceImages, assetBinding.url].slice(0, referenceImageLimitRef.current)
     const existingAssetInputs = Array.isArray(nodeData.assetInputs)
       ? nodeData.assetInputs.filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
       : []
@@ -2735,7 +2115,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     })
     const nextAssetInput = {
       url: assetBinding.url,
-      role: 'reference',
+      role: assetBinding.role || 'reference',
       ...(assetBinding.assetId ? { assetId: assetBinding.assetId } : null),
       ...(assetBinding.assetRefId ? { assetRefId: assetBinding.assetRefId } : null),
       ...(assetBinding.assetName ? { name: assetBinding.assetName } : null),
@@ -2743,34 +2123,226 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     const nextAssetInputs =
       existingIndex >= 0
         ? existingAssetInputs.map((entry, index) => (index === existingIndex ? { ...(entry as Record<string, unknown>), ...nextAssetInput } : entry))
-        : [...existingAssetInputs, nextAssetInput].slice(0, 12)
+        : [...existingAssetInputs, nextAssetInput].slice(0, referenceImageLimitRef.current)
     updateNodeData(id, {
       referenceImages: nextReferenceImages,
       assetInputs: nextAssetInputs,
     })
   }, [data, id, updateNodeData])
 
-  const activeModelKey = isVideoNode
+  const handlePickFromLibrary = React.useCallback(() => {
+    const nodeData = (data && typeof data === 'object' && !Array.isArray(data))
+      ? data as Record<string, unknown>
+      : {}
+    const existing: string[] = Array.isArray(nodeData.referenceImages)
+      ? (nodeData.referenceImages as unknown[]).map((v) => String(v || '').trim()).filter(Boolean)
+      : []
+    const referenceImageLimit = referenceImageLimitRef.current
+    if (existing.length >= referenceImageLimit) {
+      toast(`当前模型最多支持 ${referenceImageLimit} 张参考图，请先移除部分参考图`, 'warning')
+      return
+    }
+    setStylePickerOpen(true)
+  }, [data])
+
+  // 风格基底 / 摄影机控制是项目级配置：所有图片节点共享，任一节点修改会同步全部。
+  const projectIdForImageSettings = useUIStore((s) => String(s.currentProject?.id || ''))
+  const projectImageSettingsBase = useProjectImageSettings(projectIdForImageSettings)
+  const currentChapterCreativeOverride = useUIStore((s) => s.currentChapterCreativeOverride)
+  const projectImageSettings = React.useMemo(
+    () => mergeChapterCreativeOverrideIntoProjectImageSettings(
+      projectImageSettingsBase,
+      currentChapterCreativeOverride,
+    ),
+    [currentChapterCreativeOverride, projectImageSettingsBase],
+  )
+
+  const styleImages: string[] = React.useMemo(() => {
+    if (projectImageSettings.styleImages.length) return projectImageSettings.styleImages
+    // 兼容旧画布：节点级数据作为 fallback
+    const s = (data as Record<string, unknown>)?.styleImages
+    return Array.isArray(s) ? (s as unknown[]).map((v) => String(v || '').trim()).filter(Boolean) : []
+  }, [projectImageSettings.styleImages, data])
+
+  const imageCinematicCamera: CinematicCameraValue | null = React.useMemo(() => {
+    if (projectImageSettings.imageCinematicCamera) return projectImageSettings.imageCinematicCamera
+    // 兼容旧画布：节点级数据作为 fallback
+    const c = (data as Record<string, unknown>)?.imageCinematicCamera as Record<string, unknown> | null | undefined
+    if (!c || typeof c !== 'object') return null
+    return c as unknown as CinematicCameraValue
+  }, [projectImageSettings.imageCinematicCamera, data])
+
+  const handleStyleImageConfirm = React.useCallback((url: string) => {
+    if (!url || !projectIdForImageSettings) return
+    const current = styleImages.includes(url)
+      ? styleImages.filter((u) => u !== url)
+      : [...styleImages, url]
+    useProjectImageSettingsStore.getState().setStyleImages(projectIdForImageSettings, current)
+  }, [styleImages, projectIdForImageSettings])
+
+  const handleCinematicCameraChange = React.useCallback((cam: Omit<CinematicCameraValue, 'enabled'>) => {
+    if (!projectIdForImageSettings) return
+    useProjectImageSettingsStore.getState().setCinematicCamera(
+      projectIdForImageSettings,
+      { enabled: true, ...cam },
+    )
+  }, [projectIdForImageSettings])
+
+  const handleStyleClear = React.useCallback(() => {
+    if (!projectIdForImageSettings) return
+    // 单轨约定：节点「风格」chip 移除 = 取消整个画风锚定（连 lockedStyle 元信息与服务端持久化一起清），
+    // 否则 lockedStyle 残留会让生成层把画风参考悄悄注回来（黑盒复活）。
+    useProjectImageSettingsStore.getState().setLockedStyle(projectIdForImageSettings, null)
+  }, [projectIdForImageSettings])
+
+  const handleStyleImageRemove = React.useCallback((url: string) => {
+    if (!projectIdForImageSettings) return
+    const remaining = styleImages.filter((u) => u !== url)
+    const store = useProjectImageSettingsStore.getState()
+    if (remaining.length === 0) {
+      // 移除最后一张 = 整体取消画风锚定（单轨约定，与 chip ✕ 一致）
+      store.setLockedStyle(projectIdForImageSettings, null)
+    } else {
+      store.setStyleImages(projectIdForImageSettings, remaining)
+    }
+  }, [styleImages, projectIdForImageSettings])
+
+  const handleCameraClear = React.useCallback(() => {
+    if (!projectIdForImageSettings) return
+    useProjectImageSettingsStore.getState().setCinematicCamera(projectIdForImageSettings, null)
+  }, [projectIdForImageSettings])
+
+  const handleStylePickerSelect = React.useCallback((url: string) => {
+    const nodeData = (data && typeof data === 'object' && !Array.isArray(data))
+      ? data as Record<string, unknown>
+      : {}
+    const existing: string[] = Array.isArray(nodeData.referenceImages)
+      ? (nodeData.referenceImages as unknown[]).map((v) => String(v || '').trim()).filter(Boolean)
+      : []
+    if (existing.includes(url)) return
+    const referenceImageLimit = referenceImageLimitRef.current
+    const nextReferenceImages = [...existing, url].slice(0, referenceImageLimit)
+    const existingAssetInputs: unknown[] = Array.isArray(nodeData.assetInputs)
+      ? (nodeData.assetInputs as unknown[]).filter((e) => e && typeof e === 'object')
+      : []
+    const nextAssetInputs = [...existingAssetInputs, { url, role: 'reference' }].slice(0, referenceImageLimit)
+    updateNodeData(id, { referenceImages: nextReferenceImages, assetInputs: nextAssetInputs })
+  }, [data, id, updateNodeData])
+
+  const storedAudioModel = typeof (data as Record<string, unknown>).audioModel === 'string'
+    ? String((data as Record<string, unknown>).audioModel).trim()
+    : ''
+  const activeModelKey = isAudioNode
+    ? storedAudioModel
+    : isVideoNode
     ? videoModel
     : coreKind === 'image' || kind === 'imageEdit'
       ? imageModel
       : modelKey
-  const modelList = useModelOptions(kind as NodeKind)
+  const modelCatalogKind: NodeKind = isAudioNode
+    ? 'audio'
+    : isVideoNode
+      ? 'video'
+      : coreKind === 'image' || kind === 'imageEdit'
+        ? kind === 'imageEdit' ? 'imageEdit' : 'image'
+        : 'text'
+  const shouldLoadPrimaryModelCatalog = !viewOnly
+    && !isStructuredWorkflowNode
+    && (hasModelSelect || isAudioNode)
+  const {
+    options: modelList,
+    loading: modelListLoading,
+    error: modelListError,
+    retry: retryModelList,
+  } = useModelOptionsState(modelCatalogKind, { enabled: shouldLoadPrimaryModelCatalog })
   const modelMenuOptions = React.useMemo<ModelOption[]>(() => {
-    if (modelList.length) {
-      return modelList.map((option) => ({
-        ...option,
-        label: getTaskNodeModelDisplayLabel(option),
-      }))
+    return modelList.map((option) => ({
+      ...option,
+      label: getTaskNodeModelDisplayLabel(option),
+    }))
+  }, [modelList])
+  const {
+    options: videoActionModelList,
+    loading: videoActionModelListLoading,
+    error: videoActionModelListError,
+  } = useModelOptionsState('video', {
+    enabled: shouldLoadPrimaryModelCatalog && isVideoNode,
+    includeActionModels: true,
+  })
+  const usePrimaryImageEditCatalog = modelCatalogKind === 'image' || modelCatalogKind === 'imageEdit'
+  const {
+    options: secondaryImageEditOptions,
+    loading: secondaryImageEditLoading,
+    error: secondaryImageEditError,
+  } = useModelOptionsState('imageEdit', {
+    enabled: !viewOnly && coreKind === 'image' && !usePrimaryImageEditCatalog,
+  })
+  const imageEditActionOptions = usePrimaryImageEditCatalog ? modelMenuOptions : secondaryImageEditOptions
+  const imageEditActionLoading = usePrimaryImageEditCatalog ? modelListLoading : secondaryImageEditLoading
+  const imageEditActionError = usePrimaryImageEditCatalog ? modelListError : secondaryImageEditError
+  const resolveImageEditModelForAction = React.useCallback((requestedValue?: string | null): string | null => {
+    if (imageEditActionLoading) {
+      toast('图片模型目录仍在加载，请稍后重试', 'error')
+      return null
     }
-    const fallbackValue = String(activeModelKey || '').trim()
-    if (!fallbackValue) return []
-    return [{ value: fallbackValue, label: fallbackValue, modelKey: fallbackValue }]
-  }, [activeModelKey, modelList])
+    if (imageEditActionError) {
+      toast(`图片模型目录加载失败：${imageEditActionError.message}`, 'error')
+      return null
+    }
+    if (!imageEditActionOptions.length) {
+      toast('没有可用图片模型，请先在系统模型管理中配置渠道、协议与价格', 'error')
+      return null
+    }
+    const requestedModel = String(requestedValue ?? imageModel ?? '').trim()
+    if (requestedModel) {
+      const matched = findModelOptionByIdentifier(imageEditActionOptions, requestedModel)
+      if (!matched) {
+        toast(`图片模型 ${requestedModel} 当前不可用，请重新选择后重试`, 'error')
+        return null
+      }
+      return matched.value
+    }
+    return imageEditActionOptions[0]?.value || null
+  }, [imageEditActionError, imageEditActionLoading, imageEditActionOptions, imageModel])
   const selectedActiveModelOption = React.useMemo(
     () => findModelOptionByIdentifier(modelMenuOptions, activeModelKey),
     [activeModelKey, modelMenuOptions],
   )
+  React.useEffect(() => {
+    if (viewOnly || isAudioNode) return
+    const firstOption = resolveDefaultCatalogModelOption({
+      currentValue: activeModelKey,
+      options: modelMenuOptions,
+      loading: modelListLoading,
+      error: modelListError,
+    })
+    if (!firstOption) return
+    const firstValue = firstOption.value.trim()
+    if (isVideoNode) {
+      setVideoModel(firstValue)
+      updateNodeData(id, { videoModel: firstValue, videoModelVendor: firstOption.vendor || null })
+      return
+    }
+    if (coreKind === 'image' || kind === 'imageEdit') {
+      setImageModel(firstValue)
+      updateNodeData(id, { imageModel: firstValue, imageModelVendor: null })
+      return
+    }
+    setModelKey(firstValue)
+    updateNodeData(id, { geminiModel: firstValue, modelVendor: firstOption.vendor || null })
+  }, [
+    activeModelKey,
+    coreKind,
+    id,
+    isAudioNode,
+    isVideoNode,
+    kind,
+    modelListError,
+    modelListLoading,
+    modelMenuOptions,
+    updateNodeData,
+    viewOnly,
+  ])
   const findVendorForModel = React.useCallback(
     (value: string | null | undefined) => {
       if (!value) return null
@@ -2779,30 +2351,28 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     },
     [modelList],
   )
-  const resolveRequestedModelIdentifier = React.useCallback(
-    (value: string | null | undefined) => {
-      const identifier = String(value || '').trim()
-      if (!identifier) return ''
-      return getModelOptionRequestAlias(modelList.length ? modelList : modelMenuOptions, identifier) || identifier
-    },
-    [modelList, modelMenuOptions],
-  )
   const handleApplyImageViewEdit = React.useCallback(
-    ({ cameraControl, lightingRig }: ImageViewEditorApplyPayload) => {
+    async ({ cameraControl, lightingRig, lightingControlState, smartPrompt, lightingReferenceImageUrl }: ImageViewEditorApplyPayload) => {
       const normalizedBaseImageUrl = String(basePoseImage || '').trim()
       if (!normalizedBaseImageUrl) {
-        toast('请先上传或生成图片', 'warning')
-        return
+        throw new Error('请先上传或生成图片')
       }
 
       const normalizedCameraControl = normalizeImageCameraControl(cameraControl)
       const normalizedLightingRig = normalizeImageLightingRig(lightingRig)
       const shouldPersistCamera = hasActiveImageCameraControl(normalizedCameraControl)
-      const shouldPersistLighting = hasActiveImageLightingRig(normalizedLightingRig)
+      const shouldPersistLighting = lightingControlState.directionEnabled
+        || lightingControlState.brightnessEnabled
+        || lightingControlState.colorEnabled
+        || lightingControlState.rimEnabled
+      const activeSmartPrompt = lightingControlState.smartMode ? (smartPrompt || '').trim() : ''
+      const activeLightingReferenceImageUrl = lightingControlState.smartMode
+        ? lightingReferenceImageUrl
+        : null
+      const hasLightingReference = Boolean(activeLightingReferenceImageUrl)
 
-      if (!shouldPersistCamera && !shouldPersistLighting) {
-        toast('请先启用角度或灯光控制', 'warning')
-        return
+      if (!shouldPersistCamera && !shouldPersistLighting && !activeSmartPrompt && !hasLightingReference) {
+        throw new Error('请先启用角度或灯光控制')
       }
 
       const stateBefore = useRFStore.getState()
@@ -2814,20 +2384,58 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           : imageEditSize,
       )
       const nextImageEditAspect = toAspectRatioFromImageEditSize(nextImageEditSize)
-      const fallbackModel = getDefaultModel('imageEdit')
-      const editableModel = String(imageModel || fallbackModel).trim() || fallbackModel
+      const relightDims = parseImageEditSizeDimensions(nextImageEditSize)
+      const relightImageSize: '1K' | '2K' =
+        Math.max(relightDims.width, relightDims.height) >= 1700 ? '2K' : '1K'
+      const operationKind: ImageOperationKind = shouldPersistLighting ? 'relight' : 'multi_angle'
+      const mainLightDirection = findClosestLightDirection(LIBTV_MAIN_LIGHT_DIRECTIONS, normalizedLightingRig.main)
+      const rimLightDirection = findClosestLightDirection(LIBTV_RIM_LIGHT_DIRECTIONS, normalizedLightingRig.fill)
+      const libTvLightingParameters = buildLibTvLightingOperationParameters({
+        ...lightingControlState,
+        mainDirectionKey: mainLightDirection.key,
+        rimDirectionKey: rimLightDirection.key,
+        colorHex: normalizedLightingRig.main.colorHex,
+        brightness: normalizedLightingRig.main.intensity,
+        smartPrompt: activeSmartPrompt,
+        referenceImageUrl: activeLightingReferenceImageUrl,
+      })
+      const imageOperationSpec = createImageOperationForSource({
+        kind: operationKind,
+        execution: 'image-edit',
+        sourceNodeId: id,
+        sourceUrl: normalizedBaseImageUrl,
+        sourceRevision: readImageOperationSourceRevision(sourceDataRecord.imageOperationRevision),
+        parameters: {
+          ...libTvLightingParameters,
+          ...(shouldPersistCamera ? { camera: normalizedCameraControl } : {}),
+          ...(shouldPersistLighting ? { lightingRig: normalizedLightingRig } : {}),
+          preserveIdentity: true,
+          preserveLayout: true,
+          preserveMaterials: true,
+        },
+        additionalInputs: activeLightingReferenceImageUrl
+          ? [{ role: 'reference', url: activeLightingReferenceImageUrl }]
+          : [],
+      })
 
       addNode('taskNode', undefined, {
         kind: 'imageEdit',
-        prompt: prompt.trim(),
+        prompt: activeSmartPrompt,
         aspect: nextImageEditAspect,
-        sampleCount,
-        imageModel: editableModel,
+        sampleCount: 1,
+        imageModel: RELIGHT_MODEL_KEY,
         imageModelVendor: null,
-        imageEditSize: nextImageEditSize,
-        size: nextImageEditSize,
-        referenceImages: [normalizedBaseImageUrl],
-        ...(Array.isArray(sourceDataRecord.anchorBindings) ? { anchorBindings: sourceDataRecord.anchorBindings } : null),
+        imageSize: relightImageSize,
+        imageResolution: relightImageSize,
+        resolution: relightImageSize,
+        referenceImages: activeLightingReferenceImageUrl
+          ? [normalizedBaseImageUrl, activeLightingReferenceImageUrl]
+          : [normalizedBaseImageUrl],
+        suppressUpstreamPrompts: true,
+        imageOperationSpec,
+        imageOperationState: createImageOperationState(imageOperationSpec),
+        imageOperationRevision: 1,
+        libTvImageOperationKey: shouldPersistLighting ? 'relight' : 'multi-angle',
         ...(Array.isArray(sourceDataRecord.assetInputs) ? { assetInputs: sourceDataRecord.assetInputs } : null),
         ...(shouldPersistCamera ? { imageCameraControl: normalizedCameraControl } : null),
         ...(shouldPersistLighting ? { imageLightingRig: normalizedLightingRig } : null),
@@ -2836,8 +2444,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       const afterAdd = useRFStore.getState()
       const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
       if (!newNode) {
-        toast('图片编辑配置已生成，但未能创建新节点', 'error')
-        return
+        throw new Error('图片编辑结果节点创建失败')
       }
 
       const sourceNode = afterAdd.nodes.find((node) => node.id === id)
@@ -2847,6 +2454,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       }
       afterAdd.onNodesChange([
         { id: newNode.id, type: 'position', position: targetPos, dragging: false },
+        { id: id, type: 'select' as const, selected: false },
         { id: newNode.id, type: 'select', selected: true },
       ])
       afterAdd.onConnect({
@@ -2856,21 +2464,51 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         targetHandle: 'in-image',
       })
 
-      runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 }).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : '新图片编辑生成启动失败'
-        console.error('auto run image view edit failed', error)
-        toast(message, 'error')
-      })
+      await runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
     },
-    [addNode, basePoseImage, data, id, imageEditSize, imageModel, kind, prompt, sampleCount],
+    [addNode, basePoseImage, data, id, imageEditSize, kind],
   )
-  const { openCameraEditor, openLightingEditor, modal: imageViewEditorModal } = useImageViewEditor({
+  const lightingCreditCost = React.useMemo(() => {
+    const sourceDataRecord = data as Record<string, unknown>
+    const candidateSize = normalizeImageEditSize(
+      kind === 'imageEdit'
+        ? (sourceDataRecord.imageEditSize ?? sourceDataRecord.size)
+        : imageEditSize,
+    )
+    const dims = parseImageEditSizeDimensions(candidateSize)
+    const specKey = `image:${Math.max(dims.width, dims.height) >= 1700 ? '2k' : '1k'}`
+    const relightOption = findModelOptionByIdentifier(modelList, RELIGHT_MODEL_KEY)
+    if (!relightOption) return undefined
+    const credits = resolveModelGenerationCredits({
+      kind: 'imageEdit',
+      modelOption: relightOption,
+      specKey,
+      quantity: sampleCount,
+    })
+    return credits > 0 ? credits : undefined
+  }, [data, imageEditSize, kind, modelList, sampleCount])
+  const handleUploadLightingReferenceImage = React.useCallback(async (file: File): Promise<string> => {
+    const projectId = typeof currentProject?.id === 'string' ? currentProject.id.trim() : ''
+    const uploaded = await uploadServerAssetFile(file, file.name || '打光参考图', {
+      taskKind: 'image_edit',
+      ownerNodeId: id,
+      ...(projectId ? { projectId } : {}),
+    })
+    const url = readServerAssetHostedUrl(uploaded)
+    if (!url) throw new Error('打光参考图上传成功，但返回结果缺少可用 URL')
+    notifyAssetRefresh()
+    return url
+  }, [currentProject?.id, id])
+  const { openCameraEditor, openLightingEditor, closeEditor: closeLightingEditor, modal: imageViewEditorModal, lightingToolbar: imageViewLightingToolbar, isEditorOpen: imageViewEditorOpen } = useImageViewEditor({
     baseImageUrl: basePoseImage,
     cameraControl: (data as Record<string, unknown>)?.imageCameraControl,
     lightingRig: (data as Record<string, unknown>)?.imageLightingRig,
     hasImages: imageResults.length > 0,
     isDarkUi,
     inlineDividerColor,
+    nodeId: id,
+    lightingCreditCost,
+    onUploadLightingReferenceImage: handleUploadLightingReferenceImage,
     onApply: handleApplyImageViewEdit,
   })
   const existingModelVendor = (data as any)?.modelVendor
@@ -2896,13 +2534,50 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     return selectedImageModelOption.meta
   }, [selectedImageModelOption])
   const imageModelConfig = React.useMemo(
-    () => parseImageModelCatalogConfig(selectedImageModelMeta),
-    [selectedImageModelMeta],
+    () =>
+      constrainImageModelCatalogConfigByPricing(
+        parseImageModelCatalogConfig(selectedImageModelMeta),
+        selectedImageModelOption?.pricing,
+      ),
+    [selectedImageModelMeta, selectedImageModelOption?.pricing],
   )
   const videoModelConfig = React.useMemo(
-    () => parseVideoModelCatalogConfig(selectedVideoModelMeta),
-    [selectedVideoModelMeta],
+    () => constrainVideoModelCatalogConfigByPricing(
+      parseVideoModelCatalogConfig(selectedVideoModelMeta),
+      selectedVideoModelOption?.pricing,
+    ),
+    [selectedVideoModelMeta, selectedVideoModelOption?.pricing],
   )
+  const continuationDurationOptions = React.useMemo(() => {
+    const max = videoModelConfig?.maxVideoExtensionDurationSeconds
+    return (videoModelConfig?.durationOptions || [])
+      .map((option) => option.value)
+      .filter((value) => max === undefined || value <= max)
+  }, [videoModelConfig])
+  const videoEditModelOptions = React.useMemo(() => {
+    return videoActionModelList
+      .map((option) => ({ ...option, config: parseVideoModelCatalogConfig(option.meta) }))
+      .filter((option) => option.config?.supportsVideoEditing === true)
+  }, [videoActionModelList])
+  const videoSubjectRemovalModelOptions = React.useMemo(
+    () => videoEditModelOptions
+      .filter((option) => option.config?.supportsVideoSubjectRemoval === true)
+      .map((option) => option),
+    [videoEditModelOptions],
+  )
+  const videoSubtitleRemovalModelOptions = React.useMemo(
+    () => videoEditModelOptions
+      .filter((option) => option.config?.supportsVideoSubtitleRemoval === true)
+      .map((option) => option),
+    [videoEditModelOptions],
+  )
+  React.useEffect(() => {
+    referenceImageLimitRef.current = isVideoNode && videoModelConfig?.maxReferenceImages
+      ? Math.max(1, Math.trunc(videoModelConfig.maxReferenceImages))
+      : isVideoNode
+        ? DEFAULT_VIDEO_REFERENCE_IMAGE_LIMIT
+        : DEFAULT_IMAGE_NODE_REFERENCE_IMAGE_LIMIT
+  }, [isVideoNode, videoModelConfig?.maxReferenceImages])
   const configuredImageAspectOptions = React.useMemo(
     () =>
       (imageModelConfig?.aspectRatioOptions || []).map((option) => ({
@@ -2915,7 +2590,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     () =>
       (imageModelConfig?.imageSizeOptions || []).map((option) => ({
         value: option.value,
-        label: formatVideoOptionLabel(option.label, option.priceLabel),
+        label: option.label,
       })),
     [imageModelConfig],
   )
@@ -2923,7 +2598,15 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     () =>
       (imageModelConfig?.resolutionOptions || []).map((option) => ({
         value: option.value,
-        label: formatImageResolutionOptionLabel(option.label, option.value, option.priceLabel),
+        label: formatImageResolutionOptionLabel(option.label, option.value),
+      })),
+    [imageModelConfig],
+  )
+  const configuredImageQualityOptions = React.useMemo(
+    () =>
+      (imageModelConfig?.qualityOptions || []).map((option) => ({
+        value: option.value,
+        label: formatImageQualityOptionLabel(option.label, option.value),
       })),
     [imageModelConfig],
   )
@@ -2935,7 +2618,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     () =>
       (videoModelConfig?.durationOptions || []).map((option) => ({
         value: String(option.value),
-        label: formatVideoOptionLabel(option.label, option.priceLabel),
+        label: option.label,
       })),
     [videoModelConfig],
   )
@@ -2943,7 +2626,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     () =>
       (videoModelConfig?.sizeOptions || []).map((option) => ({
         value: option.value,
-        label: formatVideoOptionLabel(option.label, option.priceLabel),
+        label: option.label,
       })),
     [videoModelConfig],
   )
@@ -2951,33 +2634,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     () =>
       (videoModelConfig?.resolutionOptions || []).map((option) => ({
         value: option.value,
-        label: formatVideoOptionLabel(option.label, option.priceLabel),
-      })),
-    [videoModelConfig],
-  )
-  const isImageEditNode = kind === 'imageEdit'
-  const imageEditSizeOption = React.useMemo(
-    () => resolveImageEditSizeOption(imageEditSize),
-    [imageEditSize],
-  )
-  const imageEditPreview = React.useMemo(
-    () =>
-      isImageEditNode
-        ? {
-            label: imageEditSizeOption.value,
-            width: imageEditSizeOption.width,
-            height: imageEditSizeOption.height,
-          }
-        : null,
-    [imageEditSizeOption.height, imageEditSizeOption.value, imageEditSizeOption.width, isImageEditNode],
-  )
-  const imageEditResolutionOptions = React.useMemo(
-    () =>
-      IMAGE_EDIT_SIZE_OPTIONS.map((option) => ({
-        value: option.value,
         label: option.label,
       })),
-    [],
+    [videoModelConfig],
   )
   const configuredOrientationOptions = React.useMemo(
     () => (videoModelConfig?.orientationOptions || []).map((option) => ({ value: option.value, label: option.label })),
@@ -3027,812 +2686,20 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     () => buildVideoBillingSpecKey(effectiveVideoResolution, videoDuration),
     [effectiveVideoResolution, videoDuration],
   )
-  const [editingShotSourceIndex, setEditingShotSourceIndex] = React.useState<number | null>(null)
-  const editingShotSourceIndexRef = React.useRef<number | null>(null)
-  React.useEffect(() => {
-    editingShotSourceIndexRef.current = editingShotSourceIndex
-  }, [editingShotSourceIndex])
-  const handlePoseSaved = React.useCallback(
-    ({ mode, poseStickmanUrl: stickmanUrl, poseReferenceImages: refs, baseImageUrl, maskUrl, prompt: posePrompt, imageEditSize: nextImageEditSizeRaw, resizedImageUrl }: { mode: 'pose' | 'depth' | 'size'; poseStickmanUrl: string | null; poseReferenceImages: string[]; baseImageUrl: string; maskUrl?: string | null; prompt?: string; imageEditSize?: string; resizedImageUrl?: string | null }) => {
-      const normalizedBaseImageUrl = String(baseImageUrl || '').trim()
-      const normalizedRefs = Array.from(
-        new Set(
-          [
-            normalizedBaseImageUrl,
-            ...(refs || []).map((x) => String(x || '').trim()),
-          ].filter(Boolean),
-        ),
-      )
-      const effectivePrompt = (posePrompt || prompt || (data as any)?.prompt || '').trim()
-      const normalizedMaskGuideUrl = mode === 'depth' ? String(maskUrl || '').trim() : ''
-      const normalizedEditRefs = normalizedMaskGuideUrl
-        ? [...normalizedRefs.filter((url) => url !== normalizedMaskGuideUrl).slice(0, 7), normalizedMaskGuideUrl]
-        : normalizedRefs.slice(0, 8)
-      const imageEditPrompt = appendImageEditFocusGuidePrompt(
-        effectivePrompt || '保持原构图，修复不合理细节并提升质量',
-        Boolean(normalizedMaskGuideUrl),
-      )
-      const nextImageEditSize = normalizeImageEditSize(nextImageEditSizeRaw || imageEditSize)
-      const nextImageEditAspect = toAspectRatioFromImageEditSize(nextImageEditSize)
-      const nextImageEditDimensions = parseImageEditSizeDimensions(nextImageEditSize)
-      const normalizedResizedImageUrl = String(resizedImageUrl || '').trim()
-      const sourceTag = String((data as any)?.source || '').toLowerCase()
-      const hasStoryboardMarkers =
-        typeof (data as any)?.storyboardCount === 'number' ||
-        (Array.isArray((data as any)?.storyboardShotPrompts) && (data as any).storyboardShotPrompts.length > 0) ||
-        /storyboard/i.test(sourceTag) ||
-        Number.isFinite(Number((data as any)?.storyboardChunkIndex)) ||
-        Number.isFinite(Number((data as any)?.storyboardShotStart))
-      const isInsideNovelStoryboardGroup = (() => {
-        const state = useRFStore.getState()
-        const self = state.nodes.find((n) => n.id === id) as any
-        const parentId = String(self?.parentId || '').trim()
-        if (!parentId) return false
-        const parent = state.nodes.find((n) => n.id === parentId) as any
-        return String(parent?.data?.groupKind || '').trim() === 'novel_storyboard_chapter'
-      })()
-      const requestedTargetIndex =
-        typeof editingShotSourceIndexRef.current === 'number' && editingShotSourceIndexRef.current >= 0
-          ? editingShotSourceIndexRef.current
-          : (typeof (data as any)?.imagePrimaryIndex === 'number' && (data as any).imagePrimaryIndex >= 0
-              ? (data as any).imagePrimaryIndex
-              : 0)
-      const shouldOverwriteInPlace =
-        kind === 'novelStoryboard' ||
-        kind === 'storyboardImage' ||
-        kind === 'storyboardShot' ||
-        typeof editingShotSourceIndexRef.current === 'number' ||
-        hasStoryboardMarkers ||
-        isInsideNovelStoryboardGroup
-
-      if (mode === 'size' && shouldOverwriteInPlace) {
-        if (!normalizedResizedImageUrl) {
-          toast('尺寸调整失败：未返回新图地址', 'error')
-          return
-        }
-        const currentResults = Array.isArray((data as any)?.imageResults) ? ([...(data as any).imageResults] as any[]) : []
-        const resolvedTargetIndex = currentResults[requestedTargetIndex]
-          ? requestedTargetIndex
-          : (typeof (data as any)?.imagePrimaryIndex === 'number' && currentResults[(data as any).imagePrimaryIndex]
-              ? (data as any).imagePrimaryIndex
-              : 0)
-        const prev = currentResults[resolvedTargetIndex] || {}
-        if (currentResults.length > 0) {
-          currentResults[resolvedTargetIndex] = { ...prev, url: normalizedResizedImageUrl }
-        } else {
-          currentResults.push({ url: normalizedResizedImageUrl })
-        }
-        updateNodeData(id, {
-          imageResults: currentResults,
-          imageUrl: normalizedResizedImageUrl,
-          imagePrimaryIndex: resolvedTargetIndex,
-          imageEditSize: nextImageEditSize,
-          size: nextImageEditSize,
-          aspect: nextImageEditAspect,
-        })
-        toast(`镜头 ${resolvedTargetIndex + 1} 已按 ${nextImageEditSize} 尺寸更新`, 'success')
-        return
-      }
-
-      if (shouldOverwriteInPlace) {
-        const run = async () => {
-          try {
-            const ui = useUIStore.getState()
-            const apiKey = (ui.publicApiKey || '').trim()
-            const token = getAuthToken()
-            if (!apiKey && !token) {
-              toast('请先登录后再试', 'error')
-              return
-            }
-            const persist = ui.assetPersistenceEnabled
-            const resolvedImageModel = await resolveExecutableImageModel({
-              kind: 'imageEdit',
-              value: imageModel,
-            })
-            const modelKey = resolvedImageModel.value
-            if (resolvedImageModel.shouldWriteBack) {
-              setImageModel(modelKey)
-              updateNodeData(id, {
-                imageModel: modelKey,
-                imageModelVendor: null,
-              })
-            }
-            const aspectRatio = nextImageEditAspect || normalizeImageAspect((data as any)?.aspect)
-            let effectiveEditReferenceImages = normalizedEditRefs
-            let referenceSheetMeta: Record<string, unknown> | null = null
-            const { nodes, edges } = useRFStore.getState()
-            const runtimeReferenceAssetInputs = mergeReferenceAssetInputs({
-              assetInputs: (data as Record<string, unknown>)?.assetInputs,
-              dynamicEntries: collectDynamicUpstreamReferenceEntriesForNode(nodes, edges, id),
-              referenceImages: effectiveEditReferenceImages,
-              limit: 8,
-            })
-            if (normalizedEditRefs.length > 2) {
-              try {
-                const mergedReferenceSheet = await uploadMergedReferenceSheet({
-                  id,
-                  entries: buildNamedReferenceEntries({
-                    assetInputs: runtimeReferenceAssetInputs,
-                    referenceImages: normalizedEditRefs,
-                    fallbackPrefix: 'ref',
-                    limit: 8,
-                  }),
-                  prompt: imageEditPrompt,
-                  vendor: resolvedImageModel.vendor || 'auto',
-                  modelKey,
-                  taskKind: 'image_edit',
-                })
-                if (mergedReferenceSheet) {
-                  effectiveEditReferenceImages = [mergedReferenceSheet.url]
-                  referenceSheetMeta = {
-                    kind: 'collage',
-                    url: mergedReferenceSheet.url,
-                    sourceUrls: mergedReferenceSheet.sourceUrls,
-                    entries: mergedReferenceSheet.entries.map((entry) => ({
-                      id: entry.label,
-                      sourceUrl: entry.sourceUrl,
-                      ...(entry.assetId ? { assetId: entry.assetId } : null),
-                      ...(entry.note ? { note: entry.note } : null),
-                    })),
-                  }
-                }
-              } catch (error) {
-                console.warn('[TaskNode] merge image edit references failed', error)
-              }
-            }
-            const effectiveEditAssetInputs = mergeReferenceAssetInputs({
-              assetInputs: runtimeReferenceAssetInputs,
-              dynamicEntries: collectDynamicUpstreamReferenceEntriesForNode(nodes, edges, id),
-              referenceImages: effectiveEditReferenceImages,
-              limit: 8,
-            })
-            const internalImageEditPrompt = appendReferenceAliasSlotPrompt({
-              prompt: imageEditPrompt,
-              assetInputs: effectiveEditAssetInputs,
-              referenceImages: effectiveEditReferenceImages,
-              enabled: effectiveEditReferenceImages.length > 0 && !referenceSheetMeta,
-            })
-            let nextUrl = ''
-
-            if (!nextUrl) {
-              const taskRes = await runPublicTask(apiKey, {
-                request: {
-                  kind: 'image_edit',
-                  prompt: internalImageEditPrompt,
-                  ...nextImageEditDimensions,
-                  extras: {
-                    nodeKind: kind,
-                    nodeId: id,
-                    modelKey,
-                    aspectRatio,
-                    imageEditSize: nextImageEditSize,
-                    size: nextImageEditSize,
-                    resolution: nextImageEditSize,
-                    image_size: nextImageEditSize,
-                    referenceImages: effectiveEditReferenceImages,
-                    ...(effectiveEditAssetInputs.length ? { assetInputs: effectiveEditAssetInputs } : {}),
-                    ...(referenceSheetMeta ? { referenceSheet: referenceSheetMeta } : {}),
-                    persistAssets: persist,
-                  },
-                },
-              })
-
-              let result = taskRes.result
-              const taskId = String(result?.id || '').trim()
-              if ((result.status === 'queued' || result.status === 'running') && taskId) {
-                for (let i = 0; i < 24; i += 1) {
-                  await new Promise((r) => window.setTimeout(r, 1500))
-                  const polled = await fetchPublicTaskResult(apiKey, {
-                    taskId,
-                    vendor: taskRes.vendor,
-                    taskKind: 'image_edit',
-                    prompt: internalImageEditPrompt,
-                  })
-                  result = polled.result
-                  if (result.status === 'succeeded' || result.status === 'failed') break
-                }
-              }
-
-              if (result.status !== 'succeeded') {
-                throw new Error('单镜头微调失败：任务未成功完成')
-              }
-              const imageAsset =
-                (Array.isArray(result.assets) ? result.assets.find((a) => a.type === 'image' && a.url) : null) ||
-                (Array.isArray(result.assets) ? result.assets.find((a) => !!a?.url) : null) ||
-                null
-              nextUrl = typeof imageAsset?.url === 'string' ? imageAsset.url.trim() : ''
-            }
-            if (!nextUrl) {
-              throw new Error('单镜头微调失败：未返回图片地址')
-            }
-
-            const currentResults = Array.isArray((data as any)?.imageResults) ? ([...(data as any).imageResults] as any[]) : []
-            const resolvedTargetIndex = currentResults[requestedTargetIndex]
-              ? requestedTargetIndex
-              : (typeof (data as any)?.imagePrimaryIndex === 'number' && currentResults[(data as any).imagePrimaryIndex]
-                  ? (data as any).imagePrimaryIndex
-                  : 0)
-            const prev = currentResults[resolvedTargetIndex] || {}
-            const nowIso = new Date().toISOString()
-            const previousUrl = String(prev?.url || '').trim()
-            type StoryboardShotCandidate = {
-              url: string
-              selected: boolean
-              createdAt: string
-              source: 'generated' | 'edited'
-            }
-            type StoryboardShotCandidateBucket = {
-              sourceIndex: number
-              candidates: StoryboardShotCandidate[]
-            }
-            const rawBuckets = Array.isArray((data as any)?.storyboardShotCandidates)
-              ? ((data as any).storyboardShotCandidates as unknown[])
-              : []
-            const nextBuckets: StoryboardShotCandidateBucket[] = rawBuckets
-              .map((entry) => {
-                if (!entry || typeof entry !== 'object') return null
-                const parsed = entry as { sourceIndex?: unknown; candidates?: unknown }
-                const sourceIndexRaw = Number(parsed.sourceIndex)
-                if (!Number.isFinite(sourceIndexRaw) || sourceIndexRaw < 0) return null
-                const sourceIndex = Math.trunc(sourceIndexRaw)
-                const candidatesRaw = Array.isArray(parsed.candidates) ? parsed.candidates : []
-                const candidates: StoryboardShotCandidate[] = candidatesRaw
-                  .map((candidate) => {
-                    if (!candidate || typeof candidate !== 'object') return null
-                    const item = candidate as { url?: unknown; selected?: unknown; createdAt?: unknown; source?: unknown }
-                    const url = String(item.url || '').trim()
-                    if (!url) return null
-                    const source = String(item.source || '').trim().toLowerCase() === 'edited' ? 'edited' : 'generated'
-                    return {
-                      url,
-                      selected: item.selected === true,
-                      createdAt: String(item.createdAt || '').trim() || nowIso,
-                      source,
-                    }
-                  })
-                  .filter((candidate): candidate is StoryboardShotCandidate => Boolean(candidate))
-                return { sourceIndex, candidates }
-              })
-              .filter((bucket): bucket is StoryboardShotCandidateBucket => Boolean(bucket))
-              .slice(0, 200)
-
-            const bucketIdx = nextBuckets.findIndex((bucket) => bucket.sourceIndex === resolvedTargetIndex)
-            const fallbackCandidates = previousUrl
-              ? [{ url: previousUrl, selected: true, createdAt: nowIso, source: 'generated' as const }]
-              : []
-            const bucket: StoryboardShotCandidateBucket = bucketIdx >= 0
-              ? nextBuckets[bucketIdx]
-              : { sourceIndex: resolvedTargetIndex, candidates: fallbackCandidates }
-            const deselected = bucket.candidates.map((candidate) => ({ ...candidate, selected: false }))
-            const existingCandidateIndex = deselected.findIndex((candidate) => candidate.url === nextUrl)
-            if (existingCandidateIndex >= 0) {
-              deselected[existingCandidateIndex] = { ...deselected[existingCandidateIndex], selected: true }
-            } else {
-              deselected.push({
-                url: nextUrl,
-                selected: true,
-                createdAt: nowIso,
-                source: 'edited',
-              })
-            }
-            const nextBucket: StoryboardShotCandidateBucket = {
-              sourceIndex: resolvedTargetIndex,
-              candidates: deselected.slice(-30),
-            }
-            if (bucketIdx >= 0) nextBuckets[bucketIdx] = nextBucket
-            else nextBuckets.push(nextBucket)
-
-            const rawSelectionHistory = Array.isArray((data as any)?.storyboardSelectionHistory)
-              ? ((data as any).storyboardSelectionHistory as unknown[])
-              : []
-            const nextSelectionHistory = [
-              ...rawSelectionHistory,
-              {
-                sourceIndex: resolvedTargetIndex,
-                imageUrl: nextUrl,
-                selectedAt: nowIso,
-                source: 'edited',
-              },
-            ].slice(-500)
-            if (currentResults.length > 0) {
-              currentResults[resolvedTargetIndex] = { ...prev, url: nextUrl }
-            } else {
-              currentResults.push({ url: nextUrl })
-            }
-            const currentPrimary = typeof (data as any)?.imagePrimaryIndex === 'number' ? (data as any).imagePrimaryIndex : 0
-            updateNodeData(id, {
-              imageResults: currentResults,
-              ...(currentPrimary === resolvedTargetIndex || !((data as any)?.imageUrl)
-                ? { imageUrl: nextUrl, imagePrimaryIndex: resolvedTargetIndex }
-                : {}),
-              storyboardShotCandidates: nextBuckets,
-              storyboardSelectionHistory: nextSelectionHistory,
-              poseStickmanUrl: stickmanUrl || null,
-              poseReferenceImages: normalizedRefs,
-              poseMaskUrl: normalizedMaskGuideUrl || null,
-              ...(effectivePrompt ? { prompt: effectivePrompt } : {}),
-              imageEditSize: nextImageEditSize,
-              size: nextImageEditSize,
-              aspect: nextImageEditAspect,
-            })
-            toast(`镜头 ${resolvedTargetIndex + 1} 已更新（覆盖当前节点）`, 'success')
-          } catch (err: any) {
-            toast(err?.message || '单镜头更新失败', 'error')
-          } finally {
-            editingShotSourceIndexRef.current = null
-            setEditingShotSourceIndex(null)
-          }
-        }
-        void run()
-        return
-      }
-
-      const stateBefore = useRFStore.getState()
-      const beforeIds = new Set(stateBefore.nodes.map((n) => n.id))
-      if (mode === 'size') {
-        if (!normalizedResizedImageUrl) {
-          toast('尺寸调整失败：未返回新图地址', 'error')
-          return
-        }
-        const stateBefore = useRFStore.getState()
-        const beforeIds = new Set(stateBefore.nodes.map((n) => n.id))
-        addNode('taskNode', undefined, {
-          kind: 'image',
-          prompt: effectivePrompt,
-          aspect: nextImageEditAspect,
-          sampleCount: 1,
-          imageUrl: normalizedResizedImageUrl,
-          imageResults: [{ url: normalizedResizedImageUrl }],
-          imagePrimaryIndex: 0,
-          imageModel: String(imageModel || getDefaultModel('image')).trim() || getDefaultModel('image'),
-          imageModelVendor: null,
-          imageEditSize: nextImageEditSize,
-          size: nextImageEditSize,
-        })
-        const afterAdd = useRFStore.getState()
-        const newNode = afterAdd.nodes.find((n) => !beforeIds.has(n.id))
-        if (!newNode) {
-          toast('尺寸调整已完成，但未能创建新图像节点', 'error')
-          return
-        }
-        const sourceNode = afterAdd.nodes.find((n) => n.id === id)
-        const targetPos = {
-          x: (sourceNode?.position?.x || 0) + 380,
-          y: sourceNode?.position?.y || 0,
-        }
-        afterAdd.onNodesChange([
-          { id: newNode.id, type: 'position', position: targetPos, dragging: false },
-          { id: newNode.id, type: 'select', selected: true },
-        ])
-        afterAdd.onConnect({
-          source: id,
-          sourceHandle: 'out-image',
-          target: newNode.id,
-          targetHandle: 'in-image',
-        })
-        toast(`已生成 ${nextImageEditSize} 新图`, 'success')
-        return
-      }
-
-      const targetKind = 'imageEdit'
-      const fallbackModel = getDefaultModel('imageEdit')
-      const editableModel = String(imageModel || fallbackModel).trim() || fallbackModel
-
-      addNode('taskNode', undefined, {
-        kind: targetKind,
-        prompt: effectivePrompt,
-        aspect: nextImageEditAspect,
-        sampleCount,
-        imageModel: editableModel,
-        imageModelVendor: null,
-        imageEditSize: nextImageEditSize,
-        size: nextImageEditSize,
-        poseStickmanUrl: stickmanUrl || null,
-        poseReferenceImages: normalizedRefs.slice(0, 8),
-        poseMaskUrl: normalizedMaskGuideUrl || null,
-      })
-
-      const afterAdd = useRFStore.getState()
-      const newNode = afterAdd.nodes.find((n) => !beforeIds.has(n.id))
-      if (!newNode) {
-        toast('图片编辑已保存，但未能创建新图像节点', 'error')
-        return
-      }
-
-      const sourceNode = afterAdd.nodes.find((n) => n.id === id)
-      const targetPos = {
-        x: (sourceNode?.position?.x || 0) + 380,
-        y: sourceNode?.position?.y || 0,
-      }
-      afterAdd.onNodesChange([
-        { id: newNode.id, type: 'position', position: targetPos, dragging: false },
-        { id: newNode.id, type: 'select', selected: true },
-      ])
-      afterAdd.onConnect({
-        source: id,
-        sourceHandle: 'out-image',
-        target: newNode.id,
-        targetHandle: 'in-image',
-      })
-
-      if (!effectivePrompt) {
-        toast('已创建新图片编辑节点，请填写提示词后再运行', 'info')
-        return
-      }
-
-      runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 }).catch((err) => {
-        console.error('auto run pose image failed', err)
-        toast(err?.message || '新图片编辑生成启动失败', 'error')
-      })
-    },
-    [addNode, currentProject?.id, data, editingShotSourceIndex, findVendorForModel, id, imageEditSize, imageModel, kind, prompt, sampleCount, updateNodeData],
+  const imageSpecKey = React.useMemo(
+    () =>
+      buildImageBillingSpecKeyForOption({
+        modelOption: selectedActiveModelOption,
+        aspect,
+        imageSize,
+        imageResolution,
+        imageQuality,
+      }),
+    [aspect, imageQuality, imageResolution, imageSize, selectedActiveModelOption],
   )
-
-  const { open: openPoseEditor, modal: poseEditorModal } = usePoseEditor({
-    nodeId: id,
-    baseImageUrl: basePoseImage,
-    poseReferenceImages,
-    poseStickmanUrl,
-    promptValue: prompt,
-    onPromptSave: (next) => {
-      setPrompt(next)
-      updateNodeData(id, { prompt: next })
-    },
-    imageEditSize,
-    imageEditSizeOptions: imageEditResolutionOptions,
-    onImageEditSizeChange: (next) => {
-      const normalized = normalizeImageEditSize(next)
-      setImageEditSize(normalized)
-      updateNodeData(id, {
-        imageEditSize: normalized,
-        size: normalized,
-        aspect: toAspectRatioFromImageEditSize(normalized),
-      })
-    },
-    canvasResizeSize,
-    onCanvasResizeSizeChange: (next) => {
-      const normalized = normalizeCanvasResizeSize(next)
-      setCanvasResizeSize(normalized)
-      updateNodeData(id, { canvasResizeSize: normalized })
-    },
-    hasImages: imageResults.length > 0,
-    isDarkUi,
-    inlineDividerColor,
-    updateNodeData,
-    onPoseSaved: handlePoseSaved,
+  const rewriteModelOptions = useModelOptions('text', {
+    enabled: !viewOnly && !isStructuredWorkflowNode,
   })
-
-  const [mosaicModalOpen, setMosaicModalOpen] = React.useState(false)
-  const [mosaicInvalidUrls, setMosaicInvalidUrls] = React.useState<string[]>([])
-  const [mosaicLayoutMode, setMosaicLayoutMode] = React.useState<'square' | 'columns'>(() => (
-    (data as any)?.mosaicLayoutMode === 'columns' ? 'columns' : 'square'
-  ))
-  const [mosaicGrid, setMosaicGrid] = React.useState<number>(() => {
-    const stored = (data as any)?.mosaicGrid
-    return typeof stored === 'number' && stored >= 1 && stored <= 3 ? stored : 2
-  })
-  const [mosaicColumns, setMosaicColumns] = React.useState<number>(() => {
-    const raw = Number((data as any)?.mosaicColumns)
-    return Number.isFinite(raw) && raw >= 1 && raw <= 6 ? Math.trunc(raw) : 3
-  })
-  const [mosaicSelected, setMosaicSelected] = React.useState<string[]>(() => {
-    const imgs = Array.isArray((data as any)?.mosaicImages)
-      ? ((data as any)?.mosaicImages as any[]).map((i) => (typeof i?.url === 'string' ? i.url : null)).filter(Boolean)
-      : []
-    return imgs.length ? imgs.slice(0, 30) : []
-  })
-  const [mosaicCellSize, setMosaicCellSize] = React.useState<number>(() => {
-    const raw = Number((data as any)?.mosaicCellSize)
-    return Number.isFinite(raw) && raw >= 256 && raw <= 2048 ? Math.trunc(raw) : 480
-  })
-  const [mosaicDividerWidth, setMosaicDividerWidth] = React.useState<number>(() => {
-    const raw = Number((data as any)?.mosaicDividerWidth)
-    return Number.isFinite(raw) && raw >= 0 && raw <= 24 ? raw : 0
-  })
-  const [mosaicDividerColor, setMosaicDividerColor] = React.useState<string>(() => {
-    const raw = String((data as any)?.mosaicDividerColor || '').trim()
-    return raw || '#ffffff'
-  })
-  const [mosaicBackgroundColor, setMosaicBackgroundColor] = React.useState<string>(() => {
-    const raw = String((data as any)?.mosaicBackgroundColor || '').trim()
-    return raw || '#0b1224'
-  })
-  const [mosaicTitle, setMosaicTitle] = React.useState<string>(() => String((data as any)?.mosaicTitle || ''))
-  const [mosaicSubtitle, setMosaicSubtitle] = React.useState<string>(() => String((data as any)?.mosaicSubtitle || ''))
-  const [mosaicTitleColor, setMosaicTitleColor] = React.useState<string>(() => {
-    const raw = String((data as any)?.mosaicTitleColor || '').trim()
-    return raw || '#f8fafc'
-  })
-  const [mosaicSubtitleColor, setMosaicSubtitleColor] = React.useState<string>(() => {
-    const raw = String((data as any)?.mosaicSubtitleColor || '').trim()
-    return raw || '#cbd5e1'
-  })
-  const mosaicLimit = mosaicLayoutMode === 'columns' ? 30 : mosaicGrid * mosaicGrid
-  const allImages = React.useMemo(() => {
-    if (!isMosaicNode || !mosaicModalOpen) return []
-    const urls: string[] = []
-    const push = (url: unknown) => {
-      if (typeof url !== 'string') return
-      const trimmed = url.trim()
-      if (trimmed) urls.push(trimmed)
-    }
-    const stateNodes = useRFStore.getState().nodes
-    stateNodes.forEach((node) => {
-      const nodeData = node.data || {}
-      push((nodeData as any).imageUrl)
-      if (Array.isArray((nodeData as any).imageResults)) {
-        ;((nodeData as any).imageResults as Array<{ url?: unknown }>).forEach((item) => push(item?.url))
-      }
-    })
-    return Array.from(new Set(urls))
-  }, [isMosaicNode, mosaicModalOpen])
-  const availableImages = React.useMemo(() => {
-    const filtered = allImages.filter((url) => !mosaicInvalidUrls.includes(url))
-    if (mosaicSelected.length) {
-      const selectedSet = new Set(mosaicSelected)
-      const rest = filtered.filter((url) => !selectedSet.has(url))
-      return [...mosaicSelected, ...rest]
-    }
-    return filtered
-  }, [allImages, mosaicInvalidUrls, mosaicSelected])
-  const [mosaicPreviewUrl, setMosaicPreviewUrl] = React.useState<string | null>(null)
-  const [mosaicPreviewError, setMosaicPreviewError] = React.useState<string | null>(null)
-  const [mosaicPreviewLoading, setMosaicPreviewLoading] = React.useState(false)
-  const buildMosaicPreview = React.useCallback(async (
-    urls: string[],
-    grid: number,
-    options?: {
-      cellSize?: number
-      dividerWidth?: number
-      dividerColor?: string
-      layoutMode?: 'square' | 'columns'
-      columns?: number
-      backgroundColor?: string
-      title?: string
-      subtitle?: string
-      titleColor?: string
-      subtitleColor?: string
-    },
-  ) => {
-    const { buildMosaicCanvas } = await import('../../runner/mosaicRunner')
-    setMosaicPreviewLoading(true)
-    setMosaicPreviewError(null)
-    try {
-      const { canvas, failedUrls } = await buildMosaicCanvas(urls, grid || 2, {
-        cellSize: options?.cellSize,
-        dividerWidth: options?.dividerWidth,
-        dividerColor: options?.dividerColor,
-        layoutMode: options?.layoutMode,
-        columns: options?.columns,
-        backgroundColor: options?.backgroundColor,
-        title: options?.title,
-        subtitle: options?.subtitle,
-        titleColor: options?.titleColor,
-        subtitleColor: options?.subtitleColor,
-      })
-      setMosaicPreviewUrl(canvas.toDataURL('image/png'))
-      if (failedUrls.length) {
-        setMosaicPreviewError(`已移除 ${failedUrls.length} 张过期或不可访问的图片`)
-        setMosaicSelected((prev) => prev.filter((url) => !failedUrls.includes(url)))
-        setMosaicInvalidUrls((prev) => Array.from(new Set([...prev, ...failedUrls])))
-      }
-    } catch (error: unknown) {
-      console.warn('mosaic preview failed', error)
-      setMosaicPreviewUrl(null)
-      const failedUrls = Array.isArray((error as { failedUrls?: unknown })?.failedUrls)
-        ? ((error as { failedUrls: string[] }).failedUrls)
-        : []
-      if (failedUrls.length) {
-        setMosaicSelected((prev) => prev.filter((url) => !failedUrls.includes(url)))
-        setMosaicInvalidUrls((prev) => Array.from(new Set([...prev, ...failedUrls])))
-      }
-      const message = error instanceof Error ? error.message : '预览生成失败，请检查图片是否可跨域访问'
-      setMosaicPreviewError(message)
-    } finally {
-      setMosaicPreviewLoading(false)
-    }
-  }, [])
-  const handleMosaicToggle = React.useCallback(
-    (url: string, checked?: boolean) => {
-      if (!url) return
-      if (mosaicInvalidUrls.includes(url)) {
-        toast('该图片已失效，请选择其他图片', 'error')
-        return
-      }
-      setMosaicSelected((prev) => {
-        const nextChecked = typeof checked === 'boolean' ? checked : !prev.includes(url)
-        if (nextChecked) {
-          if (prev.includes(url)) return prev
-          const next = [...prev, url]
-          if (next.length > mosaicLimit) return prev
-          return next
-        }
-        return prev.filter((item) => item !== url)
-      })
-    },
-    [mosaicInvalidUrls, mosaicLimit],
-  )
-  const moveMosaicItem = React.useCallback((url: string, dir: number) => {
-    setMosaicSelected((prev) => {
-      const idx = prev.findIndex((item) => item === url)
-      if (idx < 0) return prev
-      const nextIdx = idx + dir
-      if (nextIdx < 0 || nextIdx >= prev.length) return prev
-      const next = [...prev]
-      const current = next[idx]
-      next[idx] = next[nextIdx]
-      next[nextIdx] = current
-      return next
-    })
-  }, [])
-  const handleMosaicSave = React.useCallback(async () => {
-    const picked = mosaicSelected.slice(0, mosaicLimit)
-    if (!picked.length) {
-      toast('请至少选择 1 张图片', 'error')
-      return
-    }
-    try {
-      const { buildMosaicCanvas } = await import('../../runner/mosaicRunner')
-      const result = await buildMosaicCanvas(picked, mosaicGrid, {
-        cellSize: mosaicCellSize,
-        dividerWidth: mosaicDividerWidth,
-        dividerColor: mosaicDividerColor,
-        layoutMode: mosaicLayoutMode,
-        columns: mosaicColumns,
-        backgroundColor: mosaicBackgroundColor,
-        title: mosaicTitle,
-        subtitle: mosaicSubtitle,
-        titleColor: mosaicTitleColor,
-        subtitleColor: mosaicSubtitleColor,
-      })
-      if (result.failedUrls.length) {
-        setMosaicSelected((prev) => prev.filter((url) => !result.failedUrls.includes(url)))
-        setMosaicInvalidUrls((prev) => Array.from(new Set([...prev, ...result.failedUrls])))
-        toast(`已移除 ${result.failedUrls.length} 张过期图片，已用剩余图片拼图`, 'info')
-      }
-      const blob: Blob = await new Promise((resolve, reject) => {
-        try {
-          result.canvas.toBlob((canvasBlob) => {
-            if (canvasBlob) resolve(canvasBlob)
-            else reject(new Error('未生成拼图结果'))
-          }, 'image/png')
-        } catch (error) {
-          reject(error)
-        }
-      })
-      const fileName = `mosaic-${Date.now()}.png`
-      const file = new File([blob], fileName, { type: 'image/png' })
-      const hosted = await uploadServerAssetFile(file, fileName, { taskKind: 'mosaic' })
-      const hostedUrl = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
-      if (!hostedUrl) throw new Error('拼图已生成，但上传到 OSS 失败')
-
-      const existing = Array.isArray((data as any)?.imageResults) ? (data as any)?.imageResults : []
-      const sanitizedExisting = existing.filter((item: unknown) => {
-        const url = typeof (item as { url?: unknown })?.url === 'string' ? String((item as { url: string }).url).trim() : ''
-        return Boolean(url) && REMOTE_IMAGE_URL_REGEX.test(url)
-      })
-      const merged = [...sanitizedExisting, { url: hostedUrl, title: mosaicTitle || '拼图' }]
-      const primaryIndex = merged.length - 1
-      setNodeStatus(id, 'success', {
-        progress: 100,
-        imageUrl: hostedUrl,
-        imageResults: merged,
-        imagePrimaryIndex: primaryIndex,
-        serverAssetId: hosted.id,
-        mosaicImages: picked.map((url) => ({ url })),
-        mosaicGrid,
-        mosaicColumns,
-        mosaicLimit,
-        mosaicLayoutMode,
-        mosaicCellSize,
-        mosaicDividerWidth,
-        mosaicDividerColor,
-        mosaicBackgroundColor,
-        mosaicTitle,
-        mosaicSubtitle,
-        mosaicTitleColor,
-        mosaicSubtitleColor,
-        lastResult: {
-          id,
-          at: Date.now(),
-          kind: 'mosaic',
-          preview: { type: 'image', src: hostedUrl },
-        },
-      })
-      setMosaicModalOpen(false)
-      toast('拼图已更新', 'success')
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '拼图生成失败'
-      toast(message, 'error')
-    }
-  }, [
-    data,
-    id,
-    mosaicBackgroundColor,
-    mosaicCellSize,
-    mosaicColumns,
-    mosaicDividerColor,
-    mosaicDividerWidth,
-    mosaicGrid,
-    mosaicLayoutMode,
-    mosaicLimit,
-    mosaicSelected,
-    mosaicSubtitle,
-    mosaicSubtitleColor,
-    mosaicTitle,
-    mosaicTitleColor,
-    setNodeStatus,
-  ])
-
-  React.useEffect(() => {
-    const picked = mosaicSelected.slice(0, mosaicLimit)
-    if (!picked.length) {
-      setMosaicPreviewUrl(null)
-      setMosaicPreviewError(null)
-      return
-    }
-    buildMosaicPreview(picked, mosaicGrid, {
-      cellSize: mosaicCellSize,
-      dividerWidth: mosaicDividerWidth,
-      dividerColor: mosaicDividerColor,
-      layoutMode: mosaicLayoutMode,
-      columns: mosaicColumns,
-      backgroundColor: mosaicBackgroundColor,
-      title: mosaicTitle,
-      subtitle: mosaicSubtitle,
-      titleColor: mosaicTitleColor,
-      subtitleColor: mosaicSubtitleColor,
-    })
-  }, [
-    buildMosaicPreview,
-    mosaicBackgroundColor,
-    mosaicCellSize,
-    mosaicColumns,
-    mosaicDividerColor,
-    mosaicDividerWidth,
-    mosaicGrid,
-    mosaicLayoutMode,
-    mosaicLimit,
-    mosaicSelected,
-    mosaicSubtitle,
-    mosaicSubtitleColor,
-    mosaicTitle,
-    mosaicTitleColor,
-  ])
-  React.useEffect(() => {
-    setMosaicSelected((prev) => prev.slice(0, mosaicLimit))
-  }, [mosaicLimit])
-
-  React.useEffect(() => {
-    if (!mosaicModalOpen) return
-    setMosaicLayoutMode((data as any)?.mosaicLayoutMode === 'columns' ? 'columns' : 'square')
-    const storedGrid = (data as any)?.mosaicGrid
-    setMosaicGrid(typeof storedGrid === 'number' && storedGrid >= 1 && storedGrid <= 3 ? storedGrid : 2)
-    const storedColumns = Number((data as any)?.mosaicColumns)
-    setMosaicColumns(Number.isFinite(storedColumns) && storedColumns >= 1 && storedColumns <= 6 ? Math.trunc(storedColumns) : 3)
-    const storedCellSize = Number((data as any)?.mosaicCellSize)
-    setMosaicCellSize(Number.isFinite(storedCellSize) && storedCellSize >= 256 && storedCellSize <= 2048 ? Math.trunc(storedCellSize) : 480)
-    const storedDividerWidth = Number((data as any)?.mosaicDividerWidth)
-    setMosaicDividerWidth(Number.isFinite(storedDividerWidth) && storedDividerWidth >= 0 && storedDividerWidth <= 24 ? storedDividerWidth : 0)
-    const storedDividerColor = String((data as any)?.mosaicDividerColor || '').trim()
-    setMosaicDividerColor(storedDividerColor || '#ffffff')
-    const storedBackgroundColor = String((data as any)?.mosaicBackgroundColor || '').trim()
-    setMosaicBackgroundColor(storedBackgroundColor || '#0b1224')
-    setMosaicTitle(String((data as any)?.mosaicTitle || ''))
-    setMosaicSubtitle(String((data as any)?.mosaicSubtitle || ''))
-    const storedTitleColor = String((data as any)?.mosaicTitleColor || '').trim()
-    setMosaicTitleColor(storedTitleColor || '#f8fafc')
-    const storedSubtitleColor = String((data as any)?.mosaicSubtitleColor || '').trim()
-    setMosaicSubtitleColor(storedSubtitleColor || '#cbd5e1')
-    const imgs = Array.isArray((data as any)?.mosaicImages)
-      ? ((data as any)?.mosaicImages as any[]).map((i) => (typeof i?.url === 'string' ? i.url : null)).filter(Boolean)
-      : []
-    if (imgs.length) {
-      setMosaicSelected(imgs.slice(0, (data as any)?.mosaicLayoutMode === 'columns' ? 30 : ((typeof storedGrid === 'number' && storedGrid >= 1 && storedGrid <= 3 ? storedGrid : 2) ** 2)))
-    }
-  }, [data, mosaicModalOpen])
-
-  const rewriteModelOptions = useModelOptions('text')
   const rewriteModelSelectOptions = React.useMemo<ModelOption[]>(
     () => rewriteModelOptions.map((option) => ({
       ...option,
@@ -3840,7 +2707,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     })),
     [rewriteModelOptions],
   )
-  const resolvePromptRefineModelAlias = React.useCallback(() => {
+  const resolvePromptRefineModelKey = React.useCallback(() => {
     const candidates = [
       String((data as any)?.geminiModel || '').trim(),
       String(modelKey || '').trim(),
@@ -3863,11 +2730,10 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     return refineStructuredImagePrompt({
       prompt: nextPrompt,
       negativePrompt: String((data as Record<string, unknown>)?.negativePrompt || '').trim(),
-      systemPrompt,
-      modelAlias: resolvePromptRefineModelAlias(),
+      modelKey: resolvePromptRefineModelKey(),
       productionMetadata: (data as Record<string, unknown>)?.productionMetadata,
     })
-  }, [data, prompt, resolvePromptRefineModelAlias, systemPrompt])
+  }, [data, prompt, resolvePromptRefineModelKey])
   const handleCommitStructuredPrompt = React.useCallback((patch: {
     structuredPrompt: Record<string, unknown>
     prompt: string
@@ -3947,13 +2813,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     structuredPromptValue,
     updateNodeData,
   ])
-  const handleStructuredPromptModeChange = React.useCallback((next: boolean) => {
-    if (next) {
-      void handleEnableStructuredPromptMode()
-      return
-    }
-    updateNodeData(id, { promptEditorMode: 'text' })
-  }, [handleEnableStructuredPromptMode, id, updateNodeData])
   const baseShowTimeMenu = hasDuration
   const baseShowResolutionMenu = isVideoNode
     ? configuredSizeOptions.length > 0 || hasAspect
@@ -3967,23 +2826,28 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   React.useEffect(() => {
     if (!modelList.length) return
     const matched = findModelOptionByIdentifier(modelList, activeModelKey)
-    const next = matched || modelList[0]
-    if (!next) return
-    const nextRequestedModel = resolveRequestedModelIdentifier(next.value)
-    if (!nextRequestedModel) return
-    if (String(activeModelKey || '').trim() === nextRequestedModel) return
-    setModelKey(nextRequestedModel)
-    setImageModel(nextRequestedModel)
-    setVideoModel(nextRequestedModel)
-    updateNodeData(id, {
-      geminiModel: nextRequestedModel,
-      imageModel: nextRequestedModel,
-      videoModel: nextRequestedModel,
-      modelVendor: next.vendor || null,
-      imageModelVendor: null,
-      videoModelVendor: next.vendor || null,
-    })
-  }, [activeModelKey, modelList, id, resolveRequestedModelIdentifier, updateNodeData])
+    if (!matched) return
+    const next = matched
+    const nextModelValue = String(next.value || '').trim()
+    if (!nextModelValue) return
+    if (String(activeModelKey || '').trim() === nextModelValue) return
+    if (isAudioNode) {
+      updateNodeData(id, { audioModel: nextModelValue })
+      return
+    }
+    if (isVideoNode) {
+      setVideoModel(nextModelValue)
+      updateNodeData(id, { videoModel: nextModelValue, videoModelVendor: next.vendor || null })
+      return
+    }
+    if (coreKind === 'image' || kind === 'imageEdit') {
+      setImageModel(nextModelValue)
+      updateNodeData(id, { imageModel: nextModelValue, imageModelVendor: null })
+      return
+    }
+    setModelKey(nextModelValue)
+    updateNodeData(id, { geminiModel: nextModelValue, modelVendor: next.vendor || null })
+  }, [activeModelKey, coreKind, id, isAudioNode, isVideoNode, kind, modelList, updateNodeData])
 
   React.useEffect(() => {
     if (!isVideoNode) return
@@ -3993,10 +2857,10 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         : {}
     const nextDuration = readVideoDurationSeconds(
       dataRecord,
-      isStoryboardNode ? STORYBOARD_MAX_TOTAL_DURATION : 15,
+      15,
     )
     setVideoDuration((prev) => (prev === nextDuration ? prev : nextDuration))
-  }, [data, isStoryboardNode, isVideoNode])
+  }, [data, isVideoNode])
 
   React.useEffect(() => {
     if (!isVideoNode || !videoModelConfig) return
@@ -4079,18 +2943,25 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       patch.resolution = nextImageResolution
     }
 
+    const nextImageQuality = pickImageQualityValue(imageModelConfig, imageQuality)
+    if (nextImageQuality && nextImageQuality !== imageQuality) {
+      setImageQuality(nextImageQuality)
+      patch.imageQuality = nextImageQuality
+    }
+
     if (Object.keys(patch).length) {
       updateNodeData(id, patch)
     }
-  }, [aspect, id, imageModelConfig, imageResolution, imageSize, isVideoNode, updateNodeData])
+  }, [aspect, id, imageModelConfig, imageQuality, imageResolution, imageSize, isVideoNode, updateNodeData])
 
   React.useEffect(() => {
     if (!isVideoNode) return
-    const storedVideoResolution = typeof (data as Record<string, unknown>)?.videoResolution === 'string'
-      ? normalizeVideoResolution((data as Record<string, unknown>)?.videoResolution)
+    const dataRecord = data as Record<string, unknown>
+    const storedVideoResolution = typeof dataRecord.videoResolution === 'string'
+      ? normalizeVideoResolution(dataRecord.videoResolution)
       : ''
-    const storedVideoSpecKey = typeof (data as any)?.videoSpecKey === 'string' ? String((data as any).videoSpecKey).trim() : ''
-    const storedSpecKey = typeof (data as any)?.specKey === 'string' ? String((data as any).specKey).trim() : ''
+    const storedVideoSpecKey = typeof dataRecord.videoSpecKey === 'string' ? dataRecord.videoSpecKey.trim() : ''
+    const storedSpecKey = typeof dataRecord.specKey === 'string' ? dataRecord.specKey.trim() : ''
     if (
       storedVideoResolution === effectiveVideoResolution &&
       storedVideoSpecKey === videoSpecKey &&
@@ -4104,6 +2975,14 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       specKey: videoSpecKey || null,
     })
   }, [data, effectiveVideoResolution, id, isVideoNode, updateNodeData, videoSpecKey])
+
+  React.useEffect(() => {
+    if (isVideoNode) return
+    const dataRecord = data as Record<string, unknown>
+    const storedSpecKey = typeof dataRecord.specKey === 'string' ? dataRecord.specKey.trim() : ''
+    if (storedSpecKey === (imageSpecKey || '')) return
+    updateNodeData(id, { specKey: imageSpecKey || null })
+  }, [data, id, imageSpecKey, isVideoNode, updateNodeData])
 
   const trimmedFirstFrameUrl = veoFirstFrameUrl.trim()
   const trimmedLastFrameUrl = veoLastFrameUrl.trim()
@@ -4121,6 +3000,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   )
   const veoReferenceLimitReached = veoReferenceImages.length >= MAX_VEO_REFERENCE_IMAGES
   const [veoImageModalMode, setVeoImageModalMode] = React.useState<'first' | 'last' | 'reference' | null>(null)
+  const [continueVeoSelectionToLastFrame, setContinueVeoSelectionToLastFrame] = React.useState(false)
 
   React.useEffect(() => {
     if (existingModelVendor || !modelKey) return
@@ -4138,18 +3018,22 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       updateNodeData(id, { videoModelVendor: vendor })
     }
   }, [existingVideoVendor, videoModel, findVendorForModel, updateNodeData, id, isVideoNode])
-  const summaryModelLabel =
-    findModelOptionByIdentifier(modelMenuOptions, activeModelKey)?.label ||
-    getModelLabel(toNodeKind(coreKind === 'image' ? 'image' : kind), activeModelKey)
+  const summaryModelLabel = selectedActiveModelOption?.label || (
+    modelListError
+      ? '模型目录加载失败'
+      : modelListLoading
+        ? '正在读取模型…'
+        : activeModelKey
+          ? `模型不可用：${activeModelKey}`
+          : '未选择模型'
+  )
   const summaryDuration =
     isVideoNode
       ? selectedConfiguredDurationOption?.label || `${videoDuration}s`
       : `${sampleCount}x`
   const summaryVideoSize = isVideoNode
     ? selectedConfiguredSizeOption?.label || videoSize || aspect
-    : isImageEditNode
-      ? imageEditSizeOption.label
-      : selectedConfiguredImageAspectOption?.label || aspect
+    : selectedConfiguredImageAspectOption?.label || aspect
   const summaryVideoResolution = React.useMemo(() => {
     if (!isVideoNode) return ''
     return selectedConfiguredResolutionOption?.label || effectiveVideoResolution || '未设定'
@@ -4176,34 +3060,70 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       resolveModelGenerationCredits({
         kind: billingNodeKind,
         modelOption: selectedActiveModelOption,
-        specKey: isVideoNode ? videoSpecKey : null,
+        specKey: isVideoNode ? videoSpecKey : imageSpecKey,
         quantity: coreKind === 'image' ? sampleCount : 1,
       }),
-    [billingNodeKind, coreKind, isVideoNode, sampleCount, selectedActiveModelOption, videoSpecKey],
+    [billingNodeKind, coreKind, imageSpecKey, isVideoNode, sampleCount, selectedActiveModelOption, videoSpecKey],
   )
+  const characterFissionCreditsPerVariant = React.useMemo(() => {
+    if (!isCharacterReferenceNode || !selectedActiveModelOption) return 0
+    const specKey = buildImageBillingSpecKeyForOption({
+      modelOption: selectedActiveModelOption,
+      aspect: '3:4',
+      imageSize,
+      imageResolution,
+    })
+    return resolveModelGenerationCredits({
+      kind: 'imageEdit',
+      modelOption: selectedActiveModelOption,
+      specKey,
+      quantity: 1,
+    })
+  }, [imageResolution, imageSize, isCharacterReferenceNode, selectedActiveModelOption])
   const requiredCreditsLabel = React.useMemo(() => {
+    if (isAudioNode) {
+      if ((data as any)?.audioType === 'music') {
+        const fixedCredits = resolveModelGenerationCredits({
+          kind: 'audio',
+          modelOption: selectedActiveModelOption,
+          quantity: 1,
+        })
+        return fixedCredits > 0 ? `${fixedCredits}积分` : null
+      }
+      const billingUnit = readCatalogTagValue(selectedActiveModelOption, 'tapcanvas:billing-unit')
+      const configuredRate = Number(readCatalogTagValue(selectedActiveModelOption, 'tapcanvas:billing-credits'))
+      if (billingUnit === 'second' && Number.isFinite(configuredRate) && configuredRate > 0) {
+        return `${configuredRate}积分/秒`
+      }
+      if (billingUnit !== '10k_chars' || !Number.isFinite(configuredRate) || configuredRate <= 0) {
+        return null
+      }
+      const text = (prompt || '').trim()
+      if (!text) return null
+      let chars = 0
+      for (const ch of text) {
+        const code = ch.codePointAt(0) ?? 0
+        chars +=
+          (code >= 0x2e80 && code <= 0x9fff) ||
+          (code >= 0xac00 && code <= 0xd7af) ||
+          (code >= 0xf900 && code <= 0xfaff) ||
+          (code >= 0x3000 && code <= 0x303f) ||
+          (code >= 0xff00 && code <= 0xffef)
+            ? 2
+            : 1
+      }
+      return `${Math.max(1, Math.ceil((chars * configuredRate) / 10000))}积分`
+    }
     if (!(isVideoNode || coreKind === 'image')) return null
-    return `${requiredGenerationCredits}积分`
-  }, [coreKind, isVideoNode, requiredGenerationCredits])
-  const promptPresetOptions = React.useMemo(
-    () =>
-      presetItems.map((item) => ({
-        value: item.id,
-        label: `${item.title}${item.scope === 'base' ? '（基础）' : ''}`,
-      })),
-    [presetItems],
+    if (!(requiredGenerationCredits > 0)) return null
+    // 批量分支：N 份 = N 次独立生成，积分按份数汇总展示
+    const multiplier = runCount > 1 ? runCount : 1
+    return `${requiredGenerationCredits * multiplier}积分`
+  }, [coreKind, isAudioNode, isVideoNode, requiredGenerationCredits, runCount, data, prompt, selectedActiveModelOption])
+  const durationOptions = React.useMemo(
+    () => configuredDurationOptions,
+    [configuredDurationOptions],
   )
-  const allowNodePresetForPrompt = !isStoryboardNode
-  const durationOptions = React.useMemo(() => {
-    if (configuredDurationOptions.length) return configuredDurationOptions
-    if (resolvedVideoVendor === 'veo') {
-      return [...VEO_DURATION_OPTIONS]
-    }
-    if (isStoryboardNode) {
-      return [...BASE_DURATION_OPTIONS, STORYBOARD_DURATION_OPTION]
-    }
-    return BASE_DURATION_OPTIONS
-  }, [configuredDurationOptions, isStoryboardNode, resolvedVideoVendor])
 
   React.useEffect(() => {
     const raw = (data as any)?.videoHd
@@ -4246,21 +3166,37 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }
   }, [durationOptions, hasDuration, id, isVideoNode, updateNodeData, videoDuration])
 
-  const handleToolbarModelChange = React.useCallback((value: string) => {
-    const requestedValue = resolveRequestedModelIdentifier(value) || value
-    setModelKey(requestedValue)
-    setImageModel(requestedValue)
-    setVideoModel(requestedValue)
-    const option = findModelOptionByIdentifier(modelMenuOptions, value)
-    updateNodeData(id, {
-      geminiModel: requestedValue,
-      imageModel: requestedValue,
-      videoModel: requestedValue,
-      modelVendor: option?.vendor || null,
-      imageModelVendor: null,
-      videoModelVendor: option?.vendor || null,
+  const persistRecentGenerationPrefs = React.useCallback((patch: UserGenerationPrefsDto) => {
+    saveNodeModelPrefs(patch)
+    void updateRecentGenerationPrefs(patch).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error)
+      toast(`账号生成偏好保存失败：${message}`, 'error')
     })
-  }, [findModelOptionByIdentifier, id, modelMenuOptions, resolveRequestedModelIdentifier, updateNodeData])
+  }, [])
+
+  const handleToolbarModelChange = React.useCallback((value: string) => {
+    const selectedValue = String(value || '').trim()
+    if (!selectedValue) return
+    const option = findModelOptionByIdentifier(modelMenuOptions, value)
+    if (!option) {
+      toast(`模型 ${selectedValue} 不在当前系统模型目录中`, 'error')
+      return
+    }
+    if (isVideoNode) {
+      setVideoModel(selectedValue)
+      updateNodeData(id, { videoModel: selectedValue, videoModelVendor: option.vendor || null })
+      persistRecentGenerationPrefs({ videoModel: selectedValue })
+      return
+    }
+    if (coreKind === 'image' || kind === 'imageEdit') {
+      setImageModel(selectedValue)
+      updateNodeData(id, { imageModel: selectedValue, imageModelVendor: null })
+      persistRecentGenerationPrefs({ imageModel: selectedValue })
+      return
+    }
+    setModelKey(selectedValue)
+    updateNodeData(id, { geminiModel: selectedValue, modelVendor: option.vendor || null })
+  }, [coreKind, id, isVideoNode, kind, modelMenuOptions, persistRecentGenerationPrefs, updateNodeData])
 
   const handleToolbarDurationChange = React.useCallback((num: number) => {
     const nextSpecKey = buildVideoBillingSpecKey(effectiveVideoResolution, num)
@@ -4279,7 +3215,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       const matchedOption =
         videoModelConfig?.sizeOptions.find((option) => option.value === normalizedSize) || null
       const nextSpecKey = buildVideoBillingSpecKey(effectiveVideoResolution, videoDuration)
-      const nextAspect = matchedOption?.aspectRatio ? normalizeImageAspect(matchedOption.aspectRatio) : aspect
+      const sizeParts = normalizedSize.split(':')
+      const declaredAspect = matchedOption?.aspectRatio || (sizeParts.length === 2 ? normalizedSize : '')
+      const nextAspect = declaredAspect ? normalizeImageAspect(declaredAspect) : aspect
       const nextOrientation = resolveVideoOrientationValue({
         currentOrientation: matchedOption?.orientation ?? orientationRef.current,
         size: normalizedSize,
@@ -4292,11 +3230,12 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         videoResolution: effectiveVideoResolution || null,
         videoSpecKey: nextSpecKey || null,
         specKey: nextSpecKey || null,
-        ...(matchedOption?.aspectRatio ? { aspect: nextAspect } : {}),
+        ...(declaredAspect ? { aspect: nextAspect } : {}),
         orientation: nextOrientation,
       })
-      if (matchedOption?.aspectRatio) {
+      if (declaredAspect) {
         setAspect(nextAspect)
+        persistRecentGenerationPrefs({ videoAspect: nextAspect })
       }
       orientationRef.current = nextOrientation
       setOrientation(nextOrientation)
@@ -4304,8 +3243,32 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }
     const normalizedAspect = normalizeImageAspect(value)
     setAspect(normalizedAspect)
-    updateNodeData(id, { aspect: normalizedAspect })
-  }, [aspect, effectiveVideoResolution, id, isVideoNode, updateNodeData, videoDuration, videoModelConfig])
+    const patch: Record<string, unknown> = { aspect: normalizedAspect }
+    if (!hasPrimaryImage) {
+      const parts = normalizedAspect.split(':')
+      const aw = parseFloat(parts[0] ?? '')
+      const ah = parseFloat(parts[1] ?? '')
+      const currentWidth = typeof (data as any)?.nodeWidth === 'number' && (data as any)?.nodeWidth > 0
+        ? (data as any).nodeWidth as number
+        : 360
+      if (aw > 0 && ah > 0) {
+        const raw = Math.round(currentWidth / (aw / ah))
+        patch.nodeHeight = Math.max(90, Math.min(960, raw))
+      }
+    }
+    updateNodeData(id, patch)
+    if (typeof patch.nodeHeight === 'number') {
+      const patchedWidth = typeof (data as any)?.nodeWidth === 'number' && (data as any)?.nodeWidth > 0
+        ? (data as any).nodeWidth as number
+        : 360
+      rf.updateNode(id, (node) => ({
+        style: { ...node.style, width: patchedWidth, height: patch.nodeHeight as number },
+      }))
+    }
+    if (aspectTransitionTimerRef.current) clearTimeout(aspectTransitionTimerRef.current)
+    setIsAspectTransitioning(true)
+    aspectTransitionTimerRef.current = setTimeout(() => setIsAspectTransitioning(false), 320)
+  }, [aspect, data, effectiveVideoResolution, hasPrimaryImage, id, isVideoNode, persistRecentGenerationPrefs, updateNodeData, videoDuration, videoModelConfig])
 
   const handleToolbarVideoResolutionChange = React.useCallback((value: string) => {
     const normalizedResolution = normalizeVideoResolution(value)
@@ -4316,13 +3279,13 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       videoSpecKey: nextSpecKey || null,
       specKey: nextSpecKey || null,
     })
-  }, [id, updateNodeData, videoDuration])
+    if (normalizedResolution) persistRecentGenerationPrefs({ videoResolution: normalizedResolution })
+  }, [id, persistRecentGenerationPrefs, updateNodeData, videoDuration])
 
   const handleToolbarOrientationChange = React.useCallback((value: Orientation) => {
     const normalized = normalizeOrientation(value)
     const matchedOption =
       videoModelConfig?.orientationOptions.find((option) => option.value === normalized) || null
-    const nextSize = matchedOption?.size ? matchedOption.size : videoSize
     const nextSpecKey = buildVideoBillingSpecKey(effectiveVideoResolution, videoDuration)
     orientationRef.current = normalized
     setOrientation(normalized)
@@ -4338,13 +3301,20 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       setVideoSize(matchedOption.size)
     }
     if (matchedOption?.aspectRatio) {
-      setAspect(normalizeImageAspect(matchedOption.aspectRatio))
+      const nextAspect = normalizeImageAspect(matchedOption.aspectRatio)
+      setAspect(nextAspect)
+      persistRecentGenerationPrefs({ videoAspect: nextAspect })
     }
-  }, [effectiveVideoResolution, id, updateNodeData, videoDuration, videoModelConfig, videoSize])
+  }, [effectiveVideoResolution, id, persistRecentGenerationPrefs, updateNodeData, videoDuration, videoModelConfig, videoSize])
+
+  // kling-v3-omni「参考视频用途」：feature=动作迁移（上游参考视频只供动作/运镜/风格，
+  // 新主体来自参考图）、base=底片重绘/续演（默认）。写入 data.videoReferType，
+  // remoteRunner / bridge 透传 → hono metadata.video_refer_type → apimart video_list[].refer_type。
+  const videoReferTypeSetting = normalizeKlingVideoReferType((data as any)?.videoReferType) ?? 'base'
 
   const mappedVideoControls = React.useMemo<ReadonlyArray<ToolbarMappedControl>>(() => {
     if (!isVideoNode || !videoModelConfig) return []
-    const controls = videoModelConfig.controls.flatMap((control) => {
+    const controls = videoModelConfig.controls.flatMap((control): ToolbarMappedControl[] => {
       if (control.binding === 'durationSeconds') {
         if (!durationOptions.length) return []
         return [{
@@ -4412,9 +3382,26 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           onChange: handleToolbarVideoResolutionChange,
         }]
       : []
+    // kling-v3-omni 专属：参考视频用途（动作迁移/底片重绘）。仅当上游连入视频时该设置才生效，
+    // 但常驻展示便于先选模式再连线。
+    const referTypeControl: ToolbarMappedControl[] = isKlingV3OmniVideoModel(videoModel)
+      ? [{
+          key: 'video_refer_type',
+          binding: 'videoReferType' as const,
+          title: '参考视频用途',
+          summary: videoReferTypeSetting === 'feature' ? '动作迁移' : '底片重绘',
+          options: [
+            { value: 'base', label: '底片重绘（重绘/续演参考视频本身）' },
+            { value: 'feature', label: '动作迁移（动作/运镜迁移到参考图新主体）' },
+          ],
+          onChange: (value: string) => {
+            updateNodeData(id, { videoReferType: value === 'feature' ? 'feature' : 'base' })
+          },
+        }]
+      : []
     return hasSizeControl
-      ? [...controls.filter((control) => control.binding !== 'orientation'), ...autoResolutionControl]
-      : [...controls, ...autoResolutionControl]
+      ? [...controls.filter((control) => control.binding !== 'orientation'), ...autoResolutionControl, ...referTypeControl]
+      : [...controls, ...autoResolutionControl, ...referTypeControl]
   }, [
     configuredVideoResolutionOptions,
     configuredOrientationOptions,
@@ -4424,35 +3411,68 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     handleToolbarOrientationChange,
     handleToolbarSizeChange,
     handleToolbarVideoResolutionChange,
+    id,
     isVideoNode,
     summaryDuration,
     summaryOrientation,
     summaryVideoResolution,
     summaryVideoSize,
+    updateNodeData,
+    videoModel,
     videoModelConfig,
+    videoReferTypeSetting,
   ])
 
   const mappedVideoControlBindings = React.useMemo(() => {
-    return new Set<VideoModelControlBinding>(mappedVideoControls.map((control) => control.binding))
+    return new Set<ToolbarMappedControl['binding']>(mappedVideoControls.map((control) => control.binding))
   }, [mappedVideoControls])
+
+  // whenSelected 约束：由当前 imageSize 选项决定
+  const selectedImageSizeConstraint = React.useMemo(() => {
+    if (!imageModelConfig) return null
+    return imageModelConfig.imageSizeOptions.find((o) => o.value === imageSize)?.whenSelected ?? null
+  }, [imageModelConfig, imageSize])
+
+  // 受约束的比例选项：whenSelected.aspectRatioOptions 存在时覆盖全局列表
+  const effectiveImageAspectOptions = React.useMemo(() => {
+    const constrained = selectedImageSizeConstraint?.aspectRatioOptions
+    if (constrained?.length) {
+      return constrained.map((v) => ({ value: v, label: v }))
+    }
+    return configuredImageAspectOptions
+  }, [configuredImageAspectOptions, selectedImageSizeConstraint])
+
+  // 当 imageSize 切换后，若当前比例不在有效列表内则自动修正
+  React.useEffect(() => {
+    if (!effectiveImageAspectOptions.length) return
+    if (effectiveImageAspectOptions.some((o) => o.value === aspect)) return
+    const first = effectiveImageAspectOptions[0]?.value
+    if (first) {
+      setAspect(first)
+      updateNodeData(id, { aspect: first })
+    }
+  }, [aspect, effectiveImageAspectOptions, id, updateNodeData])
 
   const mappedImageControls = React.useMemo<ReadonlyArray<ToolbarMappedControl>>(() => {
     if (isVideoNode || !imageModelConfig) return []
-    return imageModelConfig.controls.flatMap((control) => {
+    const hiddenBindings = new Set(selectedImageSizeConstraint?.hides ?? [])
+    return imageModelConfig.controls.flatMap((control): ToolbarMappedControl[] => {
       if (control.binding === 'aspectRatio') {
-        if (!configuredImageAspectOptions.length) return []
+        if (!effectiveImageAspectOptions.length) return []
+        const selectedAspectOption = effectiveImageAspectOptions.find((o) => o.value === aspect)
         return [{
           key: control.key,
           binding: control.binding,
           title: control.label,
-          summary: selectedConfiguredImageAspectOption?.label || aspect,
-          options: configuredImageAspectOptions,
+          summary: selectedAspectOption?.label || aspect,
+          options: effectiveImageAspectOptions,
           onChange: handleToolbarSizeChange,
         }]
       }
       if (control.binding === 'imageSize') {
         if (imageSizeMatchesResolutionOptions) return []
-        if (!configuredImageSizeOptions.length) return []
+        // 单档不渲染下拉，避免单选项的伪菜单
+        if (configuredImageSizeOptions.length <= 1) return []
         return [{
           key: control.key,
           binding: control.binding,
@@ -4461,12 +3481,17 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           options: configuredImageSizeOptions,
           onChange: (value: string) => {
             setImageSize(value)
-            updateNodeData(id, { imageSize: value })
+            // 同步 imageResolution / resolution，spec key 优先读 imageResolution，
+            // 不同步会让切换分辨率时积分不变。
+            setImageResolution(value)
+            updateNodeData(id, { imageSize: value, imageResolution: value, resolution: value })
+            persistRecentGenerationPrefs({ imageSize: value })
           },
         }]
       }
       if (control.binding === 'resolution') {
-        if (!configuredImageResolutionOptions.length) return []
+        if (hiddenBindings.has('resolution')) return []
+        if (configuredImageResolutionOptions.length <= 1) return []
         return [{
           key: control.key,
           binding: control.binding,
@@ -4475,7 +3500,25 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           options: configuredImageResolutionOptions,
           onChange: (value: string) => {
             setImageResolution(value)
-            updateNodeData(id, { imageResolution: value, resolution: value })
+            // 同步 imageSize 让 catalog 默认值算出的 specKey 与 toolbar 显示对齐。
+            setImageSize(value)
+            updateNodeData(id, { imageResolution: value, resolution: value, imageSize: value })
+            persistRecentGenerationPrefs({ imageSize: value })
+          },
+        }]
+      }
+      if (control.binding === 'quality') {
+        if (configuredImageQualityOptions.length <= 1) return []
+        const selectedQualityOption = configuredImageQualityOptions.find((option) => option.value === imageQuality)
+        return [{
+          key: control.key,
+          binding: control.binding,
+          title: '画质',
+          summary: selectedQualityOption?.label || imageQuality,
+          options: configuredImageQualityOptions,
+          onChange: (value: string) => {
+            setImageQuality(value)
+            updateNodeData(id, { imageQuality: value })
           },
         }]
       }
@@ -4484,18 +3527,22 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   }, [
     aspect,
     configuredImageAspectOptions,
+    configuredImageQualityOptions,
     configuredImageResolutionOptions,
     configuredImageSizeOptions,
+    effectiveImageAspectOptions,
     handleToolbarSizeChange,
     id,
     imageModelConfig,
+    imageQuality,
     imageResolution,
     imageSize,
     imageSizeMatchesResolutionOptions,
     isVideoNode,
-    selectedConfiguredImageAspectOption,
+    persistRecentGenerationPrefs,
     selectedConfiguredImageResolutionOption,
     selectedConfiguredImageSizeOption,
+    selectedImageSizeConstraint,
     updateNodeData,
   ])
 
@@ -4505,7 +3552,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         .map((control) => control.binding)
         .filter(
           (binding): binding is ImageModelControlBinding =>
-            binding === 'aspectRatio' || binding === 'imageSize' || binding === 'resolution',
+            binding === 'aspectRatio' || binding === 'imageSize' || binding === 'resolution' || binding === 'quality',
         ),
     )
   }, [mappedImageControls])
@@ -4521,8 +3568,84 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const showImageSizeMenu =
     hasImageSize &&
     !imageSizeMatchesResolutionOptions &&
-    (imageModelConfig ? configuredImageSizeOptions.length > 0 : true) &&
+    // 单档选项（如 gemini-2.5-flash-image-preview 只支持 1K）就不渲染下拉，
+    // 避免出现 1 项的伪选择菜单。
+    (imageModelConfig ? configuredImageSizeOptions.length > 1 : true) &&
     !mappedImageControlBindings.has('imageSize')
+
+  const mediaGenerationSettings = React.useMemo(() => {
+    if (isVideoComposeNode || isAudioNode || !(isVideoNode || coreKind === 'image')) return null
+    return buildMediaGenerationSettings({
+      kind: isVideoNode ? 'video' : 'image',
+      aspect,
+      videoSize,
+      orientation,
+      effectiveVideoResolution,
+      imageResolution,
+      imageSize,
+      imageQuality,
+      videoReferType: videoReferTypeSetting,
+      mappedControls: isVideoNode ? mappedVideoControls : mappedImageControls,
+      fallbackAspectOptions: isVideoNode ? configuredSizeOptions : effectiveImageAspectOptions,
+      onFallbackAspectChange: handleToolbarSizeChange,
+      duration: isVideoNode && durationOptions.length > 0
+        ? {
+            value: videoDuration,
+            options: durationOptions,
+            onChange: handleToolbarDurationChange,
+          }
+        : null,
+      audio: isVideoNode && videoModelConfig?.supportsNativeAudio === true
+        ? {
+            value: videoGenerateAudio,
+            onChange: (value: boolean) => {
+              setVideoGenerateAudio(value)
+              updateNodeData(id, { videoGenerateAudio: value })
+            },
+          }
+        : null,
+      summaryAspect: isVideoNode
+        ? summaryVideoSize
+        : selectedConfiguredImageAspectOption?.label || aspect,
+      summaryResolution: summaryVideoResolution,
+      summaryDuration,
+      quantity: runCount,
+      onQuantityChange: (value: number) => {
+        setRunCount(value)
+        updateNodeData(id, { runCount: value })
+      },
+    })
+  }, [
+    aspect,
+    configuredSizeOptions,
+    coreKind,
+    durationOptions,
+    effectiveImageAspectOptions,
+    effectiveVideoResolution,
+    handleToolbarDurationChange,
+    handleToolbarSizeChange,
+    id,
+    imageResolution,
+    imageSize,
+    imageQuality,
+    isAudioNode,
+    isVideoComposeNode,
+    isVideoNode,
+    mappedImageControls,
+    mappedVideoControls,
+    orientation,
+    runCount,
+    selectedConfiguredImageAspectOption,
+    summaryDuration,
+    summaryVideoResolution,
+    summaryVideoSize,
+    updateNodeData,
+    videoDuration,
+    videoGenerateAudio,
+    videoModelConfig?.supportsNativeAudio,
+    videoReferTypeSetting,
+    videoSize,
+  ])
   React.useEffect(() => {
     if (typeof persistedCharacterRewriteModel === 'string' && persistedCharacterRewriteModel.trim() && persistedCharacterRewriteModel !== characterRewriteModel) {
       setCharacterRewriteModel(persistedCharacterRewriteModel)
@@ -4549,95 +3672,26 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     setPromptSamplesOpen(false)
   }, [id, updateNodeData])
 
-  React.useEffect(() => {
-    const fromData = (data as any)?.llmPresetId
-    const next = typeof fromData === 'string' && fromData.trim() ? fromData : null
-    setSelectedPresetId((prev) => (prev === next ? prev : next))
-  }, [(data as any)?.llmPresetId])
-
-  React.useEffect(() => {
-    setNewPresetType(presetType)
-  }, [presetType])
-
-  const reloadNodePresets = React.useCallback(async () => {
-    setPresetLoading(true)
-    try {
-      const list = await listLlmNodePresets({ type: presetType })
-      setPresetItems(Array.isArray(list) ? list : [])
-    } catch (err: any) {
-      setPresetItems([])
-      toast(err?.message || '加载节点预设失败', 'error')
-    } finally {
-      setPresetLoading(false)
-    }
-  }, [presetType])
-
-  React.useEffect(() => {
-    void reloadNodePresets()
-  }, [reloadNodePresets])
-
-  const handlePresetChange = React.useCallback((presetId: string | null) => {
-    setSelectedPresetId(presetId)
-    if (!presetId) {
-      updateNodeData(id, { llmPresetId: null })
-      return
-    }
-    const selectedPreset = presetItems.find((item) => item.id === presetId)
-    if (!selectedPreset) {
-      updateNodeData(id, { llmPresetId: presetId })
-      return
-    }
-    setPrompt(selectedPreset.prompt)
-    updateNodeData(id, {
-      prompt: selectedPreset.prompt,
-      llmPresetId: selectedPreset.id,
-      llmPresetType: selectedPreset.type,
-      llmPresetTitle: selectedPreset.title,
-    })
-  }, [id, presetItems, updateNodeData])
-
-  const handleCreateNodePreset = React.useCallback(async () => {
-    const title = newPresetTitle.trim()
-    const promptText = newPresetPrompt.trim()
-    if (!title || !promptText) {
-      toast('请填写预设名称和提示词', 'error')
-      return
-    }
-    setPresetSaving(true)
-    try {
-      const created = await createLlmNodePreset({
-        title,
-        prompt: promptText,
-        type: newPresetType,
-      })
-      setPresetModalOpen(false)
-      setNewPresetTitle('')
-      setNewPresetPrompt('')
-      await reloadNodePresets()
-      const shouldApplyPrompt = created.type === presetType
-      if (shouldApplyPrompt) {
-        setSelectedPresetId(created.id)
-        setPrompt(created.prompt)
-        updateNodeData(id, {
-          prompt: created.prompt,
-          llmPresetId: created.id,
-          llmPresetType: created.type,
-          llmPresetTitle: created.title,
-        })
-      }
-      toast('预设创建成功', 'success')
-    } catch (err: any) {
-      toast(err?.message || '创建预设失败', 'error')
-    } finally {
-      setPresetSaving(false)
-    }
-  }, [id, newPresetPrompt, newPresetTitle, newPresetType, presetType, reloadNodePresets, updateNodeData])
+  const handleApplyPromptLibraryEntry = React.useCallback((promptText: string) => {
+    setPrompt(promptText)
+    updateNodeData(id, { prompt: promptText })
+  }, [id, updateNodeData])
 
   const applyVeoReferenceImages = React.useCallback((next: string[]) => {
     const normalized = normalizeVeoReferenceUrls(next)
     setVeoReferenceImages(normalized)
     updateNodeData(id, { veoReferenceImages: normalized })
   }, [id, updateNodeData])
+
+  const clearVideoReferenceEdges = React.useCallback(() => {
+    const state = useRFStore.getState()
+    const edgeIds = collectOrderedUpstreamReferenceItems(state.nodes, state.edges, id).map((item) => item.edgeId)
+    if (edgeIds.length > 0) {
+      state.onEdgesChange(edgeIds.map((edgeId) => ({ id: edgeId, type: 'remove' as const })))
+    }
+    updateNodeData(id, { upstreamReferenceOrder: [] })
+    closeCanvasReferencePicker()
+  }, [closeCanvasReferencePicker, id, updateNodeData])
 
   const handleReferenceToggle = React.useCallback((url: string) => {
     if (firstFrameLocked) return
@@ -4669,7 +3723,8 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     if (veoReferenceImages.length) {
       applyVeoReferenceImages([])
     }
-  }, [applyVeoReferenceImages, id, updateNodeData, veoReferenceImages.length])
+    clearVideoReferenceEdges()
+  }, [applyVeoReferenceImages, clearVideoReferenceEdges, id, updateNodeData, veoReferenceImages.length])
 
   const handleSetLastFrameUrl = React.useCallback((value: string) => {
     if (!firstFrameLocked) return
@@ -4685,83 +3740,16 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const openVeoModal = React.useCallback((mode: 'first' | 'last' | 'reference') => {
     setVeoImageModalMode(mode)
   }, [])
-  const closeVeoModal = React.useCallback(() => setVeoImageModalMode(null), [])
-
-  const showUpstreamPreview = Boolean(isSingleSelectionActive && isComposerNode)
-  const upstreamSourceId = useRFStore(
-    React.useCallback((s) => {
-      if (!showUpstreamPreview) return null
-      let lastSource: string | null = null
-      s.edges.forEach((edge) => {
-        if (edge.target === id) lastSource = edge.source
-      })
-      return lastSource
-    }, [id, showUpstreamPreview]),
-  )
-  const upstreamSourceData = useRFStore(
-    React.useCallback((s) => {
-      if (!upstreamSourceId) return null
-      const src = s.nodes.find((n) => n.id === upstreamSourceId)
-      return src ? (src.data as any) : null
-    }, [upstreamSourceId]),
-  )
-  const { upstreamText, upstreamImageUrl, upstreamVideoUrl } = React.useMemo(() => {
-    if (!showUpstreamPreview || !upstreamSourceData) {
-      return {
-        upstreamText: null as string | null,
-        upstreamImageUrl: null as string | null,
-        upstreamVideoUrl: null as string | null,
-      }
-    }
-
-    const sd: any = upstreamSourceData || {}
-    const skind: string | undefined = sd.kind
-    const sourceSchema = getTaskNodeSchema(skind)
-    const sourceFeatures = new Set(sourceSchema.features)
-    const sourceIsImageNode =
-      sourceSchema.category === 'image' || sourceFeatures.has('image') || sourceFeatures.has('imageResults')
-    const sourceHasVideoResults =
-      sourceFeatures.has('videoResults') ||
-      sourceFeatures.has('video') ||
-      sourceSchema.category === 'video' ||
-      sourceSchema.category === 'composer' ||
-      sourceSchema.category === 'storyboard'
-
-    // 获取最新的主文本 / 提示词
-    const uText =
-      sd.prompt && typeof sd.prompt === 'string'
-        ? sd.prompt
-        : sourceFeatures.has('textResults') && sd.textResults && sd.textResults.length > 0
-          ? sd.textResults[sd.textResults.length - 1]
-          : sourceSchema.category === 'document'
-            ? (sd.prompt as string | undefined) || (sd.label as string | undefined) || null
-            : null
-
-    // 获取最新的主图片 URL
-    let uImg = null as string | null
-    if (sourceIsImageNode) {
-      uImg = (sd.imageUrl as string | undefined) || null
-    } else if (sourceHasVideoResults && sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
-      uImg = sd.videoResults[sd.videoPrimaryIndex]?.thumbnailUrl || sd.videoResults[0]?.thumbnailUrl
-    }
-
-    // 获取最新的主视频 URL
-    let uVideo = null as string | null
-    if (sourceHasVideoResults) {
-      if (sd.videoResults && sd.videoResults.length > 0 && sd.videoPrimaryIndex !== undefined) {
-        uVideo = sd.videoResults[sd.videoPrimaryIndex]?.url || sd.videoResults[0]?.url
-      } else {
-        uVideo = (sd.videoUrl as string | undefined) || null
-      }
-    }
-
-    return { upstreamText: uText, upstreamImageUrl: uImg, upstreamVideoUrl: uVideo }
-  }, [showUpstreamPreview, upstreamSourceData])
+  const closeVeoModal = React.useCallback(() => {
+    setVeoImageModalMode(null)
+    setContinueVeoSelectionToLastFrame(false)
+  }, [])
 
   const buildFeaturePatch = React.useCallback((nextPrompt: string) => {
     const patch: Record<string, unknown> = { prompt: nextPrompt }
     if (hasAspect) patch.aspect = aspect
     if (hasImageSize) patch.imageSize = imageSize
+    if (!isVideoNode && imageSpecKey) patch.specKey = imageSpecKey
     if (hasImageResults) {
       patch.imageModel = imageModel
       patch.imageModelVendor = null
@@ -4794,6 +3782,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     hasVideo,
     hasVideoResults,
     imageModel,
+    imageSpecKey,
     isVideoNode,
     modelKey,
     sampleCount,
@@ -4806,8 +3795,26 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   ])
 
   const runNode = () => {
+    if (isOrchestratedVideoClip) {
+      requestVideoClipAgentAction({
+        nodeId: id,
+        action: 'resume_clip',
+        runId: readVideoClipRunId(data),
+        clipIndex: readVideoClipIndex(data),
+      })
+      return
+    }
     if (isPlainTextNode) {
       updateNodeData(id, { prompt })
+      return
+    }
+    const liveNodeData = useRFStore.getState().nodes.find((node) => node.id === id)?.data
+    const nodeRecord = (liveNodeData ?? data) as Record<string, unknown>
+    if (
+      nodeRecord.libTvImageOperationKey === 'portrait-adjust'
+      && nodeRecord.portraitTextureSelectionStatus !== 'confirmed'
+    ) {
+      toast('请先在原图上选择要调节的人物并确认', 'error')
       return
     }
     let nextPrompt = (prompt || (data as any)?.prompt || '').trim()
@@ -4818,114 +3825,17 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       setPrompt(nextPrompt)
     }
     updateNodeData(id, patch)
+    if ((isVideoNode || coreKind === 'image') && runCount > 1) {
+      // 批量分支执行：克隆 runCount-1 个同节点并行跑（继承上下游连线、剥离旧结果）
+      void useRFStore.getState().runNodeBranchClones(id, runCount)
+      return
+    }
     runSelected()
   }
 
-  const handleAdoptVideo = React.useCallback((idx: number) => {
-    const target = videoResults[idx]
-    if (!target) return
-    updateNodeData(id, {
-      adoptedVideoAsset: {
-        index: idx,
-        url: target.url,
-        adoptedAt: new Date().toISOString(),
-        progress: typeof data?.progress === 'number' && Number.isFinite(data.progress) ? data.progress : null,
-      } satisfies AdoptedAssetMetadata,
-    })
-    toast(`已采纳第 ${idx + 1} 个视频`, 'success')
-  }, [data?.progress, id, updateNodeData, videoResults])
-
-	  const videoContent = !isVideoNode
-	    ? null
-	    : (
-	      <VideoContent
-        videoResults={videoResults}
-        videoPrimaryIndex={videoPrimaryIndex}
-        adoptedVideoIndex={adoptedVideoIndex}
-        isPrimaryVideoAdopted={isPrimaryVideoAdopted}
-        videoUrl={videoUrl}
-        videoThumbnailUrl={videoThumbnailUrl}
-        videoTitle={videoTitle}
-        frameCaptureLoading={frameCaptureLoading}
-        frameSamples={frameSamples}
-        handleCaptureVideoFrames={handleCaptureVideoFrames}
-        cleanupFrameSamples={cleanupFrameSamples}
-        mediaOverlayBackground={mediaOverlayBackground}
-        mediaOverlayText={mediaOverlayText}
-        mediaFallbackSurface={mediaFallbackSurface}
-        mediaFallbackText={mediaFallbackText}
-		        inlineDividerColor={inlineDividerColor}
-		        accentPrimary={accentPrimary}
-		        rgba={rgba}
-		        videoSurface={videoSurface}
-		        onAdoptVideo={handleAdoptVideo}
-		        onOpenVideoModal={() => setVideoExpanded(true)}
-		        onOpenWebCut={
-		          viewOnly
-		            ? undefined
-		            : () => {
-	              const src = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
-              if (!src) {
-                toast('暂无可剪辑的视频', 'error')
-                return
-              }
-
-              const baseTitle =
-                (videoResults[videoPrimaryIndex]?.title || videoTitle || '').trim() ||
-                'clip'
-              const nextTitle = `${baseTitle}-剪辑`
-
-              openWebCutVideoEditModal({
-                nodeId: id,
-                videoUrl: src,
-                videoTitle: baseTitle,
-                onApply: async (result) => {
-                  const before = useRFStore.getState()
-                  const beforeIds = new Set(before.nodes.map((n) => n.id))
-
-                  addNode('taskNode', undefined, {
-                    kind: 'video',
-                    videoUrl: result.url,
-                    videoThumbnailUrl: result.thumbnailUrl || null,
-                    videoTitle: nextTitle,
-                    serverAssetId: result.assetId,
-                  })
-
-                  const after = useRFStore.getState()
-                  const newNode = after.nodes.find((n) => !beforeIds.has(n.id))
-                  if (!newNode) {
-                    toast('剪辑已上传，但未能创建新视频节点', 'error')
-                    return
-                  }
-
-                  const sourceNode = after.nodes.find((n) => n.id === id)
-                  const targetPos = {
-                    x: (sourceNode?.position?.x || 0) + 520,
-                    y: sourceNode?.position?.y || 0,
-                  }
-                  after.onNodesChange([
-                    { id: newNode.id, type: 'position', position: targetPos, dragging: false },
-                    { id: newNode.id, type: 'select', selected: true },
-                  ])
-                },
-              })
-            }
-	        }
-	      />
-	    )
-
-	  const characterContentProps = null
-
-	  const mosaicProps = {
-	    imageResults,
-	    imagePrimaryIndex,
-	    placeholderColor: placeholderIconColor,
-    mosaicGrid,
-    onOpenModal: () => setMosaicModalOpen(true),
-    onSave: handleMosaicSave,
-  }
-
   const handleImageUpload = React.useCallback(async (files: File[]) => {
+    const requestedEmptyAction = pendingImageUploadActionRef.current
+    pendingImageUploadActionRef.current = null
     if (!supportsImageUpload) return
     if (nodeHasUploadIntent || nodeHasPendingUploads) {
       toast('当前节点仍有图片上传中，请等待完成后再试', 'info')
@@ -5090,7 +4000,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       }
 
       if (successCount === 0) {
-        toast('已添加图片，但未能托管到 OSS/R2，将仅使用本地预览（无法用于远程任务）', 'error')
+        toast('已添加图片，但未能托管到 TOS，将仅使用本地预览（无法用于远程任务）', 'error')
       }
 
       if (successCount > 0 && extraPrepared.length) {
@@ -5114,6 +4024,11 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           }
         })
       }
+      if (successCount > 0 && requestedEmptyAction === 'image-upscale') {
+        setHdPanelOpen(true)
+      } else if (successCount > 0 && requestedEmptyAction === 'image-to-image') {
+        toast('参考图已加载，请输入改图指令', 'success')
+      }
     } catch (error) {
       console.error('Failed to upload image:', error)
       toast('上传图片失败，请稍后再试', 'error')
@@ -5122,18 +4037,613 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }
   }, [supportsImageUpload, nodeHasUploadIntent, nodeHasPendingUploads, id, updateNodeData])
 
+  const [videoUploading, setVideoUploading] = React.useState(false)
+
+  const handleVideoUpload = React.useCallback(async (files: File[]) => {
+    if (!isVideoNode || viewOnly) return
+    const valid = (files || []).filter((f) => {
+      if (!f.type.startsWith('video/')) return false
+      const MAX_BYTES = 500 * 1024 * 1024
+      if (f.size > MAX_BYTES) {
+        toast(`视频 "${f.name}" 超过 500MB，已跳过`, 'error')
+        return false
+      }
+      return true
+    })
+    if (!valid.length) return
+
+    setVideoUploading(true)
+    for (const file of valid) {
+      const localUrl = URL.createObjectURL(file)
+      const title = file.name.replace(/\.[a-z0-9]+$/i, '').trim() || '上传视频'
+      updateNodeData(id, { videoUrl: localUrl })
+      try {
+        const hosted = await uploadServerAssetFile(file, title, { ownerNodeId: id })
+        const url = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
+        if (url) {
+          updateNodeData(id, {
+            videoUrl: url,
+            videoResults: [...videoResults, { url, title, thumbnailUrl: null, duration: null }],
+            videoPrimaryIndex: videoResults.length,
+            serverAssetId: hosted.id,
+          })
+          URL.revokeObjectURL(localUrl)
+        } else {
+          toast('视频上传成功但未获取到链接，使用本地预览', 'error')
+        }
+      } catch (error) {
+        console.error('Failed to upload video:', error)
+        toast('视频上传失败，请稍后再试', 'error')
+        URL.revokeObjectURL(localUrl)
+        updateNodeData(id, { videoUrl: null })
+      }
+    }
+    setVideoUploading(false)
+  }, [isVideoNode, viewOnly, id, updateNodeData, videoResults])
+
   const isImageNode = coreKind === 'image'
+
+  // ─── Image → 3D ───────────────────────────────────────────────────────────
+  const [show3dPanel, setShow3dPanel] = React.useState(false)
+  const sleep3d = React.useCallback((ms: number) => new Promise<void>((r) => setTimeout(r, ms)), [])
+  const legacyImageUrl = (data as any)?.imageUrl as string | undefined
+  const handleRun3d = React.useCallback(async (p: Image3DParams) => {
+    setShow3dPanel(false)
+    const imageUrl = primaryImageUrl || legacyImageUrl
+    if (!imageUrl) {
+      toast('请先生成或上传图片', 'error')
+      return
+    }
+    // 参照图片编辑/重绘的交互：3D 结果落在右侧新建的下游节点（原图节点保持不动），
+    // 新节点继承原图作占位预览，连线 out-image → in-image，完成后自动切 3D 视图。
+    const beforeIds = new Set(useRFStore.getState().nodes.map(n => n.id))
+    addNode('taskNode', '3D 模型', {
+      kind: 'image',
+      prompt: p.prompt,
+      imageUrl,
+      model3dStatus: 'running',
+      model3dPrompt: p.prompt,
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find(n => !beforeIds.has(n.id))
+    if (!newNode) {
+      toast('3D 节点创建失败', 'error')
+      return
+    }
+    const targetId = newNode.id
+    const sourceNode = afterAdd.nodes.find(n => n.id === id)
+    // nodeWidth 声明在本回调之后，这里从节点实测宽度取（fallback 520）
+    const srcWidth = Number((sourceNode as any)?.measured?.width ?? (sourceNode as any)?.width) || 520
+    afterAdd.onNodesChange([{
+      id: targetId, type: 'position' as const,
+      position: { x: (sourceNode?.position?.x ?? 0) + srcWidth + 80, y: sourceNode?.position?.y ?? 0 },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-image', target: targetId, targetHandle: 'in-image' })
+    setNodeStatus(targetId, 'running', { progress: 5 })
+    try {
+      let result = await runTaskByVendor('doubao', withCanvasGenerationContext({
+        kind: 'image_to_3d',
+        prompt: p.prompt,
+        extras: { modelKey: 'doubao-seed3d-2-0-260328', imageUrl },
+      }, useUIStore.getState(), targetId))
+      const taskId = result.id
+      updateNodeData(targetId, { model3dStatus: 'running', model3dPrompt: p.prompt, model3dTaskId: taskId })
+      const deadline = Date.now() + 15 * 60 * 1000
+      while (result.status !== 'succeeded' && result.status !== 'failed' && Date.now() < deadline) {
+        await sleep3d(3000)
+        const res = await fetchPublicTaskResultWithAuth({ taskId, taskKind: 'image_to_3d', prompt: p.prompt })
+        result = res.result
+        setNodeStatus(targetId, 'running', { progress: 50, model3dStatus: 'running' })
+      }
+      if (result.status !== 'succeeded' && result.status !== 'failed') {
+        throw new Error('3D 生成超时（超过 15 分钟），请稍后重试')
+      }
+      if (result.status === 'failed') throw new Error('3D 生成失败')
+      const url = result.assets?.find((a) => a.url)?.url
+      if (!url) throw new Error('未返回 3D 模型 URL')
+      setNodeStatus(targetId, 'success', { progress: 100, model3dStatus: 'success', model3dUrl: url, model3dView: true })
+      notifyAssetRefresh()
+    } catch (e) {
+      setNodeStatus(targetId, 'error', { model3dStatus: 'error', lastError: e instanceof Error ? e.message : '3D 生成失败' })
+    }
+  }, [addNode, id, primaryImageUrl, legacyImageUrl, setNodeStatus, updateNodeData, sleep3d])
+
+  // ─── Video → Enhance ──────────────────────────────────────────────────────
+  const [showEnhancePanel, setShowEnhancePanel] = React.useState(false)
+  const handleRunEnhance = React.useCallback(async (p: EnhanceParams) => {
+    setShowEnhancePanel(false)
+    const sourceData = data as Record<string, unknown>
+    const vr = Array.isArray(sourceData.videoResults)
+      ? sourceData.videoResults.filter((entry): entry is Record<string, unknown> => (
+        Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry)
+      ))
+      : []
+    const pidx = typeof sourceData.videoPrimaryIndex === 'number' ? sourceData.videoPrimaryIndex : 0
+    const srcUrl = String(vr[pidx]?.url || sourceData.videoUrl || vr[0]?.url || '').trim()
+    if (!srcUrl) {
+      toast('当前节点没有可增强的视频', 'error')
+      return
+    }
+    const sourceNode = useRFStore.getState().nodes.find((node) => node.id === id)
+    const sourceWidth = sourceNode?.measured?.width ?? sourceNode?.width ?? 520
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', '画质增强', {
+      kind: 'video',
+      videoResults: [],
+      videoPrimaryIndex: 0,
+      videoDuration: typeof sourceData.videoDuration === 'number' ? sourceData.videoDuration : undefined,
+      sourceVideoNodeId: id,
+      sourceVideoUrl: srcUrl,
+      videoEnhanceParams: p,
+      prompt: typeof sourceData.prompt === 'string' ? sourceData.prompt : '',
+      status: 'queued',
+      progress: 0,
+    })
+    const afterAdd = useRFStore.getState()
+    const outputNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!outputNode) {
+      toast('画质增强占位节点创建失败', 'error')
+      return
+    }
+    afterAdd.onNodesChange([{
+      id: outputNode.id,
+      type: 'position' as const,
+      position: {
+        x: (sourceNode?.position?.x ?? 0) + sourceWidth + 80,
+        y: sourceNode?.position?.y ?? 0,
+      },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: outputNode.id, targetHandle: 'in-video' })
+    afterAdd.clearPendingFocusNodeId()
+    setNodeStatus(outputNode.id, 'running', { progress: 5 })
+
+    const startTime = Date.now()
+    try {
+      const specKey = computeEnhanceSpecKey(p)
+      const extras: Record<string, unknown> = {
+        modelKey: 'volc-enhance-video',
+        video_url: srcUrl,
+        specKey,
+        tool_version: p.tool_version,
+        scene: p.scene,
+      }
+      if (p.fps !== undefined) extras.fps = p.fps
+      if (p.resolution) extras.resolution = p.resolution
+      if (p.resolution_limit) extras.resolution_limit = p.resolution_limit
+      let result = await runTaskByVendor('volc', withCanvasGenerationContext(
+        { kind: 'video_enhance', prompt: '', extras },
+        useUIStore.getState(),
+        outputNode.id,
+      ))
+      const taskId = result.id
+      const deadline = Date.now() + 30 * 60 * 1000
+      while (result.status !== 'succeeded' && result.status !== 'failed' && Date.now() < deadline) {
+        await new Promise<void>((r) => setTimeout(r, 5000))
+        const res = await fetchPublicTaskResultWithAuth({ taskId, taskKind: 'video_enhance', prompt: '' })
+        result = res.result
+        const elapsed = Date.now() - startTime
+        const prog = Math.min(90, 10 + Math.floor((elapsed / (30 * 60 * 1000)) * 80))
+        setNodeStatus(outputNode.id, 'running', { progress: prog })
+      }
+      if (result.status !== 'succeeded' && result.status !== 'failed') {
+        throw new Error('画质增强超时（超过 30 分钟），请稍后重试')
+      }
+      if (result.status === 'failed') throw new Error('画质增强失败')
+      const url = result.assets?.find((asset) => typeof asset.url === 'string' && asset.url.trim())?.url?.trim()
+      if (!url) throw new Error('未返回增强视频 URL')
+      updateNodeData(outputNode.id, {
+        videoUrl: url,
+        videoResults: [{ url, title: '画质增强', duration: sourceData.videoDuration }],
+        videoPrimaryIndex: 0,
+        videoDuration: sourceData.videoDuration,
+      })
+      setNodeStatus(outputNode.id, 'success', { progress: 100 })
+      notifyAssetRefresh()
+      toast('画质增强完成，结果已回填到新视频节点', 'success')
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '画质增强失败'
+      setNodeStatus(outputNode.id, 'error', { lastError: message })
+      toast(message, 'error')
+    }
+  }, [addNode, data, id, setNodeStatus, updateNodeData])
+
+  const handleVideoEditSubmit = React.useCallback(async (input: {
+    mode: Exclude<VideoToolEditorMode, 'separation'>
+    selections: Array<{ id: string; x: number; y: number; width: number; height: number }>
+    modelValue: string
+  }): Promise<void> => {
+    const sourceData = data as Record<string, unknown>
+    const rawResults = Array.isArray(sourceData.videoResults) ? sourceData.videoResults : []
+    const primaryIndex = typeof sourceData.videoPrimaryIndex === 'number' ? sourceData.videoPrimaryIndex : 0
+    const primary = rawResults[primaryIndex] as Record<string, unknown> | undefined
+    const first = rawResults[0] as Record<string, unknown> | undefined
+    const sourceUrl = String(primary?.url || sourceData.videoUrl || first?.url || '').trim()
+    if (!sourceUrl || !/^https?:\/\//i.test(sourceUrl)) {
+      throw new Error('当前节点没有可处理的真实视频 URL')
+    }
+    const modelOptions = input.mode === 'subject' ? videoSubjectRemovalModelOptions : videoSubtitleRemovalModelOptions
+    const modelOption = findModelOptionByIdentifier(modelOptions, input.modelValue)
+    if (!modelOption) throw new Error('当前编辑模型不可用，请重新选择')
+    const modelKey = getModelOptionRequestAlias(modelOptions, modelOption.value) || modelOption.value
+    const actionModelConfig = parseVideoModelCatalogConfig(modelOption.meta)
+    const editOperation = input.mode === 'subject'
+      ? 'subject_remove'
+      : input.mode === 'subtitle-auto'
+        ? 'subtitle_remove_auto'
+        : 'subtitle_remove'
+    const selectionSummary = input.selections
+      .map((selection, index) => `区域${index + 1}(x=${selection.x.toFixed(4)},y=${selection.y.toFixed(4)},w=${selection.width.toFixed(4)},h=${selection.height.toFixed(4)})`)
+      .join('；')
+    const prompt = input.mode === 'subject'
+      ? `移除视频中指定区域内的主体，对整段视频进行跨帧对象跟踪，并使用时序一致的背景修复自然填补原主体区域。${selectionSummary ? `选区为：${selectionSummary}。` : ''}`
+      : input.mode === 'subtitle-auto'
+        ? '自动识别并移除整段视频中的硬字幕、贴纸字幕和时间轴字幕，保持人物、背景、镜头运动与画面纹理连续，不改变原视频内容。'
+        : `移除视频中指定区域内的字幕，对整段视频进行跨帧跟踪与时序修复，保持背景纹理和镜头运动连续。选区为：${selectionSummary}。`
+
+    const sourceNode = useRFStore.getState().nodes.find((node) => node.id === id)
+    const sourceWidth = sourceNode?.measured?.width ?? sourceNode?.width ?? 520
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', input.mode === 'subject' ? '主体消除' : '去字幕', {
+      kind: 'video',
+      videoResults: [],
+      videoPrimaryIndex: 0,
+      videoDuration: typeof sourceData.videoDuration === 'number' ? sourceData.videoDuration : undefined,
+      sourceVideoNodeId: id,
+      sourceVideoUrl: sourceUrl,
+      videoEditOperation: editOperation,
+      videoEditSelections: input.selections,
+      videoEditModel: modelKey,
+      prompt,
+      status: 'queued',
+      progress: 0,
+    })
+    const afterAdd = useRFStore.getState()
+    const outputNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!outputNode) throw new Error('视频编辑占位节点创建失败')
+    afterAdd.onNodesChange([{
+      id: outputNode.id,
+      type: 'position' as const,
+      position: {
+        x: (sourceNode?.position?.x ?? 0) + sourceWidth + 80,
+        y: sourceNode?.position?.y ?? 0,
+      },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: outputNode.id, targetHandle: 'in-video' })
+    afterAdd.clearPendingFocusNodeId()
+    setNodeStatus(outputNode.id, 'running', { progress: 5 })
+
+    const startedAt = Date.now()
+    try {
+      const sourceDurationRaw = typeof sourceData.videoDuration === 'number' && Number.isFinite(sourceData.videoDuration)
+        ? sourceData.videoDuration
+        : typeof primary?.duration === 'number' && Number.isFinite(primary.duration)
+          ? primary.duration
+          : undefined
+      const sourceDurationSeconds = typeof sourceDurationRaw === 'number' && sourceDurationRaw > 0
+        ? Math.max(1, Math.ceil(sourceDurationRaw))
+        : undefined
+      const declaredDurationOptions = (actionModelConfig?.durationOptions || [])
+        .map((option) => option.value)
+        .filter((value) => Number.isFinite(value) && value > 0)
+      const declaredMaxDuration = declaredDurationOptions.length > 0
+        ? Math.max(...declaredDurationOptions)
+        : undefined
+      const declaredMinDuration = declaredDurationOptions.length > 0
+        ? Math.min(...declaredDurationOptions)
+        : undefined
+      if (sourceDurationSeconds !== undefined && declaredMaxDuration !== undefined && sourceDurationSeconds > declaredMaxDuration) {
+        throw new Error(`所选编辑模型“${getTaskNodeModelDisplayLabel(modelOption)}”最多处理 ${declaredMaxDuration} 秒；当前源视频为 ${sourceDurationSeconds} 秒，请先裁剪或更换支持长视频的模型。`)
+      }
+      if (sourceDurationSeconds !== undefined && declaredMinDuration !== undefined && sourceDurationSeconds < declaredMinDuration) {
+        throw new Error(`所选编辑模型“${getTaskNodeModelDisplayLabel(modelOption)}”要求至少 ${declaredMinDuration} 秒；当前源视频为 ${sourceDurationSeconds} 秒，请先补足片段或更换模型。`)
+      }
+      // 编辑模型的 duration 既是 provider 的硬边界，也是 new-api 线性时长计费事实。
+      // MediaKit 不会把该字段当作生成时长，但仍需透传用于准确计费。
+      const durationSeconds = sourceDurationSeconds
+      const billingResolution = typeof sourceData.videoResolution === 'string' && sourceData.videoResolution.trim()
+        ? sourceData.videoResolution.trim()
+        : actionModelConfig?.defaultResolution
+      let result = await runTaskByVendor('auto', withCanvasGenerationContext({
+        kind: 'video_edit',
+        prompt,
+        extras: {
+          modelKey,
+          upstreamVideoUrl: sourceUrl,
+          editOperation,
+          editSelections: input.selections,
+          editPreserveSourceDuration: durationSeconds === undefined,
+          ...(typeof durationSeconds === 'number' ? { durationSeconds } : {}),
+          ...(billingResolution ? { resolution: billingResolution } : {}),
+          ...(typeof sourceDurationRaw === 'number' && sourceDurationRaw > 0
+            ? { billingReferenceVideoDurationSeconds: sourceDurationRaw }
+            : {}),
+        },
+      }, useUIStore.getState(), outputNode.id))
+      const taskId = result.id
+      const deadline = Date.now() + 30 * 60 * 1000
+      while (result.status !== 'succeeded' && result.status !== 'failed' && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5000))
+        const polled = await fetchPublicTaskResultWithAuth({ taskId, taskKind: 'video_edit', prompt })
+        result = polled.result
+        const elapsed = Date.now() - startedAt
+        setNodeStatus(outputNode.id, 'running', { progress: Math.min(90, 10 + Math.floor((elapsed / (30 * 60 * 1000)) * 80)) })
+      }
+      if (result.status !== 'succeeded' && result.status !== 'failed') throw new Error('视频编辑超时（超过 30 分钟），请稍后重试')
+      if (result.status === 'failed') throw new Error('视频编辑失败，请查看任务详情')
+      const url = result.assets?.find((asset) => typeof asset.url === 'string' && asset.url.trim())?.url?.trim()
+      if (!url) throw new Error('视频编辑完成但未返回视频 URL')
+      updateNodeData(outputNode.id, {
+        videoUrl: url,
+        videoResults: [{ url, title: input.mode === 'subject' ? '主体消除' : '去字幕', duration: sourceData.videoDuration }],
+        videoPrimaryIndex: 0,
+        videoDuration: sourceData.videoDuration,
+      })
+      setNodeStatus(outputNode.id, 'success', { progress: 100 })
+      notifyAssetRefresh()
+      toast('视频编辑完成，结果已回填到新视频节点', 'success')
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '视频编辑失败'
+      setNodeStatus(outputNode.id, 'error', { lastError: message })
+      toast(message, 'error')
+      throw error
+    }
+  }, [addNode, data, id, setNodeStatus, updateNodeData, videoSubjectRemovalModelOptions, videoSubtitleRemovalModelOptions])
+
+  const cameraChipLabel = React.useMemo(() => {
+    if (!imageCinematicCamera?.enabled || !imageCinematicCamera?.cameraKey) return '摄影机控制'
+    return CAMERA_BODIES.find((c) => c.key === imageCinematicCamera.cameraKey)?.label ?? '摄影机控制'
+  }, [imageCinematicCamera])
   const hideImageMeta = isImageNode && !selected
   const isImageExpired = Boolean((data as any)?.expired || (data as any)?.imageExpired)
-  // GenerationOverlay 已覆盖 running/queued 状态；本地上传仍需独立提示，避免组件 remount 后丢失“上传中”事实。
+  // GenerationOverlay 已覆盖 running/queued 状态；本地上传仍需独立提示，避免组件 remount 后丢失”上传中”事实。
   const showImageStateOverlay = Boolean(isImageNode && (isImageExpired || isUploadingImage))
   const imageStateLabel = isUploadingImage ? '上传中' : isImageExpired ? '已过期' : null
 
-  const isCanvasMediaNode = coreKind === 'image' || coreKind === 'video'
-  const isResizableVisualNode = isCanvasMediaNode || isStoryboardEditorNode
-  const useMediaFocusToolbar = isCanvasMediaNode
-  const showBottomToolbar = isSingleSelectionActive && !isCameraRefNode && !isPlainTextNode && !isStoryboardEditorNode
-  const showUpstreamReferenceStrip = Boolean(useMediaFocusToolbar && isImageNode && isSingleSelectionActive)
+  // ─── Panoramic state ──────────────────────────────────────────────────────
+  const isPanoramic = isImageNode && Boolean((data as any)?.isPanoramic)
+  const panoramicCamera: PanoramicCameraState = React.useMemo(() => {
+    const raw = (data as any)?.panoramicCamera
+    if (raw && typeof raw === 'object') {
+      const az = Number(raw.azimuthDeg)
+      const el = Number(raw.elevationDeg)
+      const fov = Number(raw.fovDeg)
+      if (Number.isFinite(az) && Number.isFinite(el) && Number.isFinite(fov)) {
+        return { azimuthDeg: az, elevationDeg: el, fovDeg: fov }
+      }
+    }
+    return PANORAMIC_DEFAULT_CAMERA
+  }, [(data as any)?.panoramicCamera])
+  const panoramicGridVisible = Boolean((data as any)?.panoramicGridVisible)
+  const panoramicViewerRef = React.useRef<PanoramicViewerHandle>(null)
+  const [panoramicFullscreenOpen, setPanoramicFullscreenOpen] = React.useState(false)
+  const [imageNodeMultiAngleOpen, setImageNodeMultiAngleOpen] = React.useState(false)
+  const [imageNodeMultiAngleGenerating, setImageNodeMultiAngleGenerating] = React.useState(false)
+  const [imageNodeCamera, setImageNodeCamera] = React.useState<PanoramicCameraState>({ azimuthDeg: 0, elevationDeg: 0, fovDeg: 75 })
+  const [imageNodeMultiAnglePrompt, setImageNodeMultiAnglePrompt] = React.useState('')
+  const [panoramicGenerating, setPanoramicGenerating] = React.useState(false)
+  const [panoramicConfirm, setPanoramicConfirm] = React.useState(false)
+  const [panoramicSphereMode, setPanoramicSphereMode] = React.useState(false)
+  const [gridSplitOpen, setGridSplitOpen] = React.useState(false)
+  const [pendingIntentConfig, setPendingIntentConfig] = React.useState<{ intent: ChapterCanvasIntent; chapterContext: NonNullable<ReturnType<typeof resolveIntentChapterContext>> } | null>(null)
+  const activeIntent = useIntentLifecycle((s) => s.activeIntent)
+  const runningNodeIntents = useIntentLifecycle((s) => s.runningNodeIntents)
+  // ─── 图片编辑器 state ─────────────────────────────────────────────────────
+  const [cropOpen, setCropOpen] = React.useState(false)
+  const [trimOpen, setTrimOpen] = React.useState(false)
+  const [videoContinuationOpen, setVideoContinuationOpen] = React.useState(false)
+  const [videoToolEditorMode, setVideoToolEditorMode] = React.useState<VideoToolEditorMode | null>(null)
+  const [videoEditModel, setVideoEditModel] = React.useState('')
+  const [maskMode, setMaskMode] = React.useState<'repaint' | 'erase' | null>(null)
+  const [annotateOpen, setAnnotateOpen] = React.useState(false)
+  const [elementEditOpen, setElementEditOpen] = React.useState(false)
+  const [portraitTextureEditorOutputNodeId, setPortraitTextureEditorOutputNodeId] = React.useState<string | null>(null)
+  const [hdPanelOpen, setHdPanelOpen] = React.useState(false)
+  const [hdLoading, setHdLoading] = React.useState(false)
+  const [emotionPanelOpen, setEmotionPanelOpen] = React.useState(false)
+  const [emotionPersonSelectorOpen, setEmotionPersonSelectorOpen] = React.useState(false)
+  const [emotionSelectorManual, setEmotionSelectorManual] = React.useState(false)
+  const [emotionSelection, setEmotionSelection] = React.useState<PortraitTextureSelection | null>(null)
+  const [emotionLoading, setEmotionLoading] = React.useState(false)
+  const [emotionError, setEmotionError] = React.useState<string | null>(null)
+  const [denoiseLoading, setDenoiseLoading] = React.useState(false)
+  const [expandPanelOpen, setExpandPanelOpen] = React.useState(false)
+  const [expandLoading, setExpandLoading] = React.useState(false)
+  const isRotatePreview = !!(data as any)?._rotatePreview
+  const [rotatePrevAngle, setRotatePrevAngle] = React.useState<number>(() => Number((data as any)?._rotatePreview?.angle ?? 0))
+  const [rotatePrevFlipH, setRotatePrevFlipH] = React.useState<boolean>(() => Boolean((data as any)?._rotatePreview?.flipH))
+  const [rotatePrevFlipV, setRotatePrevFlipV] = React.useState<boolean>(() => Boolean((data as any)?._rotatePreview?.flipV))
+  const [rotateSaving, setRotateSaving] = React.useState(false)
+  const [rotatePreviewNodeId, setRotatePreviewNodeId] = React.useState<string | null>(null)
+  const [extractLoading, setExtractLoading] = React.useState(false)
+  const [smartCutoutLoading, setSmartCutoutLoading] = React.useState(false)
+  const [layerLoading, setLayerLoading] = React.useState(false)
+  const [imageNaturalSize, setImageNaturalSize] = React.useState<{ w: number; h: number } | null>(null)
+  const [gridSplitRows, setGridSplitRows] = React.useState(2)
+  const [gridSplitCols, setGridSplitCols] = React.useState(2)
+  const [gridSplitSelectedCells, setGridSplitSelectedCells] = React.useState<Set<string>>(new Set())
+  const [gridSplitHoveredCell, setGridSplitHoveredCell] = React.useState<string | null>(null)
+  const [gridSplitScale, setGridSplitScale] = React.useState(2)
+  const [gridSplitCreating, setGridSplitCreating] = React.useState(false)
+  const [gridSplitCreatingHD, setGridSplitCreatingHD] = React.useState(false)
+  React.useEffect(() => {
+    if (videoEditModel && videoEditModelOptions.some((option) => option.value === videoEditModel)) return
+    const next = videoEditModelOptions[0]?.value || ''
+    if (next !== videoEditModel) setVideoEditModel(next)
+  }, [videoEditModel, videoEditModelOptions])
+  const panoramicModelOption = React.useMemo(
+    () => findModelOptionByIdentifier(imageEditActionOptions, imageModel)
+      ?? (!imageModel ? imageEditActionOptions[0] ?? null : null),
+    [imageEditActionOptions, imageModel],
+  )
+  const panoramicSpecKey = React.useMemo(
+    () => buildImageBillingSpecKeyForOption({ modelOption: panoramicModelOption, aspect: '2:1', imageSize: '', imageResolution: '4k' }),
+    [panoramicModelOption],
+  )
+  const panoramicCredits = React.useMemo(
+    () => resolveModelGenerationCredits({ kind: 'image', modelOption: panoramicModelOption, specKey: panoramicSpecKey, quantity: 1 }),
+    [panoramicModelOption, panoramicSpecKey],
+  )
+
+  const handlePanoramicCameraChange = React.useCallback(
+    (camera: PanoramicCameraState) => {
+      updateNodeData(id, { panoramicCamera: camera })
+    },
+    [id, updateNodeData],
+  )
+
+  const handleImageNodeMultiAngleCapture = React.useCallback(
+    async (
+      _captures: Array<{ label: string; dataUrl: string }>,
+      options: { promptEnabled: boolean },
+    ) => {
+      if (imageNodeMultiAngleGenerating) return
+      const baseImageUrl = (primaryImageUrl || imageResults[imagePrimaryIndex]?.url || imageResults[0]?.url || '').trim()
+      if (!baseImageUrl) {
+        toast('多角度生成缺少真实源图片', 'error')
+        return
+      }
+      const stateBefore = useRFStore.getState()
+      const beforeIds = new Set(stateBefore.nodes.map((node) => node.id))
+      const editableModel = resolveImageEditModelForAction()
+      if (!editableModel) return
+      setImageNodeMultiAngleGenerating(true)
+      const horizontalAngle = Math.round(((imageNodeCamera.azimuthDeg % 360) + 360) % 360)
+      const verticalAngle = Math.round(Math.max(-30, Math.min(60, imageNodeCamera.elevationDeg)))
+      const zoom = multiAngleFovToZoom(imageNodeCamera.fovDeg)
+      const executionPrompt = options.promptEnabled ? imageNodeMultiAnglePrompt.trim() : ''
+      const cameraParameters = {
+        azimuthDeg: horizontalAngle,
+        elevationDeg: verticalAngle,
+        fovDeg: imageNodeCamera.fovDeg,
+        distance: cameraFovToImageDistance(imageNodeCamera.fovDeg),
+      }
+      const imageOperationSpec = createImageOperationForSource({
+        kind: 'multi_angle',
+        execution: 'image-edit',
+        sourceNodeId: id,
+        sourceUrl: baseImageUrl,
+        sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+        parameters: {
+          horizontal_angle: String(horizontalAngle),
+          vertical_angle: String(verticalAngle),
+          zoom: String(zoom),
+          prompt: executionPrompt,
+          camera: cameraParameters,
+          preserveIdentity: true,
+          preserveSceneLayout: true,
+        },
+      })
+      try {
+        addNode('taskNode', `多角度 ${horizontalAngle}°/${verticalAngle}°`, {
+          kind: 'imageEdit',
+          prompt: executionPrompt,
+          imageModel: editableModel,
+          imageModelVendor: null,
+          referenceImages: [baseImageUrl],
+          imageOperationSpec,
+          imageOperationState: createImageOperationState(imageOperationSpec),
+          imageOperationRevision: 1,
+          libTvImageOperationKey: 'multi-angle',
+          imageCameraControl: {
+            enabled: true,
+            presetId: 'front',
+            azimuthDeg: horizontalAngle,
+            elevationDeg: verticalAngle,
+            distance: cameraFovToImageDistance(imageNodeCamera.fovDeg),
+          },
+        })
+        const afterAdd = useRFStore.getState()
+        const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+        if (!newNode) throw new Error('多角度结果节点创建失败')
+        const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+        afterAdd.onNodesChange([
+          { id: newNode.id, type: 'position', position: { x: (sourceNode?.position?.x || 0) + 380, y: sourceNode?.position?.y || 0 }, dragging: false },
+          { id: id, type: 'select' as const, selected: false },
+          { id: newNode.id, type: 'select', selected: true },
+        ])
+        afterAdd.onConnect({ source: id, sourceHandle: 'out-image', target: newNode.id, targetHandle: 'in-image' })
+        setImageNodeMultiAngleOpen(false)
+        await runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
+      } catch (error: unknown) {
+        toast(error instanceof Error ? error.message : '多角度生成启动失败', 'error')
+      } finally {
+        setImageNodeMultiAngleGenerating(false)
+      }
+    },
+    [addNode, data, id, imageNodeCamera, imageNodeMultiAngleGenerating, imageNodeMultiAnglePrompt, imageResults, imagePrimaryIndex, primaryImageUrl, resolveImageEditModelForAction],
+  )
+
+  // audio 与图/视频同用 media-focus 工具栏与可调尺寸资产卡（样式统一）
+  const isCanvasMediaNode = coreKind === 'image' || coreKind === 'video' || coreKind === 'audio'
+  // audio 卡片固定 16:9，不参与自由 resize；仍走 media-focus 工具栏
+  const isResizableVisualNode =
+    (isCanvasMediaNode && coreKind !== 'audio') || isStoryboardEditorNode || isStructuredWorkflowNode
+  const useMediaFocusToolbar = isCanvasMediaNode && !isVideoComposeNode
+  const isPortraitTextureNode = (data as Record<string, unknown>).libTvImageOperationKey === 'portrait-adjust'
+  const showStyleChip = (isImageNode || kind === 'imageEdit') && useMediaFocusToolbar
+  const showCameraChip = (isImageNode || kind === 'imageEdit') && useMediaFocusToolbar
+  const portraitTextureEditorOpen = portraitTextureEditorOutputNodeId !== null
+  const anyImageEditorOpen = cropOpen || maskMode !== null || annotateOpen || elementEditOpen || portraitTextureEditorOpen || emotionPersonSelectorOpen || hdPanelOpen || expandPanelOpen || isRotatePreview || trimOpen || showEnhancePanel || videoContinuationOpen || videoToolEditorMode !== null || imageNodeMultiAngleOpen || imageViewEditorOpen
+  // 视频菜单能力（高清增强、智能续写、智能擦除、智能去字幕、主体消除、音视频分离）
+  // 都是配置面板/弹窗，不应复用图片/视频编辑覆盖层的 fitView + lock。否则大尺寸
+  // 视频节点会被强制移到视口中心，面板反而被推到视口外，用户无法平移画布操作。
+  // 真正需要在媒体表面上拖拽的裁剪、蒙版、标注、时间轴编辑仍保留聚焦锁定。
+  const canvasViewLockEditorOpen =
+    cropOpen || maskMode !== null || annotateOpen || elementEditOpen || portraitTextureEditorOpen || emotionPersonSelectorOpen || hdPanelOpen || expandPanelOpen || isRotatePreview || trimOpen || imageNodeMultiAngleOpen || imageViewEditorOpen
+  const showBottomToolbar =
+    isSingleSelectionActive &&
+    !isPlainTextNode &&
+    !isStoryboardEditorNode &&
+    !isVideoComposeNode &&
+    !isSegmentRemakeNode &&
+    !isStructuredWorkflowNode &&
+    !gridSplitOpen &&
+    !anyImageEditorOpen
+  const mediaNaturalSize = React.useMemo(() => {
+    const raw = (data as any)?.mediaNaturalSize
+    if (!raw || typeof raw !== 'object') return null
+    const w = Number(raw.width)
+    const h = Number(raw.height)
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null
+    return { width: w, height: h }
+  }, [(data as any)?.mediaNaturalSize])
+
+  const imageDimensionTrailing = hasImageResults && mediaNaturalSize ? (
+    <Text
+      className="tc-task-node__header-dimensions"
+      size="xs"
+      c="dimmed"
+      style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums', userSelect: 'none', pointerEvents: 'none' }}
+    >
+      {mediaNaturalSize.width} × {mediaNaturalSize.height}
+    </Text>
+  ) : null
+
+  const textIntentActions = isPlainTextNode ? (
+    <div
+      className="tc-task-node__header-intent-actions"
+      style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <LazyIntentActionGroup
+        nodeId={id}
+        kind={kind}
+        semanticKind={typeof data?.kind === 'string' ? data.kind : undefined}
+        nodeData={typeof data === 'object' && data ? (data as Record<string, unknown>) : undefined}
+        preset={typeof (data as Record<string, unknown>).preset === 'string'
+          ? (data as Record<string, unknown>).preset as string
+          : undefined}
+      />
+    </div>
+  ) : null
+
+  const showUpstreamReferenceStrip = Boolean(
+    useMediaFocusToolbar && (isImageNode || isVideoNode) && isSingleSelectionActive,
+  )
   const serializedUpstreamReferenceItems = useRFStore(
     React.useCallback((state) => {
       if (!showUpstreamReferenceStrip) return ''
@@ -5160,21 +4670,117 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       blockedSourceNodeIds: upstreamReferenceItems.map((item) => item.sourceNodeId),
     })
   }, [canvasReferencePickerActive, closeCanvasReferencePicker, id, openCanvasReferencePicker, upstreamReferenceItems])
-  const handleRemoveUpstreamReference = React.useCallback((edgeId: string) => {
-    deleteEdge(edgeId)
-  }, [deleteEdge])
-  const handleReorderUpstreamReference = React.useCallback((draggedEdgeId: string, targetEdgeId: string) => {
-    const currentIndex = upstreamReferenceItems.findIndex((item) => item.edgeId === draggedEdgeId)
-    const targetIndex = upstreamReferenceItems.findIndex((item) => item.edgeId === targetEdgeId)
-    if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) return
-    const reordered = upstreamReferenceItems.slice()
-    const [moved] = reordered.splice(currentIndex, 1)
-    if (!moved) return
-    reordered.splice(targetIndex, 0, moved)
-    updateNodeData(id, {
-      upstreamReferenceOrder: reordered.map((item) => item.sourceNodeId),
+  const handleOpenMediaMarker = React.useCallback(() => {
+    if (isImageNode && hasImageResults) {
+      setAnnotateOpen(true)
+      setCropOpen(false)
+      setMaskMode(null)
+      return
+    }
+    if (isVideoNode) {
+      const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
+      if (!sourceUrl) {
+        toast('当前没有可标记的真实视频资产', 'error')
+        return
+      }
+      const playback = readRetainedVideoPlaybackSnapshot(buildRetainedVideoSurfaceKey(id, sourceUrl))
+      setVideoMarkerPlayback({
+        currentTime: playback?.currentTime ?? 0,
+        duration: playback?.duration ?? activeVideoDuration,
+      })
+      setVideoMarkerOpen(true)
+      return
+    }
+    toast('当前节点没有可标记的媒体资产', 'warning')
+  }, [activeVideoDuration, hasImageResults, id, isImageNode, isVideoNode, videoPrimaryIndex, videoResults, videoUrl])
+
+  const handleSaveVideoMarker = React.useCallback(async (draft: VideoMarkerDraft): Promise<void> => {
+    if (videoMarkerSaving) return
+    const sourceVideoUrl = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
+    if (!sourceVideoUrl) {
+      toast('当前没有可标记的真实视频资产', 'error')
+      return
+    }
+    const rangeError = validateVideoMarkerRange({
+      startSeconds: draft.startSeconds,
+      endSeconds: draft.endSeconds,
+      durationSeconds: videoMarkerPlayback.duration,
     })
-  }, [id, updateNodeData, upstreamReferenceItems])
+    if (rangeError) {
+      toast(rangeError, 'error')
+      return
+    }
+    setVideoMarkerSaving(true)
+    let capturedFrames: Awaited<ReturnType<typeof captureFramesAtTimes>>['frames'] = []
+    try {
+      const captured = await captureFramesAtTimes(
+        { type: 'url', url: sourceVideoUrl },
+        [draft.startSeconds],
+        { mimeType: 'image/jpeg', quality: 0.92 },
+      )
+      capturedFrames = captured.frames
+      const frame = capturedFrames[0]
+      if (!frame) throw new Error('标记起始时间没有可用视频帧')
+      const hosted = await uploadCanvasImageBlob({
+        blob: frame.blob,
+        label: '视频标记截帧',
+        filePrefix: 'video-marker-frame',
+        ownerNodeId: id,
+        projectId: typeof currentProject?.id === 'string' ? currentProject.id : undefined,
+      })
+      const marker = createVideoMarker({
+        sourceVideoUrl,
+        startSeconds: draft.startSeconds,
+        endSeconds: draft.endSeconds,
+        frameUrl: hosted.url,
+        frameAssetId: hosted.assetId,
+        note: draft.note,
+      })
+      updateNodeData(id, {
+        videoMarkers: [...videoMarkers, marker],
+        activeVideoMarkerId: marker.id,
+      })
+      setVideoMarkerOpen(false)
+      toast(draft.endSeconds > draft.startSeconds ? '已保存视频片段标记' : '已保存视频帧标记', 'success')
+    } catch (error: unknown) {
+      toast(error instanceof Error ? error.message : '视频标记保存失败', 'error')
+    } finally {
+      capturedFrames.forEach((frame) => URL.revokeObjectURL(frame.objectUrl))
+      setVideoMarkerSaving(false)
+    }
+  }, [currentProject?.id, id, updateNodeData, videoMarkerPlayback.duration, videoMarkerSaving, videoMarkers, videoPrimaryIndex, videoResults, videoUrl])
+  const handleSelectMediaPromptLibraryItem = React.useCallback((item: { prompt: string }) => {
+    const addition = item.prompt.trim()
+    if (!addition) return
+    const nextPrompt = prompt.trim() ? `${prompt.trim()}，${addition}` : addition
+    setPrompt(nextPrompt)
+    updateNodeData(id, { prompt: nextPrompt })
+    setMediaPromptLibraryKind(null)
+  }, [id, prompt, updateNodeData])
+  const handleApplyCharacterFromLibrary = React.useCallback((character: AiCharacterLibraryCharacterDto) => {
+    const roleName = String(character.identity_hint || character.name || character.character_id || '角色').trim()
+    const references = buildCharacterReferenceImages(character)
+    if (references.length === 0) {
+      throw new Error(`角色“${roleName}”没有可用参考图`)
+    }
+    const record = data as Record<string, unknown>
+    const existingReferences = Array.isArray(record.roleCardReferenceImages)
+      ? record.roleCardReferenceImages.map((value) => String(value || '').trim()).filter(Boolean)
+      : []
+    const nextReferences = Array.from(new Set([...existingReferences, ...references]))
+      .slice(0, referenceImageLimitRef.current)
+    const mention = `@${roleName.replace(/\s+/g, '_')}`
+    const nextPrompt = prompt.includes(mention)
+      ? prompt
+      : `${prompt.trim()}${prompt.trim() ? ' ' : ''}${mention}`
+    setPrompt(nextPrompt)
+    updateNodeData(id, {
+      prompt: nextPrompt,
+      roleName,
+      characterBible: buildCharacterBibleFromDto(character),
+      roleCardReferenceImages: nextReferences,
+    })
+  }, [data, id, prompt, updateNodeData])
   const canvasZoom = useStore((state) => {
     if (!showBottomToolbar) return 1
     const zoom = state.transform[2]
@@ -5187,31 +4793,341 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     return Math.max(min, Math.min(max, Math.round(n)))
   }
 
-  const visualNodeDefaults = React.useMemo(() => {
-    if (coreKind === 'video') return { width: 400, height: 225, minWidth: 240, maxWidth: 960, minHeight: 160, maxHeight: 720 }
-    if (isStoryboardEditorNode) return { width: 560, height: 470, minWidth: 360, maxWidth: 960, minHeight: 260, maxHeight: 760 }
-    if (kind === 'imageEdit') return { width: 320, height: 220, minWidth: 180, maxWidth: 420, minHeight: 120, maxHeight: 420 }
-    return { width: 120, height: 210, minWidth: 110, maxWidth: 420, minHeight: 90, maxHeight: 420 }
-  }, [coreKind, isStoryboardEditorNode, kind])
+  const visualNodeDefaults = React.useMemo(
+    () => isSegmentRemakeNode
+      ? { width: 610, height: 350, minWidth: 300, maxWidth: 960, minHeight: 169, maxHeight: 720 }
+      : getVisualNodeDefaults(kind, coreKind, isStoryboardEditorNode),
+    [coreKind, isSegmentRemakeNode, isStoryboardEditorNode, kind],
+  )
+  const textNodeSize = isPlainTextNode
+    ? getTextNodeSize(data as Record<string, unknown>)
+    : null
 
   const nodeWidth = isResizableVisualNode
     ? clampFinite((data as any)?.nodeWidth, visualNodeDefaults.minWidth, visualNodeDefaults.maxWidth, visualNodeDefaults.width)
     : isPlainTextNode
-      ? clampFinite((data as any)?.nodeWidth, 340, 620, TEXT_NODE_DEFAULT_WIDTH)
+      ? (textNodeSize?.width ?? TEXT_NODE_DEFAULT_WIDTH)
     : typeof (data as any)?.nodeWidth === 'number' && Number.isFinite((data as any)?.nodeWidth)
       ? Math.max(320, Math.min(720, Number((data as any)?.nodeWidth)))
-      : coreKind === 'video' ? 400 : 360
+      : 360
 
   const nodeHeight = isResizableVisualNode
     ? clampFinite((data as any)?.nodeHeight, visualNodeDefaults.minHeight, visualNodeDefaults.maxHeight, visualNodeDefaults.height)
     : null
-  const toolbarBaseWidth = useMediaFocusToolbar ? 650 : 380
+
+  const editedImageUploadCacheRef = React.useRef<Map<string, Promise<HostedEditedImageAsset>>>(new Map())
+
+  const uploadEditedImageBlob = React.useCallback(async (input: {
+    blob: Blob
+    label: string
+    filePrefix: string
+    taskKind?: string
+  }): Promise<HostedEditedImageAsset> => {
+    const digest = await createBlobSha256Hex(input.blob)
+    const mimeType = (input.blob.type || '').split(';')[0].trim() || 'image/png'
+    const taskKind = typeof input.taskKind === 'string' && input.taskKind.trim()
+      ? input.taskKind.trim()
+      : 'image_edit'
+    const projectId = typeof currentProject?.id === 'string' ? currentProject.id.trim() : ''
+    const cacheKey = [projectId, taskKind, mimeType, input.blob.size, digest].join('|')
+    const cached = editedImageUploadCacheRef.current.get(cacheKey)
+    if (cached) return await cached
+
+    const uploadPromise = (async (): Promise<HostedEditedImageAsset> => {
+      const extension = getImageFileExtension(mimeType)
+      const fileName = `${normalizeUploadFilePrefix(input.filePrefix)}-${digest.slice(0, 16)}.${extension}`
+      const file = new File([input.blob], fileName, { type: mimeType, lastModified: 0 })
+      const uploaded = await uploadServerAssetFile(file, input.label, {
+        taskKind,
+        ownerNodeId: id,
+        ...(projectId ? { projectId } : {}),
+      })
+      const url = readServerAssetHostedUrl(uploaded)
+      const assetId = typeof uploaded.id === 'string' ? uploaded.id.trim() : ''
+      if (!url || !assetId) {
+        throw new Error(`${input.label}已处理，但上传结果缺少可用图片 URL`)
+      }
+      notifyAssetRefresh()
+      return { url, assetId }
+    })()
+
+    editedImageUploadCacheRef.current.set(cacheKey, uploadPromise)
+    try {
+      return await uploadPromise
+    } catch (error) {
+      editedImageUploadCacheRef.current.delete(cacheKey)
+      throw error
+    }
+  }, [currentProject?.id, id])
+
+  // Panoramic callbacks (depend on nodeWidth)
+  const handlePanoramicScreenshot = React.useCallback(async () => {
+    const viewer = panoramicViewerRef.current
+    if (!viewer || !hasPrimaryImage) return
+    const dataUrl = viewer.captureAtAngle(
+      panoramicCamera.azimuthDeg,
+      panoramicCamera.elevationDeg,
+      panoramicCamera.fovDeg,
+      1280,
+      720,
+    )
+    if (!dataUrl) return
+    const sourceNode = useRFStore.getState().nodes.find((n) => n.id === id)
+    const sx = sourceNode ? Number(sourceNode.position.x) : 0
+    const sy = sourceNode ? Number(sourceNode.position.y) : 0
+    const label = `全景截图-${Math.round(panoramicCamera.azimuthDeg)}°`
+    try {
+      const hosted = await uploadEditedImageBlob({
+        blob: await dataUrlToImageBlob(dataUrl),
+        label,
+        filePrefix: 'panoramic-screenshot',
+      })
+      const imageResult = buildHostedImageResult(hosted, label)
+      addNode('taskNode', label, {
+        kind: 'image',
+        imageUrl: hosted.url,
+        imageResults: [imageResult],
+        imagePrimaryIndex: 0,
+        serverAssetId: hosted.assetId,
+        status: 'done',
+        position: { x: sx + nodeWidth + 96, y: sy },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '全景截图上传失败'
+      toast(message, 'error')
+    }
+  }, [addNode, hasPrimaryImage, id, nodeWidth, panoramicCamera, uploadEditedImageBlob])
+
+  const handlePanoramicMultiView = React.useCallback(
+    async (count: 4 | 12) => {
+      const viewer = panoramicViewerRef.current
+      if (!viewer || !hasPrimaryImage) return
+      const angles = count === 4 ? FOUR_VIEW_ANGLES : TWELVE_VIEW_ANGLES
+      const captures = angles.map((a) => ({
+        label: a.label,
+        dataUrl: viewer.captureAtAngle(a.azimuthDeg, a.elevationDeg, a.fovDeg, 1280, 720) ?? '',
+      })).filter((c) => c.dataUrl)
+      if (!captures.length) return
+      const uploadedCaptures: Array<{ label: string; asset: HostedEditedImageAsset }> = []
+      for (const capture of captures) {
+        try {
+          const asset = await uploadEditedImageBlob({
+            blob: await dataUrlToImageBlob(capture.dataUrl),
+            label: capture.label,
+            filePrefix: 'panoramic-multiview',
+          })
+          uploadedCaptures.push({ label: capture.label, asset })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '上传失败'
+          toast(`${capture.label} 上传失败：${message}`, 'error')
+        }
+      }
+      if (!uploadedCaptures.length) return
+
+      const sourceNode = useRFStore.getState().nodes.find((n) => n.id === id)
+      const sx = sourceNode ? Number(sourceNode.position.x) : 0
+      const sy = sourceNode ? Number(sourceNode.position.y) : 0
+      const groupId = `group-${Date.now()}`
+      const colWidth = 360
+      const colGap = 24
+      const rowHeight = 260
+      const rowGap = 24
+      const cols = count === 4 ? 2 : 4
+      const groupW = cols * colWidth + (cols - 1) * colGap + 48
+      const rows = Math.ceil(uploadedCaptures.length / cols)
+      const groupH = rows * rowHeight + (rows - 1) * rowGap + 48
+      const groupX = sx + nodeWidth + 96
+      const groupY = sy
+
+      useRFStore.setState((s: any) => {
+        const newGroupNode = {
+          id: groupId,
+          type: 'groupNode',
+          position: { x: groupX, y: groupY },
+          data: { label: `全景截图组 (${count}张)` },
+          style: { width: groupW, height: groupH },
+        }
+        const newImageNodes = uploadedCaptures.map((cap, i) => {
+          const col = i % cols
+          const row = Math.floor(i / cols)
+          const imageResult = buildHostedImageResult(cap.asset, cap.label)
+          return {
+            id: `pano-shot-${Date.now()}-${i}`,
+            type: 'taskNode',
+            position: { x: 24 + col * (colWidth + colGap), y: 24 + row * (rowHeight + rowGap) },
+            parentId: groupId,
+            data: {
+              label: cap.label,
+              kind: 'image',
+              imageUrl: cap.asset.url,
+              imageResults: [imageResult],
+              imagePrimaryIndex: 0,
+              serverAssetId: cap.asset.assetId,
+              status: 'done',
+            },
+            style: { width: colWidth, height: rowHeight },
+          }
+        })
+        const sourceEdge = {
+          id: `e-pano-${id}-${groupId}`,
+          source: id,
+          target: groupId,
+          type: 'default',
+        }
+        return {
+          nodes: [...s.nodes, newGroupNode, ...newImageNodes],
+          edges: [...s.edges, sourceEdge],
+        }
+      })
+    },
+    [hasPrimaryImage, id, nodeWidth, uploadEditedImageBlob],
+  )
+
+  const handleGeneratePanoramic = React.useCallback(async () => {
+    const sourceUrl = primaryImageUrl
+    if (!sourceUrl || panoramicGenerating) return
+    const selectedPanoramicModel = resolveImageEditModelForAction()
+    if (!selectedPanoramicModel) return
+    setPanoramicGenerating(true)
+    const imageOperationSpec = createPresetImageOperation({
+      presetKey: 'panorama-720',
+      sourceNodeId: id,
+      sourceUrl,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+    })
+    const sourceNode = useRFStore.getState().nodes.find((n) => n.id === id)
+    const sx = sourceNode ? Number(sourceNode.position.x) : 0
+    const sy = sourceNode ? Number(sourceNode.position.y) : 0
+    const newNodeId = `pano-${Date.now()}`
+    useRFStore.setState((s: any) => ({
+      nodes: [
+        ...s.nodes,
+        {
+          id: newNodeId,
+          type: 'taskNode',
+          position: { x: sx + nodeWidth + 96, y: sy },
+          data: {
+            label: '720°全景图',
+            kind: 'image',
+            status: 'running',
+            isPanoramic: true,
+            imageOperationSpec,
+            imageOperationState: {
+              ...createImageOperationState(imageOperationSpec, 'running'),
+              attempt: 1,
+              progress: 5,
+              startedAt: new Date().toISOString(),
+            },
+            imageOperationRevision: 1,
+            libTvImagePresetKey: 'panorama-720',
+            libTvImageOperationKey: 'panorama-720',
+          },
+          style: { width: 400, height: 200 },
+        },
+      ],
+      edges: [
+        ...s.edges,
+        { id: `e-pano-derive-${id}-${newNodeId}`, source: id, target: newNodeId, type: 'default' },
+      ],
+    }))
+    try {
+      let result = await runTaskByVendor('auto', withCanvasGenerationContext({
+        kind: 'image_edit',
+        prompt: `Convert this image into a 360-degree equirectangular panorama with 2:1 aspect ratio. Seamless horizontal wrap-around, spherical projection compatible, no visible seams at the edges. ${prompt || 'Preserve the original style and atmosphere.'}`,
+        extras: {
+          modelKey: selectedPanoramicModel,
+          referenceImages: [sourceUrl],
+          aspectRatio: '2:1',
+          resolution: '4k',
+          count: 1,
+          imageOperationSpec,
+          imageOperation: imageOperationSpec.kind,
+        },
+      }, useUIStore.getState(), newNodeId))
+      // 同步图片任务现在会被后端包装成 storedResultReady 的 queued 壳（assets 为空），需轮询 /tasks/result 取最终图。
+      let assets: any[] = Array.isArray((result as any)?.assets) ? (result as any).assets : []
+      if (assets.length === 0 && (result as any)?.id) {
+        const taskId = (result as any).id
+        const deadline = Date.now() + 3 * 60 * 1000
+        while (result.status !== 'succeeded' && result.status !== 'failed' && Date.now() < deadline) {
+          await sleep3d(2000)
+          const res = await fetchPublicTaskResultWithAuth({ taskId, taskKind: 'image_edit', prompt })
+          result = res.result
+        }
+        if (result.status === 'failed') throw new Error('全景图生成失败')
+        if (result.status !== 'succeeded') throw new Error('全景图生成超时，请稍后重试')
+        assets = Array.isArray((result as any)?.assets) ? (result as any).assets : []
+      }
+      const firstImage = assets.find((a: any) => a?.type === 'image' && a?.url)
+      if (firstImage?.url) {
+        useRFStore.setState((s: any) => ({
+          nodes: s.nodes.map((n: any) =>
+            n.id === newNodeId
+              ? {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    imageUrl: firstImage.url,
+                    imageResults: [{ url: firstImage.url, title: '720°全景图' }],
+                    imagePrimaryIndex: 0,
+                    status: 'success',
+                    isPanoramic: true,
+                    imageOperationState: {
+                      ...createImageOperationState(imageOperationSpec, 'succeeded'),
+                      attempt: 1,
+                      progress: 100,
+                      startedAt: imageOperationSpec.createdAt,
+                      finishedAt: new Date().toISOString(),
+                      resultAssets: [{ role: 'result' as const, url: firstImage.url }],
+                    },
+                    imageOperationRevision: imageOperationSpec.sourceRevision + 1,
+                  },
+                }
+              : n,
+          ),
+        }))
+        notifyAssetRefresh()
+      } else {
+        throw new Error('未返回全景图')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '全景图生成失败'
+      toast(msg, 'error')
+      useRFStore.setState((s: any) => ({
+        nodes: s.nodes.map((n: any) =>
+          n.id === newNodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  status: 'error',
+                  lastError: msg,
+                  imageOperationState: {
+                    ...createImageOperationState(imageOperationSpec, 'failed'),
+                    attempt: 1,
+                    progress: 0,
+                    finishedAt: new Date().toISOString(),
+                    error: { code: 'panorama_generation_failed', message: msg, retryable: true },
+                  },
+                },
+              }
+            : n,
+        ),
+      }))
+    } finally {
+      setPanoramicGenerating(false)
+    }
+  }, [data, id, nodeWidth, panoramicGenerating, primaryImageUrl, prompt, resolveImageEditModelForAction, sleep3d])
+
+  const toolbarBaseWidth = useMediaFocusToolbar ? 660 : 380
   const toolbarMinScale = 220 / toolbarBaseWidth
-  const toolbarScale = Math.max(toolbarMinScale, canvasZoom)
+  // React Flow 的 NodeToolbar 本身已保持屏幕尺寸；媒体生成卡不再叠加画布缩放，
+  // 否则缩放/平移后会从 LibTV 的固定 660px 卡片缩成不可操作的小条。
+  const toolbarScale = useMediaFocusToolbar ? 1 : Math.max(toolbarMinScale, canvasZoom)
   const toolbarWidthCss = `min(${toolbarBaseWidth}px, calc((100vw - 48px) / ${toolbarScale}))`
   const toolbarMaxHeightCss = `calc(60vh / ${toolbarScale})`
   const textNodeHeight = isPlainTextNode
-    ? clampFinite((data as any)?.nodeHeight, TEXT_NODE_MIN_HEIGHT, TEXT_NODE_MAX_HEIGHT, TEXT_NODE_DEFAULT_HEIGHT)
+    ? (textNodeSize?.height ?? TEXT_NODE_DEFAULT_HEIGHT)
     : null
 
   const variantsOpen = Boolean((data as any)?.variantsOpen)
@@ -5220,28 +5136,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const variantsBaseWidth = Number.isFinite(variantsBaseWidthRaw) && variantsBaseWidthRaw > 0 ? variantsBaseWidthRaw : null
   const variantsBaseHeight = Number.isFinite(variantsBaseHeightRaw) && variantsBaseHeightRaw > 0 ? variantsBaseHeightRaw : null
 
-  const storyboardCount = React.useMemo(() => {
-    if (kind === 'novelStoryboard') {
-      const raw = Number((data as any)?.storyboardCount)
-      if (Number.isFinite(raw)) return Math.max(1, Math.min(25, Math.floor(raw)))
-      const promptsLen = Array.isArray((data as any)?.storyboardShotPrompts)
-        ? (data as any).storyboardShotPrompts.length
-        : 0
-      if (promptsLen > 0) return Math.max(1, Math.min(25, Math.floor(promptsLen)))
-      return 1
-    }
-    if (kind !== 'storyboardImage') return 4
-    const raw = Number((data as any)?.storyboardCount)
-    if (!Number.isFinite(raw)) return 4
-    return Math.max(4, Math.min(16, Math.floor(raw)))
-  }, [data, kind])
-
-  const storyboardImageAspectRatio =
-    (kind === 'storyboardImage' || kind === 'novelStoryboard') && String((data as any)?.storyboardAspectRatio || '16:9') === '9:16'
-      ? '9:16'
-      : '16:9'
-  const storyboardImageStyle = kind === 'storyboardImage' || kind === 'novelStoryboard' ? String((data as any)?.storyboardStyle || 'realistic') : 'realistic'
-  const isNovelStoryboardNode = kind === 'novelStoryboard'
+  const isNovelStoryboardNode = (data as Record<string, unknown>).kind === 'novelStoryboard'
   const handleMediaResizeEnd = React.useCallback(
     (_event: unknown, params: NodeResizeEndParams) => {
       const nextWidth = clampFinite(params?.width, visualNodeDefaults.minWidth, visualNodeDefaults.maxWidth, nodeWidth)
@@ -5252,162 +5147,176 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       updateNodeData(id, {
         nodeWidth: nextWidth,
         nodeHeight: nextHeight,
+        // Mark as user-sized so auto-normalization (fitVisualSizeToNatural) never overrides it.
+        nodeSizeManual: true,
       })
     },
     [clampFinite, id, nodeHeight, nodeWidth, updateNodeData, visualNodeDefaults.height, visualNodeDefaults.maxHeight, visualNodeDefaults.maxWidth, visualNodeDefaults.minHeight, visualNodeDefaults.minWidth],
   )
 
-  const parseStoryboardShotsFromText = React.useCallback((text: string): string[] => {
-    const lines = String(text || '')
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-    const shots: string[] = []
-    const shotsByNo = new Map<number, string>()
-    for (const line of lines) {
-      if (/^\d+\s*[-~到]\s*\d+\s*秒\s*[：:]/.test(line) || /^\d+\s*秒\s*[：:]/.test(line)) continue
-      const tableMatch =
-        line.match(/^\|\s*\*{0,2}S?(\d{1,3})\*{0,2}\s*\|\s*(.+?)\s*\|/i) ||
-        line.match(/^\|\s*\*{0,2}镜头\s*(\d{1,3})\*{0,2}\s*\|\s*(.+?)\s*\|/i)
-      if (tableMatch) {
-        const no = Number(tableMatch[1] || '')
-        const shot = String(tableMatch[2] || '').trim()
-        if (shot && Number.isFinite(no) && no > 0) {
-          if (!shotsByNo.has(no)) shotsByNo.set(no, shot)
-          continue
-        }
-      }
-      const boldSectionMatch = line.match(/^\*{1,2}\s*S?(\d{1,3})\s*[｜|:：\-]\s*(.+?)\s*\*{1,2}$/i)
-      if (boldSectionMatch) {
-        const no = Number(boldSectionMatch[1] || '')
-        const shot = String(boldSectionMatch[2] || '').trim()
-        if (shot && Number.isFinite(no) && no > 0) {
-          if (!shotsByNo.has(no)) shotsByNo.set(no, shot)
-          continue
-        }
-      }
-      const m =
-        line.match(/^(?:[-*]\s*)?(?:镜头|分镜)\s*(\d+)?\s*[：:.\u3001-]?\s*(.+)$/) ??
-        line.match(/^Shot\s+(\d+)\s*[:.-]\s*(.+)$/i) ??
-        line.match(/^#{1,6}\s*(?:镜头|分镜)\s*(\d+)\s*[：:.\u3001-]?\s*(.+)$/) ??
-        line.match(/^\s*S?(\d{1,3})\s*[｜|:：]\s*(.+)$/i)
-      const no = Number(m?.[1] || '')
-      const shot = String(m?.[2] || '').trim()
-      if (!shot) continue
-      if (Number.isFinite(no) && no > 0) {
-        if (!shotsByNo.has(no)) shotsByNo.set(no, shot)
-      } else {
-        shots.push(shot)
-      }
-    }
-    if (shotsByNo.size) {
-      return Array.from(shotsByNo.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([, s]) => s)
-        .filter(Boolean)
-    }
-    // Parse section style output: ### S01 ... + bullet lines
-    const sections: Array<{ no: number; lines: string[] }> = []
-    let current: { no: number; lines: string[] } | null = null
-    for (const line of lines) {
-      const hm =
-        line.match(/^#{1,6}\s*\*{0,2}\s*S?(\d{1,3})\b/i) ||
-        line.match(/^#{1,6}\s*\*{0,2}(?:镜头|分镜)\s*(\d{1,3})\b/i) ||
-        line.match(/^\*{0,2}\s*S(\d{1,3})\b/i)
-      if (hm) {
-        if (current) sections.push(current)
-        current = { no: Math.trunc(Number(hm[1])), lines: [] }
-        continue
-      }
-      if (current) current.lines.push(line)
-    }
-    if (current) sections.push(current)
-    if (sections.length) {
-      const sectionShots = sections
-        .sort((a, b) => a.no - b.no)
-        .map((sec) => {
-          const normalizedLines = sec.lines
-            .map((ln) => ln.replace(/^[-*]\s*/, '').trim())
-            .filter(Boolean)
-          const sceneLine =
-            normalizedLines.find((ln) => /^(画面|scene)\s*[：:]/i.test(ln)) ||
-            normalizedLines.find((ln) => !/^(镜头运动|时长|台词|字幕|音效|转场|production|qc)/i.test(ln))
-          if (!sceneLine) return ''
-          return sceneLine.replace(/^(画面|scene)\s*[：:]\s*/i, '').trim()
-        })
-        .filter(Boolean)
-      if (sectionShots.length) return sectionShots
-    }
-    return shots
-  }, [])
-  const sanitizeNovelStoryboardShots = React.useCallback((shots: string[]): string[] => {
-    const isNoise = (line: string) => {
-      const v = String(line || '').trim()
-      if (!v) return true
-      if (/^#{1,6}\s+/.test(v)) return true
-      if (/^\|.*\|$/.test(v)) return true
-      if (/^[-*_]{3,}$/.test(v)) return true
-      if (/^(统一参数|结构化分镜脚本|镜头列表|生产建议|全镜头通用约束|每镜头图像提示词|每镜头视频提示词)\b/i.test(v)) return true
-      if (/同时标注内容分级|避免露骨|已根据素材完成续写分镜|整合\s*\d+\s*-\s*\d+\s*连续可执行稿/i.test(v)) return true
-      if (/^角色一致性固定串/i.test(v)) return true
-      if (/^(?:-|•)?\s*(?:唯|萧夜|真宫寺唯|鸣神素子|萧羽)\s*[：:]/i.test(v)) return true
-      if (/^(?:-|•)?\s*(?:风格|style)\s*[：:]/i.test(v)) return true
-      if (/加载\s*TapCanvas\s*能力技能|基于小说正文与已完成|产出新增镜头|可执行分镜包|避免重复/i.test(v)) return true
-      if (/^(镜头|分镜)\s*[；;|]/.test(v)) return true
-      if (/^(plan|note|tips?|prompt list|shot list|act|report)[:：]?$/i.test(v)) return true
-      if (/第\d+章(电影级写实镜头|人物交互镜头|情绪推进镜头|转场收束镜头)/.test(v)) return true
-      return false
-    }
-    return (Array.isArray(shots) ? shots : [])
-      .map((x) => String(x || '').trim())
-      .filter((x) => x && !isNoise(x))
-  }, [])
+  const handleMediaNaturalSize = React.useCallback(
+    (size: MediaNaturalSize) => {
+      const naturalWidth = Number(size.width)
+      const naturalHeight = Number(size.height)
+      const naturalUrl = String(size.url || '').trim()
+      if (!naturalUrl || !Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight) || naturalWidth <= 0 || naturalHeight <= 0) return
 
-  const storyboardShotPromptsForDrag = React.useMemo(() => {
-    if (!(isNovelStoryboardNode || kind === 'storyboardImage')) return [] as string[]
-    const maxShots = isNovelStoryboardNode ? 25 : 24
-    const explicit = Array.isArray((data as any)?.storyboardShotPrompts)
-      ? ((data as any).storyboardShotPrompts as unknown[])
-          .map((x) => String(x || '').trim())
-          .filter(Boolean)
-      : []
-    if (explicit.length) return explicit.slice(0, maxShots)
-    const fromScript = parseStoryboardShotsFromText(String((data as any)?.storyboardScript || prompt || ''))
-    return fromScript.slice(0, maxShots)
-  }, [data, isNovelStoryboardNode, kind, parseStoryboardShotsFromText, prompt])
+      // Manually-resized nodes keep their explicit size — never auto-normalize them.
+      if ((data as any)?.nodeSizeManual === true) return
 
-  const novelStoryboardShots = React.useMemo(() => {
-    if (!isNovelStoryboardNode) return [] as string[]
-    return storyboardShotPromptsForDrag
-  }, [isNovelStoryboardNode, storyboardShotPromptsForDrag])
+      const currentWidth = nodeWidth
+      const currentHeight = nodeHeight ?? visualNodeDefaults.height
+      // Normalize to the unified target size (fit natural ratio at the kind's target area) — shared
+      // with the lightweight shell so before/after-focus boxes are identical. Driven by size delta
+      // (not just ratio) so same-aspect-but-undersized legacy nodes also snap to the unified size.
+      const { width: fittedWidth, height: fittedHeight } = fitVisualSizeToNatural(
+        currentWidth, currentHeight, naturalWidth, naturalHeight, visualNodeDefaults,
+      )
+      if (Math.abs(fittedWidth - currentWidth) <= 1 && Math.abs(fittedHeight - currentHeight) <= 1) return
 
-  const upsertNovelStoryboardShots = React.useCallback((nextShots: string[]) => {
-    const maxShots = isNovelStoryboardNode ? 25 : 24
-    const normalized = nextShots
-      .map((x) => String(x || '').trim())
-      .filter(Boolean)
-      .slice(0, maxShots)
-    const count = Math.max(1, normalized.length)
-    const script = normalized
-      .map((shot, idx) => `镜头 ${idx + 1}：${shot}`)
-      .join('\n')
-    setPrompt(script)
+      updateNodeData(id, {
+        nodeWidth: fittedWidth,
+        nodeHeight: fittedHeight,
+        mediaNaturalSize: {
+          width: Math.round(naturalWidth),
+          height: Math.round(naturalHeight),
+          url: naturalUrl,
+        },
+      })
+      // Sync RF node style so NodeToolbar at Position.Bottom uses the updated height
+      rf.updateNode(id, (node) => ({
+        style: { ...node.style, width: fittedWidth, height: fittedHeight },
+      }))
+      // Refit parent group so it doesn't overflow when images load and resize nodes
+      const parentGroupId = String((rf.getNode(id) as any)?.parentId || '').trim()
+      if (parentGroupId) {
+        setTimeout(() => useRFStore.getState().fitGroupToChildren(parentGroupId), 80)
+      }
+    },
+    [data, id, nodeHeight, nodeWidth, updateNodeData, visualNodeDefaults],
+  )
+
+  const handleVideoEmptyAction = React.useCallback((action: MediaEmptyAction) => {
+    if (action === 'long-video') {
+      const ultraLongLimit = videoModelConfig?.maxUltraLongDurationSeconds ?? 0
+      if (ultraLongLimit < 300) {
+        toast('当前视频模型不支持 5 分钟超长视频，请先切换支持该能力的模型', 'warning')
+        return
+      }
+      handleToolbarDurationChange(300)
+      return
+    }
+    if (action === 'first-last-frame-video') {
+      if (videoModelConfig?.supportsFirstLastFrame !== true) {
+        toast('当前视频模型不支持首尾帧生成，请先切换支持该能力的模型', 'warning')
+        return
+      }
+      setContinueVeoSelectionToLastFrame(true)
+      openVeoModal('first')
+      return
+    }
+    if (action === 'first-frame-video') {
+      if (videoModelConfig?.supportsReferenceImages !== true && resolvedVideoVendor !== 'veo') {
+        toast('当前视频模型不支持首帧参考，请先切换支持该能力的模型', 'warning')
+        return
+      }
+      setContinueVeoSelectionToLastFrame(false)
+      openVeoModal('first')
+    }
+  }, [handleToolbarDurationChange, openVeoModal, resolvedVideoVendor, videoModelConfig])
+
+  const handleSegmentRemakeConfirm = React.useCallback(async (ranges: SegmentRemakeRange[], nextPrompt: string) => {
     updateNodeData(id, {
-      prompt: script,
-      storyboardScript: script,
-      storyboardShotPrompts: normalized,
-      storyboardCount: isNovelStoryboardNode
-        ? Math.max(1, Math.min(25, count))
-        : Math.max(4, Math.min(16, count)),
+      prompt: nextPrompt,
+      segmentRemakeRanges: ranges,
+      segmentRemakeSubmittedAt: new Date().toISOString(),
+      status: 'queued',
     })
-  }, [id, isNovelStoryboardNode, updateNodeData])
+    requestVideoClipAgentAction({
+      nodeId: id,
+      action: 'revise_clip',
+      runId: readVideoClipRunId(data),
+      clipIndex: readVideoClipIndex(data),
+    })
+  }, [data, id, updateNodeData])
 
-  const stripUrlsFromText = React.useCallback((text: string): string => {
-    return String(text || '')
-      .replace(/https?:\/\/[^\s；;，,]+/g, '')
-      .replace(/[ \t]+\n/g, '\n')
-      .trim()
-  }, [])
+  const segmentRemakeRanges = React.useMemo<SegmentRemakeRange[]>(() => {
+    const raw = (data as Record<string, unknown>).segmentRemakeRanges
+    if (!Array.isArray(raw)) return []
+    return raw.flatMap((value): SegmentRemakeRange[] => {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return []
+      const record = value as Record<string, unknown>
+      const start = Number(record.start)
+      const end = Number(record.end)
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return []
+      return [{ start, end }]
+    }).slice(0, 5)
+  }, [data])
+
+	  const videoContent = !isVideoNode
+	    ? null
+	    : isSegmentRemakeNode
+	      ? (
+	        <LazySegmentRemakeContent
+	          videoUrl={videoResults[videoPrimaryIndex]?.url || videoUrl || ''}
+          videoDuration={activeVideoDuration ?? (Number((data as Record<string, unknown>).videoDuration) || 0)}
+          videoTitle={videoTitle}
+          initialRanges={segmentRemakeRanges}
+	          prompt={prompt}
+	          onPromptChange={(value) => { setPrompt(value); updateNodeData(id, { prompt: value }) }}
+	          onConfirm={handleSegmentRemakeConfirm}
+          onReference={() => setVideoExpanded(true)}
+          onCharacterLibrary={() => setCharacterLibraryOpen(true)}
+          onFullscreen={() => setVideoExpanded(true)}
+          quickActions={() => (
+            <LazyLibTvMediaQuickActions
+              kind="video"
+              disabled={nodeReadOnly || isRunning}
+              referenceActive={canvasReferencePickerActive}
+              markerActive={videoMarkers.length > 0 || videoMarkerOpen}
+              onReference={handleToggleCanvasReferencePicker}
+              onMarker={handleOpenMediaMarker}
+              onEffect={() => setMediaPromptLibraryKind('effect')}
+              onCharacters={() => setCharacterLibraryOpen(true)}
+              onCameraMovement={() => setMediaPromptLibraryKind('camera')}
+              onFocus={handleFocusNode}
+            />
+          )}
+          modelValue={videoModel}
+          modelOptions={modelMenuOptions.map((option) => ({ value: option.value, label: option.label }))}
+          onModelChange={handleToolbarModelChange}
+          resolutionValue={effectiveVideoResolution}
+          resolutionOptions={configuredVideoResolutionOptions}
+          onResolutionChange={handleToolbarVideoResolutionChange}
+          runCount={runCount}
+          onRunCountChange={(value) => updateNodeData(id, { runCount: value })}
+          readOnly={nodeReadOnly}
+        />
+      )
+	    : (
+	      <LazyVideoContent
+        nodeId={id}
+        videoResults={videoResults}
+        videoPrimaryIndex={videoPrimaryIndex}
+        videoUrl={videoUrl}
+        videoThumbnailUrl={videoThumbnailUrl}
+        videoTitle={videoTitle}
+        mediaOverlayBackground={mediaOverlayBackground}
+        mediaOverlayText={mediaOverlayText}
+        mediaFallbackSurface={mediaFallbackSurface}
+        mediaFallbackText={mediaFallbackText}
+		        inlineDividerColor={inlineDividerColor}
+		        accentPrimary={accentPrimary}
+		        rgba={rgba}
+		        videoSurface={videoSurface}
+		        onOpenVideoModal={() => setVideoExpanded(true)}
+		        onMediaNaturalSize={handleMediaNaturalSize}
+		        onUpload={viewOnly ? undefined : handleVideoUpload}
+		        uploading={videoUploading}
+		        onEmptyAction={viewOnly ? undefined : handleVideoEmptyAction}
+	      />
+	    )
+
 
   const novelStoryboardProgressMeta = React.useMemo(() => {
     if (!isNovelStoryboardNode) return null
@@ -5425,8 +5334,17 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
 
   const [novelStoryboardContinueLoading, setNovelStoryboardContinueLoading] = React.useState(false)
   const novelStoryboardCanGenerateNext = React.useMemo(
-    () => !!novelStoryboardProgressMeta,
-    [novelStoryboardProgressMeta],
+    () => {
+      const record = data as Record<string, unknown>
+      const chunkId = typeof record.storyboardChunkId === 'string' ? record.storyboardChunkId.trim() : ''
+      return (
+        !!novelStoryboardProgressMeta &&
+        status === 'success' &&
+        record.storyboardMetadataStatus === 'persisted' &&
+        chunkId.length > 0
+      )
+    },
+    [data, novelStoryboardProgressMeta, status],
   )
   const novelStoryboardSessionId = React.useMemo(() => {
     if (!novelStoryboardProgressMeta) return ''
@@ -5445,539 +5363,39 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     if (!novelStoryboardProgressMeta || novelStoryboardContinueLoading) return
     setNovelStoryboardContinueLoading(true)
     try {
-      type StoryboardHistoryItem = ProjectBookStoryboardHistoryDto['items'][number]
-      const chapterNo = Math.max(1, Math.trunc(Number(novelStoryboardProgressMeta.chapter || 1)))
-      const taskId = String(novelStoryboardProgressMeta.taskId || '').trim()
-      const runTitle = `分镜渐进续写 · ${new Date().toLocaleString()}`
-      const runGoal = '仅生成当前全书进度的下一组 25 镜头（从当前节点继续）'
-      const beforeHistory = await listProjectBookStoryboardHistory(
-        novelStoryboardProgressMeta.projectId,
-        novelStoryboardProgressMeta.bookId,
-        { taskId, limit: 240 },
-      ).catch(() => null)
-      const beforeItems = Array.isArray(beforeHistory?.items) ? beforeHistory.items : []
-      const historyKey = (item: ProjectBookStoryboardHistoryDto['items'][number]) =>
-        `${String(item.taskId || '').trim()}:${Math.max(1, Math.trunc(Number(item.shotNo || 1)))}`
-      const beforeKeys = new Set(beforeItems.map(historyKey))
-
-      const created = await createAgentPipelineRun({
-        projectId: novelStoryboardProgressMeta.projectId,
-        title: runTitle,
-        goal: runGoal,
-        stages: [
-          'material_ingest',
-          'script_breakdown',
-          'storyboard_generation',
-          'shot_planning',
-          'image_generation',
-          'video_generation',
-          'qc_publish',
-        ],
+      const { runNovelStoryboardContinuation } = await import('./taskNode/novelStoryboardContinuation')
+      await runNovelStoryboardContinuation({
+        progressMeta: novelStoryboardProgressMeta,
+        data: data as Record<string, unknown>,
+        nodeId: id,
+        addNode,
+        appendLog,
+        resolveImageEditModelForAction,
+        setNodeStatus,
+        updateNodeData,
       })
-      const variationHint = [
-        '关键帧差异为强约束：任意相邻镜头在以下三项中至少显式变化两项：主体动作、镜头类型、机位运动。',
-        '每个镜头提示词必须明确写出这三项：主体动作、镜头类型、机位运动，禁止留空或复用上一个镜头。',
-      ].join('\n')
-      const attemptPayloads = [
-        { force: false, hint: '' },
-        { force: true, hint: variationHint },
-      ] as const
-      let afterItems: StoryboardHistoryItem[] = []
-      let lastRunError = ''
-      let lastDoneResult: { result?: { storyboardContent?: unknown } } | null = null
-      for (const attempt of attemptPayloads) {
-        const done = await executeAgentPipelineRun(created.id, {
-          force: attempt.force,
-          systemPrompt: [UNIFIED_STORYBOARD_SYSTEM_HINT, attempt.hint].filter(Boolean).join('\n\n'),
-          bookId: novelStoryboardProgressMeta.bookId,
-          progress: {
-            taskId,
-
-            mode: 'single',
-            groupSize: 25,
-          },
-        })
-        lastDoneResult = done
-        const status = String((done as any)?.status || '')
-        const isFailed = status === 'failed' || status === 'canceled'
-        lastRunError = String((done as any)?.errorMessage || '').trim()
-        const refreshedHistory = await listProjectBookStoryboardHistory(
-          novelStoryboardProgressMeta.projectId,
-          novelStoryboardProgressMeta.bookId,
-          { taskId, limit: 240 },
-        ).catch(() => null)
-        const currentItems = Array.isArray(refreshedHistory?.items) ? refreshedHistory.items : []
-        const addedNow = currentItems.filter((item) => !beforeKeys.has(historyKey(item)))
-        afterItems = currentItems
-        if (addedNow.length > 0 || !isFailed) break
-      }
-
-      const addedItems = afterItems.filter((item) => !beforeKeys.has(historyKey(item)))
-      const shotNoOf = (item: StoryboardHistoryItem) => Math.max(1, Math.trunc(Number(item.shotNo || 1)))
-      const chapterOf = (item: StoryboardHistoryItem) => Math.max(1, Math.trunc(Number((item as any).chapter || chapterNo)))
-      const taskOf = (item: StoryboardHistoryItem) => String(item.taskId || taskId).trim()
-      const byShotNoAsc = (a: StoryboardHistoryItem, b: StoryboardHistoryItem) => shotNoOf(a) - shotNoOf(b)
-      const dedupeByShotNo = (items: StoryboardHistoryItem[]) => {
-        const pick = new Map<number, StoryboardHistoryItem>()
-        for (const item of items) {
-          const shotNo = shotNoOf(item)
-          const prev = pick.get(shotNo)
-          if (!prev) {
-            pick.set(shotNo, item)
-            continue
-          }
-          const prevTs = Date.parse(String(prev.updatedAt || prev.createdAt || ''))
-          const curTs = Date.parse(String(item.updatedAt || item.createdAt || ''))
-          if ((Number.isFinite(curTs) ? curTs : 0) >= (Number.isFinite(prevTs) ? prevTs : 0)) {
-            pick.set(shotNo, item)
-          }
-        }
-        return Array.from(pick.values()).sort(byShotNoAsc)
-      }
-      const groupByChunk = (items: StoryboardHistoryItem[]) => {
-        const map = new Map<string, StoryboardHistoryItem[]>()
-        for (const item of items) {
-          const itemTaskId = taskOf(item)
-          const chunkId = String(item.chunkId || '').trim()
-          const chunkIndex = Math.max(0, Math.trunc(Number(item.chunkIndex || 0)))
-          const key = `${itemTaskId}:${chunkId || `chunk-${chunkIndex}`}`
-          if (!map.has(key)) map.set(key, [])
-          map.get(key)!.push(item)
-        }
-        return map
-      }
-      const pickBestChunk = (items: StoryboardHistoryItem[]) => {
-        const grouped = Array.from(groupByChunk(items).values()).map((group) => {
-          const deduped = dedupeByShotNo(group)
-          const maxShot = deduped.reduce((max, it) => Math.max(max, shotNoOf(it)), 0)
-          const latestTs = deduped.reduce((max, it) => {
-            const ts = Date.parse(String(it.updatedAt || it.createdAt || ''))
-            return Math.max(max, Number.isFinite(ts) ? ts : 0)
-          }, 0)
-          return { items: deduped, count: deduped.length, maxShot, latestTs }
-        })
-        grouped.sort((a, b) => b.count - a.count || b.maxShot - a.maxShot || b.latestTs - a.latestTs)
-        return grouped[0]?.items || []
-      }
-
-      const currentTaskNewItems = addedItems.filter((item) => taskOf(item) === taskId)
-      const currentTaskAfterItems = afterItems.filter((item) => taskOf(item) === taskId)
-      const afterCurrentShot = currentTaskAfterItems.filter((item) => shotNoOf(item) > novelStoryboardProgressMeta.currentShotEnd)
-      const generatedBatch = pickBestChunk(
-        currentTaskNewItems.length
-          ? currentTaskNewItems
-          : afterCurrentShot.length
-            ? afterCurrentShot
-            : currentTaskAfterItems.length
-              ? currentTaskAfterItems
-              : afterItems,
-      )
-      const effectiveBatch = generatedBatch
-      if (!effectiveBatch.length) {
-        throw new Error(lastRunError || '后端已执行但未产出可用分镜历史；禁止使用本地模板回退，请检查 agents 日志与上游产物')
-      }
-
-      const historyChapter = chapterOf(effectiveBatch[0])
-      const normalizedBatch = dedupeByShotNo(effectiveBatch)
-      const shotStart = shotNoOf(normalizedBatch[0])
-      const shotEnd = shotNoOf(normalizedBatch[normalizedBatch.length - 1])
-      const groupSize = Math.max(
-        normalizedBatch.length,
-        Math.max(1, Math.trunc(Number(normalizedBatch[0]?.groupSize || normalizedBatch.length))),
-      )
-      const chunkIndex = Math.max(0, Math.trunc(Number(normalizedBatch[0]?.chunkIndex || 0)))
-      const nodeDataRecord = data as Record<string, unknown>
-      const storyboardAspectRatio =
-        typeof nodeDataRecord.storyboardAspectRatio === 'string' && nodeDataRecord.storyboardAspectRatio.trim()
-          ? nodeDataRecord.storyboardAspectRatio.trim()
-          : '16:9'
-      const imageModelKey =
-        typeof nodeDataRecord.imageModel === 'string' && nodeDataRecord.imageModel.trim()
-          ? nodeDataRecord.imageModel.trim()
-          : getDefaultModel('imageEdit')
-      const storyboardStoryContext =
-        typeof nodeDataRecord.storyboardStoryContext === 'string' && nodeDataRecord.storyboardStoryContext.trim()
-          ? nodeDataRecord.storyboardStoryContext.trim()
-          : undefined
-      const storyboardPlanId =
-        typeof nodeDataRecord.storyboardPlanId === 'string' && nodeDataRecord.storyboardPlanId.trim()
-          ? nodeDataRecord.storyboardPlanId.trim()
-          : undefined
-      const replayChunkId = buildReplayStoryboardChunkId({
-        taskId,
-        chunkId: normalizedBatch[0]?.chunkId,
-        chunkIndex,
-      })
-
-      type ReplayShotItem = {
-        shotNo: number
-        frameIndex: number
-        script: string
-        imageUrl: string
-        roleAnchorUrls: string[]
-        referenceBindings: StoryboardReferenceBinding[]
-      }
-
-      const shotItems: ReplayShotItem[] = normalizedBatch.map((item, index) => {
-        const shotNo = shotNoOf(item)
-        const script = String(item.script || '').trim()
-        if (!script) {
-          throw new Error(`分镜历史缺少脚本：shotNo=${shotNo}`)
-        }
-        const imageUrl = String(item.selectedImageUrl || item.imageUrl || '').trim()
-        const roleBindings = Array.isArray(item.roleCardAnchors)
-          ? item.roleCardAnchors.map((anchor) => ({
-              kind: 'role' as const,
-              refId: String(anchor.cardId || '').trim() || undefined,
-              label: String(anchor.roleName || '').trim() || '角色锚点',
-              imageUrl: String(anchor.imageUrl || '').trim(),
-            }))
-          : []
-        const genericReferenceBindings = Array.isArray(item.references)
-          ? item.references.map((reference) => ({
-              kind: 'reference' as const,
-              label: String(reference.label || '').trim() || '参考图',
-              imageUrl: String(reference.url || '').trim(),
-            }))
-          : []
-        const referenceBindings = normalizeStoryboardReferenceBindings([
-          ...roleBindings,
-          ...genericReferenceBindings,
-        ])
-        const roleAnchorUrls = roleBindings
-          .map((binding) => String(binding.imageUrl || '').trim())
-          .filter(Boolean)
-        const shotIndexRaw = Number(item.shotIndexInChunk)
-        const frameIndex =
-          Number.isFinite(shotIndexRaw) && shotIndexRaw >= 0
-            ? Math.trunc(shotIndexRaw)
-            : Math.max(0, shotNo - shotStart || index)
-        return {
-          shotNo,
-          frameIndex,
-          script,
-          imageUrl,
-          roleAnchorUrls,
-          referenceBindings,
-        }
-      })
-
-      const imageShotItems = shotItems.filter((item) => item.imageUrl)
-      const roleRefs = Array.from(new Set(shotItems.flatMap((item) => item.roleAnchorUrls))).slice(0, 8)
-      const storyboardShotPrompts = shotItems.map((item) => item.script)
-      const storyboardScript = buildStoryboardChunkScript(shotItems)
-      const tailFrameUrl = imageShotItems.length > 0 ? imageShotItems[imageShotItems.length - 1]?.imageUrl || '' : ''
-      const chunkReferenceBindings = normalizeStoryboardReferenceBindings([
-        ...(tailFrameUrl
-          ? [{ kind: 'continuity_tail' as const, label: '本组尾帧', imageUrl: tailFrameUrl }]
-          : []),
-        ...shotItems.flatMap((item) => item.referenceBindings),
-      ])
-      const protocolGroupSize = normalizeStoryboardSelectionProtocolGroupSize(groupSize)
-      const buildChunkSelectionContext = (input?: { title?: string; imageUrl?: string }): StoryboardSelectionContext => (
-        buildStoryboardSelectionContextOrThrow({
-          scope: 'chunk',
-          taskId,
-          planId: storyboardPlanId,
-          chunkId: replayChunkId,
-          chunkIndex,
-          groupSize: protocolGroupSize,
-          shotStart,
-          shotEnd,
-          title: typeof input?.title === 'string' && input.title.trim() ? input.title.trim() : undefined,
-          imageUrl: typeof input?.imageUrl === 'string' && input.imageUrl.trim() ? input.imageUrl.trim() : undefined,
-          sourceBookId: novelStoryboardProgressMeta.bookId,
-          materialChapter: historyChapter,
-          storyContext: storyboardStoryContext,
-          storyboardScript,
-          modelKey: imageModelKey,
-          aspectRatio: storyboardAspectRatio,
-          referenceBindings: chunkReferenceBindings.length > 0 ? chunkReferenceBindings : undefined,
-        })
-      )
-      const buildFrameSelectionContext = (
-        shotItem: ReplayShotItem,
-        input?: { title?: string; imageUrl?: string },
-      ): StoryboardSelectionContext => (
-        buildStoryboardSelectionContextOrThrow({
-          scope: 'frame',
-          taskId,
-          planId: storyboardPlanId,
-          chunkId: replayChunkId,
-          chunkIndex,
-          groupSize: protocolGroupSize,
-          shotStart,
-          shotEnd,
-          shotNo: shotItem.shotNo,
-          frameIndex: shotItem.frameIndex,
-          title: typeof input?.title === 'string' && input.title.trim() ? input.title.trim() : undefined,
-          imageUrl:
-            typeof input?.imageUrl === 'string' && input.imageUrl.trim()
-              ? input.imageUrl.trim()
-              : shotItem.imageUrl || undefined,
-          sourceBookId: novelStoryboardProgressMeta.bookId,
-          materialChapter: historyChapter,
-          storyContext: storyboardStoryContext,
-          shotPrompt: shotItem.script,
-          storyboardScript,
-          modelKey: imageModelKey,
-          aspectRatio: storyboardAspectRatio,
-          referenceBindings:
-            shotItem.referenceBindings.length > 0
-              ? shotItem.referenceBindings
-              : chunkReferenceBindings.length > 0
-                ? chunkReferenceBindings
-                : undefined,
-        })
-      )
-      const imageResults = imageShotItems.map((item) => ({
-        url: item.imageUrl,
-        title: `镜头 ${item.shotNo}`,
-        shotPrompt: item.script,
-        storyboardSelectionContext: buildFrameSelectionContext(item, {
-          title: `镜头 ${item.shotNo}`,
-          imageUrl: item.imageUrl,
-        }),
-      }))
-      const primaryImageUrl = imageResults[0]?.url || ''
-      const primaryShotNo = imageShotItems[0]?.shotNo || shotStart
-      const chunkSelectionContext = buildChunkSelectionContext({
-        title: `分镜续写 · 任务 ${taskId} 镜头${shotStart}-${shotEnd}`,
-        imageUrl: primaryImageUrl || undefined,
-      })
-
-      const createReplayTaskNode = (label: string, payload: Record<string, unknown>): string => {
-        const before = new Set(useRFStore.getState().nodes.map((n) => String(n.id || '').trim()))
-        addNode('taskNode', label, payload)
-        const created = useRFStore
-          .getState()
-          .nodes
-          .find((n) => !before.has(String(n.id || '').trim()))
-        return created?.id ? String(created.id) : ''
-      }
-
-      const shotScriptNodeIds = shotItems
-        .map((item, idx) => (
-          createReplayTaskNode(
-            `镜头脚本 ${item.shotNo} · 任务 ${taskId}`,
-            {
-              kind: 'storyboardScript',
-              autoLabel: false,
-              prompt: item.script,
-              textBackgroundColor: idx % 2 === 0 ? '#eff6ff' : '#f8fafc',
-              sourceBookId: novelStoryboardProgressMeta.bookId,
-              storyboardTaskId: taskId,
-              chapter: historyChapter,
-              materialChapter: historyChapter,
-              source: 'novel_storyboard_pipeline_replay_shot',
-              storyboardGroupSize: groupSize,
-              storyboardChunkIndex: chunkIndex,
-              storyboardShotStart: item.shotNo,
-              storyboardShotEnd: item.shotNo,
-              storyboardShotNo: item.shotNo,
-              storyboardSelectionContext: buildFrameSelectionContext(item, {
-                title: `镜头脚本 ${item.shotNo} · 任务 ${taskId}`,
-              }),
-              status: 'success',
-              progress: 100,
-              nodeWidth: 250,
-              nodeHeight: 105,
-            },
-          )
-        ))
-        .filter(Boolean)
-
-      const anchorNodeId = roleRefs.length
-        ? createReplayTaskNode(
-            `角色锚点 · 任务 ${taskId} 镜头${shotStart}-${shotEnd}`,
-            {
-              kind: 'image',
-              autoLabel: false,
-              sourceBookId: novelStoryboardProgressMeta.bookId,
-              storyboardTaskId: taskId,
-              chapter: historyChapter,
-              materialChapter: historyChapter,
-              source: 'novel_storyboard_pipeline_anchor',
-              roleCardReferenceImages: roleRefs,
-              imageUrl: roleRefs[0],
-              imagePrimaryIndex: 0,
-              imageResults: roleRefs.map((url, idx) => ({ url, title: `角色锚点 ${idx + 1}` })),
-              storyboardSelectionContext: buildChunkSelectionContext({
-                title: `角色锚点 · 任务 ${taskId} 镜头${shotStart}-${shotEnd}`,
-                imageUrl: roleRefs[0],
-              }),
-              status: 'success',
-              progress: 100,
-              nodeWidth: 320,
-              nodeHeight: 210,
-            },
-          )
-        : ''
-
-      const storyboardNodeId = createReplayTaskNode(`分镜续写 · 任务 ${taskId} 镜头${shotStart}-${shotEnd}`, {
-        kind: 'novelStoryboard',
-        autoLabel: false,
-        storyboardCount: groupSize,
-        storyboardAspectRatio,
-        storyboardStyle: 'realistic',
-        imageModel: imageModelKey,
-        storyboardScript,
-        storyboardShotPrompts,
-        storyboardChunkNarrative: storyboardShotPrompts.join('；'),
-        storyboardStoryContext: storyboardStoryContext || undefined,
-        sourceBookId: novelStoryboardProgressMeta.bookId,
-        roleCardReferenceImages: roleRefs.length ? roleRefs : undefined,
-        storyboardTaskId: taskId,
-        storyboardPlanId: storyboardPlanId || undefined,
-        chapter: historyChapter,
-        materialChapter: historyChapter,
-        source: 'novel_storyboard_history',
-        storyboardGroupSize: groupSize,
-        storyboardChunkIndex: chunkIndex,
-        storyboardShotStart: shotStart,
-        storyboardShotEnd: shotEnd,
-        storyboardSelectionContext: chunkSelectionContext,
-        imageUrl: primaryImageUrl || undefined,
-        imagePrimaryIndex: primaryImageUrl ? 0 : undefined,
-        imageResults,
-        storyboardShotNo: primaryShotNo,
-        status: 'success',
-        progress: 100,
-      })
-      if (!storyboardNodeId) {
-        toast('创建后续分镜节点失败', 'error')
-        return
-      }
-      const scriptGroupNodeIds = [...shotScriptNodeIds, anchorNodeId].filter(Boolean)
-      const afterAdd = useRFStore.getState()
-      const newNode = afterAdd.nodes.find((n) => String(n.id || '') === storyboardNodeId)
-      if (!newNode) return
-
-      const sourceNode = afterAdd.nodes.find((n) => n.id === id) as any
-      const targetGroupId = String(sourceNode?.parentId || '').trim()
-      if (targetGroupId) {
-        const siblings = afterAdd.nodes.filter((n: any) => !scriptGroupNodeIds.includes(String(n.id || '')) && String(n?.parentId || '') === targetGroupId)
-        const baseX = Number(sourceNode?.position?.x || 0)
-        const baseY = Number(sourceNode?.position?.y || 0)
-        const maxY = siblings.reduce((max, n: any) => Math.max(max, Number(n?.position?.y || 0)), baseY)
-        const startY = maxY + 150
-        const replayPositions = new Map<string, { x: number; y: number }>()
-        shotScriptNodeIds.forEach((nodeId, idx) => {
-          const col = idx % 5
-          const row = Math.floor(idx / 5)
-          replayPositions.set(nodeId, { x: baseX + col * 260, y: startY + row * 120 })
-        })
-        const scriptRows = Math.max(1, Math.ceil(Math.max(1, shotScriptNodeIds.length) / 5))
-        const anchorY = startY + scriptRows * 120 + 24
-        if (anchorNodeId) replayPositions.set(anchorNodeId, { x: baseX, y: anchorY })
-        useRFStore.setState((s: any) => ({
-          ...s,
-          nodes: s.nodes.map((n: any) => (
-            replayPositions.has(String(n.id || ''))
-              ? {
-                  ...n,
-                  position: replayPositions.get(String(n.id || ''))!,
-                  parentId: targetGroupId,
-                  extent: sourceNode.extent,
-                  selected: n.id === storyboardNodeId,
-                }
-              : {
-                  ...n,
-                  selected: n.id === storyboardNodeId,
-            }
-          )),
-        }))
-        if (scriptGroupNodeIds.length >= 2) {
-          afterAdd.arrangeGroupChildren(targetGroupId, 'grid', scriptGroupNodeIds)
-        }
-        const latest = useRFStore.getState().nodes
-        const parentGroup = latest.find((n: any) => String(n?.id || '') === targetGroupId)
-        const groupW = Math.max(980, Math.round(Number((parentGroup as any)?.style?.width || (parentGroup as any)?.measured?.width || 980)))
-        useRFStore.setState((s: any) => ({
-          ...s,
-          nodes: s.nodes.map((n: any) => (
-            String(n?.id || '') === storyboardNodeId
-              ? {
-                  ...n,
-                  parentId: undefined,
-                  extent: undefined,
-                  position: { x: baseX + groupW + 32, y: baseY + 8 },
-                }
-              : n
-          )),
-        }))
-      } else {
-        const baseX = Number(sourceNode?.position?.x || 0) + 240
-        const baseY = Number(sourceNode?.position?.y || 0)
-        const posById = new Map<string, { x: number; y: number }>()
-        shotScriptNodeIds.forEach((nodeId, idx) => {
-          const col = idx % 5
-          const row = Math.floor(idx / 5)
-          posById.set(nodeId, { x: baseX + col * 260, y: baseY + row * 120 - 180 })
-        })
-        const scriptRows = Math.max(1, Math.ceil(Math.max(1, shotScriptNodeIds.length) / 5))
-        const anchorY = baseY + scriptRows * 120 - 40
-        if (anchorNodeId) posById.set(anchorNodeId, { x: baseX, y: anchorY })
-        const changes = Array.from(posById.entries()).flatMap(([nodeId, position]) => ([
-          { id: nodeId, type: 'position' as const, position, dragging: false },
-          { id: nodeId, type: 'select' as const, selected: nodeId === storyboardNodeId },
-        ]))
-        afterAdd.onNodesChange(changes)
-        const scriptAreaWidth = Math.max(980, Math.ceil(Math.max(1, shotScriptNodeIds.length) / 5) * 260)
-        afterAdd.onNodesChange([
-          {
-            id: storyboardNodeId,
-            type: 'position',
-            position: { x: baseX + scriptAreaWidth + 32, y: baseY - 40 },
-            dragging: false,
-          },
-          { id: storyboardNodeId, type: 'select', selected: true },
-        ])
-      }
-
-      afterAdd.onConnect({
-        source: id,
-        sourceHandle: 'out-image-wide',
-        target: storyboardNodeId,
-        targetHandle: 'in-image-wide',
-      })
-      shotScriptNodeIds.forEach((nodeId, idx) => {
-        if (idx === 0) return
-        afterAdd.onConnect({
-          source: shotScriptNodeIds[idx - 1],
-          sourceHandle: 'out-text',
-          target: nodeId,
-          targetHandle: 'in-text',
-        })
-      })
-      shotScriptNodeIds.forEach((nodeId) => {
-        afterAdd.onConnect({
-          source: nodeId,
-          sourceHandle: 'out-text',
-          target: storyboardNodeId,
-          targetHandle: 'in-image-wide',
-        })
-      })
-      if (anchorNodeId) {
-        afterAdd.onConnect({
-          source: anchorNodeId,
-          sourceHandle: 'out-image-wide',
-          target: storyboardNodeId,
-          targetHandle: 'in-image-wide',
-        })
-      }
-      toast(`已创建后续分镜节点（任务 ${taskId} · 镜头${shotStart}-${shotEnd}）`, 'success')
-    } catch (err: any) {
-      console.error(err)
-      toast(err?.message || '生成后续分镜失败', 'error')
     } finally {
       setNovelStoryboardContinueLoading(false)
     }
-  }, [addNode, data, id, novelStoryboardContinueLoading, novelStoryboardProgressMeta, parseStoryboardShotsFromText])
+  }, [
+    addNode,
+    appendLog,
+    data,
+    id,
+    novelStoryboardContinueLoading,
+    novelStoryboardProgressMeta,
+    resolveImageEditModelForAction,
+    setNodeStatus,
+    updateNodeData,
+  ])
 
   React.useEffect(() => {
     if (!isNovelStoryboardNode || !novelStoryboardProgressMeta || !novelStoryboardSessionId) return
-    if (status === 'running' || status === 'queued') {
+    const record = data as Record<string, unknown>
+    const pipelineStatus = typeof record.storyboardPipelineStatus === 'string'
+      ? record.storyboardPipelineStatus.trim()
+      : ''
+    if ((status === 'running' || status === 'queued') && pipelineStatus !== 'succeeded') {
       syncCreationSessionCheckpoint({
         id: novelStoryboardSessionId,
         title: novelStoryboardProgressMeta.chapter > 0 ? `AI 创作 · 第${novelStoryboardProgressMeta.chapter}章` : 'AI 创作',
@@ -5990,6 +5408,21 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         summary: novelStoryboardCurrentIndex > 0
           ? `正在生成第 ${novelStoryboardCurrentIndex} 个创作单元`
           : '正在生成当前创作单元',
+        updatedAt: Date.now(),
+      })
+      return
+    }
+    if (pipelineStatus === 'succeeded' && status === 'queued') {
+      syncCreationSessionCheckpoint({
+        id: novelStoryboardSessionId,
+        title: novelStoryboardProgressMeta.chapter > 0 ? `AI 创作 · 第${novelStoryboardProgressMeta.chapter}章` : 'AI 创作',
+        status: 'paused',
+        unitType: 'storyboard_chunk',
+        currentIndex: Math.max(0, novelStoryboardCurrentIndex),
+        total: novelStoryboardTotalUnits,
+        currentNodeId: id,
+        currentTaskId: novelStoryboardProgressMeta.taskId,
+        summary: '本组分镜脚本已通过语义审查，等待生成真实画面与尾帧后再继续下一单元。',
         updatedAt: Date.now(),
       })
       return
@@ -6011,13 +5444,29 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       })
       return
     }
+    if (status === 'success' && record.storyboardMetadataStatus === 'failed') {
+      syncCreationSessionCheckpoint({
+        id: novelStoryboardSessionId,
+        title: novelStoryboardProgressMeta.chapter > 0 ? `AI 创作 · 第${novelStoryboardProgressMeta.chapter}章` : 'AI 创作',
+        status: 'paused',
+        unitType: 'storyboard_chunk',
+        currentIndex: Math.max(0, novelStoryboardCurrentIndex),
+        total: novelStoryboardTotalUnits,
+        currentNodeId: id,
+        currentTaskId: novelStoryboardProgressMeta.taskId,
+        summary: typeof record.storyboardMetadataError === 'string' && record.storyboardMetadataError.trim()
+          ? record.storyboardMetadataError.trim()
+          : '画面已生成并保留，但章节分镜元数据写入失败；修复落库后才能继续下一单元。',
+        updatedAt: Date.now(),
+      })
+      return
+    }
     if (status === 'error') {
-      failCreationSession(String((data as Record<string, unknown>)?.lastError || '创作单元执行失败'))
+      failCreationSession(String(record.lastError || '创作单元执行失败'))
     }
   }, [
     data,
     failCreationSession,
-    handleGenerateNovelStoryboardNextChunk,
     id,
     isNovelStoryboardNode,
     novelStoryboardCanGenerateNext,
@@ -6028,23 +5477,195 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     status,
     syncCreationSessionCheckpoint,
   ])
-  const migrateLegacyStoryboardToNovel = React.useCallback(() => {
-    if (kind !== 'storyboardImage') return
-    const script = String((data as any)?.storyboardScript || prompt || '').trim()
-    const parsed = parseStoryboardShotsFromText(script)
-    const existingShots = Array.isArray((data as any)?.storyboardShotPrompts)
-      ? ((data as any).storyboardShotPrompts as unknown[]).map((x) => String(x || '').trim()).filter(Boolean)
-      : []
-    const shotPrompts = (existingShots.length ? existingShots : parsed).slice(0, 25)
-    updateNodeData(id, {
-      kind: 'novelStoryboard',
-      novelStoryboardCollapsed: false,
-      ...(shotPrompts.length ? { storyboardShotPrompts: shotPrompts } : null),
-      ...(script ? { storyboardScript: script, prompt: script } : null),
+  const handleGridSplitCellClick = React.useCallback((key: string, shift: boolean) => {
+    setGridSplitSelectedCells((prev) => {
+      const next = new Set(prev)
+      if (shift) {
+        if (next.has(key)) next.delete(key)
+        else next.add(key)
+      } else {
+        if (next.has(key) && next.size === 1) next.clear()
+        else { next.clear(); next.add(key) }
+      }
+      return next
     })
-    toast('已迁移为小说分镜节点', 'success')
-  }, [data, id, kind, parseStoryboardShotsFromText, prompt, updateNodeData])
+  }, [])
 
+  const handleRotateDragStart = React.useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation()
+    const nodeEl = e.currentTarget.closest('.tc-task-node') as HTMLElement | null
+    if (!nodeEl) return
+    const rect = nodeEl.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const cy = rect.top + rect.height / 2
+    const startPointerAngle = Math.atan2(e.clientX - cx, -(e.clientY - cy)) * 180 / Math.PI
+    const startRotation = rotatePrevAngle
+    const onMove = (me: PointerEvent) => {
+      const pAngle = Math.atan2(me.clientX - cx, -(me.clientY - cy)) * 180 / Math.PI
+      let newAngle = startRotation + (pAngle - startPointerAngle)
+      newAngle = ((newAngle + 540) % 360) - 180
+      setRotatePrevAngle(Math.round(newAngle))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }, [rotatePrevAngle])
+
+  const handleRotatePrevConfirm = React.useCallback(async () => {
+    if (!primaryImageUrl) return
+    setRotateSaving(true)
+    try {
+      // Prefer the already-downloaded resource from ManagedImage cache (blob: / ImageBitmap)
+      // to avoid CORS. Only fall back to a fresh fetch when the cache misses.
+      const resId = resourceManager.buildResourceId({ url: primaryImageUrl, kind: 'image' })
+      const cached = resId ? useResourceRuntimeStore.getState().imageEntries[resId]?.decoded : null
+
+      let drawSource: CanvasImageSource
+      let srcW: number
+      let srcH: number
+      let tempObjUrl: string | null = null
+
+      if (cached?.imageBitmap) {
+        drawSource = cached.imageBitmap
+        srcW = cached.imageBitmap.width
+        srcH = cached.imageBitmap.height
+      } else {
+        let imgSrc: string
+        if (cached?.objectUrl) {
+          imgSrc = cached.objectUrl
+        } else {
+          const blob = await fetchProxiedImageBlob(primaryImageUrl)
+          tempObjUrl = URL.createObjectURL(blob)
+          imgSrc = tempObjUrl
+        }
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const el = new Image()
+          el.crossOrigin = 'anonymous'
+          el.onload = () => resolve(el)
+          el.onerror = reject
+          el.src = imgSrc
+        })
+        drawSource = img
+        srcW = img.naturalWidth
+        srcH = img.naturalHeight
+      }
+
+      const rad = (rotatePrevAngle * Math.PI) / 180
+      const sin = Math.abs(Math.sin(rad))
+      const cos = Math.abs(Math.cos(rad))
+      const w = Math.round(srcW * cos + srcH * sin)
+      const h = Math.round(srcW * sin + srcH * cos)
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')!
+      ctx.translate(w / 2, h / 2)
+      ctx.scale(rotatePrevFlipH ? -1 : 1, rotatePrevFlipV ? -1 : 1)
+      ctx.rotate(rad)
+      ctx.drawImage(drawSource, -srcW / 2, -srcH / 2)
+      if (tempObjUrl) URL.revokeObjectURL(tempObjUrl)
+
+      // Upload to OSS to avoid storing a large data: URL in node data (which would
+      // cause ManagedImage to load it into the resource store, potentially triggering
+      // trimToBudget and evicting other nodes' cached images).
+      const blob = await new Promise<Blob>((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('canvas.toBlob failed')), 'image/jpeg', 0.95))
+      const fileName = `rotate-${id}-${Date.now()}.jpg`
+      const projectId = typeof currentProject?.id === 'string' ? currentProject.id.trim() : ''
+      const hosted = await uploadServerAssetFile(new File([blob], fileName, { type: 'image/jpeg' }), fileName, {
+        ...(projectId ? { projectId } : {}),
+        ownerNodeId: id,
+      })
+      const ossUrl = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
+      if (!ossUrl) throw new Error('旋转图片已处理，但上传 OSS 失败')
+      const rotatePreview = (data as Record<string, unknown>)._rotatePreview
+      const rotatePreviewRecord = rotatePreview && typeof rotatePreview === 'object' && !Array.isArray(rotatePreview)
+        ? rotatePreview as Record<string, unknown>
+        : null
+      const sourceNodeId = typeof rotatePreviewRecord?.sourceId === 'string' && rotatePreviewRecord.sourceId.trim()
+        ? rotatePreviewRecord.sourceId.trim()
+        : id
+      const imageOperationSpec = createImageOperationForSource({
+        kind: 'rotate',
+        execution: 'local-transform',
+        sourceNodeId,
+        sourceUrl: primaryImageUrl,
+        sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+        parameters: {
+          angleDeg: rotatePrevAngle,
+          flipHorizontal: rotatePrevFlipH,
+          flipVertical: rotatePrevFlipV,
+          sourceSize: { width: srcW, height: srcH },
+          outputSize: { width: w, height: h },
+        },
+      })
+      updateNodeData(id, {
+        imageUrl: ossUrl,
+        imageResults: [{ url: ossUrl }],
+        serverAssetId: hosted.id,
+        _rotatePreview: undefined,
+        status: 'done',
+        imageOperationSpec,
+        imageOperationState: {
+          ...createImageOperationState(imageOperationSpec, 'succeeded'),
+          attempt: 1,
+          progress: 100,
+          startedAt: imageOperationSpec.createdAt,
+          finishedAt: new Date().toISOString(),
+          resultAssets: [{ role: 'result' as const, url: ossUrl, assetId: hosted.id }],
+        },
+        imageOperationRevision: imageOperationSpec.sourceRevision + 1,
+      })
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '旋转失败', 'error')
+    } finally {
+      setRotateSaving(false)
+    }
+  }, [currentProject?.id, data, id, primaryImageUrl, rotatePrevAngle, rotatePrevFlipH, rotatePrevFlipV, updateNodeData])
+
+  const handleRotatePrevClose = React.useCallback(() => {
+    useRFStore.getState().deleteNode(id)
+  }, [id])
+
+  // Stable callbacks so the React.memo'd <ImageContent> can actually bail out: imageProps is spread
+  // prop-by-prop, and in the common (non-panoramic, non-rotating) case the only otherwise-unstable
+  // entries are these two inline arrows. With them stabilized, ImageContent skips re-render on every
+  // parent re-render whose image data is unchanged (typing prompts, store ticks, sibling updates).
+  const handleSelectPrimaryImage = React.useCallback((idx: number, url: string) => {
+    setImagePrimaryIndex(idx)
+    updateNodeData(id, { imageUrl: url, imagePrimaryIndex: idx })
+  }, [id, setImagePrimaryIndex, updateNodeData])
+  const handleUpdateNodeDataPatch = React.useCallback(
+    (patch: Record<string, any>) => updateNodeData(id, patch),
+    [id, updateNodeData],
+  )
+  const handleImageEmptyAction = React.useCallback((action: MediaEmptyAction) => {
+    if (action !== 'image-to-image' && action !== 'image-upscale') return
+    pendingImageUploadActionRef.current = action
+    const input = fileRef.current
+    if (!input) {
+      pendingImageUploadActionRef.current = null
+      toast('图片选择器尚未就绪，请重新点击', 'error')
+      return
+    }
+    const clearCanceledAction = () => {
+      window.setTimeout(() => {
+        if (input.files?.length) return
+        if (pendingImageUploadActionRef.current === action) {
+          pendingImageUploadActionRef.current = null
+        }
+      }, 250)
+    }
+    window.addEventListener('focus', clearCanceledAction, { once: true })
+    input.click()
+  }, [])
+  React.useLayoutEffect(() => {
+    const pendingAction = consumeMediaEmptyAction(id)
+    if (!pendingAction) return
+    handleImageEmptyAction(pendingAction)
+  }, [handleImageEmptyAction, id])
   const imageProps = {
     nodeId: id,
     nodeKind: kind,
@@ -6059,105 +5680,40 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     imagePrimaryIndex,
     primaryImageUrl,
     fileRef,
-    canUpload: supportsImageUpload,
+    isGenerating: status === 'running' || status === 'queued',
+    canUpload: supportsImageUpload && status !== 'running' && status !== 'queued',
     uploading: isUploadingImage,
     onUpload: handleImageUpload,
-    onSelectPrimary: (idx: number, url: string) => {
-      setImagePrimaryIndex(idx)
-      updateNodeData(id, { imageUrl: url, imagePrimaryIndex: idx })
-    },
-    adoptedImageIndex,
-    isPrimaryImageAdopted,
-    onAdoptImage: (idx: number) => {
-      const target = imageResults[idx]
-      if (!target) return
-      updateNodeData(id, {
-        adoptedImageAsset: {
-          index: idx,
-          url: target.url,
-          adoptedAt: new Date().toISOString(),
-          progress: typeof data?.progress === 'number' && Number.isFinite(data.progress) ? data.progress : null,
-        } satisfies AdoptedAssetMetadata,
-      })
-      toast(`已采纳第 ${idx + 1} 张图片`, 'success')
-    },
+    onEmptyAction: handleImageEmptyAction,
+    onSelectPrimary: handleSelectPrimaryImage,
     compact: hideImageMeta,
     showStateOverlay: showImageStateOverlay,
     stateLabel: imageStateLabel,
-    onUpdateNodeData: (patch: Record<string, any>) => updateNodeData(id, patch),
+    onUpdateNodeData: handleUpdateNodeDataPatch,
     nodeShellText,
     darkCardShadow,
     mediaOverlayText,
     subtleOverlayBackground,
     imageUrl,
-    themeWhite: theme.white,
-    imageEditPreview,
-  }
-
-  const handleEditSingleShot = React.useCallback((input: { url: string; label: string; sourceIndex?: number }) => {
-    const shotUrl = String(input?.url || '').trim()
-    if (!shotUrl) {
-      toast('镜头图片地址无效，无法编辑', 'error')
-      return
-    }
-    if (typeof input.sourceIndex !== 'number' || input.sourceIndex < 0) {
-      toast('当前镜头来源不可编辑，请先完成分镜生图再试', 'warning')
-      return
-    }
-    const sourceIndex = input.sourceIndex
-    const primaryTitle =
-      imageResults[imagePrimaryIndex] && typeof imageResults[imagePrimaryIndex]?.title === 'string'
-        ? String(imageResults[imagePrimaryIndex]?.title || '').trim()
-        : ''
-    const primaryIsShot = primaryTitle.startsWith('镜头')
-    const shotSourceOffset =
-      (kind === 'novelStoryboard' || kind === 'storyboardImage')
-        ? (primaryIsShot ? Math.max(0, imagePrimaryIndex) : (imagePrimaryIndex >= 0 ? imagePrimaryIndex + 1 : 1))
-        : 0
-    const shotPromptIndex = Math.max(0, sourceIndex - shotSourceOffset)
-    const shotPrompt = String(novelStoryboardShots[shotPromptIndex] || '').trim()
-    const repairPrompt = [
-      '请先理解参考图中当前镜头的构图与角色，再执行定向修复。',
-      '任务目标：只修复不合理细节，保持角色身份、画风、服装、光线与镜头意图连续。',
-      shotPrompt ? `当前镜头脚本：${shotPrompt}` : '',
-      '修复要求：构图不偏移、人物不换脸、不新增无关元素、避免畸形肢体与错误透视。',
-      '输出：仅返回1张修复后的镜头图。',
-    ]
-      .filter(Boolean)
-      .join('\n')
-    editingShotSourceIndexRef.current = sourceIndex
-    setEditingShotSourceIndex(sourceIndex)
-    handlePoseSaved({
-      poseStickmanUrl: null,
-      poseReferenceImages: [shotUrl],
-      baseImageUrl: shotUrl,
-      prompt: repairPrompt,
-    })
-  }, [handlePoseSaved, imagePrimaryIndex, kind, novelStoryboardShots])
-
-  const storyboardImageProps = {
-    nodeId: id,
-    nodePrompt: prompt,
-    storyboardScript: String((data as any)?.storyboardScript || prompt || '').trim(),
-    storyboardShotPrompts: storyboardShotPromptsForDrag,
-    nodeWidth,
-    nodeHeight: nodeHeight ?? visualNodeDefaults.height,
-    variantsOpen,
-    variantsBaseWidth,
-    variantsBaseHeight,
-    imageResults,
-    imagePrimaryIndex,
-    primaryImageUrl,
-    storyboardCount,
-    onUpdateNodeData: (patch: Record<string, any>) => updateNodeData(id, patch),
-    showStateOverlay: showImageStateOverlay,
-    stateLabel: imageStateLabel,
-    nodeShellText,
-    darkCardShadow,
-    subtleOverlayBackground,
-    mediaOverlayText,
-    themeWhite: theme.white,
-    onEditShot: handleEditSingleShot,
+    themeWhite: themeWhite,
+    onMediaNaturalSize: handleMediaNaturalSize,
+    isPanoramic,
+    panoramicSphereMode,
+    panoramicCamera,
+    panoramicGridVisible,
+    panoramicViewerRef,
+    onPanoramicCameraChange: handlePanoramicCameraChange,
+    onEnterSphereMode: isPanoramic ? () => setPanoramicSphereMode(true) : undefined,
+    gridSplitMode: gridSplitOpen && !isPanoramic,
+    gridSplitRows: gridSplitOpen ? gridSplitRows : undefined,
+    gridSplitCols: gridSplitOpen ? gridSplitCols : undefined,
+    gridSplitSelected: gridSplitSelectedCells,
+    gridSplitHovered: gridSplitHoveredCell,
+    onGridCellHover: setGridSplitHoveredCell,
+    onGridCellClick: handleGridSplitCellClick,
+    isGridSplitCell: Boolean((data as any)?.isGridSplitCell),
+    rotatePreview: isRotatePreview ? { angle: rotatePrevAngle, flipH: rotatePrevFlipH, flipV: rotatePrevFlipV } : undefined,
+    onRotateDragStart: isRotatePreview ? handleRotateDragStart : undefined,
   }
 
   const handleComposeStoryboardEditorImage = React.useCallback(async (file: File) => {
@@ -6261,26 +5817,477 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     useUIStore.getState().openPreview({ url: toolbarPreview.url, kind: toolbarPreview.kind as any, name: data?.label })
   }, [data?.label, toolbarPreview])
 
-  const handleDownload = React.useCallback(() => {
+  const [toolbarDownloading, setToolbarDownloading] = React.useState(false)
+  const handleDownload = React.useCallback(async () => {
     if (!toolbarPreview.url) return
-    void downloadUrl({
-      url: toolbarPreview.url,
-      filename: appendDownloadSuffix(data?.label || kind || 'node', Date.now()),
-      preferBlob: true,
-      fallbackTarget: '_blank',
-    })
-  }, [data?.label, kind, toolbarPreview])
+    if (toolbarDownloading) return
+    const filename = appendDownloadSuffix(data?.label || kind || 'node', Date.now())
+    // 优先复用 ManagedImage 已下好的同源 blob:URL —— 跨域的 TOS 链接会让浏览器
+    // 忽略 <a download> 属性、转而新开 tab 打开图片。同源 blob: 链接则必定触发直接下载。
+    // 缓存未命中再走 downloadUrl 的跨域 fetch + 同源代理逻辑。
+    if (toolbarPreview.kind === 'image') {
+      const resId = resourceManager.buildResourceId({ url: toolbarPreview.url, kind: 'image' })
+      const cachedObjectUrl = resId
+        ? useResourceRuntimeStore.getState().imageEntries[resId]?.decoded?.objectUrl
+        : null
+      if (cachedObjectUrl) {
+        void downloadUrl({ url: cachedObjectUrl, filename, preferBlob: false, fallbackTarget: '_self' })
+        return
+      }
+    }
+    setToolbarDownloading(true)
+    try {
+      await downloadUrl({
+        url: toolbarPreview.url,
+        filename,
+        proxyBlob: fetchAssetDownloadBlob,
+      })
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '下载失败，请稍后重试', 'error')
+    } finally {
+      setToolbarDownloading(false)
+    }
+  }, [data?.label, kind, toolbarPreview, toolbarDownloading])
+
+  const composedVideoUrl = isVideoComposeNode ? ((data as any)?.videoUrl as string | undefined) || null : null
+
+  const handleComposeDone = React.useCallback(async (blob: Blob) => {
+    if (isOrchestratedVideoClip) {
+      requestVideoClipAgentAction({
+        nodeId: id,
+        action: 'revise_clip',
+        runId: readVideoClipRunId(data),
+        clipIndex: readVideoClipIndex(data),
+      })
+      return
+    }
+    // 1) 立即用 blob: URL 写回画布——合成即可见,不被上传阻塞(修复 bfeb2ada8 回归:
+    //    旧实现先 await 上传 TOS 再写回,上传慢/卡住时「合成后加不到画布」)。
+    const blobUrl = URL.createObjectURL(blob)
+    const uploadToken = crypto.randomUUID()
+    updateNodeData(id, buildComposeInitialPatch((data as any)?.videoResults, blobUrl, uploadToken))
+
+    // 2) 后台把成片转存 TOS,成功后把临时 blob: URL 换成持久 URL;失败则保留 blob:(本会话仍可播)。
+    try {
+      const projectId = String(currentProject?.id || '').trim()
+      const file = new File([blob], `compose-${Date.now()}.mp4`, { type: 'video/mp4' })
+      const asset = await uploadServerAssetFile(file, `成片-${id}`, {
+        projectId: projectId || undefined,
+        taskKind: 'composeVideo',
+      })
+      // 注意:上传结果的真实 URL 在 asset.data.url(与全站其它调用一致),不是 asset.url。
+      // 原回归代码误用 asset.url(undefined),上传成功反而把 videoUrl 写成空 → 加不到画布。
+      const durableUrl =
+        typeof (asset as any)?.data?.url === 'string' ? String((asset as any).data.url).trim() : ''
+      if (durableUrl) {
+        const fresh = useRFStore.getState().nodes.find((n) => n.id === id)
+        const patch = buildComposeUrlSwapPatch(fresh?.data, blobUrl, durableUrl, uploadToken)
+        if (patch) updateNodeData(id, patch)
+      }
+    } catch (error: unknown) {
+      toast(`成片已在当前会话生成，但持久化上传失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    }
+  }, [currentProject?.id, data, id, isOrchestratedVideoClip, updateNodeData])
+
+  // 2026-07-17 用户拍板：clips_ready 不再自动触发浏览器合成——合成是用户分步操控的动作，
+  // 由用户在成片节点手动点「合成视频」发起（clips_ready 语义不变＝段齐+连线完成，等用户合成）。
+
+  const [composeDownloading, setComposeDownloading] = React.useState(false)
+  const handleDownloadComposed = React.useCallback(async () => {
+    if (!composedVideoUrl) return
+    if (composeDownloading) return
+    setComposeDownloading(true)
+    try {
+      await downloadUrl({ url: composedVideoUrl, filename: appendDownloadSuffix((data as any)?.label || '合成视频', Date.now()), proxyBlob: fetchAssetDownloadBlob })
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '下载失败，请稍后重试', 'error')
+    } finally {
+      setComposeDownloading(false)
+    }
+  }, [composedVideoUrl, data, composeDownloading])
+
+  const videoComposeProps = React.useMemo(
+    () =>
+      isVideoComposeNode
+        ? {
+            upstreamVideos,
+            composedVideoUrl,
+            videoSurface,
+            mediaFallbackText,
+            nodeHeight: nodeHeight ?? undefined,
+            orchestrated: isOrchestratedVideoClip,
+            prompt: typeof (data as any)?.prompt === 'string' ? (data as any).prompt : '',
+            onPromptChange: (value: string) => updateNodeData(id, { prompt: value }),
+            onAddReference: () => openCanvasReferencePicker({ targetNodeId: id }),
+            onOpenEditor: () => setComposeEditorOpen(true),
+            onDownload: handleDownloadComposed,
+            downloading: composeDownloading,
+          }
+        : undefined,
+    [isOrchestratedVideoClip, isVideoComposeNode, upstreamVideos, composedVideoUrl, videoSurface, mediaFallbackText, nodeHeight, handleDownloadComposed, composeDownloading, data, id, updateNodeData, openCanvasReferencePicker],
+  )
+
+  const audioType: 'speech' | 'music' = (data as any)?.audioType === 'music' ? 'music' : 'speech'
+  const audioSpeechModelOptions = React.useMemo(
+    () => modelMenuOptions.filter((option) => isCatalogAudioType(option, 'speech')),
+    [modelMenuOptions],
+  )
+  const audioMusicModelOptions = React.useMemo(
+    () => modelMenuOptions.filter((option) => isCatalogAudioType(option, 'music')),
+    [modelMenuOptions],
+  )
+  const activeAudioModelOptions = audioType === 'music' ? audioMusicModelOptions : audioSpeechModelOptions
+  React.useEffect(() => {
+    if (!isAudioNode || viewOnly || modelListLoading || modelListError || storedAudioModel) return
+    const firstValue = String(activeAudioModelOptions[0]?.value || '').trim()
+    if (!firstValue) return
+    updateNodeData(id, { audioModel: firstValue })
+  }, [
+    activeAudioModelOptions,
+    id,
+    isAudioNode,
+    modelListError,
+    modelListLoading,
+    storedAudioModel,
+    updateNodeData,
+    viewOnly,
+  ])
+  // 音频参数走 ControlChips 通用芯片（与图片节点底部工具栏同一套样式）
+  type AudioControl = {
+    key: string
+    title: string
+    summary: string
+    options: ReadonlyArray<{ value: string; label: string; disabled?: boolean }>
+    onChange: (value: string) => void
+    render?: React.ReactNode
+  }
+  const mappedAudioControls = React.useMemo<ReadonlyArray<AudioControl>>(() => {
+    if (!isAudioNode) return []
+    const audioModel = storedAudioModel
+    const selectedAudioOption = findModelOptionByIdentifier(activeAudioModelOptions, audioModel)
+    const isDoubao = Boolean(
+      selectedAudioOption && readCatalogTags(selectedAudioOption).includes('tapcanvas:audio-engine=doubao'),
+    )
+
+    // MiniMax 音色/情绪/语速
+    const voiceId =
+      (typeof (data as any)?.voiceId === 'string' && ((data as any).voiceId as string).trim()) ||
+      'male-qn-qingse'
+    const emotion = typeof (data as any)?.emotion === 'string' ? ((data as any).emotion as string) : ''
+    const speed = typeof (data as any)?.speed === 'number' ? ((data as any).speed as number) : 1
+    // 豆包语音参数
+    const doubaoVoiceId =
+      typeof (data as any)?.doubaoVoiceId === 'string' ? ((data as any).doubaoVoiceId as string) : ''
+    const speechRate = typeof (data as any)?.speechRate === 'number' ? ((data as any).speechRate as number) : 0
+    const pitchRate = typeof (data as any)?.pitchRate === 'number' ? ((data as any).pitchRate as number) : 0
+    const loudnessRate =
+      typeof (data as any)?.loudnessRate === 'number' ? ((data as any).loudnessRate as number) : 0
+    const lyricsMode =
+      (data as any)?.lyricsMode === 'auto' || (data as any)?.lyricsMode === 'custom'
+        ? ((data as any).lyricsMode as 'auto' | 'custom')
+        : 'instrumental'
+
+    const modelOptions = activeAudioModelOptions
+
+    const controls: AudioControl[] = [
+      {
+        key: 'audioType',
+        title: '类型',
+        summary: audioType === 'music' ? '音乐' : '语音',
+        options: [
+          { value: 'speech', label: '语音' },
+          { value: 'music', label: '音乐' },
+        ],
+        onChange: (value) => {
+          const nextType = value === 'music' ? 'music' : 'speech'
+          const nextOptions = nextType === 'music' ? audioMusicModelOptions : audioSpeechModelOptions
+          const nextModel = String(nextOptions[0]?.value || '').trim()
+          if (!nextModel) {
+            toast(`${nextType === 'music' ? '音乐' : '语音'}模型目录为空，请先在系统模型管理中配置渠道、协议与价格`, 'error')
+          }
+          updateNodeData(id, {
+            audioType: nextType,
+            audioModel: nextModel || null,
+          })
+        },
+      },
+      {
+        key: 'audioModel',
+        title: '模型',
+        summary: selectedAudioOption?.label || (audioModel ? `不可用：${audioModel}` : '未选择模型'),
+        options: modelOptions,
+        onChange: (value) => {
+          if (!findModelOptionByIdentifier(modelOptions, value)) {
+            toast(`音频模型 ${value} 不在当前系统模型目录中`, 'error')
+            return
+          }
+          updateNodeData(id, { audioModel: value })
+        },
+      },
+    ]
+    if (audioType === 'speech') {
+      if (isDoubao) {
+        // 豆包语音：富音色选择器（render）+ 语速/音调/响度
+        controls.push(
+          {
+            key: 'doubaoVoiceId',
+            title: '音色',
+            summary: '',
+            options: [],
+            onChange: () => {},
+            render: (
+              <LazyDoubaoVoicePicker
+                key="doubaoVoiceId"
+                compact
+                value={doubaoVoiceId}
+                onChange={(vid, vname) => {
+                  // 配音卡三字段同步（2026-07-17 根治）：改音色必须连带 voiceLabel 与
+                  // 「配音卡｜角色·音色名」label 后缀一起更新，否则卡面标签与真实音色脱钩。
+                  const patch: Record<string, unknown> = { doubaoVoiceId: vid }
+                  const isVoiceCard =
+                    String((data as any)?.audioType ?? '').toLowerCase() === 'voice_card'
+                  if (isVoiceCard) {
+                    patch.voiceLabel = vname || ''
+                    const role =
+                      (typeof (data as any)?.voiceCharacter === 'string' &&
+                        ((data as any).voiceCharacter as string).trim()) ||
+                      (typeof (data as any)?.roleName === 'string' &&
+                        ((data as any).roleName as string).trim()) ||
+                      ''
+                    if (role) patch.label = vname ? `配音卡｜${role}·${vname}` : `配音卡｜${role}`
+                  }
+                  updateNodeData(id, patch)
+                }}
+                stopNodeDrag={(e) => e.stopPropagation()}
+              />
+            ),
+          },
+          {
+            key: 'speechRate',
+            title: '语速',
+            summary:
+              (DOUBAO_SPEECH_RATE_OPTIONS as readonly { value: string; label: string }[]).find(
+                (o) => Number(o.value) === speechRate,
+              )?.label || `${speechRate}`,
+            options: DOUBAO_SPEECH_RATE_OPTIONS as unknown as { value: string; label: string }[],
+            onChange: (value) => updateNodeData(id, { speechRate: Number(value) || 0 }),
+          },
+          {
+            key: 'pitchRate',
+            title: '音调',
+            summary:
+              (DOUBAO_PITCH_RATE_OPTIONS as readonly { value: string; label: string }[]).find(
+                (o) => Number(o.value) === pitchRate,
+              )?.label || `${pitchRate}`,
+            options: DOUBAO_PITCH_RATE_OPTIONS as unknown as { value: string; label: string }[],
+            onChange: (value) => updateNodeData(id, { pitchRate: Number(value) || 0 }),
+          },
+          {
+            key: 'loudnessRate',
+            title: '响度',
+            summary:
+              (DOUBAO_LOUDNESS_RATE_OPTIONS as readonly { value: string; label: string }[]).find(
+                (o) => Number(o.value) === loudnessRate,
+              )?.label || `${loudnessRate}`,
+            options: DOUBAO_LOUDNESS_RATE_OPTIONS as unknown as { value: string; label: string }[],
+            onChange: (value) => updateNodeData(id, { loudnessRate: Number(value) || 0 }),
+          },
+        )
+      } else {
+        controls.push(
+          {
+            key: 'voiceId',
+            title: '音色',
+            summary:
+              (AUDIO_VOICE_OPTIONS as readonly { value: string; label: string }[]).find(
+                (o) => o.value === voiceId,
+              )?.label || voiceId,
+            options: AUDIO_VOICE_OPTIONS as unknown as { value: string; label: string }[],
+            onChange: (value) => updateNodeData(id, { voiceId: value }),
+          },
+          {
+            key: 'emotion',
+            title: '情绪',
+            summary:
+              (AUDIO_EMOTION_OPTIONS as readonly { value: string; label: string }[]).find(
+                (o) => o.value === emotion,
+              )?.label || '默认',
+            options: [
+              { value: '', label: '默认' },
+              ...(AUDIO_EMOTION_OPTIONS as unknown as { value: string; label: string }[]),
+            ],
+            onChange: (value) => updateNodeData(id, { emotion: value }),
+          },
+          {
+            key: 'speed',
+            title: '语速',
+            summary: `${speed.toFixed(1)}x`,
+            options: ['0.5', '0.8', '1', '1.2', '1.5', '2'].map((v) => ({
+              value: v,
+              label: `${Number(v).toFixed(1)}x`,
+            })),
+            onChange: (value) => updateNodeData(id, { speed: Number(value) || 1 }),
+          },
+        )
+      }
+    } else {
+      controls.push({
+        key: 'lyricsMode',
+        title: '歌词',
+        summary:
+          (AUDIO_LYRICS_MODE_OPTIONS as readonly { value: string; label: string }[]).find(
+            (o) => o.value === lyricsMode,
+          )?.label || '纯音乐',
+        options: AUDIO_LYRICS_MODE_OPTIONS as unknown as { value: string; label: string }[],
+        onChange: (value) => updateNodeData(id, { lyricsMode: value }),
+      })
+    }
+    return controls
+  }, [
+    activeAudioModelOptions,
+    audioMusicModelOptions,
+    audioSpeechModelOptions,
+    audioType,
+    data,
+    id,
+    isAudioNode,
+    storedAudioModel,
+    updateNodeData,
+  ])
+
+  const handleAudioUpload = React.useCallback(
+    async (file: File) => {
+      if (!isAudioNode || nodeReadOnly) return
+      if (!file.type.startsWith('audio/')) {
+        toast('请选择音频文件', 'error')
+        return
+      }
+      const title = file.name.replace(/\.[a-z0-9]+$/i, '').trim() || '上传音频'
+      const projectId = typeof currentProject?.id === 'string' ? currentProject.id.trim() : ''
+      updateNodeData(id, { status: 'running', errorMessage: null })
+      try {
+        const hosted = await uploadServerAssetFile(file, title, {
+          ownerNodeId: id,
+          ...(projectId ? { projectId } : {}),
+        })
+        const url = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
+        if (!url) {
+          throw new Error('音频已上传，但 Assets 未返回可用链接')
+        }
+        updateNodeData(id, {
+          audioUrl: url,
+          assetId: hosted.id,
+          serverAssetId: hosted.id,
+          audioResults: [{ url, assetId: hosted.id }],
+          assetRegistrationStatus: 'ready',
+          audioDurationSec: null,
+          status: 'success',
+          errorMessage: null,
+        })
+        notifyAssetRefresh()
+        toast('音频已上传到 Assets', 'success')
+      } catch (error: unknown) {
+        const msg = error instanceof Error && error.message ? error.message : '音频上传失败'
+        updateNodeData(id, { status: 'failed', errorMessage: msg })
+        toast(msg, 'error')
+      }
+    },
+    [currentProject?.id, isAudioNode, nodeReadOnly, id, updateNodeData],
+  )
+
+  const audioProps = React.useMemo(
+    () =>
+      isAudioNode
+        ? {
+            audioUrl:
+              typeof (data as any)?.audioUrl === 'string' && ((data as any).audioUrl as string).trim()
+                ? ((data as any).audioUrl as string)
+                : null,
+            audioDurationSec:
+              typeof (data as any)?.audioDurationSec === 'number'
+                ? ((data as any).audioDurationSec as number)
+                : null,
+            isRunning,
+            readOnly: nodeReadOnly,
+            nodeHeight: nodeHeight ?? undefined,
+            onUpload: (file: File) => {
+              void handleAudioUpload(file)
+            },
+          }
+        : undefined,
+    [isAudioNode, data, isRunning, nodeReadOnly, nodeHeight, handleAudioUpload],
+  )
+
+  const videoAnalysisProps = React.useMemo(
+    () => isVideoAnalysisNode
+      ? {
+          nodeId: id,
+          data: data as Record<string, unknown>,
+          readOnly: nodeReadOnly,
+          nodeWidth,
+          nodeHeight: nodeHeight ?? visualNodeDefaults.height,
+        }
+      : undefined,
+    [data, id, isVideoAnalysisNode, nodeHeight, nodeReadOnly, nodeWidth, visualNodeDefaults.height],
+  )
+
+  const shotTableProps = React.useMemo(
+    () => isShotTableNode
+      ? {
+          nodeId: id,
+          data: data as Record<string, unknown>,
+          readOnly: nodeReadOnly,
+          nodeHeight: nodeHeight ?? visualNodeDefaults.height,
+          assetReferences: shotTableAssetReferences,
+        }
+      : undefined,
+    [data, id, isShotTableNode, nodeHeight, nodeReadOnly, shotTableAssetReferences, visualNodeDefaults.height],
+  )
+
+  const workflowStageProps = React.useMemo(
+    () => isWorkflowStageNode
+      ? {
+          nodeId: id,
+          data: data as Record<string, unknown>,
+          readOnly: nodeReadOnly,
+        }
+      : undefined,
+    [data, id, isWorkflowStageNode, nodeReadOnly],
+  )
+
+  const workflowTriggerProps = React.useMemo(
+    () => isWorkflowTriggerNode
+      ? {
+          nodeId: id,
+          data: data as Record<string, unknown>,
+          readOnly: nodeReadOnly,
+        }
+      : undefined,
+    [data, id, isWorkflowTriggerNode, nodeReadOnly],
+  )
 
   const featureBlocks = renderFeatureBlocks(schema.features, {
-    featureFlags,
     videoContent,
     imageProps,
     storyboardEditorProps,
+    videoComposeProps,
+    audioProps,
+    videoAnalysisProps,
+    shotTableProps,
+    workflowStageProps,
+    workflowTriggerProps,
   })
+
+  // 上游音频节点（配音/BGM 轨）：只在「视频合成」节点消费，合成时自动混入。
+  const upstreamComposeAudioTracks = React.useMemo(() => {
+    if (!isVideoComposeNode || isOrchestratedVideoClip) return []
+    const state = useRFStore.getState()
+    return collectUpstreamComposeAudioTracks(id, state.nodes as any, state.edges as any)
+    // data 依赖触发边/上游变化后的重算（store 快照读取，避免订阅放大渲染）
+  }, [isOrchestratedVideoClip, isVideoComposeNode, id, data])
+  const [saveToLibraryOpen, setSaveToLibraryOpen] = React.useState(false)
 	  const [mentionOpen, setMentionOpen] = React.useState(false)
 	  const [mentionFilter, setMentionFilter] = React.useState('')
-	  const [mentionItems, setMentionItems] = React.useState<MentionSuggestionItem[]>([])
-	  const [mentionLoading, setMentionLoading] = React.useState(false)
 	  const mentionMetaRef = React.useRef<{
 	    at: number
 	    caret: number
@@ -6305,6 +6312,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         username: ref.username,
         displayName: ref.displayName,
         rawLabel: ref.rawLabel,
+        assetUrl: ref.assetUrl || null,
       }))
       .sort((a, b) => Number(b.connected) - Number(a.connected))
   }, [characterRefMap, edgesForCharacters, id, mergedCharacterRefs])
@@ -6313,28 +6321,42 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     const direct = withUsername.filter((opt) => opt.connected)
     return direct.length > 0 ? direct : withUsername
   }, [autoCharacterOptions])
-  const upstreamReferenceMentionRefs = useRFStore(
+  const upstreamReferenceMentionRefs = useStableRFStoreSelection(
     React.useCallback((s): CharacterRef[] => {
       if (!wantsCharacterRefs) return EMPTY_CHARACTER_REFS
       return collectDynamicUpstreamReferenceEntriesForNode(s.nodes, s.edges, id)
-        .map((entry) => {
+        .flatMap((entry): CharacterRef[] => {
           const username = toMentionUsername(entry.label)
-          if (!username) return null
-          return {
+          if (!username) return []
+          const assetUrl = typeof entry.url === 'string' ? entry.url.trim() : ''
+          const assetId = typeof entry.assetId === 'string' ? entry.assetId.trim() : ''
+          const displayName = String(entry.name || entry.label).trim() || username
+          return [{
             nodeId: `upstream-ref:${id}:${username}`,
             username,
-            displayName: String(entry.name || entry.label).trim() || username,
-            rawLabel: String(entry.name || entry.label).trim() || username,
+            displayName,
+            rawLabel: displayName,
             source: 'character',
-          } satisfies CharacterRef
+            assetUrl: assetUrl || null,
+            assetId: assetId || null,
+            assetRefId: username,
+            assetName: displayName,
+            isConnected: true,
+          } satisfies CharacterRef]
         })
-        .filter((item): item is CharacterRef => item !== null)
     }, [id, wantsCharacterRefs]),
     areCharacterRefsEqual,
   )
+  const persistedAssetInputMentionRefs = React.useMemo<CharacterRef[]>(() => {
+    const nodeData = data && typeof data === 'object' && !Array.isArray(data)
+      ? data as Record<string, unknown>
+      : {}
+    return buildPersistedPromptAssetMentionRefs(id, nodeData.assetInputs)
+  }, [data, id])
   const mentionSuggestionOptions = React.useMemo(() => {
     const byUsername = new Map<string, CharacterRef>()
       const push = (item: {
+        nodeId?: string | null
         username?: string
         displayName?: string
         rawLabel?: string
@@ -6343,14 +6365,29 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         assetId?: string | null
         assetRefId?: string | null
         assetName?: string | null
+        mentionAliases?: readonly string[]
+        assetRole?: 'style' | 'reference'
+        isConnected?: boolean
       }) => {
       const username = toMentionUsername(item.username)
       if (!username) return
       const key = username.toLowerCase()
-      if (byUsername.has(key)) return
+      const existing = byUsername.get(key)
+      if (existing) {
+        if (!existing.assetUrl && item.assetUrl) existing.assetUrl = item.assetUrl
+        if (!existing.assetId && item.assetId) existing.assetId = item.assetId
+        if (!existing.assetRefId && item.assetRefId) existing.assetRefId = item.assetRefId
+        if (!existing.assetName && item.assetName) existing.assetName = item.assetName
+        if (item.mentionAliases?.length) {
+          existing.mentionAliases = Array.from(new Set([...(existing.mentionAliases || []), ...item.mentionAliases]))
+        }
+        if (!existing.assetRole && item.assetRole) existing.assetRole = item.assetRole
+        if (!existing.isConnected && item.isConnected) existing.isConnected = true
+        return
+      }
       const displayName = String(item.displayName || '').trim() || username
       byUsername.set(key, {
-        nodeId: `mention:${key}`,
+        nodeId: item.nodeId || `mention:${key}`,
         username,
         displayName,
         rawLabel: String(item.rawLabel || displayName).trim() || displayName,
@@ -6359,353 +6396,56 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         assetId: item.assetId || null,
         assetRefId: item.assetRefId || null,
         assetName: item.assetName || null,
+        mentionAliases: item.mentionAliases || [],
+        assetRole: item.assetRole,
+        isConnected: item.isConnected === true,
       })
     }
-    connectedCharacterOptions.forEach(push)
+    connectedCharacterOptions.forEach((opt) => push({
+      nodeId: opt.value,
+      username: opt.username,
+      displayName: opt.displayName,
+      rawLabel: opt.rawLabel,
+      source: 'character',
+      assetUrl: opt.assetUrl || null,
+      isConnected: opt.connected,
+    }))
     upstreamReferenceMentionRefs.forEach(push)
+    persistedAssetInputMentionRefs.forEach(push)
     canvasAssetMentionRefs.forEach(push)
     projectAssetMentionRefs.forEach(push)
+    const lockedStyle = projectImageSettings.lockedStyle
+    if (lockedStyle?.referenceImageUrl) {
+      const styleId = String(lockedStyle.styleId || '').trim()
+      const materialId = styleId.startsWith('material:') ? styleId.slice('material:'.length) : styleId
+      const styleName = String(lockedStyle.styleName || '').trim() || materialId || 'style'
+      const username = materialId || toMentionUsername(styleName)
+      if (username) {
+        push({
+          nodeId: `mention:style-lock:${styleId || username}`,
+          username,
+          displayName: styleName,
+          rawLabel: styleName,
+          source: 'asset',
+          assetUrl: String(lockedStyle.referenceImageUrl).trim(),
+          assetId: materialId || null,
+          assetRefId: styleId || materialId || username,
+          assetName: styleName,
+          mentionAliases: [styleId, materialId],
+          assetRole: 'style',
+          isConnected: true,
+        })
+      }
+    }
     return Array.from(byUsername.values())
-  }, [canvasAssetMentionRefs, connectedCharacterOptions, projectAssetMentionRefs, upstreamReferenceMentionRefs])
-  const isUsingWorkflowCharacters = React.useMemo(
-    () => connectedCharacterOptions.length > 0 && connectedCharacterOptions.every((opt) => !opt.connected),
-    [connectedCharacterOptions],
-  )
-
-  const clampStoryboardDuration = React.useCallback((value: number): number => {
-    if (Number.isNaN(value)) return STORYBOARD_DEFAULT_DURATION
-    return Math.min(STORYBOARD_MAX_DURATION, Math.max(STORYBOARD_MIN_DURATION, value))
-  }, [])
-
-  const notifyStoryboardLimit = React.useCallback(() => {
-    toast('分镜总时长上限为 25 秒，请调整各镜头时长', 'error')
-  }, [])
-
-  const applyStoryboardChange = React.useCallback(
-    (mutator: (prev: StoryboardScene[]) => StoryboardScene[]) => {
-      setStoryboardScenes((prev) => {
-        const next = mutator(prev)
-        if (next === prev) return prev
-        const total = totalStoryboardDuration(next)
-        if (total > STORYBOARD_MAX_TOTAL_DURATION + 1e-6) {
-          notifyStoryboardLimit()
-          return prev
-        }
-        return next
-      })
-    },
-    [notifyStoryboardLimit],
-  )
-
-  const updateStoryboardScene = React.useCallback(
-    (sceneId: string, patch: Partial<StoryboardScene>) => {
-      applyStoryboardChange((prev) =>
-        prev.map((scene) =>
-          scene.id === sceneId
-            ? {
-                ...scene,
-                ...patch,
-                duration:
-                  typeof patch.duration === 'number'
-                    ? clampStoryboardDuration(patch.duration)
-                    : scene.duration,
-              }
-            : scene,
-        ),
-      )
-    },
-    [applyStoryboardChange, clampStoryboardDuration],
-  )
-
-  const handleAddScene = React.useCallback(() => {
-    applyStoryboardChange((prev) => {
-      const remaining = STORYBOARD_MAX_TOTAL_DURATION - totalStoryboardDuration(prev)
-      if (remaining <= 0) {
-        notifyStoryboardLimit()
-        return prev
-      }
-      const duration = Math.min(STORYBOARD_DEFAULT_DURATION, remaining)
-      return [...prev, createScene({ duration })]
-    })
-  }, [applyStoryboardChange, notifyStoryboardLimit])
-
-  const handleRemoveScene = React.useCallback(
-    (sceneId: string) => {
-      applyStoryboardChange((prev) => {
-        const filtered = prev.filter((scene) => scene.id !== sceneId)
-        if (filtered.length === 0) {
-          return [
-            createScene({
-              duration: Math.min(STORYBOARD_DEFAULT_DURATION, STORYBOARD_MAX_TOTAL_DURATION),
-            }),
-          ]
-        }
-        return filtered
-      })
-    },
-    [applyStoryboardChange],
-  )
-
-  const handleSceneDurationDelta = React.useCallback(
-    (sceneId: string, delta: number) => {
-      applyStoryboardChange((prev) =>
-        prev.map((scene) =>
-          scene.id === sceneId
-            ? {
-                ...scene,
-                duration: clampStoryboardDuration(scene.duration + delta),
-              }
-            : scene,
-        ),
-      )
-    },
-    [applyStoryboardChange, clampStoryboardDuration],
-  )
-
-  const [storyboardScriptLoading, setStoryboardScriptLoading] = React.useState(false)
-  const [storyboardImageScriptLoading, setStoryboardImageScriptLoading] = React.useState(false)
-
-  const handleGenerateStoryboardImageScript = React.useCallback(async () => {
-    if (viewOnly) return
-    if (kind !== 'storyboardImage' && kind !== 'novelStoryboard') return
-    if (storyboardImageScriptLoading) return
-    if (status === 'running' || status === 'queued') return
-
-    const desiredCount = Math.max(4, Math.min(16, Math.floor(storyboardCount || 4)))
-    const aspectRatio = storyboardImageAspectRatio
-
-    const mentionList = connectedCharacterOptions
-      .map((opt) => String(opt.username || '').replace(/^@/, '').trim())
-      .filter(Boolean)
-      .map((u) => `@${u}`)
-      .join(' ')
-
-    const refText = typeof upstreamText === 'string' ? upstreamText.trim() : ''
-    const theme = prompt.trim() || refText || String((data as any)?.label || '').trim()
-    if (!theme) {
-      toast('请先输入主题或连接参考文本', 'warning')
-      return
-    }
-
-    const styleLabel = (() => {
-      switch (storyboardImageStyle) {
-        case 'comic':
-          return '美漫'
-        case 'sketch':
-          return '草图'
-        case 'strip':
-          return '条漫'
-        case 'realistic':
-        default:
-          return '写实'
-      }
-    })()
-
-    const systemPrompt = [
-      '你是一个分镜脚本生成助手。',
-      '你必须严格按用户指定格式输出；不要解释、不要 Markdown、不要代码块。',
-      `输出必须恰好 ${desiredCount} 行，每行都必须从 "镜头 i：" 开始（i 从 1 到 ${desiredCount}）。`,
-      '每行只写该镜头的画面提示词，尽量一行写完，不要换行。',
-      '输出语言跟随用户输入语言；若未指定则默认中文。',
-      '@username 前后必须各留一个空格（例如："... @alice ..."）。',
-    ].join('\n')
-
-    const promptText = [
-      `目标镜头数：${desiredCount}`,
-      `画幅比例：${aspectRatio}`,
-      `风格倾向：${styleLabel}`,
-      refText ? `参考文本：${refText}` : null,
-      mentionList ? `可用角色：${mentionList}` : null,
-      '',
-      '主题/剧情：',
-      theme,
-      '',
-      '请生成分镜脚本，严格输出格式（示例，仅示意格式）：',
-      '镜头 1：……',
-      '镜头 2：……',
-      '（只输出脚本正文，不要添加任何解释或多余内容）',
-    ]
-      .filter(Boolean)
-      .join('\n')
-
-
-
-    try {
-      setStoryboardImageScriptLoading(true)
-      const ui = useUIStore.getState()
-      const apiKey = (ui.publicApiKey || '').trim()
-      const token = getAuthToken()
-      if (!apiKey && !token) {
-        toast('请先登录后再试', 'error')
-        return
-      }
-      const persist = ui.assetPersistenceEnabled
-      const forceUnifiedSkill = kind === 'novelStoryboard'
-      const promptRefineModelAlias = resolvePromptRefineModelAlias()
-      const taskRes = await runPublicTask(apiKey, {
-        request: {
-          kind: 'prompt_refine',
-          prompt: promptText,
-          extras: {
-            systemPrompt: forceUnifiedSkill
-              ? [UNIFIED_STORYBOARD_SYSTEM_HINT, systemPrompt].filter(Boolean).join('\n\n')
-              : systemPrompt,
-            ...(forceUnifiedSkill ? { requiredSkills: [UNIFIED_STORYBOARD_SKILL] } : {}),
-            ...(promptRefineModelAlias ? { modelAlias: promptRefineModelAlias } : {}),
-            persistAssets: persist,
-          },
-        },
-      })
-      const raw = extractTextFromTaskResult(taskRes.result).trim()
-      if (!raw) {
-        toast('模型未返回分镜脚本，请稍后重试', 'error')
-        return
-      }
-
-      const normalizedShots = parseStoryboardShotsFromText(raw)
-      if (normalizedShots.length !== desiredCount) {
-        throw new Error(`模型返回的分镜脚本数量不符合要求：expected=${desiredCount} actual=${normalizedShots.length}`)
-      }
-
-      setPrompt(raw)
-      updateNodeData(id, { prompt: raw })
-      toast('已生成分镜脚本', 'success')
-    } catch (error: any) {
-      const message = typeof error?.message === 'string' ? error.message : '生成脚本失败'
-      toast(message, 'error')
-    } finally {
-      setStoryboardImageScriptLoading(false)
-    }
   }, [
+    canvasAssetMentionRefs,
     connectedCharacterOptions,
-    data,
-    id,
-    kind,
-    prompt,
-    status,
-    storyboardCount,
-    storyboardImageAspectRatio,
-    storyboardImageScriptLoading,
-    storyboardImageStyle,
-    upstreamText,
-    updateNodeData,
-    resolvePromptRefineModelAlias,
-    viewOnly,
+    projectAssetMentionRefs,
+    projectImageSettings.lockedStyle,
+    persistedAssetInputMentionRefs,
+    upstreamReferenceMentionRefs,
   ])
-
-  const handleGenerateStoryboardScript = React.useCallback(async () => {
-    if (viewOnly) return
-    if (!isStoryboardNode) return
-    if (storyboardScriptLoading) return
-
-    const desiredCount = Math.max(4, Math.min(16, Math.floor(storyboardScenes.length || 4)))
-    const orientation = normalizeOrientation(orientationRef.current)
-    const aspectRatio = orientation === 'portrait' ? '9:16' : '16:9'
-
-    const mentionList = connectedCharacterOptions
-      .map((opt) => String(opt.username || '').replace(/^@/, '').trim())
-      .filter(Boolean)
-      .map((u) => `@${u}`)
-      .join(' ')
-
-    const title = storyboardTitle.trim()
-    const notes = storyboardNotes.trim()
-    const refText = typeof upstreamText === 'string' ? upstreamText.trim() : ''
-
-    const systemPrompt = [
-      '你是一个分镜脚本生成助手。',
-      '你必须严格按用户指定格式输出；不要解释、不要 Markdown、不要代码块。',
-      '输出必须从第一行就以 "Shot 1:" 开始。',
-      '每个 Shot 必须包含 duration/framing/movement/Scene 四项；framing 仅可用 close/medium/wide；movement 仅可用 static/push/pull/pan/tilt。',
-      '输出语言跟随用户输入语言；若未指定则默认中文。@username 前后必须各留一个空格（例如："... @alice ..."）。',
-    ].join('\n')
-
-    const promptText = [
-      `目标镜头数：${desiredCount}`,
-      `画幅比例：${aspectRatio}`,
-      title ? `标题：${title}` : null,
-      notes ? `全局备注：${notes}` : null,
-      refText ? `参考文本：${refText}` : null,
-      mentionList ? `可用角色：${mentionList}` : null,
-      '',
-      '请生成分镜脚本，严格输出以下格式（示例，注意从第一行就开始）：',
-      'Shot 1:',
-      'duration: 5.0sec',
-      'framing: medium',
-      'movement: static',
-      'Scene: （用中文写镜头提示词，尽量一行写完）',
-      '',
-      `要求：`,
-      `- 一共输出 ${desiredCount} 个 Shot，编号从 1 递增；`,
-      `- 总时长不超过 ${STORYBOARD_MAX_TOTAL_DURATION} 秒；`,
-      '- 只输出脚本正文，不要添加任何前缀/解释/总结；',
-    ]
-      .filter(Boolean)
-      .join('\n')
-
-    try {
-      setStoryboardScriptLoading(true)
-      const ui = useUIStore.getState()
-      const apiKey = (ui.publicApiKey || '').trim()
-      const token = getAuthToken()
-      if (!apiKey && !token) {
-        toast('请先登录后再试', 'error')
-        return
-      }
-      const persist = ui.assetPersistenceEnabled
-      const promptRefineModelAlias = resolvePromptRefineModelAlias()
-      const taskRes = await runPublicTask(apiKey, {
-        request: {
-          kind: 'prompt_refine',
-          prompt: promptText,
-          extras: {
-            systemPrompt,
-            ...(promptRefineModelAlias ? { modelAlias: promptRefineModelAlias } : {}),
-            persistAssets: persist,
-          },
-        },
-      })
-      const raw = extractTextFromTaskResult(taskRes.result).trim()
-      if (!raw) {
-        toast('模型未返回分镜脚本，请稍后重试', 'error')
-        return
-      }
-
-      const trimmed = raw.trim()
-      const firstShotIdx = trimmed.search(/Shot\s+1:\s*/i)
-      const normalizedText = firstShotIdx >= 0 ? trimmed.slice(firstShotIdx) : trimmed
-      if (!/Shot\s+\d+:\s*/i.test(normalizedText)) {
-        throw new Error('模型未按要求返回 Shot 脚本；禁止使用本地模板回退')
-      }
-
-      const parsedScenes = enforceStoryboardTotalLimit(normalizeStoryboardScenes(normalizedText, null))
-      if (parsedScenes.length !== desiredCount) {
-        throw new Error(`模型返回的 Shot 数量不符合要求：expected=${desiredCount} actual=${parsedScenes.length}`)
-      }
-
-      applyStoryboardChange(() => parsedScenes)
-      toast('已生成分镜脚本', 'success')
-    } catch (error: any) {
-      const message = typeof error?.message === 'string' ? error.message : '生成脚本失败'
-      toast(message, 'error')
-    } finally {
-      setStoryboardScriptLoading(false)
-    }
-  }, [
-    applyStoryboardChange,
-    clampStoryboardDuration,
-    connectedCharacterOptions,
-    isStoryboardNode,
-    orientationRef,
-    storyboardNotes,
-    storyboardScenes.length,
-    storyboardScriptLoading,
-    storyboardTitle,
-    upstreamText,
-    resolvePromptRefineModelAlias,
-    viewOnly,
-  ])
-
   const handleSmartGenerateVideoPrompt = React.useCallback(async () => {
     if (viewOnly || !isVideoNode) return
     if (videoPromptGenerationLoading) return
@@ -6751,19 +6491,21 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       setVideoPromptGenerationLoading(true)
       const ui = useUIStore.getState()
       const apiKey = (ui.publicApiKey || '').trim()
-      const token = getAuthToken()
-      if (!apiKey && !token) {
+      if (!apiKey && !hasAuthSession()) {
         toast('请先登录后再试', 'error')
         return
       }
-      const promptRefineModelAlias = resolvePromptRefineModelAlias()
+      const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
+      const promptRefineModelKey = resolvePromptRefineModelKey()
       const taskRes = await runPublicTask(apiKey, {
+        vendor: 'auto',
+        ...(vendorCandidates.length ? { vendorCandidates } : {}),
         request: {
           kind: 'prompt_refine',
           prompt: promptText,
           extras: {
             systemPrompt,
-            ...(promptRefineModelAlias ? { modelAlias: promptRefineModelAlias } : {}),
+            ...(promptRefineModelKey ? { modelKey: promptRefineModelKey } : {}),
             persistAssets: false,
           },
         },
@@ -6791,7 +6533,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     isVideoNode,
     orientation,
     prompt,
-    resolvePromptRefineModelAlias,
+    resolvePromptRefineModelKey,
     status,
     updateNodeData,
     videoDuration,
@@ -6825,30 +6567,32 @@ const rewritePromptWithCharacters = React.useCallback(
       summary,
       '',
       '【任务说明】',
-      '请在保持原文语气、内容和结构不变的前提下，完成以下操作：',
-      '1. 将所有与上述角色相关的称呼（包含别名、同音写法）替换为对应的 @username；',
-      '2. 如果某个角色在原文未出现，也请在合适的位置补上一处 @username；',
+      '请在保持原文语气、事实、对白、内容和结构不变的前提下，完成以下操作：',
+      '1. 只有在上下文能够确认某个称呼确实指向上述角色时，才替换为对应的 @username；',
+      '2. 原文没有出现的角色不得补写，身份证据不足的称呼保持原样；',
       '3. 只输出替换后的脚本正文，不要添加解释、前缀或 Markdown；',
-      '4. 全文保持中文。',
+      '4. 全文保持中文；',
       '5. 确保每个 @username 前后至少保留一个空格，避免紧贴其他字符。',
       '',
       '【原始脚本】',
       basePrompt,
     ].join('\n')
     const systemPrompt =
-      '你是一个提示词修订助手。请根据用户提供的角色映射，统一替换或补充脚本中的角色引用，只输出修改后的脚本文本。务必确保每个 @username 前后至少保留一个空格。'
+      '你是一个提示词修订助手。只在上下文能确认人物身份时替换角色引用；不得补写原文未出现的角色，不得修改对白或剧情事实。只输出修改后的脚本文本，并确保每个 @username 前后至少保留一个空格。'
     const ui = useUIStore.getState()
     const apiKey = (ui.publicApiKey || '').trim()
-    const token = getAuthToken()
-    if (!apiKey && !token) {
+    if (!apiKey && !hasAuthSession()) {
       throw new Error('未登录：请先登录后再试')
     }
+    const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
     const persist = ui.assetPersistenceEnabled
     const taskRes = await runPublicTask(apiKey, {
+      vendor: 'auto',
+      ...(vendorCandidates.length ? { vendorCandidates } : {}),
       request: {
         kind: 'prompt_refine',
         prompt: instructions,
-        extras: { systemPrompt, modelAlias: modelValue, persistAssets: persist },
+        extras: { systemPrompt, modelKey: modelValue, persistAssets: persist },
       },
     })
     const text = extractTextFromTaskResult(taskRes.result)
@@ -6856,6 +6600,32 @@ const rewritePromptWithCharacters = React.useCallback(
   },
   [],
 )
+
+  const [translatePromptLoading, setTranslatePromptLoading] = React.useState(false)
+  const handleTranslatePrompt = React.useCallback(async () => {
+    if (translatePromptLoading || viewOnly) return
+    const promptText = (prompt || '').trim()
+    if (!promptText) { toast('请先填写提示词再翻译', 'warning'); return }
+    setTranslatePromptLoading(true)
+    try {
+      const translated = await llmChat({
+        model: 'gpt-5.4',
+        systemPrompt: '你是一个提示词翻译助手。如果用户输入的是中文，请完整翻译成英文（图片/视频生成 prompt 格式保持不变，时间轴标记如 [0s] 等原样保留）；如果是英文，请完整翻译成中文。只输出翻译结果，不要添加任何解释、前缀或 Markdown。禁止截断，必须翻译全部内容。',
+        userPrompt: promptText,
+        temperature: 0.3,
+        maxTokens: 4096,
+      })
+      if (!translated) { toast('模型未返回翻译结果，请稍后重试', 'error'); return }
+      setPrompt(translated)
+      updateNodeData(id, { prompt: translated })
+      toast('翻译完成', 'success')
+    } catch (error: any) {
+      const message = typeof error?.message === 'string' ? error.message : '翻译失败'
+      toast(message, 'error')
+    } finally {
+      setTranslatePromptLoading(false)
+    }
+  }, [translatePromptLoading, viewOnly, prompt, id, setPrompt, updateNodeData])
 
   const handleApplyCharacterMentions = React.useCallback(async () => {
     if (!connectedCharacterOptions.length) return
@@ -6876,29 +6646,7 @@ const rewritePromptWithCharacters = React.useCallback(
       return { mention, displayName: opt.displayName || mention, aliases: aliasList }
     })
 
-    if (isStoryboardNode) {
-      if (!storyboardScenes.length) {
-        applyStoryboardChange(() => [createScene({ description: appendedMentions })])
-        setCharacterRewriteError(null)
-        return
-      }
-      const allEmpty = storyboardScenes.every((scene) => !scene.description.trim())
-      if (allEmpty) {
-        applyStoryboardChange((prev) => {
-      if (!prev.length) return [createScene({ description: appendedMentions })]
-      const [first, ...rest] = prev
-      return [
-            {
-              ...first,
-              description: appendedMentions || first.description,
-            },
-            ...rest,
-          ]
-        })
-        setCharacterRewriteError(null)
-        return
-      }
-    } else if (!prompt.trim()) {
+    if (!prompt.trim()) {
       if (appendedMentions) {
         setPrompt(appendedMentions)
         updateNodeData(id, { prompt: appendedMentions })
@@ -6911,61 +6659,17 @@ const rewritePromptWithCharacters = React.useCallback(
     const currentRequestId = ++rewriteRequestIdRef.current
     setCharacterRewriteLoading(true)
     try {
-      if (isStoryboardNode) {
-        let aiFailed = false
-        const updatedScenes: StoryboardScene[] = []
-        for (const scene of storyboardScenes) {
-          const base = scene.description || ''
-          if (!base.trim()) {
-            updatedScenes.push(scene)
-            continue
-          }
-          let rewritten = ''
-          try {
-            rewritten = await rewritePromptWithCharacters({
-              basePrompt: base,
-              roles,
-              modelValue: characterRewriteModel,
-            })
-          } catch (err) {
-            aiFailed = true
-            console.warn('[TaskNode] rewrite via AI failed', err)
-          }
-          let nextText = (rewritten || '').trim()
-          if (!nextText) {
-            nextText = roles.reduce((acc, role) => {
-              const fallback = applyMentionFallback(acc, role.mention, role.aliases)
-              return fallback.text
-            }, base).trim()
-          }
-          updatedScenes.push({ ...scene, description: nextText })
-        }
-        if (aiFailed) {
-          setCharacterRewriteError('AI 替换失败，已使用本地规则处理')
-        }
-        applyStoryboardChange(() => updatedScenes)
-      } else {
-        let rewritten = ''
-        try {
-          rewritten = await rewritePromptWithCharacters({
-            basePrompt: prompt,
-            roles,
-            modelValue: characterRewriteModel,
-          })
-        } catch (err) {
-          console.warn('[TaskNode] rewrite via AI failed', err)
-          setCharacterRewriteError(err instanceof Error ? err.message : 'AI 替换失败，使用本地规则处理')
-        }
-        let nextText = (rewritten || '').trim()
-        if (!nextText) {
-          nextText = roles.reduce((acc, role) => {
-            const fallback = applyMentionFallback(acc, role.mention, role.aliases)
-            return fallback.text
-          }, prompt)
-        }
-        setPrompt(nextText)
-        updateNodeData(id, { prompt: nextText })
-      }
+      const nextText = (await rewritePromptWithCharacters({
+        basePrompt: prompt,
+        roles,
+        modelValue: characterRewriteModel,
+      })).trim()
+      if (!nextText) throw new Error('角色引用修订未返回文本')
+      setPrompt(nextText)
+      updateNodeData(id, { prompt: nextText })
+    } catch (err) {
+      console.warn('[TaskNode] character reference rewrite failed', err)
+      setCharacterRewriteError(err instanceof Error ? err.message : '角色引用修订失败，原文本未修改')
     } finally {
       if (rewriteRequestIdRef.current === currentRequestId) {
         setCharacterRewriteLoading(false)
@@ -6978,9 +6682,6 @@ const rewritePromptWithCharacters = React.useCallback(
     rewritePromptWithCharacters,
     id,
     updateNodeData,
-    isStoryboardNode,
-    storyboardScenes,
-    applyStoryboardChange,
   ])
   const handleSetPrimaryVideo = React.useCallback((idx: number) => {
     const target = videoResults[idx]
@@ -7006,59 +6707,1479 @@ const rewritePromptWithCharacters = React.useCallback(
     setVideoExpanded(false)
   }, [id, updateNodeData, videoResults])
 
+  const hasUpstreamConnections = React.useMemo(() => {
+    const isImgKind = kind === 'image' || kind === 'imageEdit'
+    const isVideoKind = kind === 'video'
+    if (!isImgKind && !isVideoKind && !hasImageResults) return false
+    return canvasEdges.some((edge) => edge.target === id)
+  }, [canvasEdges, hasImageResults, id, kind])
+
+  const [imagePresetConfirmKey, setImagePresetConfirmKey] = React.useState<string | null>(null)
+  const rf = useReactFlow()
+
+  const handleFocusNode = React.useCallback(() => {
+    void rf.fitView({
+      nodes: [{ id }],
+      padding: 0.18,
+      duration: 220,
+      minZoom: 0.1,
+      maxZoom: 1.15,
+    })
+  }, [id, rf])
+
+  React.useEffect(() => {
+    if (!imagePresetConfirmKey) return
+    const nodePos = useRFStore.getState().nodes.find((n) => n.id === id)?.position
+    const nx = nodePos?.x ?? 0
+    const ny = nodePos?.y ?? 0
+    const nw = nodeWidth
+    const nh = nodeHeight ?? visualNodeDefaults.height
+    const { zoom } = rf.getViewport()
+    const targetZoom = Math.min(Math.max(zoom, 0.7), 1.4)
+    rf.setCenter?.(nx + nw / 2, ny + nh / 2, { zoom: targetZoom, duration: 320 })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imagePresetConfirmKey])
+
+  React.useEffect(() => {
+    if (!gridSplitOpen) {
+      setGridSplitSelectedCells(new Set())
+      setGridSplitHoveredCell(null)
+      return
+    }
+    // padding 0.35 留出顶部宫格工具栏空间；maxZoom 1.2 防止图片太大撑出屏幕
+    rf.fitView?.({ nodes: [{ id }], padding: 0.35, duration: 380, maxZoom: 1.2 })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gridSplitOpen])
+
+  // While grid split is active, keep this node selected (lock interaction to this node)
+  React.useEffect(() => {
+    if (!gridSplitOpen || selected) return
+    useRFStore.setState((s) => {
+      const target = s.nodes.find((node) => node.id === id)
+      const needsSelectionSync = s.nodes.some((node) => node.selected !== (node.id === id))
+      if (!target || !needsSelectionSync) return s
+      return {
+        nodes: s.nodes.map((node) => ({
+          ...node,
+          selected: node.id === id,
+        })),
+      }
+    })
+  }, [gridSplitOpen, selected, id])
+
+  // 图片编辑覆盖层开启时只锁定画布平移/缩放。LibTV 不会在打开编辑器时
+  // 改变用户当前视角；自动 fitView 会把节点放大并把编辑器挤出视口。
+  React.useEffect(() => {
+    if (canvasViewLockEditorOpen) {
+      setCanvasViewLocked(true)
+    } else {
+      setCanvasViewLocked(false)
+    }
+    return () => { setCanvasViewLocked(false) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasViewLockEditorOpen])
+
+  // 当 primaryImageUrl 变化时获取图片自然尺寸（供覆盖层编辑器使用）
+  React.useEffect(() => {
+    if (!primaryImageUrl) { setImageNaturalSize(null); return }
+    const img = new Image()
+    // 编辑器后续会读取像素；尺寸探测必须从第一次请求起使用同一匿名 CORS 身份，
+    // 避免先把无 ACAO 的普通图片响应写进缓存，再污染裁剪/重绘/标注请求。
+    img.crossOrigin = 'anonymous'
+    img.referrerPolicy = 'no-referrer'
+    img.onload = () => setImageNaturalSize({ w: img.naturalWidth, h: img.naturalHeight })
+    img.onerror = () => setImageNaturalSize(null)
+    img.src = primaryImageUrl
+  }, [primaryImageUrl])
+
+  // 抠图 / 分层：在画布上派生一个图像子节点（imageEdit），连线但不自动执行——由调用方对「终端
+  // 节点」调 runNodeDagToTarget，串联节点会按依赖顺序被一并执行。
+  // forceTaskKind='image_remove_bg' 时该节点走像素级分割引擎（remove.bg 代理 / 本地 ONNX），
+  // 否则走默认彩色编辑模型（Gemini 3.1）做生成式重绘（提纯 / 提取文字 / 去文字 / 去主体）。
+  const spawnImageNode = React.useCallback((opts: {
+    label: string
+    prompt?: string
+    forceTaskKind?: 'image_remove_bg'
+    model?: string
+    parentId?: string          // 连线的上游节点；默认当前源节点
+    parentHasImage?: boolean    // 上游已有成图时显式注入 referenceImages（仅当上游=当前源节点时为真）
+    col?: number                // 相对源节点的横向列偏移（默认 1）
+    rowOffset?: number          // 纵向行偏移（多层分层时错开）
+    imageOperationSpec?: ImageOperationSpec
+  }): string | null => {
+    const parentId = opts.parentId ?? id
+    const model = resolveImageEditModelForAction(opts.model || null)
+    if (!model) return null
+    const beforeIds = new Set(useRFStore.getState().nodes.map(n => n.id))
+    const nodeData: Record<string, unknown> = {
+      kind: 'imageEdit',
+      imageModel: model,
+      imageModelVendor: null,
+    }
+    if (opts.prompt != null) nodeData.prompt = opts.prompt
+    if (opts.forceTaskKind) nodeData.forceTaskKind = opts.forceTaskKind
+    // 串联到「尚未执行」的中间节点时不预置 referenceImages，靠画布连线在运行时收集上游产物。
+    if (opts.parentHasImage && primaryImageUrl) nodeData.referenceImages = [primaryImageUrl]
+    if (opts.imageOperationSpec) {
+      nodeData.imageOperationSpec = opts.imageOperationSpec
+      nodeData.imageOperationState = createImageOperationState(opts.imageOperationSpec)
+      nodeData.imageOperationRevision = 1
+    }
+    addNode('taskNode', opts.label, nodeData)
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find(n => !beforeIds.has(n.id))
+    if (!newNode) return null
+    const sourceNode = afterAdd.nodes.find(n => n.id === id)
+    const colGap = nodeWidth + 80
+    const rowGap = 260
+    afterAdd.onNodesChange([{
+      id: newNode.id, type: 'position' as const,
+      position: {
+        x: (sourceNode?.position?.x ?? 0) + (opts.col ?? 1) * colGap,
+        y: (sourceNode?.position?.y ?? 0) + (opts.rowOffset ?? 0) * rowGap,
+      },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: parentId, sourceHandle: 'out-image', target: newNode.id, targetHandle: 'in-image' })
+    return newNode.id
+  }, [addNode, id, nodeWidth, primaryImageUrl, resolveImageEditModelForAction])
+
+  // 执行一批终端节点（各自连带上游链按依赖顺序运行），统一收敛失败提示。
+  const runCutoutTerminals = React.useCallback((ids: Array<string | null>, label: string): Promise<void> => {
+    const targets = ids.filter((v): v is string => Boolean(v))
+    if (!targets.length) return Promise.reject(new Error(`${label}结果节点创建失败`))
+    return Promise.allSettled(
+      targets.map(t => runNodeDagToTarget(t, useRFStore.getState, useRFStore.setState, { concurrency: 1 })),
+    ).then(results => {
+      const failed = results.filter(r => r.status === 'rejected').length
+      if (failed) toast(`${label}部分失败（${failed}/${targets.length}）`, 'error')
+    })
+  }, [])
+
+  // 极速抠图：原图直接走像素级分割（remove.bg/ONNX），输出透明 PNG。
+  const handleFastCutout = React.useCallback(() => {
+    if (!primaryImageUrl || extractLoading) return
+    setExtractLoading(true)
+    const imageOperationSpec = createImageOperationForSource({
+      kind: 'cutout',
+      execution: 'remove-background',
+      sourceNodeId: id,
+      sourceUrl: primaryImageUrl,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+      parameters: { preserveSubject: true, preserveFineEdges: true, outputAlpha: true },
+      output: { mediaType: 'image', count: 1, format: 'png', transparent: true },
+    })
+    const cut = spawnImageNode({
+      label: '极速抠图',
+      forceTaskKind: 'image_remove_bg',
+      parentHasImage: true,
+      prompt: '像素级抠图：去除背景，保留主体，输出带透明通道的 PNG。',
+      imageOperationSpec,
+    })
+    runCutoutTerminals([cut], '极速抠图')
+      .catch((error: unknown) => toast(error instanceof Error ? error.message : '极速抠图启动失败', 'error'))
+      .finally(() => setExtractLoading(false))
+  }, [data, extractLoading, id, primaryImageUrl, spawnImageNode, runCutoutTerminals])
+
+  // 智能抠图：先 Gemini 把背景换成纯色（提纯主体），再像素级分割，边缘更干净。
+  const handleSmartCutout = React.useCallback(() => {
+    if (!primaryImageUrl || smartCutoutLoading) return
+    setSmartCutoutLoading(true)
+    const clean = spawnImageNode({
+      label: '智能抠图·提纯',
+      prompt: '只保留完整的主体，背景换成纯色（纯白），主体保持不变。',
+      parentHasImage: true,
+      col: 1,
+    })
+    const cut = clean
+      ? spawnImageNode({
+          label: '智能抠图',
+          forceTaskKind: 'image_remove_bg',
+          parentId: clean,
+          col: 2,
+        })
+      : null
+    runCutoutTerminals([cut], '智能抠图')
+      .catch((error: unknown) => toast(error instanceof Error ? error.message : '智能抠图启动失败', 'error'))
+      .finally(() => setSmartCutoutLoading(false))
+  }, [smartCutoutLoading, primaryImageUrl, spawnImageNode, runCutoutTerminals])
+
+  // 一键分层：调用真实 RGBA 分层模型。每个返回图层都由服务端先托管到 OSS，
+  // 再落成可独立移动、编辑和连线的图片节点；普通重绘模型不允许冒充图层分离。
+  const handleLayerSplit = React.useCallback(async () => {
+    if (!primaryImageUrl || layerLoading) return
+    setLayerLoading(true)
+    try {
+      const { runImageLayerSplit } = await import('./taskNode/imageLayerActions')
+      await runImageLayerSplit({
+        data: data as Record<string, unknown>,
+        nodeId: id,
+        nodeWidth,
+        primaryImageUrl,
+        resolveImageEditModel: resolveImageEditModelForAction,
+        sleep: sleep3d,
+      })
+    } finally {
+      setLayerLoading(false)
+    }
+  }, [data, id, layerLoading, nodeWidth, primaryImageUrl, resolveImageEditModelForAction, sleep3d])
+
+  const handleLayerRecompose = React.useCallback(async () => {
+    const { runImageLayerRecompose } = await import('./taskNode/imageLayerActions')
+    await runImageLayerRecompose({
+      data: data as Record<string, unknown>,
+      nodeId: id,
+      nodeWidth,
+      uploadEditedImageBlob,
+    })
+  }, [data, id, nodeWidth, uploadEditedImageBlob])
+
+  // 一键去噪：以当前图为参考图，用固定去噪/增强提示词生成新节点（复用 spawnImageNode 链路）
+  const handleDenoise = React.useCallback((mode: 'clean' | 'enhance') => {
+    if (!primaryImageUrl || denoiseLoading) return
+    setDenoiseLoading(true)
+    const editableModel = String(imageModel || '').trim() || undefined
+    const label = mode === 'enhance' ? '8K 增强' : '去噪'
+    const prompt = mode === 'enhance'
+      ? '保持构图与所有物体位置不变，极度增强画面细节并提升至 8K 超高清质感；C4D+Octane 渲染器风格，电影级写实 CG，大师级光影，完美构图，film-like depth；仅优化质感，保持原有颜色与冷暖比例。'
+      : '对图片进行去噪与画质增强：消除噪点、涂抹感与压缩伪影，提升细节锐度、材质与光影质感；严格保持原有构图、物体位置、颜色、亮度与冷暖比例不变，不新增高光或色彩，不改变主体形态。'
+    const newNodeId = spawnImageNode({ label, prompt, parentHasImage: true, model: editableModel })
+    if (!newNodeId) { setDenoiseLoading(false); return }
+    runNodeDagToTarget(newNodeId, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
+      .catch((err: unknown) => toast(err instanceof Error ? err.message : '去噪生成失败', 'error'))
+      .finally(() => setDenoiseLoading(false))
+  }, [denoiseLoading, imageModel, primaryImageUrl, spawnImageNode])
+
+  const handleCreateRotatePreview = React.useCallback(() => {
+    if (!primaryImageUrl) return
+    setHdPanelOpen(false)
+    setExpandPanelOpen(false)
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', '旋转与镜像', {
+      kind: 'image',
+      imageUrl: primaryImageUrl,
+      serverAssetId: imageServerAssetId,
+      status: 'done',
+      autoLabel: false,
+      _rotatePreview: { sourceId: id, angle: 0, flipH: false, flipV: false },
+    })
+    const store = useRFStore.getState()
+    const newNode = store.nodes.find((node) => !beforeIds.has(node.id))
+    if (!newNode) {
+      toast('旋转预览节点创建失败', 'error')
+      return
+    }
+    const sourceNode = store.nodes.find((node) => node.id === id)
+    store.onNodesChange([{
+      id: newNode.id,
+      type: 'position' as const,
+      position: {
+        x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80,
+        y: sourceNode?.position?.y ?? 0,
+      },
+      dragging: false,
+    }])
+    store.onConnect({ source: id, sourceHandle: 'out-image', target: newNode.id, targetHandle: 'in-image' })
+    store.onNodesChange([
+      { id, type: 'select' as const, selected: false },
+      { id: newNode.id, type: 'select' as const, selected: true },
+    ])
+    setRotatePreviewNodeId(newNode.id)
+  }, [addNode, id, imageServerAssetId, nodeWidth, primaryImageUrl])
+
+  const handleCreateVideoAnalysis = React.useCallback(() => {
+    const url = videoResults[videoPrimaryIndex]?.url || videoUrl
+    if (!url) return
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', '逐帧拉片', {
+      kind: 'videoAnalysis',
+      sourceVideoNodeId: id,
+      sourceVideoUrl: url,
+      sourceVideoDurationSeconds: activeVideoDuration,
+      videoAnalysisDimensions: ['storyboard', 'motion', 'music'],
+      videoAnalysisAutoStart: false,
+      status: 'idle',
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!newNode) {
+      toast('视频分析节点创建失败', 'error')
+      return
+    }
+    const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+    afterAdd.onNodesChange([
+      {
+        id: newNode.id,
+        type: 'position' as const,
+        position: {
+          x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80,
+          y: sourceNode?.position?.y ?? 0,
+        },
+        dragging: false,
+      },
+    ])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: newNode.id, targetHandle: 'in-video' })
+    afterAdd.clearPendingFocusNodeId()
+  }, [activeVideoDuration, addNode, id, nodeWidth, videoPrimaryIndex, videoResults, videoUrl])
+
+  const handleCreateSmartVideoEdit = React.useCallback(() => {
+    const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl
+    if (!sourceUrl) return
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', '智能剪辑', {
+      kind: 'videoCompose',
+      prompt: '',
+      smartEdit: true,
+      sourceVideoNodeId: id,
+      // 智能剪辑节点是用户显式打开编辑器后才执行的编辑动作，不能在创建时被 DAG 自动合成。
+      status: 'idle',
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!newNode) {
+      toast('智能剪辑节点创建失败', 'error')
+      return
+    }
+    const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+    afterAdd.onNodesChange([
+      {
+        id: newNode.id,
+        type: 'position' as const,
+        position: {
+          x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80,
+          y: sourceNode?.position?.y ?? 0,
+        },
+        dragging: false,
+      },
+    ])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: newNode.id, targetHandle: 'in-any' })
+    afterAdd.clearPendingFocusNodeId()
+    toast('已创建智能剪辑节点，可输入剪辑描述并打开编辑器', 'success')
+  }, [addNode, id, nodeWidth, videoPrimaryIndex, videoResults, videoUrl])
+
+  const handleCreateSegmentRemake = React.useCallback(() => {
+    const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl
+    if (!sourceUrl) return
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    const sourceData = data as Record<string, unknown>
+    addNode('taskNode', `${String(sourceData.label || '当前视频')}-片段重拍`, {
+      kind: 'video',
+      nodeWidth: 610,
+      nodeHeight: 350,
+      segmentRemake: true,
+      sourceVideoNodeId: id,
+      sourcePrevVideoNodeId: id,
+      sourceVideoUrl: sourceUrl,
+      videoUrl: sourceUrl,
+      videoResults: [{
+        url: sourceUrl,
+        title: typeof sourceData.videoTitle === 'string' ? sourceData.videoTitle : String(sourceData.label || '源视频'),
+        duration: activeVideoDuration ?? undefined,
+      }],
+      videoPrimaryIndex: 0,
+      videoDuration: activeVideoDuration ?? undefined,
+      segmentRemakeRanges: [],
+      prompt: '',
+      status: 'idle',
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!newNode) {
+      toast('片段重拍节点创建失败', 'error')
+      return
+    }
+    const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+    afterAdd.onNodesChange([
+      {
+        id: newNode.id,
+        type: 'position' as const,
+        position: { x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80, y: sourceNode?.position?.y ?? 0 },
+        dragging: false,
+      },
+    ])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: newNode.id, targetHandle: 'in-video' })
+    afterAdd.clearPendingFocusNodeId()
+    toast('已创建片段重拍节点，可标记 5 个片段后确认', 'success')
+  }, [activeVideoDuration, addNode, data, id, nodeWidth, videoPrimaryIndex, videoResults, videoUrl])
+
+  const handleCreateVideoContinuation = React.useCallback(async (input: VideoContinuationSubmit) => {
+    const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl
+    if (!sourceUrl || !input.prompt.trim()) return
+
+    const selectedDuration = input.sourceRange.end - input.sourceRange.start
+    if (!Number.isFinite(selectedDuration) || selectedDuration <= 0) {
+      toast('续写前置片段时长无效', 'error')
+      return
+    }
+
+    let continuationUrl = sourceUrl
+    let continuationAssetId: string | undefined
+    const knownSourceDuration = Number.isFinite(input.sourceDurationSeconds) && input.sourceDurationSeconds > 0
+      ? input.sourceDurationSeconds
+      : activeVideoDuration ?? undefined
+    const isPartialSelection = knownSourceDuration !== undefined
+      && (input.sourceRange.start > 0.05 || input.sourceRange.end < knownSourceDuration - 0.05)
+
+    try {
+      if (isPartialSelection) {
+        const { sliceVideo } = await import('../../utils/ffmpegTrim')
+        const clip = await sliceVideo(sourceUrl, input.sourceRange.start, input.sourceRange.end)
+        const extension = sourceUrl.split('?')[0].split('.').pop()?.toLowerCase() || 'mp4'
+        const hosted = await uploadServerAssetFile(
+          new File([clip], `continuation-${input.sourceRange.start.toFixed(1)}-${input.sourceRange.end.toFixed(1)}.${extension}`, { type: clip.type }),
+          `续写前置片段 ${selectedDuration.toFixed(1)}s`,
+          { ownerNodeId: id },
+        )
+        const hostedUrl = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
+        if (!hostedUrl) throw new Error('续写前置片段上传失败：未获取到真实资产链接')
+        continuationUrl = hostedUrl
+        continuationAssetId = hosted.id
+      }
+
+      const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+      const sourceData = data as Record<string, unknown>
+      addNode('taskNode', '智能续写', {
+        kind: 'video',
+        prompt: input.prompt.trim(),
+        sourcePrevVideoNodeId: id,
+        sourceVideoUrl: continuationUrl,
+        continuationSourceOriginalUrl: sourceUrl,
+        continuationSourceAssetId: continuationAssetId,
+        referenceVideoDurationSeconds: selectedDuration,
+        continuationSourceRangeStartSeconds: input.sourceRange.start,
+        continuationSourceRangeEndSeconds: input.sourceRange.end,
+        continuationMode: 'extend',
+        videoDuration: input.durationSeconds,
+        videoModel: sourceData.videoModel,
+        videoModelVendor: sourceData.videoModelVendor,
+        videoSize: sourceData.videoSize,
+        videoResolution: sourceData.videoResolution,
+        aspect: sourceData.aspect,
+        videoGenerateAudio: sourceData.videoGenerateAudio,
+        status: 'queued',
+      })
+      const afterAdd = useRFStore.getState()
+      const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+      if (!newNode) throw new Error('智能续写节点创建失败')
+      const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+      afterAdd.onNodesChange([
+        {
+          id: newNode.id,
+          type: 'position' as const,
+          position: { x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80, y: (sourceNode?.position?.y ?? 0) + 180 },
+          dragging: false,
+        },
+      ])
+      afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: newNode.id, targetHandle: 'in-video' })
+      afterAdd.clearPendingFocusNodeId()
+      setVideoContinuationOpen(false)
+      void runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 }).catch((error: unknown) => {
+        toast(error instanceof Error ? `智能续写失败：${error.message}` : '智能续写失败', 'error')
+      })
+      toast('已创建智能续写节点并开始生成', 'success')
+    } catch (error) {
+      toast(error instanceof Error ? `智能续写前置片段处理失败：${error.message}` : '智能续写前置片段处理失败', 'error')
+    }
+  }, [activeVideoDuration, addNode, data, id, nodeWidth, runNodeDagToTarget, videoPrimaryIndex, videoResults, videoUrl])
+
+  const handleSeparateVideo = React.useCallback(async (output: VideoSeparationOutput) => {
+    const sourceUrl = (videoResults[videoPrimaryIndex]?.url || videoUrl || '').trim()
+    if (!sourceUrl) throw new Error('当前节点没有可分离的视频资产')
+    const sourceData = data as Record<string, unknown>
+    const sourceLabel = typeof sourceData.label === 'string' && sourceData.label.trim() ? sourceData.label.trim() : '源视频'
+    const projectId = typeof currentProject?.id === 'string' ? currentProject.id.trim() : ''
+    const sourceDuration = activeVideoDuration ?? (typeof sourceData.videoDuration === 'number' ? sourceData.videoDuration : undefined)
+    const { runVideoSeparation } = await import('./taskNode/videoSeparation')
+    await runVideoSeparation({
+      nodeId: id,
+      nodeWidth,
+      output,
+      projectId,
+      sourceDuration,
+      sourceLabel,
+      sourceUrl,
+      onPlaceholdersCreated: () => setVideoToolEditorMode(null),
+    })
+  }, [activeVideoDuration, currentProject?.id, data, id, nodeWidth, videoPrimaryIndex, videoResults, videoUrl])
+
+  const createConfiguredImageDerivativeNode = React.useCallback((draft: {
+    label: string
+    prompt: string
+    presetKey?: string
+    operationKey?: string
+    operationKind: ImageOperationKind
+    execution?: ImageOperationExecution
+    parameters?: Readonly<Record<string, unknown>>
+    output?: ImageOperationSpec['output']
+    panoramic?: boolean
+  }): string | null => {
+    const normalizedBaseImageUrl = String(basePoseImage || '').trim()
+    if (!normalizedBaseImageUrl) {
+      toast(`${draft.label}缺少可执行的真实源图片`, 'error')
+      return null
+    }
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) return null
+    const imageOperationSpec = createImageOperationForSource({
+      kind: draft.operationKind,
+      execution: draft.execution ?? 'image-edit',
+      sourceNodeId: id,
+      sourceUrl: normalizedBaseImageUrl,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+      parameters: draft.parameters,
+      output: draft.output,
+    })
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', draft.label, {
+      kind: 'imageEdit',
+      prompt: draft.prompt,
+      imageModel: editableModel,
+      imageModelVendor: null,
+      referenceImages: normalizedBaseImageUrl ? [normalizedBaseImageUrl] : [],
+      suppressUpstreamPrompts: true,
+      ...(draft.presetKey ? { libTvImagePresetKey: draft.presetKey } : {}),
+      ...(draft.operationKey ? { libTvImageOperationKey: draft.operationKey } : {}),
+      imageOperationSpec,
+      imageOperationState: createImageOperationState(imageOperationSpec),
+      imageOperationRevision: 1,
+      ...(draft.panoramic
+        ? {
+          isPanoramic: true,
+          aspect: '2:1',
+          aspectRatio: '2:1',
+          imageResolution: '4k',
+          resolution: '4k',
+        }
+        : {}),
+      sampleCount: 1,
+      status: 'idle',
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!newNode) {
+      toast(`${draft.label}节点创建失败`, 'error')
+      return null
+    }
+    const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+    afterAdd.onNodesChange([
+      {
+        id: newNode.id,
+        type: 'position',
+        position: {
+          x: (sourceNode?.position?.x ?? 0) + ((sourceNode?.measured?.width as number | undefined) ?? nodeWidth) + 40,
+          y: sourceNode?.position?.y ?? 0,
+        },
+        dragging: false,
+      },
+      { id, type: 'select' as const, selected: false },
+      { id: newNode.id, type: 'select', selected: true },
+    ])
+    afterAdd.onConnect({
+      source: id,
+      sourceHandle: 'out-image',
+      target: newNode.id,
+      targetHandle: 'in-image',
+    })
+    return newNode.id
+  }, [addNode, basePoseImage, data, id, nodeWidth, resolveImageEditModelForAction])
+
+  const openPortraitTextureEditor = React.useCallback(() => {
+    const sourceImageUrl = String(primaryImageUrl || basePoseImage || '').trim()
+    if (!sourceImageUrl) {
+      toast('当前节点没有可用于人像调节的真实图片资产', 'error')
+      return
+    }
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) return
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', '人像质感调节', {
+      kind: 'imageEdit',
+      prompt: '',
+      imageModel: editableModel,
+      imageModelVendor: null,
+      referenceImages: [sourceImageUrl],
+      suppressUpstreamPrompts: true,
+      libTvImagePresetKey: 'portrait-texture',
+      libTvImageOperationKey: 'portrait-adjust',
+      portraitTextureSelectionStatus: 'selecting',
+      portraitTextureStrength: PORTRAIT_TEXTURE_DEFAULT_STRENGTH,
+      sampleCount: 1,
+      status: 'idle',
+    })
+    const afterAdd = useRFStore.getState()
+    const outputNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!outputNode) {
+      toast('人像质感调节结果节点创建失败', 'error')
+      return
+    }
+    const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+    afterAdd.onNodesChange([
+      {
+        id: outputNode.id,
+        type: 'position',
+        position: {
+          x: (sourceNode?.position?.x ?? 0) + ((sourceNode?.measured?.width as number | undefined) ?? nodeWidth) + 40,
+          y: sourceNode?.position?.y ?? 0,
+        },
+        dragging: false,
+      },
+      { id, type: 'select', selected: true },
+      { id: outputNode.id, type: 'select', selected: false },
+    ])
+    afterAdd.onConnect({
+      source: id,
+      sourceHandle: 'out-image',
+      target: outputNode.id,
+      targetHandle: 'in-image',
+    })
+    setPortraitTextureEditorOutputNodeId(outputNode.id)
+  }, [addNode, basePoseImage, id, nodeWidth, primaryImageUrl, resolveImageEditModelForAction])
+
+  const closePortraitTextureEditor = React.useCallback(() => {
+    if (portraitTextureEditorOutputNodeId) {
+      updateNodeData(portraitTextureEditorOutputNodeId, {
+        portraitTextureSelectionStatus: 'cancelled',
+      })
+    }
+    setPortraitTextureEditorOutputNodeId(null)
+  }, [portraitTextureEditorOutputNodeId, updateNodeData])
+
+  const openEmotionPersonSelector = React.useCallback((manual = false) => {
+    const sourceImageUrl = String(primaryImageUrl || basePoseImage || '').trim()
+    if (!sourceImageUrl) {
+      toast('当前节点没有可用于情绪调节的真实图片资产', 'error')
+      return
+    }
+    setEmotionError(null)
+    setEmotionPanelOpen(false)
+    setEmotionSelectorManual(manual)
+    setEmotionPersonSelectorOpen(true)
+  }, [basePoseImage, primaryImageUrl])
+
+  const handleEmotionSelectionConfirm = React.useCallback(async (selection: PortraitTextureSelection) => {
+    setEmotionSelection(selection)
+    setEmotionPersonSelectorOpen(false)
+    setEmotionError(null)
+    setEmotionPanelOpen(true)
+  }, [])
+
+  const handlePortraitTextureSelectionConfirm = React.useCallback(async (selection: PortraitTextureSelection) => {
+    const outputNodeId = portraitTextureEditorOutputNodeId
+    const sourceImageUrl = String(primaryImageUrl || basePoseImage || '').trim()
+    if (!outputNodeId) throw new Error('人像质感调节结果节点不存在')
+    if (!sourceImageUrl) throw new Error('当前节点没有可编辑的真实图片资产')
+    const outputNode = useRFStore.getState().nodes.find((node) => node.id === outputNodeId)
+    if (!outputNode) throw new Error('人像质感调节结果节点已被移除')
+
+    const sourcePng = await createMaskEditSourcePng(sourceImageUrl)
+    const [hostedSource, hostedMask] = await Promise.all([
+      uploadEditedImageBlob({
+        blob: sourcePng.blob,
+        label: '人像质感调节源图',
+        filePrefix: 'portrait-texture-source',
+      }),
+      uploadEditedImageBlob({
+        blob: selection.maskBlob,
+        label: '人像质感调节区域蒙版',
+        filePrefix: 'portrait-texture-mask',
+      }),
+    ])
+    const outputNodeData = (outputNode.data ?? {}) as Record<string, unknown>
+    const strength = normalizePortraitTextureStrength(outputNodeData.portraitTextureStrength)
+    const imageOperationSpec = createImageOperationForSource({
+      kind: 'portrait_adjust',
+      execution: 'image-edit',
+      sourceNodeId: id,
+      sourceUrl: hostedSource.url,
+      sourceAssetId: hostedSource.assetId,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+      parameters: {
+        strength,
+        selectionSource: selection.source,
+        selectionRect: selection.rect,
+        preserveIdentity: true,
+        preservePose: true,
+        preserveComposition: true,
+        maskPolarity: 'transparent-is-edit',
+        originalSourceUrl: sourceImageUrl,
+      },
+      additionalInputs: [{
+        role: 'mask',
+        url: hostedMask.url,
+        assetId: hostedMask.assetId,
+        mimeType: 'image/png',
+        width: selection.imageWidth,
+        height: selection.imageHeight,
+      }],
+    })
+    updateNodeData(outputNodeId, {
+      referenceImages: [hostedSource.url],
+      maskUrl: hostedMask.url,
+      portraitTextureMaskAssetId: hostedMask.assetId,
+      portraitTextureSourceNodeId: id,
+      portraitTextureSelectionStatus: 'confirmed',
+      portraitTextureSelectionSource: selection.source,
+      portraitTextureSelectionRect: selection.rect,
+      portraitTextureSourceSize: {
+        width: selection.imageWidth,
+        height: selection.imageHeight,
+      },
+      imageOperationSpec,
+      imageOperationState: createImageOperationState(imageOperationSpec),
+      imageOperationRevision: 1,
+    })
+    const store = useRFStore.getState()
+    store.onNodesChange([
+      { id, type: 'select', selected: false },
+      { id: outputNodeId, type: 'select', selected: true },
+    ])
+    store.clearPendingFocusNodeId()
+    setPortraitTextureEditorOutputNodeId(null)
+    toast('已选择人物，可调整参数后生成', 'success')
+  }, [basePoseImage, data, id, portraitTextureEditorOutputNodeId, primaryImageUrl, updateNodeData, uploadEditedImageBlob])
+
+  const createConfiguredImagePresetNode = React.useCallback((presetKey: string): string | null => {
+    const preset = findLibTvImagePreset(presetKey)
+    if (!preset || preset.execution === 'character-fission') return null
+    const sourceUrl = String(basePoseImage || '').trim()
+    if (!sourceUrl) {
+      toast(`${preset.label}缺少可执行的真实源图片`, 'error')
+      return null
+    }
+    const imageOperationSpec = createPresetImageOperation({
+      presetKey: preset.key,
+      sourceNodeId: id,
+      sourceUrl,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+    })
+    const newNodeId = createConfiguredImageDerivativeNode({
+      label: preset.label,
+      prompt: preset.prompt,
+      presetKey: preset.key,
+      operationKind: imageOperationSpec.kind,
+      execution: imageOperationSpec.execution,
+      parameters: imageOperationSpec.parameters,
+      output: imageOperationSpec.output,
+      panoramic: preset.execution === 'panorama',
+    })
+    return newNodeId
+  }, [basePoseImage, createConfiguredImageDerivativeNode, data, id])
+
+  const handleImagePresetExecute = React.useCallback((presetKey: string) => {
+    const preset = findLibTvImagePreset(presetKey)
+    if (!preset || preset.execution === 'character-fission') return
+    if (preset.key === 'portrait-texture') {
+      setImagePresetConfirmKey(null)
+      openPortraitTextureEditor()
+      return
+    }
+    const newNodeId = createConfiguredImagePresetNode(presetKey)
+    setImagePresetConfirmKey(null)
+    if (!newNodeId) return
+    runNodeDagToTarget(newNodeId, useRFStore.getState, useRFStore.setState, { concurrency: 1 }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : `${preset.label}生成启动失败`
+      console.error('LibTV image preset execution failed', error)
+      toast(message, 'error')
+    })
+  }, [createConfiguredImagePresetNode, openPortraitTextureEditor])
+
   // Define node-specific tools and overflow calculation
   const uniqueDefs = React.useMemo(() => {
-    if (hasImageResults) {
-      const tools: { key: string; label: string; icon: JSX.Element; onClick: () => void }[] = [
-      ]
-      if (kind === 'image') {
+    const isImgContext = hasImageResults || hasUpstreamConnections || (isVideoNode && hasPrimaryVideo)
+    if (isImgContext) {
+      // 球形模式下 uniqueDefs 为空，操作全在 toolbarMetaActions
+      if (isPanoramic && panoramicSphereMode) return []
+
+      const tools: { key: string; label: string; icon: JSX.Element; onClick: () => void; loading?: boolean; disabled?: boolean; showLabel?: boolean; badge?: React.ReactNode; menuItems?: ToolbarMenuItem[]; active?: boolean; tooltip?: string }[] = []
+
+      if (!isPanoramic && (kind === 'image' || kind === 'imageEdit') && hasImageResults) {
+        const gridSplitMenuItems: ToolbarMenuItem[] = [
+          ...LIBTV_IMAGE_GRID_SPLIT_ACTIONS.map((item) => ({
+            key: item.key,
+            label: item.label,
+            onClick: () => {
+              setGridSplitRows(item.rows)
+              setGridSplitCols(item.cols)
+              setGridSplitOpen(true)
+            },
+          })),
+          {
+            key: 'custom',
+            label: '自定义',
+            onClick: () => {},
+            subMenuContent: (
+              <LazyGridCustomPicker
+                isDarkUi={isDarkUi}
+                onSelect={(cols, rows) => {
+                  setGridSplitCols(cols)
+                  setGridSplitRows(rows)
+                  setGridSplitOpen(true)
+                }}
+              />
+            ),
+          },
+        ]
+        const moreMenuItems: ToolbarMenuItem[] = []
+        if ((data as Record<string, unknown>).isImageLayer === true) {
+          moreMenuItems.push({
+            key: 'layer-recompose',
+            label: '按当前图层重新合成',
+            icon: <IconApps size={14} />,
+            onClick: () => { void handleLayerRecompose() },
+          })
+        }
+        if (supportsReversePrompt) {
+          moreMenuItems.push({
+            key: 'reverse',
+            label: '反推提示词',
+            icon: <IconPhotoSearch size={14} />,
+            loading: reversePromptLoading,
+            disabled: reversePromptLoading,
+            onClick: onReversePrompt,
+          })
+        }
+        moreMenuItems.push(
+          { key: 'denoise-clean', label: '精简去噪 · 保构图', icon: <IconSparkles size={14} />, onClick: () => handleDenoise('clean') },
+          { key: 'denoise-8k', label: '8K 极致增强', icon: <IconSparkles size={14} />, onClick: () => handleDenoise('enhance') },
+          { key: 'smart-cutout', label: '智能抠图', icon: <IconScissors size={14} />, onClick: handleSmartCutout },
+          { key: 'save-to-library', label: '保存到素材库', icon: <IconFolderPlus size={14} />, onClick: () => setSaveToLibraryOpen(true) },
+        )
+        const nineGridMenuItems: ToolbarMenuItem[] = LIBTV_IMAGE_NINE_GRID_PRESET_KEYS.flatMap((presetKey) => {
+          const preset = findLibTvImagePreset(presetKey)
+          return preset
+            ? [{
+              key: preset.key,
+              label: preset.label,
+              icon: <LibTvImageToolbarIcon name={LIBTV_IMAGE_NINE_GRID_ICONS[preset.key] ?? 'nine-grid'} size={16} />,
+              onClick: () => setImagePresetConfirmKey(preset.key),
+            }]
+            : []
+        })
+        const imageIntentDefs = INTENT_ACTIONS.filter((definition) => definition.applicableTo({ kind }))
+        const resolveIntentContext = () => resolveIntentChapterContext({
+          sourceNodeId: id,
+          nodes: useRFStore.getState().nodes,
+          edges: useRFStore.getState().edges,
+        })
+        const thisNodeIntents = runningNodeIntents.get(id)
+        for (const definition of imageIntentDefs) {
+          const IntentIcon = definition.icon
+          const thisLoading = Boolean(thisNodeIntents?.has(definition.intent))
+          moreMenuItems.push({
+            key: definition.key,
+            label: definition.label,
+            icon: <IntentIcon size={14} />,
+            loading: thisLoading,
+            disabled: thisLoading,
+            onClick: () => {
+              if (thisLoading) return
+              const chapterContext = resolveIntentContext()
+              if (!chapterContext) {
+                toast('当前画布上下文未就绪，请稍后重试', 'error')
+                return
+              }
+              if (definition.requiresConfig) {
+                setPendingIntentConfig({ intent: definition.intent, chapterContext })
+              } else {
+                void dispatchIntent(definition.intent, id, {
+                  chapterContext,
+                  variantParams: definition.variantParams,
+                })
+              }
+            },
+          })
+        }
+        if (hasUpstreamConnections) {
+          moreMenuItems.push({
+            key: 'inherit-upstream',
+            label: '继承上游',
+            icon: <IconArrowMergeBoth size={14} />,
+            onClick: () => inheritUpstreamConnections(id),
+          })
+        }
+
         tools.push(
           {
-            key: 'image-edit',
-            label: '图片编辑',
-            icon: <IconAdjustments size={16} />,
-            onClick: () => openPoseEditor(),
+            key: 'portrait-texture',
+            label: '人像质感调节',
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="portrait" size={16} />,
+            tooltip: '人像质感与情绪调节',
+            onClick: openPortraitTextureEditor,
+            badge: <span className="tc-image-toolbar-new-badge">NEW</span>,
+            menuItems: LIBTV_IMAGE_PORTRAIT_ACTIONS.map((item) =>
+              item.key === 'portrait-adjust'
+                ? {
+                key: item.key,
+                label: item.label,
+                icon: <LibTvImageToolbarIcon name={item.icon} size={16} />,
+                onClick: openPortraitTextureEditor,
+              }
+                : {
+                key: item.key,
+                label: item.label,
+                icon: <LibTvImageToolbarIcon name={item.icon} size={16} />,
+                onClick: () => openEmotionPersonSelector(false),
+              }),
           },
-        )
-      }
-      if (kind === 'image' || kind === 'imageEdit') {
-        tools.push(
+          {
+            key: 'panoramic',
+            label: '全景',
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="panorama" size={16} />,
+            tooltip: '基于当前场景创建720°全景图',
+            onClick: () => setPanoramicConfirm(true),
+          },
           {
             key: 'camera-angle',
-            label: '角度',
-            icon: <IconCamera size={16} />,
-            onClick: () => openCameraEditor(),
+            label: '多角度',
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="multi-angle" size={16} />,
+            tooltip: '从不同摄影机角度查看并生成当前画面',
+            onClick: () => { closeLightingEditor(); setImageNodeMultiAngleOpen(true) },
           },
           {
             key: 'lighting-edit',
             label: '打光',
-            icon: <IconBulb size={16} />,
-            onClick: () => openLightingEditor(),
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="lighting" size={16} />,
+            tooltip: '调整当前画面的灯光方向、强度与氛围',
+            onClick: () => { setImageNodeMultiAngleOpen(false); openLightingEditor() },
+          },
+          {
+            key: 'nine-grid',
+            label: '九宫格',
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="nine-grid" size={16} />,
+            tooltip: '基于当前图片生成设定图、分镜或画面推演',
+            onClick: () => setImagePresetConfirmKey('multi-camera-9'),
+            menuItems: nineGridMenuItems,
+          },
+          {
+            key: 'hd',
+            label: '高清',
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="hd" size={16} />,
+            tooltip: '高清、扩图、重绘、擦除、抠图与裁剪',
+            onClick: () => setHdPanelOpen(true),
+            menuItems: LIBTV_IMAGE_HD_ACTIONS.map((item) => {
+              if (item.key === 'upscale') return {
+                key: item.key,
+                label: item.label,
+                icon: <LibTvImageToolbarIcon name={item.icon} size={14} />,
+                onClick: () => setHdPanelOpen(true),
+              }
+              if (item.key === 'expand') return {
+                key: item.key,
+                label: item.label,
+                icon: <LibTvImageToolbarIcon name={item.icon} size={14} />,
+                onClick: () => setExpandPanelOpen(true),
+              }
+              if (item.key === 'repaint') return {
+                key: item.key,
+                label: item.label,
+                icon: <LibTvImageToolbarIcon name={item.icon} size={14} />,
+                onClick: () => { setMaskMode('repaint'); setCropOpen(false); setAnnotateOpen(false) },
+              }
+              if (item.key === 'erase') return {
+                key: item.key,
+                label: item.label,
+                icon: <LibTvImageToolbarIcon name={item.icon} size={14} />,
+                onClick: () => { setMaskMode('erase'); setCropOpen(false); setAnnotateOpen(false) },
+              }
+              if (item.key === 'cutout') return {
+                key: item.key,
+                label: item.label,
+                icon: <LibTvImageToolbarIcon name={item.icon} size={14} />,
+                loading: extractLoading,
+                disabled: extractLoading,
+                onClick: handleFastCutout,
+              }
+              return {
+                key: item.key,
+                label: item.label,
+                icon: <LibTvImageToolbarIcon name={item.icon} size={14} />,
+                onClick: () => { setCropOpen(true); setAnnotateOpen(false); setMaskMode(null) },
+              }
+            }),
+          },
+          {
+            key: 'element-edit',
+            label: '元素编辑',
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="element-edit" size={16} />,
+            tooltip: '识别并修改、移动画面中的元素',
+            onClick: () => {
+              setElementEditOpen(true)
+              setCropOpen(false)
+              setAnnotateOpen(false)
+              setMaskMode(null)
+            },
+          },
+          {
+            key: 'layer-split',
+            label: '图层分离',
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="layer-split" size={16} />,
+            tooltip: '将当前图片拆分为可独立编辑的图层',
+            loading: layerLoading,
+            disabled: layerLoading,
+            onClick: handleLayerSplit,
+          },
+          {
+            key: 'grid-split',
+            label: '宫格切分',
+            showLabel: true,
+            icon: <LibTvImageToolbarIcon name="grid-split" size={16} />,
+            tooltip: '按固定或自定义行列切分当前图片',
+            onClick: () => {
+              setGridSplitRows(3)
+              setGridSplitCols(3)
+              setGridSplitOpen(true)
+            },
+            menuItems: gridSplitMenuItems,
+          },
+          {
+            key: 'annotate',
+            label: '标注',
+            icon: <LibTvImageToolbarIcon name="annotate" size={18} />,
+            tooltip: '在当前图片上绘制标注',
+            onClick: () => { setAnnotateOpen((open) => !open); setCropOpen(false); setMaskMode(null) },
+            active: annotateOpen,
+          },
+          {
+            key: 'rotate',
+            label: '旋转',
+            icon: <LibTvImageToolbarIcon name="rotate" size={16} />,
+            tooltip: '创建当前图片的旋转预览',
+            onClick: handleCreateRotatePreview,
+            active: Boolean(rotatePreviewNodeId),
+          },
+          {
+            key: 'more',
+            label: '更多',
+            icon: <IconDots size={18} />,
+            onClick: () => {},
+            menuItems: moreMenuItems,
           },
         )
+        return tools
       }
-      if (supportsReversePrompt) {
-        tools.push({
-          key: 'reverse',
-          label: '反推提示词',
-          icon: <IconPhotoSearch size={16} />,
-          onClick: () => onReversePrompt(),
-        })
+
+      // 全景平铺模式：不展示普通图片编辑操作，避免混乱
+      if (!isPanoramic) {
+        if ((kind === 'image' || kind === 'imageEdit') && hasImageResults) {
+          tools.push(
+            {
+              key: 'camera-angle',
+              label: '多角度',
+              showLabel: true,
+              icon: <IconCamera size={18} />,
+              onClick: () => { closeLightingEditor(); setImageNodeMultiAngleOpen(true) },
+            },
+            {
+              key: 'lighting-edit',
+              label: '打光',
+              showLabel: true,
+              icon: <IconBulb size={18} />,
+              onClick: () => { setImageNodeMultiAngleOpen(false); openLightingEditor() },
+            },
+          )
+        }
+        if (supportsReversePrompt && hasImageResults) {
+          tools.push({
+            key: 'reverse',
+            label: '反推提示词',
+            showLabel: true,
+            icon: <IconPhotoSearch size={18} />,
+            onClick: () => onReversePrompt(),
+            loading: reversePromptLoading,
+            disabled: reversePromptLoading,
+          })
+        }
+        if (isImageNode) {
+          const imageIntentDefs = INTENT_ACTIONS.filter((a) => a.applicableTo({ kind }))
+          if (imageIntentDefs.length > 0) {
+            const resolveCtx = () => resolveIntentChapterContext({ sourceNodeId: id, nodes: useRFStore.getState().nodes, edges: useRFStore.getState().edges })
+            // Only show loading for THIS node's running intents, not global ones.
+            const thisNodeIntents = runningNodeIntents.get(id)
+            const parentLoading = imageIntentDefs.some((a) => thisNodeIntents?.has(a.intent))
+            tools.push({
+              key: 'text-creation',
+              label: '文本创作',
+              icon: <IconMovie size={18} />,
+              showLabel: true,
+              loading: parentLoading,
+              onClick: () => {},
+              menuItems: imageIntentDefs.map((a) => {
+                const Icon = a.icon
+                const thisLoading = Boolean(thisNodeIntents?.has(a.intent))
+                return {
+                  key: a.key,
+                  label: a.label,
+                  icon: <Icon size={14} />,
+                  loading: thisLoading,
+                  // Allow concurrent dispatches from different source nodes —
+                  // only disable if THIS exact intent is already running from THIS node.
+                  disabled: thisLoading,
+                  onClick: () => {
+                    if (thisLoading) return
+                    const chapterContext = resolveCtx()
+                    if (!chapterContext) {
+                      toast('当前画布上下文未就绪，请稍后重试', 'error')
+                      return
+                    }
+                    if (a.requiresConfig) {
+                      setPendingIntentConfig({ intent: a.intent, chapterContext })
+                    } else {
+                      void dispatchIntent(a.intent, id, { chapterContext, variantParams: a.variantParams })
+                    }
+                  },
+                }
+              }),
+            })
+          }
+        }
+        if ((kind === 'image' || kind === 'imageEdit') && hasImageResults) {
+          tools.push({
+            key: 'denoise',
+            label: '一键去噪',
+            showLabel: true,
+            icon: <IconSparkles size={18} />,
+            loading: denoiseLoading,
+            onClick: () => {},
+            menuItems: [
+              { key: 'denoise-clean', label: '精简去噪 · 保构图', onClick: () => handleDenoise('clean') },
+              { key: 'denoise-8k',    label: '8K 极致增强',      onClick: () => handleDenoise('enhance') },
+            ] as ToolbarMenuItem[],
+          })
+        }
+        if ((kind === 'image' || kind === 'imageEdit') && hasImageResults) {
+          tools.push({
+            key: 'grid-split',
+            label: '宫格切分',
+            showLabel: true,
+            icon: <IconBorderAll size={18} />,
+            onClick: () => {},
+            menuItems: [
+              { key: '2x2', label: '4宫格 (2×2)', onClick: () => { setGridSplitRows(2); setGridSplitCols(2); setGridSplitOpen(true) } },
+              { key: '3x3', label: '9宫格 (3×3)', onClick: () => { setGridSplitRows(3); setGridSplitCols(3); setGridSplitOpen(true) } },
+              { key: '4x4', label: '16宫格 (4×4)', onClick: () => { setGridSplitRows(4); setGridSplitCols(4); setGridSplitOpen(true) } },
+              { key: '5x5', label: '25宫格 (5×5)', onClick: () => { setGridSplitRows(5); setGridSplitCols(5); setGridSplitOpen(true) } },
+              {
+                key: 'custom',
+                label: '自定义',
+                onClick: () => {},
+                subMenuContent: (
+                  <LazyGridCustomPicker
+                    isDarkUi={isDarkUi}
+                    onSelect={(cols, rows) => {
+                      setGridSplitCols(cols)
+                      setGridSplitRows(rows)
+                      setGridSplitOpen(true)
+                    }}
+                  />
+                ),
+              },
+            ] as ToolbarMenuItem[],
+          })
+        }
+        // 裁剪下拉菜单 + 标注 + 旋转
+        if ((kind === 'image' || kind === 'imageEdit') && hasImageResults) {
+          tools.push({
+            key: 'image-edit-menu',
+            label: '裁剪',
+            showLabel: true,
+            icon: <IconCrop size={18} />,
+            onClick: () => {},
+            menuItems: [
+              { key: 'hd',      label: '高清',  onClick: () => { setHdPanelOpen(o => !o); setExpandPanelOpen(false) } },
+              { key: 'expand',  label: '扩图',  onClick: () => { setExpandPanelOpen(o => !o); setHdPanelOpen(false) } },
+              { key: 'repaint', label: '重绘',  onClick: () => { setMaskMode('repaint'); setCropOpen(false); setAnnotateOpen(false) } },
+              { key: 'erase',   label: '擦除',  onClick: () => { setMaskMode('erase'); setCropOpen(false); setAnnotateOpen(false) } },
+              { key: 'crop',    label: '裁剪',  onClick: () => { setCropOpen(true); setAnnotateOpen(false); setMaskMode(null) } },
+            ] as ToolbarMenuItem[],
+          })
+          // 抠图 / 分层下拉菜单：一键抠图 / 智能抠图 / 一键分层，产物均为新生节点
+          tools.push({
+            key: 'cutout-menu',
+            label: '抠图',
+            showLabel: true,
+            icon: <IconScissors size={18} />,
+            loading: extractLoading || smartCutoutLoading || layerLoading,
+            onClick: () => {},
+            menuItems: [
+              { key: 'fast-cutout',  label: '极速抠图', onClick: handleFastCutout },
+              { key: 'smart-cutout', label: '智能抠图', onClick: handleSmartCutout },
+              { key: 'layer-split',  label: '一键分层', onClick: handleLayerSplit },
+            ] as ToolbarMenuItem[],
+          })
+          // 标注
+          tools.push({
+            key: 'annotate',
+            label: '标注',
+            showLabel: false,
+            icon: <IconPencil size={18} />,
+            onClick: () => { setAnnotateOpen(o => !o); setCropOpen(false); setMaskMode(null) },
+            active: annotateOpen,
+          })
+          // 旋转
+          tools.push({
+            key: 'rotate',
+            label: '旋转',
+            showLabel: false,
+            icon: <IconRotate size={18} />,
+            onClick: handleCreateRotatePreview,
+            active: !!rotatePreviewNodeId,
+          })
+        }
+        if ((kind === 'image' || kind === 'imageEdit') && hasImageResults) {
+          tools.push({
+            key: 'panoramic',
+            label: '生成720°全景图',
+            icon: <IconPanoramaHorizontal size={18} />,
+            onClick: () => { setPanoramicConfirm(true) },
+            loading: panoramicGenerating,
+          })
+        }
+        if ((kind === 'image' || kind === 'imageEdit') && hasImageResults) {
+          tools.push({
+            key: 'emotion',
+            label: '情绪调节',
+            icon: <IconMoodSmile size={18} />,
+            onClick: () => {
+              if (emotionPanelOpen || emotionPersonSelectorOpen) {
+                setEmotionPanelOpen(false)
+                setEmotionPersonSelectorOpen(false)
+                return
+              }
+              openEmotionPersonSelector(false)
+            },
+            loading: emotionLoading,
+            active: emotionPanelOpen || emotionPersonSelectorOpen,
+          })
+        }
+        // 视频工具栏（与 LibTV 参考页同步）。生成、分析、续写、剪辑、抽帧、音视频分离
+        // 和字幕/主体处理都走真实执行器；模型目录只按已发布能力展示可用模型。
+        if (isVideoNode && hasPrimaryVideo) {
+          tools.push({
+            key: 'video-enhance',
+            label: '高清',
+            showLabel: true,
+            icon: <IconBadgeHd size={16} />,
+            active: showEnhancePanel,
+            onClick: () => setShowEnhancePanel(true),
+          })
+          tools.push({
+            key: 'video-retake',
+            label: '片段重拍',
+            showLabel: true,
+            icon: <IconRepeat size={16} />,
+            onClick: handleCreateSegmentRemake,
+            menuItems: [
+              {
+                key: 'retake-current',
+                label: '片段重拍',
+                icon: <IconRepeat size={14} />,
+                onClick: handleCreateSegmentRemake,
+              },
+              {
+                key: 'smart-continue-current',
+                label: '智能续写',
+                icon: <IconRepeat size={14} />,
+                onClick: () => setVideoContinuationOpen(true),
+              },
+              {
+                key: 'smart-edit-current',
+                label: '智能剪辑',
+                icon: <IconScissors size={14} />,
+                onClick: handleCreateSmartVideoEdit,
+              },
+            ] as ToolbarMenuItem[],
+          })
+          tools.push({
+            key: 'video-analysis',
+            label: '逐帧拉片',
+            showLabel: true,
+            icon: <IconTimeline size={16} />,
+            disabled: !hasPrimaryVideo,
+            onClick: handleCreateVideoAnalysis,
+            menuItems: [
+              {
+                key: 'analysis-structured',
+                label: '创建逐帧拉片节点',
+                icon: <IconTimeline size={14} />,
+                onClick: handleCreateVideoAnalysis,
+              },
+            ],
+          })
+          tools.push({
+            key: 'video-remove-subtitles',
+            label: '智能去字幕',
+            showLabel: true,
+            icon: <IconSubtitlesOff size={16} />,
+            onClick: () => setVideoToolEditorMode('subtitle'),
+            menuItems: [
+              {
+                key: 'remove-subtitles-auto',
+                label: '智能去字幕',
+                icon: <IconSubtitlesOff size={14} />,
+                onClick: () => setVideoToolEditorMode('subtitle-auto'),
+              },
+              {
+                key: 'remove-subtitles-select',
+                label: '框选去字幕',
+                icon: <IconSubtitlesOff size={14} />,
+                onClick: () => setVideoToolEditorMode('subtitle'),
+              },
+            ],
+          })
+          tools.push({
+            key: 'video-audio-separation',
+            label: '音视频分离',
+            showLabel: true,
+            icon: <IconArrowsSplit size={16} />,
+            onClick: () => setVideoToolEditorMode('separation'),
+            menuItems: [
+              {
+                key: 'audio-separation-open',
+                label: '分离为无声视频与音轨',
+                icon: <IconArrowsSplit size={14} />,
+                onClick: () => setVideoToolEditorMode('separation'),
+              },
+            ],
+          })
+          tools.push({
+            key: 'video-subject-remove',
+            label: '主体消除',
+            showLabel: true,
+            icon: <IconUserOff size={16} />,
+            onClick: () => setVideoToolEditorMode('subject'),
+            menuItems: [
+              {
+                key: 'subject-remove-select',
+                label: '框选要消除的主体',
+                icon: <IconUserOff size={14} />,
+                onClick: () => setVideoToolEditorMode('subject'),
+              },
+            ],
+          })
+          tools.push({
+            key: 'video-first-frame',
+            label: '截取首帧',
+            showLabel: true,
+            icon: <IconScreenshot size={16} />,
+            onClick: () => { void handleCaptureVideoFirstFrame() },
+            menuItems: [
+              {
+                key: 'capture-first-frame',
+                label: '截取首帧',
+                icon: <IconScreenshot size={14} />,
+                onClick: () => { void handleCaptureVideoFrame('first') },
+              },
+              {
+                key: 'capture-last-frame',
+                label: '截取尾帧',
+                icon: <IconScreenshot size={14} />,
+                onClick: () => { void handleCaptureVideoFrame('last') },
+              },
+              {
+                key: 'capture-current-frame',
+                label: '截取当前帧',
+                icon: <IconScreenshot size={14} />,
+                onClick: () => { void handleCaptureVideoFrame('current') },
+              },
+            ] as ToolbarMenuItem[],
+          })
+        }
+
+        // 项目节点已天然属于项目素材域；此动作仅复制到个人/团队跨项目收藏库。
+        if (hasImageResults && primaryImageUrl) {
+          tools.push({
+            key: 'save-to-library',
+            label: '保存到素材库',
+            showLabel: false,
+            icon: <IconFolderPlus size={18} />,
+            onClick: () => setSaveToLibraryOpen(true),
+          })
+        }
+
+        // 继承上游
+        if (hasUpstreamConnections) {
+          tools.push({
+            key: 'inherit-upstream',
+            label: '继承上游',
+            showLabel: true,
+            icon: <IconArrowMergeBoth size={16} />,
+            onClick: () => inheritUpstreamConnections(id),
+          })
+        }
       }
       return tools
     }
-    // default tools for other node kinds (kept minimal)
-    return [
-      { key: 'extend', label: '扩展', icon: <IconArrowsDiagonal2 size={16} />, onClick: () => {} },
-    ] as { key: string; label: string; icon: JSX.Element; onClick: () => void }[]
+    // Other node kinds must not expose a generic action without a real execution contract.
+    return []
   }, [
+    handleGeneratePanoramic,
     hasImageResults,
+    hasUpstreamConnections,
+    isPanoramic,
+    panoramicSphereMode,
     kind,
     openCameraEditor,
+    closeLightingEditor,
+    panoramicGenerating,
     openLightingEditor,
-    openPoseEditor,
     onReversePrompt,
+    reversePromptLoading,
     supportsReversePrompt,
+    setGridSplitOpen,
+    setGridSplitRows,
+    setGridSplitCols,
+    isDarkUi,
+    annotateOpen,
+    hdLoading,
+    expandLoading,
+    emotionLoading,
+    rotatePreviewNodeId,
+    setHdPanelOpen,
+    setExpandPanelOpen,
+    setMaskMode,
+    setCropOpen,
+    setAnnotateOpen,
+    extractLoading,
+    smartCutoutLoading,
+    layerLoading,
+    handleFastCutout,
+    handleSmartCutout,
+    handleLayerSplit,
+    handleDenoise,
+    handleCreateRotatePreview,
+    openPortraitTextureEditor,
+    handleLayerRecompose,
+    denoiseLoading,
+    primaryImageUrl,
+    imageModel,
+    nodeWidth,
+    addNode,
+    id,
+    isImageNode,
+    activeIntent,
+    runningNodeIntents,
+    setPendingIntentConfig,
+    isVideoNode,
+    hasPrimaryVideo,
+    videoUrl,
+    viewOnly,
+    data,
+    showEnhancePanel,
+    setShowEnhancePanel,
+    handleCreateVideoAnalysis,
+    handleCreateSmartVideoEdit,
+    handleCreateSegmentRemake,
+    setTrimOpen,
+    inheritUpstreamConnections,
+    setSaveToLibraryOpen,
   ])
 
   type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
@@ -7110,7 +8231,6 @@ const rewritePromptWithCharacters = React.useCallback(
         features.has('imageResults')
       const isVideoProducer =
         schema.category === 'video' ||
-        schema.category === 'composer' ||
         schema.category === 'storyboard' ||
         features.has('videoResults')
 
@@ -7144,57 +8264,26 @@ const rewritePromptWithCharacters = React.useCallback(
 
 
 
-  React.useEffect(() => {
-    if (!suggestionsAllowed && suggestionsEnabled) {
-      setSuggestionsEnabled(false)
-    }
-  }, [suggestionsAllowed, suggestionsEnabled])
-
-  React.useEffect(() => {
-    if (suggestTimeout.current) {
-      window.clearTimeout(suggestTimeout.current)
-      suggestTimeout.current = null
-    }
-    const value = prompt.trim()
-    if (!value || value.length < 6 || !suggestionsEnabled || !suggestionsAllowed) {
-      setPromptSuggestions([])
-      setActiveSuggestion(0)
-      return
-    }
-    suggestTimeout.current = window.setTimeout(async () => {
-      try {
-        const mode = promptSuggestMode === 'semantic' ? 'semantic' : 'history'
-        const res = await suggestDraftPrompts(value, 'sora', mode)
-        setPromptSuggestions(res.prompts || [])
-        setActiveSuggestion(0)
-      } catch {
-        setPromptSuggestions([])
-        setActiveSuggestion(0)
-      }
-    }, 260)
-    return () => {
-      if (suggestTimeout.current) {
-        window.clearTimeout(suggestTimeout.current)
-        suggestTimeout.current = null
-      }
-    }
-  }, [prompt, suggestionsEnabled, suggestionsAllowed, promptSuggestMode])
-
-  // 输入 @ 时，基于工作流内连接的角色引用做本地联想（不依赖厂商/Token）。
-  React.useEffect(() => {
-    if (!mentionOpen) return
-    const q = (mentionFilter || '').trim().toLowerCase()
-    const items = mentionSuggestionOptions
+  // mention catalog is a pure projection of current canvas/project/persisted bindings.
+  // Keeping it synchronous is required for PromptSection mount: an effect-driven empty
+  // first frame renders persisted @tokens as plain text and loses their chip styling.
+  const mentionItems = React.useMemo<MentionSuggestionItem[]>(() => {
+    const q = mentionOpen ? (mentionFilter || '').trim().toLowerCase() : ''
+    const filteredOptions = mentionSuggestionOptions
       .filter((opt) => {
         const username = String(opt.username || '').toLowerCase()
         const displayName = String(opt.displayName || '').toLowerCase()
         return !q || username.includes(q) || displayName.includes(q)
       })
-      .slice(0, 12)
-      .map((opt): MentionSuggestionItem => ({
+    const visibleOptions = mentionOpen ? filteredOptions.slice(0, 12) : filteredOptions
+    return visibleOptions.map((opt): MentionSuggestionItem => ({
         username: opt.username,
         display_name: opt.displayName,
+        profile_picture_url: opt.assetUrl || null,
         source: opt.source,
+        nodeId: opt.nodeId || null,
+        mentionAliases: opt.mentionAliases || [],
+        isConnected: opt.isConnected === true,
         ...(opt.source === 'asset' && opt.assetUrl
           ? {
               assetBinding: {
@@ -7202,28 +8291,33 @@ const rewritePromptWithCharacters = React.useCallback(
                 assetId: opt.assetId || null,
                 assetRefId: opt.assetRefId || opt.username,
                 assetName: opt.assetName || opt.displayName,
+                role: opt.assetRole || 'reference',
               },
             }
           : null),
       }))
-    setMentionItems(items)
-    setMentionLoading(false)
   }, [mentionFilter, mentionOpen, mentionSuggestionOptions])
 
   const hasContent = React.useMemo(() => {
     if (hasImageResults) return Boolean(imageUrl || imageResults.length)
-    if (isVideoNode || hasVideoResults) return Boolean((data as any)?.videoUrl)
+    // Video results are the canonical output list for generated/processed
+    // clips.  Do not hide the LibTV toolbar merely because a provider wrote
+    // the URL into `videoResults[primaryIndex]` without duplicating it onto
+    // the legacy node-level `videoUrl` field.
+    if (isVideoNode || hasVideoResults) return hasPrimaryVideo
     if (isAudioNode) return Boolean((data as any)?.audioUrl)
     return false
-  }, [hasImageResults, isVideoNode, hasVideoResults, isAudioNode, imageUrl, imageResults.length, data])
+  }, [hasImageResults, isVideoNode, hasVideoResults, isAudioNode, imageUrl, imageResults.length, data, hasPrimaryVideo])
+
+  const hasGenerationContext = hasContent || hasUpstreamConnections
 
   const defaultLabel = React.useMemo(() => {
-    if (isComposerNode || hasVideo || hasVideoResults || schema.category === 'video') return '文生视频'
+    if (hasVideo || hasVideoResults || schema.category === 'video') return '文生视频'
     if (hasImageResults) return '图像节点'
     if (isAudioNode) return '音频节点'
     if (isSubtitleNode) return '字幕节点'
     return 'Task'
-  }, [hasImageResults, hasVideo, hasVideoResults, isComposerNode, isAudioNode, isSubtitleNode, schema.category])
+  }, [hasImageResults, hasVideo, hasVideoResults, isAudioNode, isSubtitleNode, schema.category])
   const currentLabel = React.useMemo(() => {
     const text = (data?.label ?? '').trim()
     return text || defaultLabel
@@ -7248,16 +8342,952 @@ const rewritePromptWithCharacters = React.useCallback(
     cancelNodeExecution(id)
     setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
   }, [cancelNodeExecution, id, setNodeStatus])
+
+  const handleCharacterFissionExecute = React.useCallback((draft: CharacterFissionDraft) => {
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) return
+    let nodeDraft: ReturnType<typeof buildCharacterFissionNodeDraft>
+    try {
+      nodeDraft = buildCharacterFissionNodeDraft({
+        sourceNodeId: id,
+        sourceData: data as Record<string, unknown>,
+        referenceImageUrl: String(basePoseImage || ''),
+        imageModel: editableModel,
+        draft,
+      })
+    } catch (error: unknown) {
+      toast(error instanceof Error ? error.message : '角色裂变配置无效', 'error')
+      return
+    }
+    const sourceUrl = String(basePoseImage || '').trim()
+    const imageOperationSpec = createImageOperationForSource({
+      kind: 'character_fission',
+      execution: 'image-edit',
+      sourceNodeId: id,
+      sourceUrl,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+      parameters: {
+        direction: draft.direction,
+        additionalPrompt: draft.additionalPrompt,
+        variantCount: 4,
+        preserveIdentity: true,
+        independentCandidates: true,
+      },
+      output: { mediaType: 'image', count: 4 },
+    })
+
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', nodeDraft.label, {
+      ...nodeDraft.data,
+      imageOperationSpec,
+      imageOperationState: createImageOperationState(imageOperationSpec),
+      imageOperationRevision: 1,
+      libTvImageOperationKey: 'character-fission',
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!newNode) {
+      toast('角色裂变候选节点创建失败', 'error')
+      return
+    }
+    const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+    afterAdd.onNodesChange([
+      {
+        id: newNode.id,
+        type: 'position',
+        position: {
+          x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80,
+          y: sourceNode?.position?.y ?? 0,
+        },
+        dragging: false,
+      },
+      { id, type: 'select' as const, selected: false },
+      { id: newNode.id, type: 'select', selected: true },
+    ])
+    afterAdd.onConnect({
+      source: id,
+      sourceHandle: 'out-image',
+      target: newNode.id,
+      targetHandle: 'in-image',
+    })
+    setImagePresetConfirmKey(null)
+    runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : '角色裂变生成启动失败'
+      console.error('Character fission execution failed', error)
+      toast(message, 'error')
+    })
+  }, [addNode, basePoseImage, data, id, nodeWidth, resolveImageEditModelForAction])
+
+  const handleSelectLibTvPreset = React.useCallback((preset: LibTvImagePreset) => {
+    if (preset.key === 'portrait-texture') {
+      openPortraitTextureEditor()
+      return
+    }
+    if (preset.execution === 'panorama') {
+      setPanoramicConfirm(true)
+      return
+    }
+    if (preset.execution === 'character-fission' && !isCharacterReferenceNode) {
+      toast('角色裂变只能从结构化角色参考资产发起', 'error')
+      return
+    }
+    setImagePresetConfirmKey(preset.key)
+  }, [isCharacterReferenceNode, openPortraitTextureEditor])
+
+  const addConnectedHostedImageNode = React.useCallback((
+    label: string,
+    asset: HostedEditedImageAsset,
+    sourceHandle: 'out-image' | 'out-video' = 'out-image',
+    imageOperationSpec?: ImageOperationSpec,
+  ): string | null => {
+    const imageResult = buildHostedImageResult(asset, label)
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    addNode('taskNode', label, {
+      kind: 'image',
+      imageUrl: asset.url,
+      imageResults: [imageResult],
+      imagePrimaryIndex: 0,
+      serverAssetId: asset.assetId,
+      status: 'done',
+      ...(imageOperationSpec
+        ? {
+            imageOperationSpec,
+            imageOperationState: {
+              ...createImageOperationState(imageOperationSpec, 'succeeded'),
+              attempt: 1,
+              progress: 100,
+              startedAt: imageOperationSpec.createdAt,
+              finishedAt: new Date().toISOString(),
+              resultAssets: [{ role: 'result' as const, url: asset.url, assetId: asset.assetId }],
+            },
+            imageOperationRevision: imageOperationSpec.sourceRevision + 1,
+          }
+        : {}),
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!newNode) return null
+    const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+    afterAdd.onNodesChange([{
+      id: newNode.id,
+      type: 'position' as const,
+      position: { x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80, y: sourceNode?.position?.y ?? 0 },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: id, sourceHandle, target: newNode.id, targetHandle: 'in-image' })
+    afterAdd.clearPendingFocusNodeId()
+    return newNode.id
+  }, [addNode, id, nodeWidth])
+
+  // 参考页的“截取首帧/尾帧/当前帧”都是确定性的本地媒体动作：从真实视频
+  // URL 读取目标帧，上传到托管资产后在源节点右侧落一个可复用图片节点。
+  const handleCaptureVideoFrame = React.useCallback(async (mode: 'first' | 'last' | 'current' = 'first') => {
+    const sourceUrl = (videoResults[videoPrimaryIndex]?.url || videoUrl || '').trim()
+    if (!sourceUrl) {
+      toast('当前没有可截取的真实视频资产', 'error')
+      return
+    }
+    let frameObjectUrl: string | null = null
+    try {
+      const playback = readRetainedVideoPlaybackSnapshot(buildRetainedVideoSurfaceKey(id, sourceUrl))
+      const currentTime = playback?.currentTime ?? videoMarkerPlayback.currentTime
+      const targetTime = mode === 'first'
+        ? 0
+        : mode === 'last'
+          ? (activeVideoDuration && activeVideoDuration > 0 ? Math.max(0, activeVideoDuration - 0.05) : Number.MAX_SAFE_INTEGER)
+          : Math.max(0, currentTime)
+      const label = mode === 'first' ? '视频首帧' : mode === 'last' ? '视频尾帧' : '视频当前帧'
+      const filePrefix = mode === 'first' ? 'video-first-frame' : mode === 'last' ? 'video-last-frame' : 'video-current-frame'
+      const { frames } = await captureFramesAtTimes(
+        { type: 'url', url: sourceUrl },
+        [targetTime],
+        { mimeType: 'image/jpeg', quality: 0.92 },
+      )
+      const frame = frames[0]
+      if (!frame) throw new Error('视频没有可用帧')
+      frameObjectUrl = frame.objectUrl
+      const hosted = await uploadCanvasImageBlob({
+        blob: frame.blob,
+        label,
+        filePrefix,
+        ownerNodeId: id,
+        projectId: typeof currentProject?.id === 'string' ? currentProject.id : undefined,
+      })
+      const newNodeId = addConnectedHostedImageNode(label, hosted, 'out-video')
+      if (!newNodeId) throw new Error('帧图片节点创建失败')
+      toast(`已截取${mode === 'first' ? '首' : mode === 'last' ? '尾' : '当前'}帧并生成图片节点`, 'success')
+    } catch (error: unknown) {
+      toast(error instanceof Error ? error.message : '截取视频帧失败', 'error')
+    } finally {
+      if (frameObjectUrl) URL.revokeObjectURL(frameObjectUrl)
+    }
+  }, [activeVideoDuration, addConnectedHostedImageNode, currentProject?.id, id, videoMarkerPlayback.currentTime, videoPrimaryIndex, videoResults, videoUrl])
+
+  const handleCaptureVideoFirstFrame = React.useCallback(() => handleCaptureVideoFrame('first'), [handleCaptureVideoFrame])
+
+  const showVideoCapabilityGap = React.useCallback((label: string, plan: string) => {
+    toast(`${label}暂不可用（能力缺口）。方案：${plan}`, 'warning')
+  }, [])
+
+  // ── Grid Split ──────────────────────────────────────────────────────────────
+  const handleGridSplitCreate = React.useCallback(async (
+    cells: GridSplitCell[],
+  ) => {
+    if (!primaryImageUrl) return
+    const rows = gridSplitRows
+    const cols = gridSplitCols
+    const orderedCells = sortGridSplitCells(cells)
+    const sourceNode = useRFStore.getState().nodes.find((n) => n.id === id)
+    const sx = (sourceNode?.position?.x ?? 0) + nodeWidth + 60
+    const sy = sourceNode?.position?.y ?? 0
+
+    const newNodeIds: string[] = []
+    let loadedSource: { image: HTMLImageElement; objectUrl: string } | null = null
+    try {
+      loadedSource = await loadImageElementFromBlob(await fetchProxiedImageBlob(primaryImageUrl))
+      for (const cell of orderedCells) {
+        const label = `宫格切分 ${cell.row + 1}-${cell.col + 1}`
+        try {
+          const croppedBlob = await cropGridSplitCellBlob({
+            image: loadedSource.image,
+            rows,
+            cols,
+            cell,
+          })
+          const hosted = await uploadEditedImageBlob({
+            blob: croppedBlob,
+            label,
+            filePrefix: `grid-split-${cell.row + 1}-${cell.col + 1}`,
+          })
+          const imageResult = buildHostedImageResult(hosted, label)
+          const imageOperationSpec = createImageOperationForSource({
+            kind: 'grid_split',
+            execution: 'local-transform',
+            sourceNodeId: id,
+            sourceUrl: primaryImageUrl,
+            sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+            parameters: { rows, cols, cell, selectedCellCount: orderedCells.length },
+            output: { mediaType: 'image', count: 1 },
+          })
+          const beforeIds = new Set(useRFStore.getState().nodes.map((n) => n.id))
+          addNode('taskNode', label, {
+            kind: 'image',
+            imageUrl: hosted.url,
+            imageResults: [imageResult],
+            imagePrimaryIndex: 0,
+            serverAssetId: hosted.assetId,
+            status: 'done',
+            isGridSplitCell: true,
+            gridSplitRows: rows,
+            gridSplitCols: cols,
+            gridSplitCell: cell,
+            imageOperationSpec,
+            imageOperationState: {
+              ...createImageOperationState(imageOperationSpec, 'succeeded'),
+              attempt: 1,
+              progress: 100,
+              startedAt: imageOperationSpec.createdAt,
+              finishedAt: new Date().toISOString(),
+              resultAssets: [{ role: 'cell' as const, url: hosted.url, assetId: hosted.assetId }],
+            },
+            imageOperationRevision: imageOperationSpec.sourceRevision + 1,
+          })
+          const storeAfterCell = useRFStore.getState()
+          const newNode = storeAfterCell.nodes.find((n) => !beforeIds.has(n.id))
+          if (newNode) {
+            const outputIndex = newNodeIds.length
+            newNodeIds.push(newNode.id)
+            storeAfterCell.onNodesChange([{
+              id: newNode.id,
+              type: 'position' as const,
+              position: {
+                x: sx + (outputIndex % cols) * (nodeWidth + 32),
+                y: sy + Math.floor(outputIndex / cols) * 260,
+              },
+              dragging: false,
+            }])
+            storeAfterCell.onConnect({
+              source: id,
+              sourceHandle: 'out-image',
+              target: newNode.id,
+              targetHandle: 'in-image',
+            })
+            storeAfterCell.clearPendingFocusNodeId()
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '处理失败'
+          toast(`宫格 ${cell.row + 1}-${cell.col + 1} 处理失败：${message}`, 'error')
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '宫格裁剪失败'
+      toast(message, 'error')
+    } finally {
+      if (loadedSource) URL.revokeObjectURL(loadedSource.objectUrl)
+    }
+
+    if (newNodeIds.length > 1) {
+      useRFStore.getState().createGroupForNodeIds(newNodeIds, `宫格切分组 (${newNodeIds.length}张)`, { preserveLayout: true })
+    }
+    setGridSplitOpen(false)
+  }, [addNode, data, gridSplitCols, gridSplitRows, id, nodeWidth, primaryImageUrl, uploadEditedImageBlob])
+
+  const handleGridSplitHD = React.useCallback(async (
+    cells: GridSplitCell[],
+    scale: number,
+  ) => {
+    if (!primaryImageUrl) return
+    const rows = gridSplitRows
+    const cols = gridSplitCols
+    const orderedCells = sortGridSplitCells(cells)
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) return
+    const sourceNode = useRFStore.getState().nodes.find((node) => node.id === id)
+    const sx = (sourceNode?.position?.x ?? 0) + nodeWidth + 60
+    const sy = sourceNode?.position?.y ?? 0
+    const newNodeIds: string[] = []
+
+    let loadedSource: { image: HTMLImageElement; objectUrl: string } | null = null
+    try {
+      loadedSource = await loadImageElementFromBlob(await fetchProxiedImageBlob(primaryImageUrl))
+      for (const cell of orderedCells) {
+        const label = `高清宫格 ${cell.row + 1}-${cell.col + 1}`
+        try {
+          const croppedBlob = await cropGridSplitCellBlob({
+            image: loadedSource.image,
+            rows,
+            cols,
+            cell,
+          })
+          const hosted = await uploadEditedImageBlob({
+            blob: croppedBlob,
+            label,
+            filePrefix: `grid-split-hd-${cell.row + 1}-${cell.col + 1}`,
+          })
+          const imageResult = buildHostedImageResult(hosted, label)
+          const imageOperationSpec = createImageOperationForSource({
+            kind: 'upscale',
+            execution: 'image-edit',
+            sourceNodeId: id,
+            sourceUrl: hosted.url,
+            sourceAssetId: hosted.assetId,
+            sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+            parameters: {
+              scale,
+              sourceGrid: { rows, cols, cell },
+              preserveComposition: true,
+              preserveText: true,
+            },
+          })
+          const beforeIds = new Set(useRFStore.getState().nodes.map((n) => n.id))
+          addNode('taskNode', label, {
+            kind: 'imageEdit',
+            imageUrl: hosted.url,
+            imageResults: [imageResult],
+            imagePrimaryIndex: 0,
+            serverAssetId: hosted.assetId,
+            referenceImages: [hosted.url],
+            isGridSplitCell: true,
+            imageModel: editableModel,
+            imageModelVendor: null,
+            status: 'queued',
+            prompt: `将图片进行${scale}倍高清放大，保持画面细节锐利清晰`,
+            imageOperationSpec,
+            imageOperationState: createImageOperationState(imageOperationSpec, 'queued'),
+            imageOperationRevision: 1,
+            libTvImageOperationKey: 'upscale',
+          })
+          const newNode = useRFStore.getState().nodes.find((n) => !beforeIds.has(n.id))
+          if (!newNode) continue
+          const outputIndex = newNodeIds.length
+          newNodeIds.push(newNode.id)
+          const storeAfterCell = useRFStore.getState()
+          storeAfterCell.onNodesChange([{
+            id: newNode.id,
+            type: 'position' as const,
+            position: {
+              x: sx + (outputIndex % cols) * (nodeWidth + 32),
+              y: sy + Math.floor(outputIndex / cols) * 260,
+            },
+            dragging: false,
+          }])
+          storeAfterCell.onConnect({
+            source: id,
+            sourceHandle: 'out-image',
+            target: newNode.id,
+            targetHandle: 'in-image',
+          })
+          storeAfterCell.clearPendingFocusNodeId()
+          runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 }).catch((err: unknown) => {
+            toast(`高清宫格 ${cell.row + 1}-${cell.col + 1} 生成失败`, 'error')
+            console.error(err)
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '处理失败'
+          toast(`高清宫格 ${cell.row + 1}-${cell.col + 1} 处理失败：${message}`, 'error')
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '宫格裁剪失败'
+      toast(message, 'error')
+    } finally {
+      if (loadedSource) URL.revokeObjectURL(loadedSource.objectUrl)
+    }
+    if (newNodeIds.length > 1) {
+      useRFStore.getState().createGroupForNodeIds(
+        newNodeIds,
+        `高清宫格组 (${newNodeIds.length}张)`,
+        { preserveLayout: true },
+      )
+    }
+    setGridSplitOpen(false)
+  }, [addNode, data, gridSplitCols, gridSplitRows, id, nodeWidth, primaryImageUrl, resolveImageEditModelForAction, uploadEditedImageBlob])
+
+  const handleGridSplitCreateOverlay = React.useCallback(async () => {
+    if (!gridSplitSelectedCells.size || gridSplitCreating) return
+    const cells = parseGridSplitSelectedCells(gridSplitSelectedCells)
+    if (!cells.length) return
+    setGridSplitCreating(true)
+    try { await handleGridSplitCreate(cells) } finally { setGridSplitCreating(false) }
+  }, [gridSplitSelectedCells, gridSplitCreating, handleGridSplitCreate])
+
+  const handleGridSplitHDOverlay = React.useCallback(async () => {
+    if (!gridSplitSelectedCells.size || gridSplitCreatingHD) return
+    const cells = parseGridSplitSelectedCells(gridSplitSelectedCells)
+    if (!cells.length) return
+    setGridSplitCreatingHD(true)
+    try { await handleGridSplitHD(cells, gridSplitScale) } finally { setGridSplitCreatingHD(false) }
+  }, [gridSplitSelectedCells, gridSplitCreatingHD, gridSplitScale, handleGridSplitHD])
+
+  // ─── 图片编辑器 callbacks ──────────────────────────────────────────────────
+  const handleCropConfirm = React.useCallback(async (blob: Blob, cropW: number, cropH: number) => {
+    if (!primaryImageUrl) return
+    try {
+      const hosted = await uploadEditedImageBlob({ blob, label: '裁剪', filePrefix: 'crop' })
+      const imageOperationSpec = createImageOperationForSource({
+        kind: 'crop',
+        execution: 'local-transform',
+        sourceNodeId: id,
+        sourceUrl: primaryImageUrl,
+        sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+        parameters: { outputSize: { width: cropW, height: cropH }, preservePixels: true },
+      })
+      const newNodeId = addConnectedHostedImageNode('裁剪', hosted, 'out-image', imageOperationSpec)
+      if (!newNodeId) throw new Error('裁剪节点创建失败')
+      setCropOpen(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '裁剪上传失败'
+      toast(message, 'error')
+    }
+  }, [addConnectedHostedImageNode, data, id, primaryImageUrl, uploadEditedImageBlob])
+
+  const handleTrimConfirm = React.useCallback(async (blob: Blob, startTime: number, endTime: number) => {
+    const activeVideoUrl = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
+    if (!activeVideoUrl) return
+    const duration = endTime - startTime
+    const label = `剪辑 ${duration.toFixed(1)}s`
+    const beforeIds = new Set(useRFStore.getState().nodes.map((n) => n.id))
+    addNode('taskNode', label, {
+      kind: 'video',
+      videoResults: [],
+      videoPrimaryIndex: 0,
+      videoDuration: duration,
+      sourceVideoNodeId: id,
+      sourceVideoUrl: activeVideoUrl,
+      trimStartSeconds: startTime,
+      trimEndSeconds: endTime,
+      status: 'queued',
+      progress: 0,
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find((n) => !beforeIds.has(n.id))
+    if (!newNode) {
+      toast('剪辑占位节点创建失败', 'error')
+      return
+    }
+    const sourceNode = afterAdd.nodes.find((n) => n.id === id)
+    afterAdd.onNodesChange([{
+      id: newNode.id,
+      type: 'position' as const,
+      position: {
+        x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80,
+        y: sourceNode?.position?.y ?? 0,
+      },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: newNode.id, targetHandle: 'in-video' })
+    afterAdd.clearPendingFocusNodeId()
+    setTrimOpen(false)
+    setNodeStatus(newNode.id, 'running', { progress: 10 })
+    try {
+      const ext = activeVideoUrl.split('?')[0].split('.').pop()?.toLowerCase() || 'mp4'
+      const file = new File([blob], `trim.${ext}`, { type: blob.type })
+      const hosted = await uploadServerAssetFile(file, label, { ownerNodeId: id })
+      const url = typeof hosted?.data?.url === 'string' ? hosted.data.url.trim() : ''
+      if (!url) throw new Error('上传失败：未获取到链接')
+      updateNodeData(newNode.id, {
+        videoUrl: url,
+        videoResults: [{ url, title: label, thumbnailUrl: null, duration }],
+        videoPrimaryIndex: 0,
+        serverAssetId: hosted.id,
+      })
+      setNodeStatus(newNode.id, 'success', { progress: 100 })
+      notifyAssetRefresh()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '视频剪辑失败'
+      setNodeStatus(newNode.id, 'error', { lastError: message })
+      toast(message, 'error')
+    }
+  }, [addNode, id, nodeWidth, setNodeStatus, updateNodeData, videoResults, videoPrimaryIndex, videoUrl])
+
+  const handleMaskConfirm = React.useCallback(async (maskBlob: Blob, prompt: string) => {
+    setMaskMode(null)
+    if (!primaryImageUrl) return
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) return
+    const operationKind: ImageOperationKind = maskMode === 'erase' ? 'erase' : 'inpaint'
+    let hostedSource: HostedEditedImageAsset
+    let hostedMask: HostedEditedImageAsset
+    try {
+      const sourcePng = await createMaskEditSourcePng(primaryImageUrl)
+      const uploadedAssets = await Promise.all([
+        uploadEditedImageBlob({
+          blob: sourcePng.blob,
+          label: maskMode === 'erase' ? '擦除源图' : '重绘源图',
+          filePrefix: maskMode === 'erase' ? 'erase-source' : 'repaint-source',
+        }),
+        uploadEditedImageBlob({
+          blob: maskBlob,
+          label: maskMode === 'erase' ? '擦除区域蒙版' : '重绘区域蒙版',
+          filePrefix: maskMode === 'erase' ? 'erase-mask' : 'repaint-mask',
+        }),
+      ])
+      hostedSource = uploadedAssets[0]
+      hostedMask = uploadedAssets[1]
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '独立蒙版上传失败'
+      toast(message, 'error')
+      return
+    }
+    const imageOperationSpec = createImageOperationForSource({
+      kind: operationKind,
+      execution: 'image-edit',
+      sourceNodeId: id,
+      sourceUrl: hostedSource.url,
+      sourceAssetId: hostedSource.assetId,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+      parameters: {
+        maskPolarity: 'transparent-is-edit',
+        preserveUnmaskedPixels: true,
+        originalSourceUrl: primaryImageUrl,
+        ...(maskMode === 'erase' ? { fillMode: 'context-aware-background' } : {}),
+      },
+      additionalInputs: [{
+        role: 'mask',
+        url: hostedMask.url,
+        assetId: hostedMask.assetId,
+        mimeType: 'image/png',
+      }],
+      output: { mediaType: 'image', count: 1 },
+    })
+    const beforeIds = new Set(useRFStore.getState().nodes.map(n => n.id))
+    addNode('taskNode', maskMode === 'erase' ? '擦除' : '重绘', {
+      kind: 'imageEdit',
+      prompt,
+      imageModel: editableModel,
+      imageModelVendor: null,
+      referenceImages: [hostedSource.url],
+      maskUrl: hostedMask.url,
+      maskAssetId: hostedMask.assetId,
+      maskPolarity: 'transparent-is-edit',
+      imageOperationSpec,
+      imageOperationState: createImageOperationState(imageOperationSpec),
+      imageOperationRevision: 1,
+      libTvImageOperationKey: maskMode === 'erase' ? 'erase' : 'repaint',
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find(n => !beforeIds.has(n.id))
+    if (!newNode) return
+    const sourceNode = afterAdd.nodes.find(n => n.id === id)
+    afterAdd.onNodesChange([{
+      id: newNode.id, type: 'position' as const,
+      position: { x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80, y: sourceNode?.position?.y ?? 0 },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-image', target: newNode.id, targetHandle: 'in-image' })
+    runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
+      .catch((err: unknown) => toast(err instanceof Error ? err.message : '生成失败', 'error'))
+  }, [addNode, data, id, maskMode, nodeWidth, primaryImageUrl, resolveImageEditModelForAction, uploadEditedImageBlob])
+
+  const handleElementEditConfirm = React.useCallback(async (submit: ElementEditSubmit) => {
+    if (!primaryImageUrl) throw new Error('当前节点没有可编辑的真实图片资产')
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) throw new Error('当前没有可用的图片编辑模型')
+
+    const sourcePng = await createMaskEditSourcePng(primaryImageUrl)
+    const [hostedSource, hostedMask] = await Promise.all([
+      uploadEditedImageBlob({
+        blob: sourcePng.blob,
+        label: submit.action === 'move' ? '元素移动源图' : '元素修改源图',
+        filePrefix: submit.action === 'move' ? 'element-move-source' : 'element-edit-source',
+      }),
+      uploadEditedImageBlob({
+        blob: submit.maskBlob,
+        label: submit.action === 'move' ? '元素移动区域蒙版' : '元素修改区域蒙版',
+        filePrefix: submit.action === 'move' ? 'element-move-mask' : 'element-edit-mask',
+      }),
+    ])
+    const imageOperationSpec = createImageOperationForSource({
+      kind: 'element_edit',
+      execution: 'image-edit',
+      sourceNodeId: id,
+      sourceUrl: hostedSource.url,
+      sourceAssetId: hostedSource.assetId,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+      parameters: {
+        action: submit.action,
+        label: submit.label,
+        selections: submit.selections,
+        moveTarget: submit.moveTarget,
+        maskPolarity: 'transparent-is-edit',
+        preserveUnmaskedPixels: true,
+        originalSourceUrl: primaryImageUrl,
+      },
+      additionalInputs: [{
+        role: 'mask',
+        url: hostedMask.url,
+        assetId: hostedMask.assetId,
+        mimeType: 'image/png',
+      }],
+      output: { mediaType: 'image', count: 1 },
+    })
+    const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+    const outputLabel = submit.action === 'move' ? `移动·${submit.label}` : `修改·${submit.label}`
+    addNode('taskNode', outputLabel, {
+      kind: 'imageEdit',
+      prompt: submit.prompt,
+      imageModel: editableModel,
+      imageModelVendor: null,
+      referenceImages: [hostedSource.url],
+      maskUrl: hostedMask.url,
+      maskAssetId: hostedMask.assetId,
+      maskPolarity: 'transparent-is-edit',
+      imageOperationSpec,
+      imageOperationState: createImageOperationState(imageOperationSpec),
+      imageOperationRevision: 1,
+      libTvImageOperationKey: 'element-edit',
+      elementEditAction: submit.action,
+      elementEditLabel: submit.label,
+      elementEditSelectionCount: submit.selectionCount,
+      elementEditSourceNodeId: id,
+      elementEditMaskAssetId: hostedMask.assetId,
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+    if (!newNode) throw new Error('元素编辑结果节点创建失败')
+    const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+    afterAdd.onNodesChange([{
+      id: newNode.id,
+      type: 'position' as const,
+      position: {
+        x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80,
+        y: sourceNode?.position?.y ?? 0,
+      },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-image', target: newNode.id, targetHandle: 'in-image' })
+    afterAdd.clearPendingFocusNodeId()
+    setElementEditOpen(false)
+    runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 }).catch((error: unknown) => {
+      toast(error instanceof Error ? error.message : '元素编辑生成失败', 'error')
+    })
+  }, [addNode, data, id, nodeWidth, primaryImageUrl, resolveImageEditModelForAction, uploadEditedImageBlob])
+
+  const handleAnnotateSave = React.useCallback(async (blob: Blob) => {
+    try {
+      const hosted = await uploadEditedImageBlob({ blob, label: '标注', filePrefix: 'annotate' })
+      if (!primaryImageUrl) throw new Error('当前节点没有可标注的真实图片资产')
+      const imageOperationSpec = createImageOperationForSource({
+        kind: 'annotate',
+        execution: 'local-transform',
+        sourceNodeId: id,
+        sourceUrl: primaryImageUrl,
+        sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+        parameters: { flattenedAnnotation: true, preserveSourceResolution: true },
+      })
+      const newNodeId = addConnectedHostedImageNode('标注', hosted, 'out-image', imageOperationSpec)
+      if (!newNodeId) throw new Error('标注节点创建失败')
+      setAnnotateOpen(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '标注上传失败'
+      toast(message, 'error')
+    }
+  }, [addConnectedHostedImageNode, data, id, primaryImageUrl, uploadEditedImageBlob])
+
+  const handleHdApply = React.useCallback((scale: 2 | 4) => {
+    if (!primaryImageUrl || hdLoading) return
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) return
+    setHdLoading(true)
+    setHdPanelOpen(false)
+    const targetResolution = scale === 4 ? '4K' : '2K'
+    const imageOperationSpec = createImageOperationForSource({
+      kind: 'upscale',
+      execution: 'image-edit',
+      sourceNodeId: id,
+      sourceUrl: primaryImageUrl,
+      sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+      parameters: {
+        scale,
+        targetResolution,
+        preserveComposition: true,
+        preserveText: true,
+        repairCompressionArtifacts: true,
+      },
+    })
+    const beforeIds = new Set(useRFStore.getState().nodes.map(n => n.id))
+    addNode('taskNode', `高清 ${scale}×`, {
+      kind: 'imageEdit',
+      prompt: `将图片进行${scale}倍高清放大，保持画面细节锐利清晰`,
+      imageModel: editableModel,
+      imageModelVendor: null,
+      referenceImages: [primaryImageUrl],
+      imageSize: targetResolution,
+      imageResolution: targetResolution,
+      resolution: targetResolution,
+      imageOperationSpec,
+      imageOperationState: createImageOperationState(imageOperationSpec),
+      imageOperationRevision: 1,
+      libTvImageOperationKey: 'upscale',
+    })
+    const afterAdd = useRFStore.getState()
+    const newNode = afterAdd.nodes.find(n => !beforeIds.has(n.id))
+    if (!newNode) { setHdLoading(false); return }
+    const sourceNode = afterAdd.nodes.find(n => n.id === id)
+    afterAdd.onNodesChange([{
+      id: newNode.id, type: 'position' as const,
+      position: { x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80, y: sourceNode?.position?.y ?? 0 },
+      dragging: false,
+    }])
+    afterAdd.onConnect({ source: id, sourceHandle: 'out-image', target: newNode.id, targetHandle: 'in-image' })
+    runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
+      .catch((err: unknown) => toast(err instanceof Error ? err.message : '高清生成失败', 'error'))
+      .finally(() => setHdLoading(false))
+  }, [addNode, data, hdLoading, id, nodeWidth, primaryImageUrl, resolveImageEditModelForAction])
+
+  const handleEmotionApply = React.useCallback(async (request: EmotionApplyRequest) => {
+    const sourceImageUrl = String(primaryImageUrl || basePoseImage || '').trim()
+    if (!sourceImageUrl) throw new Error('当前节点没有可用于情绪调节的真实图片资产')
+    if (!emotionSelection) throw new Error('请先选择要调节情绪的人物')
+    if (emotionLoading) return
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) return
+    setEmotionLoading(true)
+    setEmotionError(null)
+    try {
+      const sourcePng = await createMaskEditSourcePng(sourceImageUrl)
+      const roleCropBlob = await cropImageBlobToNormalizedRect({
+        imageBlob: sourcePng.blob,
+        rect: emotionSelection.rect,
+      })
+      const faceBoundingBox = normalizedRectToPixelBoundingBox({
+        rect: emotionSelection.rect,
+        imageWidth: emotionSelection.imageWidth,
+        imageHeight: emotionSelection.imageHeight,
+      })
+      const [hostedSource, hostedRole, hostedMask] = await Promise.all([
+        uploadEditedImageBlob({
+          blob: sourcePng.blob,
+          label: '情绪调节源图',
+          filePrefix: 'emotion-source',
+        }),
+        uploadEditedImageBlob({
+          blob: roleCropBlob,
+          label: '情绪调节人物参考图',
+          filePrefix: 'emotion-role',
+        }),
+        uploadEditedImageBlob({
+          blob: emotionSelection.maskBlob,
+          label: '情绪调节人物蒙版',
+          filePrefix: 'emotion-mask',
+        }),
+      ])
+      const { cell, resolution, sampleCount: emotionSampleCount } = request
+      const executionPrompt = buildLibTvEmotionPrompt({ expression: cell.zh, faceBoundingBox })
+      const imageOperationSpec = createImageOperationForSource({
+        kind: 'emotion_adjust',
+        execution: 'image-edit',
+        sourceNodeId: id,
+        sourceUrl: hostedSource.url,
+        sourceAssetId: hostedSource.assetId,
+        sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+        parameters: {
+          scene: 'expression_adjustment',
+          modeType: 'image2image',
+          selectedExpression: [cell.zh],
+          faceList: [faceBoundingBox],
+          prompt: executionPrompt,
+          x: cell.x,
+          y: cell.y,
+          label: cell.zh,
+          expressionDescription: cell.cn,
+          resolution,
+          sampleCount: emotionSampleCount,
+          selectionSource: emotionSelection.source,
+          selectionRect: emotionSelection.rect,
+          preserveIdentity: true,
+          preserveHair: true,
+          preserveClothing: true,
+          preservePose: true,
+          preserveComposition: true,
+          faceOnly: true,
+          maskPolarity: 'transparent-is-edit',
+          originalSourceUrl: sourceImageUrl,
+        },
+        additionalInputs: [
+          {
+            role: 'reference',
+            url: hostedRole.url,
+            assetId: hostedRole.assetId,
+            mimeType: 'image/png',
+          },
+          {
+            role: 'mask',
+            url: hostedMask.url,
+            assetId: hostedMask.assetId,
+            mimeType: 'image/png',
+            width: emotionSelection.imageWidth,
+            height: emotionSelection.imageHeight,
+          },
+        ],
+      })
+      const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
+      addNode('taskNode', `情绪·${cell.zh}`, {
+        kind: 'imageEdit',
+        prompt: executionPrompt,
+        imageModel: editableModel,
+        imageModelVendor: null,
+        referenceImages: [hostedSource.url, hostedRole.url],
+        maskUrl: hostedMask.url,
+        imageSize: resolution,
+        imageResolution: resolution,
+        sampleCount: emotionSampleCount,
+        emotionSelectionRect: emotionSelection.rect,
+        emotionSelectionSource: emotionSelection.source,
+        emotionMaskAssetId: hostedMask.assetId,
+        emotionRoleAssetId: hostedRole.assetId,
+        emotionFaceBoundingBox: faceBoundingBox,
+        imageOperationSpec,
+        imageOperationState: createImageOperationState(imageOperationSpec),
+        imageOperationRevision: 1,
+        libTvImageOperationKey: 'emotion-adjust',
+      })
+      const afterAdd = useRFStore.getState()
+      const newNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
+      if (!newNode) throw new Error('情绪调节结果节点创建失败')
+      const sourceNode = afterAdd.nodes.find((node) => node.id === id)
+      afterAdd.onNodesChange([
+        {
+          id: newNode.id,
+          type: 'position' as const,
+          position: { x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80, y: sourceNode?.position?.y ?? 0 },
+          dragging: false,
+        },
+        { id, type: 'select' as const, selected: false },
+        { id: newNode.id, type: 'select' as const, selected: true },
+      ])
+      afterAdd.onConnect({ source: id, sourceHandle: 'out-image', target: newNode.id, targetHandle: 'in-image' })
+      setEmotionPanelOpen(false)
+      await runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '情绪图生成失败'
+      setEmotionError(message)
+      toast(message, 'error')
+    } finally {
+      setEmotionLoading(false)
+    }
+  }, [addNode, basePoseImage, data, emotionLoading, emotionSelection, id, nodeWidth, primaryImageUrl, resolveImageEditModelForAction, uploadEditedImageBlob])
+
+  const handleExpandApply = React.useCallback(async (scale: number) => {
+    if (!primaryImageUrl || expandLoading) return
+    const editableModel = resolveImageEditModelForAction('gpt-image-2')
+    if (!editableModel) return
+    setExpandLoading(true)
+    setExpandPanelOpen(false)
+    try {
+      const assets = await createCenteredOutpaintAssets(primaryImageUrl, scale)
+      const [hostedExpandedSource, hostedMask] = await Promise.all([
+        uploadEditedImageBlob({
+          blob: assets.expandedSourceBlob,
+          label: `扩图 ${scale}× 底图`,
+          filePrefix: 'outpaint-source',
+        }),
+        uploadEditedImageBlob({
+          blob: assets.maskBlob,
+          label: `扩图 ${scale}× 蒙版`,
+          filePrefix: 'outpaint-mask',
+        }),
+      ])
+      const imageOperationSpec = createImageOperationForSource({
+        kind: 'outpaint',
+        execution: 'image-edit',
+        sourceNodeId: id,
+        sourceUrl: hostedExpandedSource.url,
+        sourceRevision: readImageOperationSourceRevision((data as Record<string, unknown>).imageOperationRevision),
+        sourceAssetId: hostedExpandedSource.assetId,
+        parameters: {
+          scale,
+          anchor: 'center',
+          sourceRect: {
+            x: assets.offsetX,
+            y: assets.offsetY,
+            width: assets.sourceWidth,
+            height: assets.sourceHeight,
+          },
+          targetSize: { width: assets.targetWidth, height: assets.targetHeight },
+          maskPolarity: 'transparent-is-edit',
+          preserveSourcePixels: true,
+        },
+        additionalInputs: [
+          { role: 'mask', url: hostedMask.url, assetId: hostedMask.assetId, mimeType: 'image/png' },
+          { role: 'reference', url: primaryImageUrl, nodeId: id },
+        ],
+      })
+      const beforeIds = new Set(useRFStore.getState().nodes.map(n => n.id))
+      addNode('taskNode', `扩图 ${scale}×`, {
+        kind: 'imageEdit',
+        prompt: `在完整保留中央原图像素、主体身份、构图、透视和光线的前提下，自然补全四周新增区域；新增内容与原画连续，不拉伸、不复制主体。`,
+        imageModel: editableModel,
+        imageModelVendor: null,
+        referenceImages: [hostedExpandedSource.url],
+        maskUrl: hostedMask.url,
+        maskAssetId: hostedMask.assetId,
+        imageEditSize: `${assets.targetWidth}x${assets.targetHeight}`,
+        imageOperationSpec,
+        imageOperationState: createImageOperationState(imageOperationSpec),
+        imageOperationRevision: 1,
+        libTvImageOperationKey: 'outpaint',
+      })
+      const afterAdd = useRFStore.getState()
+      const newNode = afterAdd.nodes.find(n => !beforeIds.has(n.id))
+      if (!newNode) throw new Error('扩图结果节点创建失败')
+      const sourceNode = afterAdd.nodes.find(n => n.id === id)
+      afterAdd.onNodesChange([{
+        id: newNode.id, type: 'position' as const,
+        position: { x: (sourceNode?.position?.x ?? 0) + nodeWidth + 80, y: sourceNode?.position?.y ?? 0 },
+        dragging: false,
+      }])
+      afterAdd.onConnect({ source: id, sourceHandle: 'out-image', target: newNode.id, targetHandle: 'in-image' })
+      await runNodeDagToTarget(newNode.id, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
+    } catch (error: unknown) {
+      toast(error instanceof Error ? error.message : '扩图生成失败', 'error')
+    } finally {
+      setExpandLoading(false)
+    }
+  }, [addNode, data, expandLoading, id, nodeWidth, primaryImageUrl, resolveImageEditModelForAction, uploadEditedImageBlob])
+
   const shellOutline = 'none'
-  const shellShadow = selected ? `${nodeShellShadow}, ${nodeShellGlow}` : nodeShellShadow
   const subtitle = schema.label || defaultLabel
-  const inferredProductionMeta = React.useMemo(() => inferProductionNodeMeta(kind), [kind])
-  const isExplicitAnchor = productionMeta.productionLayer === 'anchors'
-  const canToggleAnchor = UI_ANCHOR_ELIGIBLE_KINDS.has(String(kind || '').trim())
-  const canToggleApproval =
-    canToggleAnchor ||
-    productionMeta.productionLayer === 'anchors' ||
-    productionMeta.productionLayer === 'expansion'
   const headerMetaBadges = React.useMemo<HeaderMetaBadge[]>(() => {
     const badges: HeaderMetaBadge[] = []
     const productionLayer = productionMeta.productionLayer
@@ -7278,51 +9308,65 @@ const rewritePromptWithCharacters = React.useCallback(
     }
     return badges
   }, [productionMeta.approvalStatus, productionMeta.productionLayer])
-  const handleUnsetAnchor = React.useCallback(() => {
-    updateNodeData(id, {
-      productionLayer: inferredProductionMeta.productionLayer,
-      creationStage: inferredProductionMeta.creationStage,
-    })
-    appendLog(id, `[${new Date().toLocaleTimeString()}] 已取消锚点`)
-    toast('已取消锚点', 'info')
-  }, [appendLog, id, inferredProductionMeta.creationStage, inferredProductionMeta.productionLayer, updateNodeData])
-  const handleApproveAnchor = React.useCallback(() => {
-    updateNodeData(id, {
-      productionLayer: 'anchors',
-      creationStage: 'shot_anchor_lock',
-      approvalStatus: 'approved',
-    })
-    appendLog(id, `[${new Date().toLocaleTimeString()}] 已确认为锚点`)
-    toast('已确认为锚点', 'success')
-  }, [appendLog, id, updateNodeData])
-  const toolbarMetaActions = React.useMemo(() => {
-    const actions: ToolbarMetaAction[] = []
-    const isApproved = productionMeta.approvalStatus === 'approved'
-    const isAnchorActive = isExplicitAnchor && isApproved
-    if (canToggleAnchor || canToggleApproval) {
-      actions.push({
-        key: 'toggle-anchor',
-        label: isAnchorActive ? '取消锚点' : '锚点',
-        icon: <IconTarget size={16} />,
-        onClick: isAnchorActive ? handleUnsetAnchor : handleApproveAnchor,
-        active: isAnchorActive,
-      })
-    }
-    return actions
-  }, [
-    canToggleAnchor,
-    canToggleApproval,
-    handleApproveAnchor,
-    handleUnsetAnchor,
-    isExplicitAnchor,
-    productionMeta.approvalStatus,
-  ])
+  const toolbarMetaActions: ToolbarMetaAction[] = [
+    ...(isPanoramic && panoramicSphereMode
+      ? [
+          { key: 'pano-exit', label: '退出球形', icon: <IconArrowNarrowLeft size={18} />, onClick: () => setPanoramicSphereMode(false) },
+          { key: 'pano-screenshot', label: '截图', icon: <IconScreenshot size={16} />, onClick: handlePanoramicScreenshot },
+          { key: 'pano-4view', label: '4视角', icon: <IconFocusCentered size={16} />, onClick: () => handlePanoramicMultiView(4) },
+          { key: 'pano-12view', label: '12视角', icon: <IconLayoutGrid size={16} />, onClick: () => handlePanoramicMultiView(12) },
+          { key: 'pano-grid', label: panoramicGridVisible ? '隐藏网格' : '显示网格', icon: <IconGrid3x3 size={16} />, active: panoramicGridVisible, onClick: () => updateNodeData(id, { panoramicGridVisible: !panoramicGridVisible }) },
+          { key: 'pano-fullscreen', label: '全屏预览', icon: <IconMaximize size={16} />, onClick: () => setPanoramicFullscreenOpen(true) },
+          { key: 'pano-reset', label: '重置视角', icon: <IconRefresh size={16} />, onClick: () => updateNodeData(id, { panoramicCamera: PANORAMIC_DEFAULT_CAMERA }) },
+        ] satisfies ToolbarMetaAction[]
+      : []),
+    ...(isNovelStoryboardNode
+      ? [
+          {
+            key: 'novel-storyboard-next-chunk',
+            label: novelStoryboardCanGenerateNext ? '继续下一组 25 镜' : '先完成本组画面与元数据',
+            icon: <IconSparkles size={16} />,
+            onClick: () => { void handleGenerateNovelStoryboardNextChunk() },
+            loading: novelStoryboardContinueLoading,
+            disabled: !novelStoryboardCanGenerateNext || novelStoryboardContinueLoading,
+            showLabel: true,
+          },
+        ] satisfies ToolbarMetaAction[]
+      : []),
+  ]
 
   const visibleDefs = uniqueDefs
 
-  const shellBackground = 'transparent'
-  const shellBorder = 'none'
-  const shellShadowResolved = 'none'
+  // 暗色主题用科技灰，与左侧资产抽屉（.asset-manager-drawer）背景渐变完全一致，
+  // 让节点卡片从近黑画布背景中区分出来。
+  const shellBackground = isDarkUi
+    ? 'linear-gradient(180deg, rgba(24,24,27,0.98), rgba(18,18,21,0.98))'
+    : 'rgba(255,255,255,0.98)'
+  const shellBorder = isDarkUi ? '1px solid rgba(255,255,255,0.07)' : nodeShellBorder
+  const resolvedShellBorder = isStructuredWorkflowNode && selected
+    ? '1px solid var(--tc-color-border-strong, rgba(198, 203, 211, 0.42))'
+    : shellBorder
+  const draftBorderOverride: React.CSSProperties = draftByAgent
+    ? {
+        border: '2px dashed rgba(255, 196, 0, 0.7)',
+        filter: 'saturate(0.75)',
+      }
+    : {}
+  // 审核失败（内容审核未通过 / ARK 拒绝）：整节点标红，方便在画布上一眼定位。
+  // 两种来源：①本节点任务因审核报错(status=error)；②本图作为视频参考图被 ARK 拒，
+  // 服务端把 moderationRejected 标到图片节点 data 上（此时节点本身仍是 success 的图）。
+  const moderationFailed =
+    Boolean((data as any)?.moderationRejected) ||
+    isModerationFailure(status, (data as any)?.lastError)
+  const moderationBorderOverride: React.CSSProperties = moderationFailed
+    ? {
+        border: '2px solid #ef4444',
+        boxShadow: '0 0 0 1px rgba(239,68,68,0.45), 0 12px 32px rgba(239,68,68,0.28)',
+      }
+    : {}
+  const shellShadowResolved = isStructuredWorkflowNode && selected
+    ? '0 0 0 1px rgba(238, 240, 244, 0.08), 0 12px 28px rgba(0, 0, 0, 0.24)'
+    : isDarkUi ? 'none' : nodeShellShadow
   const shellPadding = 0
   const shellBackdrop = 'none'
   const textNodePlainText = React.useMemo(
@@ -7333,8 +9377,9 @@ const rewritePromptWithCharacters = React.useCallback(
     [data, latestTextResult],
   )
   const nodeShellRef = React.useRef<HTMLDivElement | null>(null)
-  const textEditorRef = React.useRef<HTMLDivElement | null>(null)
+  const textEditorRef = React.useRef<HTMLDivElement>(null)
   const textComposingRef = React.useRef(false)
+  const textResizeRequestedRef = React.useRef(false)
   const [textEditorFocused, setTextEditorFocused] = React.useState(false)
   const [textHtml, setTextHtml] = React.useState<string>(() => {
     const rawHtml = String((data as any)?.textHtml || '').trim()
@@ -7345,14 +9390,7 @@ const rewritePromptWithCharacters = React.useCallback(
   })
   const [textColorPickerOpen, setTextColorPickerOpen] = React.useState(false)
   const [textBgPickerOpen, setTextBgPickerOpen] = React.useState(false)
-  const TEXT_COLOR_PRESETS = React.useMemo(
-    () => ['#0f172a', '#f8fafc', '#1d4ed8', '#b91c1c', '#047857', '#7c3aed'],
-    [],
-  )
-  const TEXT_BG_PRESETS = React.useMemo(
-    () => ['rgba(248,250,255,0.95)', 'rgba(12,17,28,0.88)', '#fff7ed', '#eff6ff', '#ecfeff', '#f5f3ff'],
-    [],
-  )
+  // TEXT_COLOR_PRESETS and TEXT_BG_PRESETS imported from constants
   const blurActiveEditableElement = React.useCallback(() => {
     const activeElement = document.activeElement
     if (!(activeElement instanceof HTMLElement)) return
@@ -7366,31 +9404,7 @@ const rewritePromptWithCharacters = React.useCallback(
       activeElement.blur()
     }
   }, [])
-  const withAlpha = React.useCallback((colorValue: string, alpha: number): string => {
-    const raw = String(colorValue || '').trim()
-    if (!raw) return `rgba(15,23,42,${alpha})`
-    const hex = raw.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
-    if (hex) {
-      const v = hex[1]
-      const full = v.length === 3 ? v.split('').map((c) => `${c}${c}`).join('') : v
-      const r = parseInt(full.slice(0, 2), 16)
-      const g = parseInt(full.slice(2, 4), 16)
-      const b = parseInt(full.slice(4, 6), 16)
-      return `rgba(${r}, ${g}, ${b}, ${alpha})`
-    }
-    const rgb = raw.match(/^rgba?\(([^)]+)\)$/i)
-    if (rgb) {
-      const parts = rgb[1].split(',').map((p) => p.trim())
-      const r = Number(parts[0] || 0)
-      const g = Number(parts[1] || 0)
-      const b = Number(parts[2] || 0)
-      if ([r, g, b].every((n) => Number.isFinite(n))) {
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`
-      }
-    }
-    return raw
-  }, [])
-  const textBackgroundTint = withAlpha(textBackgroundColor, 0.125)
+  const textBackgroundTint = withTextNodeAlpha(textBackgroundColor, 0.125)
   const rawTextHtml = String((data as any)?.textHtml || '').trim()
   React.useEffect(() => {
     const rawHtml = rawTextHtml
@@ -7445,6 +9459,10 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [selected])
   React.useLayoutEffect(() => {
     if (!isPlainTextNode) return
+    // 聚焦只负责把轻量只读壳切换为编辑能力，不能顺带改变节点几何。
+    // 文本尺寸测量仅响应本轮真实编辑；这与 libTv 媒体节点的“聚焦不跳尺寸”合同一致。
+    if (!textResizeRequestedRef.current) return
+    textResizeRequestedRef.current = false
     const shellEl = nodeShellRef.current
     const editorEl = textEditorRef.current
     if (!shellEl || !editorEl) return
@@ -7531,6 +9549,7 @@ const rewritePromptWithCharacters = React.useCallback(
     if (!el) return
     el.focus()
     document.execCommand(command, false, value)
+    textResizeRequestedRef.current = true
     syncTextNodeContent()
   }, [syncTextNodeContent])
   const applyHeading = React.useCallback((level: 1 | 2 | 3 | 4) => {
@@ -7563,8 +9582,31 @@ const rewritePromptWithCharacters = React.useCallback(
         disabled: viewOnly,
       }
     : null
+  const modelCatalogNotice = !viewOnly && (hasModelSelect || isAudioNode) && (
+    modelListError || (!modelListLoading && Boolean(activeModelKey) && !selectedActiveModelOption)
+  ) ? (
+    <Group className="tc-task-node__model-catalog-notice" gap={6} wrap="nowrap">
+      <Text className="tc-task-node__model-catalog-notice-text" size="xs" c="red">
+        {modelListError
+          ? `模型目录加载失败：${modelListError.message}`
+          : `模型 ${activeModelKey} 当前不可用，请重新选择`}
+      </Text>
+      {modelListError ? (
+        <ActionIcon
+          className="tc-task-node__model-catalog-retry"
+          aria-label="重新加载模型目录"
+          size="xs"
+          variant="subtle"
+          color="red"
+          onClick={retryModelList}
+        >
+          <IconRefresh className="tc-task-node__model-catalog-retry-icon" size={13} />
+        </ActionIcon>
+      ) : null}
+    </Group>
+  ) : null
   const controlChipsNode = !isPlainTextNode ? (
-    <ControlChips
+    <LazyControlChips
       summaryChipStyles={summaryChipStyles}
       controlValueStyle={controlValueStyle}
       summaryModelLabel={summaryModelLabel}
@@ -7601,7 +9643,10 @@ const rewritePromptWithCharacters = React.useCallback(
       imageSizeOptions={configuredImageSizeOptions.length ? configuredImageSizeOptions : undefined}
       onImageSizeChange={(value) => {
         setImageSize(value)
-        updateNodeData(id, { imageSize: value })
+        // 同步 imageResolution / resolution，否则 buildImageBillingSpecKeyForOption
+        // 优先读 imageResolution，导致切换分辨率时 spec key 不更新、积分显示僵在初值。
+        setImageResolution(value)
+        updateNodeData(id, { imageSize: value, imageResolution: value, resolution: value })
       }}
       showOrientationMenu={showOrientationMenu}
       orientation={orientation}
@@ -7614,17 +9659,57 @@ const rewritePromptWithCharacters = React.useCallback(
         setSampleCount(value)
         updateNodeData(id, { sampleCount: value })
       }}
-      mappedControls={isVideoNode ? mappedVideoControls : mappedImageControls}
+      showRunCountMenu={isVideoNode || coreKind === 'image'}
+      runCount={runCount}
+      onRunCountChange={(value) => {
+        setRunCount(value)
+        updateNodeData(id, { runCount: value })
+      }}
+      mappedControls={isVideoNode ? mappedVideoControls : isAudioNode ? mappedAudioControls : mappedImageControls}
+      showStyleChip={showStyleChip}
+      styleImageCount={styleImages.length}
+      onStyleClick={() => setStyleImagePickerOpen(true)}
+      onStyleClear={handleStyleClear}
+      showCameraChip={showCameraChip}
+      cameraChipLabel={cameraChipLabel}
+      cameraChipActive={!!imageCinematicCamera?.enabled}
+      cameraChipOpen={cameraControlOpen}
+      onCameraChipChange={setCameraControlOpen}
+      onCameraClear={handleCameraClear}
+      cameraChipContent={
+        <LazyCameraControlPanel
+          value={imageCinematicCamera}
+          onChange={handleCinematicCameraChange}
+          onClose={() => setCameraControlOpen(false)}
+        />
+      }
+      presetLibrary={
+        isImageNode && hasImageResults && !isPanoramic
+          ? (
+              <LazyLibTvPresetLibrary
+                onSelect={handleSelectLibTvPreset}
+                disabled={isRunning || viewOnly}
+                characterFissionEnabled={isCharacterReferenceNode && Boolean(primaryImageUrl)}
+              />
+            )
+          : null
+      }
       isCharacterNode={isCharacterNode}
       isRunning={isRunning}
       smartAction={smartVideoPromptAction}
       requiredCreditsLabel={requiredCreditsLabel}
       onCancelRun={handleCancelRun}
       onRun={runNode}
+      onTranslate={handleTranslatePrompt}
+      translateLoading={translatePromptLoading}
+      show3dChip={isImageNode}
+      on3dClick={() => setShow3dPanel(true)}
+      showEnhanceChip={isVideoNode}
+      onEnhanceClick={() => setShowEnhancePanel(true)}
     />
   ) : null
   const mediaFocusControlChipsNode = useMediaFocusToolbar && !isPlainTextNode ? (
-    <ControlChips
+    <LazyControlChips
       summaryChipStyles={summaryChipStyles}
       controlValueStyle={controlValueStyle}
       summaryModelLabel={summaryModelLabel}
@@ -7635,9 +9720,9 @@ const rewritePromptWithCharacters = React.useCallback(
       showModelMenu={hasModelSelect && modelMenuOptions.length > 0}
       modelList={modelMenuOptions}
       onModelChange={handleToolbarModelChange}
-      showTimeMenu={false}
+      showTimeMenu={showTimeMenu}
       durationOptions={durationOptions}
-      onDurationChange={() => {}}
+      onDurationChange={handleToolbarDurationChange}
       showQualityMenu={false}
       qualityOptions={[]}
       onQualityChange={() => {}}
@@ -7654,7 +9739,10 @@ const rewritePromptWithCharacters = React.useCallback(
       imageSizeOptions={configuredImageSizeOptions.length ? configuredImageSizeOptions : undefined}
       onImageSizeChange={(value) => {
         setImageSize(value)
-        updateNodeData(id, { imageSize: value })
+        // 同步 imageResolution / resolution，否则 buildImageBillingSpecKeyForOption
+        // 优先读 imageResolution，导致切换分辨率时 spec key 不更新、积分显示僵在初值。
+        setImageResolution(value)
+        updateNodeData(id, { imageSize: value, imageResolution: value, resolution: value })
       }}
       showOrientationMenu={showOrientationMenu}
       orientation={orientation}
@@ -7667,13 +9755,54 @@ const rewritePromptWithCharacters = React.useCallback(
         setSampleCount(value)
         updateNodeData(id, { sampleCount: value })
       }}
-      mappedControls={isVideoNode ? mappedVideoControls : mappedImageControls}
+      showRunCountMenu={isVideoNode || coreKind === 'image'}
+      runCount={runCount}
+      onRunCountChange={(value) => {
+        setRunCount(value)
+        updateNodeData(id, { runCount: value })
+      }}
+      mappedControls={isVideoNode ? mappedVideoControls : isAudioNode ? mappedAudioControls : mappedImageControls}
+      showStyleChip={false}
+      styleImageCount={styleImages.length}
+      onStyleClick={() => setStyleImagePickerOpen(true)}
+      onStyleClear={handleStyleClear}
+      showCameraChip={showCameraChip}
+      cameraChipLabel={cameraChipLabel}
+      cameraChipActive={!!imageCinematicCamera?.enabled}
+      cameraChipOpen={cameraControlOpen}
+      onCameraChipChange={setCameraControlOpen}
+      onCameraClear={handleCameraClear}
+      cameraChipContent={
+        <LazyCameraControlPanel
+          value={imageCinematicCamera}
+          onChange={handleCinematicCameraChange}
+          onClose={() => setCameraControlOpen(false)}
+        />
+      }
+      presetLibrary={
+        isImageNode && !isPanoramic
+          ? (
+              <LazyLibTvPresetLibrary
+                onSelect={handleSelectLibTvPreset}
+                disabled={isRunning || viewOnly}
+                characterFissionEnabled={isCharacterReferenceNode && Boolean(primaryImageUrl)}
+              />
+            )
+          : null
+      }
       isCharacterNode={isCharacterNode}
       isRunning={isRunning}
       smartAction={smartVideoPromptAction}
       requiredCreditsLabel={requiredCreditsLabel}
       onCancelRun={handleCancelRun}
       onRun={runNode}
+      onTranslate={handleTranslatePrompt}
+      translateLoading={translatePromptLoading}
+      show3dChip={false}
+      on3dClick={() => setShow3dPanel(true)}
+      showEnhanceChip={false}
+      onEnhanceClick={() => setShowEnhancePanel(true)}
+      generationSettings={mediaGenerationSettings}
     />
   ) : null
   const showVeoImageControls = Boolean(isVideoNode && resolvedVideoVendor === 'veo')
@@ -7681,8 +9810,6 @@ const rewritePromptWithCharacters = React.useCallback(
     useMediaFocusToolbar
       && (
         showVeoImageControls
-        || allowNodePresetForPrompt
-        || hasAnchorBinding
         || connectedCharacterOptions.length > 0
       ),
   )
@@ -7716,7 +9843,7 @@ const rewritePromptWithCharacters = React.useCallback(
                 <Text className="tc-task-node__media-focus-settings-label" size="xs" fw={700}>
                   Veo 图像控制
                 </Text>
-                <Badge className="tc-task-node__media-focus-settings-badge" size="xs" color="grape">
+                <Badge className="tc-task-node__media-focus-settings-badge" size="xs" color="gray">
                   Veo3
                 </Badge>
               </Group>
@@ -7789,10 +9916,14 @@ const rewritePromptWithCharacters = React.useCallback(
                       withBorder
                     >
                       <div className="tc-task-node__media-focus-settings-preview-thumb">
-                        <img
+                        <ManagedImage
                           className="tc-task-node__media-focus-settings-preview-image nodrag nopan"
                           src={trimmedFirstFrameUrl}
                           alt="首帧"
+                          priority="visible"
+                          ownerNodeId={id}
+                          ownerSurface="task-node-candidate"
+                          ownerRequestKey={`task-node-video-first-frame:${id}:${trimmedFirstFrameUrl}`}
                           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         />
                       </div>
@@ -7809,10 +9940,14 @@ const rewritePromptWithCharacters = React.useCallback(
                       withBorder
                     >
                       <div className="tc-task-node__media-focus-settings-preview-thumb">
-                        <img
+                        <ManagedImage
                           className="tc-task-node__media-focus-settings-preview-image nodrag nopan"
                           src={trimmedLastFrameUrl}
                           alt="尾帧"
+                          priority="visible"
+                          ownerNodeId={id}
+                          ownerSurface="task-node-candidate"
+                          ownerRequestKey={`task-node-video-last-frame:${id}:${trimmedLastFrameUrl}`}
                           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         />
                       </div>
@@ -7822,103 +9957,6 @@ const rewritePromptWithCharacters = React.useCallback(
                     </Paper>
                   )}
                 </div>
-              )}
-            </div>
-          )}
-
-          {allowNodePresetForPrompt && (
-            <div className="tc-task-node__media-focus-settings-group">
-              <Text className="tc-task-node__media-focus-settings-label" size="xs" fw={700}>
-                预设能力
-              </Text>
-              <Select
-                className="tc-task-node__media-focus-settings-select"
-                size="xs"
-                data={promptPresetOptions}
-                value={selectedPresetId}
-                onChange={handlePresetChange}
-                placeholder={promptPresetOptions.length ? '选择预设能力' : '暂无预设能力'}
-                searchable
-                clearable
-                disabled={viewOnly}
-                nothingFoundMessage="没有匹配的预设"
-              />
-              {!viewOnly && (
-                <Group className="tc-task-node__media-focus-settings-actions" gap={6}>
-                  <Button
-                    className="tc-task-node__media-focus-settings-button"
-                    size="compact-xs"
-                    variant="light"
-                    onClick={() => {
-                      setMediaFocusOptionsOpen(false)
-                      setPresetModalOpen(true)
-                    }}
-                  >
-                    新增预设
-                  </Button>
-                  <Button
-                    className="tc-task-node__media-focus-settings-button"
-                    size="compact-xs"
-                    variant="subtle"
-                    onClick={() => {
-                      setMediaFocusOptionsOpen(false)
-                      setPromptSamplesOpen(true)
-                    }}
-                  >
-                    提示词示例
-                  </Button>
-                </Group>
-              )}
-            </div>
-          )}
-
-          {hasAnchorBinding && (
-            <div className="tc-task-node__media-focus-settings-group">
-              <Text className="tc-task-node__media-focus-settings-label" size="xs" fw={700}>
-                锚点绑定
-              </Text>
-              <Select
-                className="tc-task-node__media-focus-settings-select"
-                size="xs"
-                data={[
-                  { value: 'character', label: '角色' },
-                  { value: 'scene', label: '场景' },
-                  { value: 'prop', label: '道具' },
-                  { value: 'shot', label: '分镜' },
-                  { value: 'story', label: '剧情' },
-                  { value: 'asset', label: '资产' },
-                  { value: 'context', label: '上下文' },
-                  { value: 'authority_base_frame', label: '权威基底帧' },
-                ]}
-                value={anchorBindingKind}
-                onChange={(value) => {
-                  if (!value) return
-                  setAnchorBindingKind(value as PublicFlowAnchorBindingKind)
-                }}
-                allowDeselect={false}
-              />
-              <TextInput
-                className="tc-task-node__media-focus-settings-input"
-                size="xs"
-                value={anchorBindingLabel}
-                onChange={(e) => setAnchorBindingLabel(e.currentTarget.value)}
-                placeholder="例如：方源 / 青茅山宗祠 / 春秋蝉"
-              />
-              <Button
-                className="tc-task-node__media-focus-settings-button"
-                size="compact-xs"
-                variant="light"
-                color="grape"
-                loading={bindAnchorLoading}
-                disabled={bindAnchorLoading || !primaryImageForAnchorBinding}
-                onClick={() => { void handleBindPrimaryAnchor() }}
-              >
-                绑定当前主图
-              </Button>
-              {!!anchorBindStatusText && (
-                <Text className="tc-task-node__media-focus-settings-help" size="xs" c="dimmed">
-                  {anchorBindStatusText}
-                </Text>
               )}
             </div>
           )}
@@ -7966,35 +10004,234 @@ const rewritePromptWithCharacters = React.useCallback(
   return (
     <div
       ref={nodeShellRef}
-      className="tc-task-node"
-      onPointerDownCapture={blurActiveEditableElement}
+      className={[
+        'tc-task-node',
+        isWorkflowStageNode || isWorkflowTriggerNode ? 'tc-task-node--workflow' : '',
+        isPlainTextNode ? 'tc-task-node--plain-text' : '',
+      ].filter(Boolean).join(' ')}
+      data-workflow-kind={isWorkflowStageNode ? 'stage' : isWorkflowTriggerNode ? 'trigger' : undefined}
+      data-workflow-selected={isStructuredWorkflowNode ? selected : undefined}
+      data-aspect-transitioning={isAspectTransitioning || undefined}
+      onClick={isWorkflowStageNode || isWorkflowTriggerNode
+        ? (event) => {
+            event.stopPropagation()
+            useWorkflowNodeInspectorStore.getState().openNode(id)
+          }
+        : undefined}
       style={{
-        border: shellBorder,
-        borderRadius: 22,
-        padding: shellPadding,
-        background: isPlainTextNode ? textBackgroundTint : shellBackground,
-        color: nodeShellText,
-        boxShadow: shellShadowResolved,
-        backdropFilter: shellBackdrop,
-        transition: 'box-shadow 180ms ease',
         position: 'relative',
-        outline: shellOutline,
         boxSizing: 'border-box',
-        display: isPlainTextNode || isVideoNode ? 'flex' : undefined,
-        flexDirection: isPlainTextNode || isVideoNode ? 'column' : undefined,
-        width: nodeWidth,
-        maxWidth: 720,
+        width: isResizableVisualNode ? nodeWidth : nodeWidth + 2 * HANDLE_HORIZONTAL_OFFSET,
+        paddingLeft: isResizableVisualNode ? 0 : HANDLE_HORIZONTAL_OFFSET,
+        paddingRight: isResizableVisualNode ? 0 : HANDLE_HORIZONTAL_OFFSET,
         ...(isPlainTextNode && textNodeHeight ? { height: textNodeHeight } : null),
         ...(isResizableVisualNode && nodeHeight ? { height: nodeHeight } : null),
       } as React.CSSProperties}
     >
+      {(isImageNode || isAudioNode || isVideoNode) && (
+        <div
+          className="tc-task-node__image-meta-bar nodrag"
+          style={{
+            position: 'absolute',
+            top: -30,
+            left: 0,
+            right: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            height: 24,
+            minHeight: 24,
+            pointerEvents: 'auto',
+            userSelect: 'none',
+          }}
+        >
+          <div
+            className="tc-task-node__image-meta-bar-label"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, flex: 1 }}
+          >
+            <NodeIcon size={13} style={{ flexShrink: 0, opacity: 0.55 }} />
+            {editing ? (
+              <TextInput
+                className="tc-task-node__image-meta-bar-input nodrag"
+                ref={labelInputRef}
+                size="xs"
+                value={labelDraft}
+                autoFocus
+                onChange={(e) => setLabelDraft(e.currentTarget.value)}
+                onBlur={commitLabel}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitLabel() }
+                  else if (e.key === 'Escape') { setLabelDraft(currentLabel); setEditing(false) }
+                }}
+                styles={{ input: { fontSize: 12, padding: '2px 6px', height: 24, minHeight: 24 } }}
+                style={{ flex: 1, minWidth: 0 }}
+              />
+            ) : (
+              <Text
+                className="tc-task-node__image-meta-bar-name"
+                size="xs"
+                style={{
+                  fontSize: 12,
+                  lineHeight: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  cursor: nodeReadOnly ? 'default' : 'text',
+                }}
+                onDoubleClick={() => { if (!nodeReadOnly) setEditing(true) }}
+              >
+                {currentLabel}
+              </Text>
+            )}
+          </div>
+          {mediaNaturalSize && (
+            <Text
+              className="tc-task-node__image-meta-bar-dimensions"
+              size="xs"
+              style={{
+                fontSize: 12,
+                lineHeight: 1,
+                flexShrink: 0,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {mediaNaturalSize.width} × {mediaNaturalSize.height}
+            </Text>
+          )}
+        </div>
+      )}
+      <div
+        className={'tc-task-node__card' + (isWorkflowStageNode || isWorkflowTriggerNode ? ' tc-task-node__card--workflow' : '')}
+        onPointerDownCapture={blurActiveEditableElement}
+        style={{
+          border: (isImageNode && hasPrimaryImage) || isPlainTextNode ? 'none' : resolvedShellBorder,
+          ...draftBorderOverride,
+          borderRadius: isStructuredWorkflowNode ? 10 : 12,
+          padding: shellPadding,
+          // 普通文本节点去掉多余外框背景：内层文本面板自带底色，外壳保持透明，工具/标题贴在其上方
+          background: (isImageNode && hasPrimaryImage) || isPlainTextNode ? 'transparent' : shellBackground,
+          color: nodeShellText,
+          boxShadow: (isImageNode && hasPrimaryImage) || isPlainTextNode ? 'none' : shellShadowResolved,
+          backdropFilter: shellBackdrop,
+          transition: 'box-shadow 180ms ease',
+          position: 'relative',
+          outline: shellOutline,
+          boxSizing: 'border-box',
+          display: isPlainTextNode || isVideoNode || isStructuredWorkflowNode ? 'flex' : undefined,
+          flexDirection: isPlainTextNode || isVideoNode || isStructuredWorkflowNode ? 'column' : undefined,
+          width: '100%',
+          maxWidth: isResizableVisualNode ? undefined : 720,
+          ...(isPlainTextNode && textNodeHeight ? { height: '100%' } : null),
+          ...(isResizableVisualNode && nodeHeight ? { height: '100%' } : null),
+          // 审核失败标红需覆盖上面的 border/boxShadow（含图片节点的 none），放最后生效
+          ...moderationBorderOverride,
+        } as React.CSSProperties}
+      >
+      {draftByAgent && !showGenerationOverlay && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            useRFStore.getState().updateNodeData(id, { draftByAgent: false })
+            runNode()
+          }}
+          style={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            background: 'rgba(255, 196, 0, 0.9)',
+            color: '#000',
+            fontSize: 10,
+            padding: '2px 8px',
+            borderRadius: 4,
+            fontWeight: 600,
+            border: 'none',
+            cursor: 'pointer',
+            zIndex: 1,
+          }}
+        >
+          AI 规划 · 点击生成
+        </button>
+      )}
       <GenerationOverlay
         visible={showGenerationOverlay}
         status={status}
         progress={(data as any)?.progress}
+        label={isVideoAnalysisNode && status === 'running' ? '视频分析中' : undefined}
       />
-      {productionMetadata && <ChapterGroundedBadge metadata={productionMetadata} />}
-      {!hideImageMeta && !isCanvasMediaNode && !isStoryboardEditorNode && !isCameraRefNode && (
+      {isImageNode && show3dPanel && (
+        <LazyImage3DPanel onRun={handleRun3d} onClose={() => setShow3dPanel(false)} />
+      )}
+      {isVideoNode && showEnhancePanel && (
+        <LazyVideoEnhancePanel onRun={handleRunEnhance} onClose={() => setShowEnhancePanel(false)} />
+      )}
+      {isImageNode && (data as any)?.model3dUrl && (data as any)?.model3dView && (
+        <LazyModel3DOverlay modelUrl={(data as any).model3dUrl} visible />
+      )}
+      {isImageNode && (data as any)?.model3dUrl && (
+        <button
+          type="button"
+          className="tc-task-node__view-toggle"
+          style={{
+            position: 'absolute',
+            top: 6,
+            right: 6,
+            zIndex: 6,
+            fontSize: 11,
+            padding: '2px 8px',
+            borderRadius: 8,
+            border: 'none',
+            background: 'rgba(17,18,21,0.7)',
+            color: '#fff',
+            cursor: 'pointer',
+          }}
+          onClick={() => updateNodeData(id, { model3dView: !(data as any).model3dView })}
+        >
+          {(data as any).model3dView ? '看图片' : '看 3D'}
+        </button>
+      )}
+      {imagePresetConfirmKey && (() => {
+        const preset = findLibTvImagePreset(imagePresetConfirmKey)
+        if (!preset) return null
+        if (preset.execution === 'character-fission') {
+          return (
+            <LazyCharacterFissionEditorPortal
+              nodeId={id}
+              nodeWidth={nodeWidth}
+              nodeHeight={nodeHeight ?? undefined}
+              defaultHeight={visualNodeDefaults.height}
+              requiredGenerationCredits={characterFissionCreditsPerVariant}
+              onClose={() => setImagePresetConfirmKey(null)}
+              onExecute={handleCharacterFissionExecute}
+            />
+          )
+        }
+        return (
+          <ImagePresetConfirmPortal
+            preset={preset}
+            nodeId={id}
+            nodeWidth={nodeWidth}
+            nodeHeight={nodeHeight ?? undefined}
+            defaultHeight={visualNodeDefaults.height}
+            requiredGenerationCredits={requiredGenerationCredits}
+            onClose={() => setImagePresetConfirmKey(null)}
+            onExecute={handleImagePresetExecute}
+          />
+        )
+      })()}
+      {panoramicConfirm && (
+        <PanoramicConfirmPortal
+          nodeId={id}
+          nodeWidth={nodeWidth}
+          nodeHeight={nodeHeight ?? undefined}
+          defaultHeight={visualNodeDefaults.height}
+          panoramicCredits={panoramicCredits}
+          onClose={() => setPanoramicConfirm(false)}
+          onExecute={() => { setPanoramicConfirm(false); void handleGeneratePanoramic() }}
+        />
+      )}
+      {!hideImageMeta && !isCanvasMediaNode && !isStoryboardEditorNode && !isWorkflowStageNode && !isWorkflowTriggerNode && (
         <TaskNodeHeader
           NodeIcon={NodeIcon}
           editing={editing}
@@ -8010,173 +10247,365 @@ const rewritePromptWithCharacters = React.useCallback(
           sleekChipBase={sleekChipBase}
           labelSingleLine={isImageNode}
           isNew={isFreshAiChatNode}
-        showMeta={false}
-        showIcon={false}
-        showStatus={false}
+          titleBadge={productionMetadata || sbaPresentation ? (
+            <span className="tc-task-node__title-badges" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              {productionMetadata ? <ChapterGroundedBadge metadata={productionMetadata} /> : null}
+              {sbaPresentation ? (
+                <Badge
+                  className="tc-task-node__sba-selection-badge"
+                  size="xs"
+                  radius="md"
+                  color={sbaPresentation.nodeStatus === 'archived' ? 'gray' : sbaPresentation.selectionStatus === 'selected' ? 'teal' : 'gray'}
+                  variant={sbaPresentation.nodeStatus === 'archived' ? 'outline' : 'light'}
+                >
+                  {sbaPresentation.nodeStatus === 'archived'
+                    ? '非正史'
+                    : sbaPresentation.selectionStatus === 'selected'
+                      ? '已选择'
+                      : sbaPresentation.selectionStatus === 'superseded'
+                        ? '已替代'
+                        : '候选'}
+                </Badge>
+              ) : null}
+              {sbaPresentation && sbaPresentation.basisStatus !== 'current' ? (
+                <Badge
+                  className="tc-task-node__sba-basis-badge"
+                  size="xs"
+                  radius="md"
+                  color={sbaPresentation.basisStatus === 'stale' ? 'yellow' : 'gray'}
+                  variant="outline"
+                >
+                  {sbaPresentation.basisStatus === 'stale' ? '正史已变化' : '来源未核验'}
+                </Badge>
+              ) : null}
+            </span>
+          ) : undefined}
+          trailingContent={textIntentActions ?? imageDimensionTrailing}
+          showMeta={false}
+          showIcon={isPlainTextNode}
+          showStatus={false}
           onLabelDraftChange={setLabelDraft}
           onCommitLabel={commitLabel}
           onCancelEdit={() => {
             setLabelDraft(currentLabel)
             setEditing(false)
           }}
-          onStartEdit={() => setEditing(true)}
+          onStartEdit={() => {
+            if (nodeReadOnly) return
+            setEditing(true)
+          }}
           labelInputRef={labelInputRef}
         />
       )}
       <TopToolbar
-        isVisible={isSingleSelectionActive && !isCameraRefNode}
+        isVisible={isSingleSelectionActive && !gridSplitOpen && !anyImageEditorOpen}
         hasContent={hasContent}
+        hasGenerationContext={hasGenerationContext}
         toolbarBackground={toolbarBackground}
         toolbarShadow={toolbarShadow}
         toolbarActionIconStyles={toolbarActionIconStyles}
         inlineDividerColor={inlineDividerColor}
         visibleDefs={visibleDefs}
         extraActions={toolbarMetaActions}
+        toolbarOffset={isImageNode ? 0 : undefined}
+        hideUtilButtons={isPanoramic}
+        utilitiesAtEnd={isImageNode || isVideoNode}
+        libtvVideoMode={isVideoNode}
+        libtvImageMode={isImageNode && !isPanoramic}
         onPreview={handlePreview}
-        onDownload={handleDownload}
+        onDownload={() => { void handleDownload() }}
+        downloading={toolbarDownloading}
       />
-      {isPlainTextNode && isSingleSelectionActive && (
-        <NodeToolbar className="tc-task-node__text-inline-toolbar" position={Position.Top} align="center">
+
+      {/* Grid split mode toolbar — always visible while grid split is open */}
+      {gridSplitOpen && !isPanoramic && (
+        <NodeToolbar
+          className="tc-grid-split-toolbar nodrag nopan"
+          isVisible={true}
+          position={Position.Top}
+          align="center"
+          offset={42}
+        >
           <div
-            className="tc-task-node__text-inline-toolbar-content"
+            className="tc-grid-split-toolbar__content"
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 6,
-              padding: '6px 10px',
+              padding: '6px 12px',
               borderRadius: 999,
               background: toolbarBackground,
               boxShadow: toolbarShadow,
-              backdropFilter: 'blur(18px)',
-              maxWidth: 'min(95vw, 980px)',
-              overflowX: 'auto',
-              whiteSpace: 'nowrap',
+              maxWidth: 'min(92vw, 900px)',
             }}
           >
-            {[1, 2, 3, 4].map((level) => (
-              <Tooltip key={`h-${level}`} label={`H${level}`} position="bottom" withArrow>
-                <ActionIcon
-                  className="tc-task-node__text-inline-action"
-                  variant="transparent"
-                  size="sm"
-                  onClick={() => applyHeading(level as 1 | 2 | 3 | 4)}
-                >
-                  <Text size="xs" fw={700}>{`H${level}`}</Text>
-                </ActionIcon>
-              </Tooltip>
-            ))}
-            <div className="tc-task-node__text-inline-divider" style={{ width: 1, height: 20, background: inlineDividerColor }} />
-            <Tooltip label="加粗" position="bottom" withArrow>
-              <ActionIcon className="tc-task-node__text-inline-action" variant="transparent" size="sm" onClick={() => runRichCommand('bold')}>
-                <IconBold size={16} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="斜体" position="bottom" withArrow>
-              <ActionIcon className="tc-task-node__text-inline-action" variant="transparent" size="sm" onClick={() => runRichCommand('italic')}>
-                <IconItalic size={16} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="有序列表" position="bottom" withArrow>
-              <ActionIcon className="tc-task-node__text-inline-action" variant="transparent" size="sm" onClick={() => applyList(true)}>
-                <IconListNumbers size={16} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="无序列表" position="bottom" withArrow>
-              <ActionIcon className="tc-task-node__text-inline-action" variant="transparent" size="sm" onClick={() => applyList(false)}>
-                <IconList size={16} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="分割线" position="bottom" withArrow>
-              <ActionIcon className="tc-task-node__text-inline-action" variant="transparent" size="sm" onClick={insertDivider}>
-                <IconSeparatorHorizontal size={16} />
-              </ActionIcon>
-            </Tooltip>
-            <div className="tc-task-node__text-inline-divider" style={{ width: 1, height: 20, background: inlineDividerColor }} />
-            <Popover
-              opened={textColorPickerOpen}
-              onChange={setTextColorPickerOpen}
-              position="bottom"
-              withArrow
-              withinPortal
-              shadow="md"
+            {/* Back */}
+            <button
+              onClick={() => setGridSplitOpen(false)}
+              style={{
+                width: 30, height: 30, borderRadius: 8, border: 'none',
+                background: 'var(--mantine-color-dark-6)', color: 'var(--mantine-color-gray-3)',
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}
             >
-              <Popover.Target>
-                <div>
-                  <Tooltip label="文字颜色" position="bottom" withArrow>
-                    <ActionIcon
-                      className="tc-task-node__text-inline-action"
-                      variant="transparent"
-                      size="sm"
-                      onClick={() => setTextColorPickerOpen((prev) => !prev)}
-                    >
-                      <IconPalette size={16} color={textColor} />
-                    </ActionIcon>
-                  </Tooltip>
-                </div>
-              </Popover.Target>
-              <Popover.Dropdown>
-                <Group className="tc-task-node__text-inline-palette" gap={4} wrap="nowrap">
-                  {TEXT_COLOR_PRESETS.map((colorValue) => (
-                    <ActionIcon
-                      key={colorValue}
-                      className="tc-task-node__text-inline-color"
-                      size="sm"
-                      variant="subtle"
-                      onClick={() => {
-                        runRichCommand('foreColor', colorValue)
-                        updateNodeData(id, { textColor: colorValue })
-                        setTextColorPickerOpen(false)
-                      }}
-                    >
-                      <span className="tc-task-node__text-inline-color-dot" style={{ width: 12, height: 12, borderRadius: 999, background: colorValue }} />
-                    </ActionIcon>
-                  ))}
-                </Group>
-              </Popover.Dropdown>
-            </Popover>
-            <Popover
-              opened={textBgPickerOpen}
-              onChange={setTextBgPickerOpen}
-              position="bottom"
-              withArrow
-              withinPortal
-              shadow="md"
+              <IconArrowNarrowLeft size={16} />
+            </button>
+
+            <div style={{ width: 1, height: 20, background: inlineDividerColor, flexShrink: 0 }} />
+            <IconLayoutGrid size={15} style={{ color: 'var(--mantine-color-gray-5)', flexShrink: 0 }} />
+
+            {/* Status */}
+            <span style={{
+              fontSize: 13,
+              color: gridSplitSelectedCells.size > 0 ? nodeShellText : 'var(--mantine-color-gray-5)',
+              minWidth: 120, flexShrink: 0,
+            }}>
+              {gridSplitSelectedCells.size > 0 ? `已选 ${gridSplitSelectedCells.size} 个宫格` : '请选择宫格进行操作'}
+            </span>
+
+            <div style={{ width: 1, height: 20, background: inlineDividerColor, flexShrink: 0 }} />
+
+            {/* Create nodes */}
+            <Tooltip label="创建生图节点" position="bottom" withArrow>
+              <ActionIcon
+                variant="subtle"
+                size="sm"
+                disabled={!gridSplitSelectedCells.size || gridSplitCreating || gridSplitCreatingHD}
+                loading={gridSplitCreating}
+                onClick={() => { void handleGridSplitCreateOverlay() }}
+              >
+                <IconApps size={15} />
+              </ActionIcon>
+            </Tooltip>
+
+            {/* HD generate */}
+            <Tooltip label="生成高清图片" position="bottom" withArrow>
+              <ActionIcon
+                variant="subtle"
+                size="sm"
+                disabled={!gridSplitSelectedCells.size || gridSplitCreating || gridSplitCreatingHD}
+                loading={gridSplitCreatingHD}
+                onClick={() => { void handleGridSplitHDOverlay() }}
+              >
+                <IconPhotoSpark size={15} />
+              </ActionIcon>
+            </Tooltip>
+
+            {/* Scale selector */}
+            <select
+              value={gridSplitScale}
+              onChange={(e) => setGridSplitScale(Number(e.target.value))}
+              style={{
+                background: 'var(--mantine-color-dark-5)', color: nodeShellText,
+                border: 'none', borderRadius: 8, padding: '5px 10px', fontSize: 13, cursor: 'pointer',
+              }}
             >
-              <Popover.Target>
-                <div>
-                  <Tooltip label="背景色" position="bottom" withArrow>
-                    <ActionIcon
-                      className="tc-task-node__text-inline-action"
-                      variant="transparent"
-                      size="sm"
-                      onClick={() => setTextBgPickerOpen((prev) => !prev)}
-                    >
-                      <IconColorSwatch size={16} />
-                    </ActionIcon>
-                  </Tooltip>
-                </div>
-              </Popover.Target>
-              <Popover.Dropdown>
-                <Group className="tc-task-node__text-inline-palette" gap={4} wrap="nowrap">
-                  {TEXT_BG_PRESETS.map((colorValue) => (
-                    <ActionIcon
-                      key={colorValue}
-                      className="tc-task-node__text-inline-color"
-                      size="sm"
-                      variant="subtle"
-                      onClick={() => {
-                        updateNodeData(id, { textBackgroundColor: colorValue })
-                        setTextBgPickerOpen(false)
-                      }}
-                    >
-                      <span className="tc-task-node__text-inline-color-dot" style={{ width: 12, height: 12, borderRadius: 999, background: colorValue, border: '1px solid rgba(255,255,255,0.25)' }} />
-                    </ActionIcon>
-                  ))}
-                </Group>
-              </Popover.Dropdown>
-            </Popover>
+              <option value={2}>2倍</option>
+              <option value={4}>4倍</option>
+            </select>
           </div>
         </NodeToolbar>
+      )}
+
+      {/* ── HD 面板 ── */}
+      {hdPanelOpen ? (
+        <LazyHdUpscalePanel
+          isOpen
+          isDarkUi={isDarkUi}
+          inlineDividerColor={inlineDividerColor}
+          onClose={() => setHdPanelOpen(false)}
+          onApply={handleHdApply}
+          loading={hdLoading}
+        />
+      ) : null}
+
+      {/* ── 情绪调节面板 ── */}
+      {emotionPanelOpen && emotionSelection ? (
+        <LazyEmotionPanel
+          isOpen={emotionPanelOpen}
+          isDarkUi={isDarkUi}
+          sourceImageUrl={String(primaryImageUrl || basePoseImage || '')}
+          selection={emotionSelection}
+          onClose={() => setEmotionPanelOpen(false)}
+          onReplacePerson={() => openEmotionPersonSelector(true)}
+          onApply={handleEmotionApply}
+          loading={emotionLoading}
+          error={emotionError}
+        />
+      ) : null}
+
+      {/* ── 扩图面板 ── */}
+      {expandPanelOpen ? (
+        <LazyExpandPanel
+          isOpen
+          isDarkUi={isDarkUi}
+          onClose={() => setExpandPanelOpen(false)}
+          onApply={handleExpandApply}
+          loading={expandLoading}
+        />
+      ) : null}
+
+      {/* ── 旋转与镜像预览面板（仅在预览节点上渲染）── */}
+      {isRotatePreview && (
+        <LazyRotatePanel
+          isOpen={true}
+          isDarkUi={isDarkUi}
+          angle={rotatePrevAngle}
+          flipH={rotatePrevFlipH}
+          flipV={rotatePrevFlipV}
+          saving={rotateSaving}
+          onAngleChange={setRotatePrevAngle}
+          onFlipHChange={setRotatePrevFlipH}
+          onFlipVChange={setRotatePrevFlipV}
+          onSave={() => { void handleRotatePrevConfirm() }}
+          onClose={handleRotatePrevClose}
+        />
+      )}
+
+      {/* ── 裁剪覆盖层 ── */}
+      {cropOpen && primaryImageUrl && imageNaturalSize && (
+        <LazyCropOverlayEditor
+          imageUrl={primaryImageUrl}
+          displayWidth={nodeWidth}
+          displayHeight={nodeHeight ?? nodeWidth * 0.75}
+          naturalWidth={imageNaturalSize.w}
+          naturalHeight={imageNaturalSize.h}
+          isDarkUi={isDarkUi}
+          onClose={() => setCropOpen(false)}
+          onConfirm={handleCropConfirm}
+        />
+      )}
+
+      {/* ── 视频剪辑覆盖层 ── */}
+      {trimOpen && isVideoNode && activeVideoDuration !== null && (
+        <LazyVideoTrimEditor
+          videoUrl={videoResults[videoPrimaryIndex]?.url || videoUrl || ''}
+          videoDuration={activeVideoDuration}
+          isDarkUi={isDarkUi}
+          onClose={() => setTrimOpen(false)}
+          onConfirm={handleTrimConfirm}
+        />
+      )}
+
+      {isVideoNode && hasPrimaryVideo && videoContinuationOpen && (
+        <LazyVideoContinuationPanel
+          opened
+          readOnly={nodeReadOnly}
+          sourceVideoUrl={videoResults[videoPrimaryIndex]?.url || videoUrl || ''}
+          sourceDurationSeconds={activeVideoDuration}
+          referenceMaxSeconds={videoModelConfig?.maxReferenceVideoDurationSeconds}
+          continuationDurationOptions={continuationDurationOptions}
+          onClose={() => setVideoContinuationOpen(false)}
+          onSubmit={handleCreateVideoContinuation}
+        />
+      )}
+
+      {isVideoNode && hasPrimaryVideo && videoToolEditorMode !== null && (
+        <LazyVideoToolEditorPanel
+          opened
+          mode={videoToolEditorMode}
+          videoUrl={videoResults[videoPrimaryIndex]?.url || videoUrl || ''}
+          readOnly={nodeReadOnly}
+          onSeparate={handleSeparateVideo}
+          editModelValue={videoEditModel}
+          editModelOptions={videoToolEditorMode === 'subject' ? videoSubjectRemovalModelOptions : videoSubtitleRemovalModelOptions}
+          editModelLoading={videoActionModelListLoading}
+          editModelError={videoActionModelListError?.message ?? null}
+          editExecutorAvailable={videoToolEditorMode === 'subject' ? videoSubjectRemovalModelOptions.length > 0 : videoSubtitleRemovalModelOptions.length > 0}
+          onEditModelChange={setVideoEditModel}
+          onEditSubmit={handleVideoEditSubmit}
+          onClose={() => setVideoToolEditorMode(null)}
+          onUnavailable={(mode) => {
+            if (mode === 'separation') {
+              showVideoCapabilityGap('音视频分离', '扩展媒体 worker 的 demux 导出合同：输出无声 MP4 与独立音频文件，分别上传 Assets，再创建 video/audio 子节点')
+              return
+            }
+            showVideoCapabilityGap(
+              mode === 'subject' ? '主体消除' : mode === 'subtitle-auto' ? '智能去字幕' : '框选去字幕',
+              mode === 'subject'
+                ? '当前模型目录没有发布主体消除能力；请在 new-api 配置 wan2.7-videoedit，或接入视频修复/时序 inpainting 执行器。'
+                : mode === 'subtitle-auto'
+                  ? '当前模型目录没有发布 volc-erase-video-subtitle；请在 new-api 配置 MediaKit 自动字幕擦除模型与价格。'
+                  : '当前模型目录没有发布 volc-erase-video-subtitle-pro；请在 new-api 配置 MediaKit 框选字幕擦除模型与价格.',
+            )
+          }}
+        />
+      )}
+
+      {/* ── 元素编辑（点选/框选/画笔 + 修改/移动）── */}
+      {elementEditOpen && primaryImageUrl && (
+        <LazyElementEditEditor
+          imageUrl={primaryImageUrl}
+          isDarkUi={isDarkUi}
+          onClose={() => setElementEditOpen(false)}
+          onConfirm={handleElementEditConfirm}
+        />
+      )}
+
+      {/* ── 人像质感调节（人物识别/手动框选 → 专用结果节点）── */}
+      {portraitTextureEditorOpen && primaryImageUrl && (
+        <LazyPortraitTextureEditor
+          imageUrl={primaryImageUrl}
+          isDarkUi={isDarkUi}
+          onClose={closePortraitTextureEditor}
+          onConfirm={handlePortraitTextureSelectionConfirm}
+        />
+      )}
+
+      {/* ── 情绪调节人物选择（真实人物识别/像素蒙版）── */}
+      {emotionPersonSelectorOpen && primaryImageUrl && (
+        <LazyPortraitTextureEditor
+          imageUrl={primaryImageUrl}
+          isDarkUi={isDarkUi}
+          purpose="emotion"
+          initialManualMode={emotionSelectorManual}
+          onClose={() => setEmotionPersonSelectorOpen(false)}
+          onConfirm={handleEmotionSelectionConfirm}
+        />
+      )}
+
+      {/* ── 蒙版画笔（重绘/擦除）── */}
+      {maskMode && primaryImageUrl && imageNaturalSize && (
+        <LazyMaskDrawingEditor
+          imageUrl={primaryImageUrl}
+          naturalWidth={imageNaturalSize.w}
+          naturalHeight={imageNaturalSize.h}
+          mode={maskMode}
+          isDarkUi={isDarkUi}
+          onClose={() => setMaskMode(null)}
+          onConfirm={handleMaskConfirm}
+        />
+      )}
+
+      {/* ── 标注覆盖层 ── */}
+      {annotateOpen && primaryImageUrl && imageNaturalSize && (
+        <LazyAnnotationEditor
+          imageUrl={primaryImageUrl}
+          naturalWidth={imageNaturalSize.w}
+          naturalHeight={imageNaturalSize.h}
+          isDarkUi={isDarkUi}
+          onClose={() => setAnnotateOpen(false)}
+          onSave={handleAnnotateSave}
+        />
+      )}
+
+      {isPlainTextNode && isSingleSelectionActive && !nodeReadOnly && !imagePresetConfirmKey && (
+        <LazyTaskNodeTextInlineToolbar
+          toolbarBackground={toolbarBackground}
+          toolbarShadow={toolbarShadow}
+          inlineDividerColor={inlineDividerColor}
+          applyHeading={applyHeading}
+          runRichCommand={runRichCommand}
+          applyList={applyList}
+          insertDivider={insertDivider}
+          textColorPickerOpen={textColorPickerOpen}
+          setTextColorPickerOpen={setTextColorPickerOpen}
+          textColor={textColor}
+          textBgPickerOpen={textBgPickerOpen}
+          setTextBgPickerOpen={setTextBgPickerOpen}
+          updateNodeData={updateNodeData}
+          nodeId={id}
+        />
       )}
       <TaskNodeHandles
         targets={targets}
@@ -8185,23 +10614,30 @@ const rewritePromptWithCharacters = React.useCallback(
         defaultInputType={defaultInputType}
         defaultOutputType={defaultOutputType}
         wideHandleBase={wideHandleBase}
-        showHandles={!isInnerStoryboardShotNode}
-        showWideHandles={!isInnerStoryboardShotNode}
+        showHandles
+        showWideHandles={!isWorkflowStageNode && !isWorkflowTriggerNode}
       />
-      {isResizableVisualNode && isSingleSelectionActive && !variantsOpen && (
+      {isResizableVisualNode && isSingleSelectionActive && !variantsOpen && !isRotatePreview && (
         <NodeResizeControl
           className="tc-task-node__media-resize nodrag"
           position="bottom-right"
-          keepAspectRatio={!isStoryboardEditorNode}
+          keepAspectRatio={!isStoryboardEditorNode && !isVideoComposeNode && !isStructuredWorkflowNode}
           minWidth={visualNodeDefaults.minWidth}
           minHeight={visualNodeDefaults.minHeight}
           onResizeEnd={handleMediaResizeEnd}
         >
-          <div className="tc-task-node__media-resize-handle" style={{ width: 10, height: 10, borderRight: '2px solid rgba(255,255,255,0.55)', borderBottom: '2px solid rgba(255,255,255,0.55)' }} />
+          <div className="tc-task-node__media-resize-handle" />
         </NodeResizeControl>
       )}
+      {isWorkflowPresetSelectorNode && (
+        <LazyWorkflowPresetSelector
+          nodeId={id}
+          data={data as Record<string, unknown>}
+          readOnly={nodeReadOnly || isRunning}
+        />
+      )}
       {isPlainTextNode && (
-        <TextContent
+        <LazyTextContent
           selected={isSingleSelectionActive}
           textEditorFocused={textEditorFocused}
           textBackgroundTint={textBackgroundTint}
@@ -8209,11 +10645,14 @@ const rewritePromptWithCharacters = React.useCallback(
           textFontSize={textFontSize}
           textFontWeight={textFontWeight as React.CSSProperties['fontWeight']}
           editorRef={textEditorRef}
+          readOnly={nodeReadOnly || isRunning}
           onFocus={() => {
             setTextEditorFocused(true)
           }}
           onInput={() => {
             if (textComposingRef.current) return
+            if (nodeReadOnly) return
+            textResizeRequestedRef.current = true
             syncTextNodeContent()
           }}
           onCompositionStart={() => {
@@ -8221,50 +10660,54 @@ const rewritePromptWithCharacters = React.useCallback(
           }}
           onCompositionEnd={() => {
             textComposingRef.current = false
+            if (nodeReadOnly) return
+            textResizeRequestedRef.current = true
             syncTextNodeContent()
           }}
           onBlur={() => {
             setTextEditorFocused(false)
+            if (nodeReadOnly) return
             syncTextNodeContent()
           }}
         />
       )}
       {/* Content Area for Character/Image/Video/Text kinds */}
       {featureBlocks}
-      {isProjectDocNode && !isResizableVisualNode && (
-        <Paper
-          className="tc-task-node__doc-preview"
-          radius="md"
-          withBorder
-          p="sm"
+      {isVideoComposeNode && upstreamComposeAudioTracks.length > 0 ? (
+        <Group
+          className="nodrag"
+          gap={6}
+          wrap="nowrap"
           style={{
-            marginTop: 8,
-            width: '100%',
-            background: isDarkUi ? 'rgba(12,17,28,0.88)' : 'rgba(248,250,255,0.95)',
+            marginTop: 6,
+            padding: '4px 8px',
+            borderRadius: 8,
+            background: 'rgba(16,185,129,0.08)',
+            border: '1px solid rgba(16,185,129,0.25)',
           }}
         >
-          <Stack className="tc-task-node__doc-preview-stack" gap={6}>
-            <Text className="tc-task-node__doc-preview-title" size="xs" c="dimmed">
-              {schema.label || '文稿'}预览
-            </Text>
-            <Text
-              className="tc-task-node__doc-preview-content"
-              size="sm"
-              style={{
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                lineHeight: 1.45,
-              }}
-            >
-              {docPreviewText || '当前文稿为空。选中节点后可在底部工具栏编辑，并保存到项目素材。'}
-            </Text>
-          </Stack>
-        </Paper>
+          <IconMusic size={13} style={{ color: '#10B981', flexShrink: 0 }} />
+          <Text size="xs" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            已连接 {upstreamComposeAudioTracks.length} 条音轨，合成时自动混入
+          </Text>
+        </Group>
+      ) : null}
+      {isVideoComposeNode && !isOrchestratedVideoClip && composeEditorOpen && (
+        <LazyVideoComposeEditorModal
+          opened
+          onClose={() => setComposeEditorOpen(false)}
+          upstreamVideos={upstreamVideos}
+          upstreamAudioTracks={upstreamComposeAudioTracks}
+          onComposeDone={handleComposeDone}
+          title={(data as any)?.smartEdit === true ? '智能剪辑' : '视频合成'}
+          initialSubtitles={(data as any)?.composeSubtitles}
+          onSubtitlesChange={(s) => updateNodeData(id, { composeSubtitles: s })}
+        />
       )}
-            {/* remove bottom kind text for all nodes */}
+      {/* remove bottom kind text for all nodes */}
       {/* Removed bottom tag list; top-left label identifies node type */}
       {/* Bottom detail panel near node */}
-      {showBottomToolbar && (
+      {showBottomToolbar && !imagePresetConfirmKey && !imageViewEditorOpen && (
         <NodeToolbar className="tc-task-node__toolbar" position={Position.Bottom} align="center">
           <div
             className={[
@@ -8276,7 +10719,7 @@ const rewritePromptWithCharacters = React.useCallback(
               zIndex: 3001,
               width: toolbarWidthCss,
               maxHeight: toolbarMaxHeightCss,
-              overflowY: 'auto',
+              overflowY: useMediaFocusToolbar ? 'hidden' : 'auto',
               overflowX: 'visible',
               transformOrigin: 'top center',
               transform: `scale(${toolbarScale})`,
@@ -8290,72 +10733,18 @@ const rewritePromptWithCharacters = React.useCallback(
             >
               {!useMediaFocusToolbar && controlChipsNode ? (
                 <div className="tc-task-node__toolbar-controls">
+                  {modelCatalogNotice}
                   {controlChipsNode}
                 </div>
               ) : null}
 
               <div className="tc-task-node__toolbar-body">
-                {isProjectDocNode && (
-                  <Paper
-                    className="tc-task-node__doc-material-panel"
-                    radius="md"
-                    p="xs"
-                    style={{ background: lightContentBackground }}
-                  >
-                    <Group className="tc-task-node__doc-material-row" justify="space-between" gap={8}>
-                      <Text className="tc-task-node__doc-material-text" size="xs" c="dimmed">
-                        {currentProject?.id
-                          ? `项目素材已关联：${currentProject.name || currentProject.id}`
-                          : '未关联项目：先在顶部选择项目'}
-                      </Text>
-                      <Button
-                        className="tc-task-node__doc-material-save"
-                        size="compact-xs"
-                        variant="light"
-                        onClick={() => void handleSaveProjectMaterial()}
-                        loading={materialSaving}
-                        disabled={!currentProject?.id}
-                      >
-                        保存素材
-                      </Button>
-                    </Group>
-                  </Paper>
-                )}
-
                 {!useMediaFocusToolbar && (
                   <StatusBanner status={status} lastError={(data as any)?.lastError} httpStatus={(data as any)?.httpStatus} />
                 )}
 
-                {isVideoNode && upstreamImageUrl && !useMediaFocusToolbar && (
-                  <div className="tc-task-node__composer-upstream">
-                    <div
-                      className="tc-task-node__composer-upstream-media"
-                      style={{
-                        position: 'relative',
-                        width: '100%',
-                        maxHeight: 180,
-                        borderRadius: 8,
-                        overflow: 'hidden',
-                        marginBottom: 0,
-                        border: 'none',
-                        background: darkContentBackground,
-                      }}
-                    >
-                      <img
-                        className="tc-task-node__composer-upstream-image"
-                        src={upstreamImageUrl}
-                        alt="上游图片素材"
-                        style={{
-                          width: '100%',
-                          height: 'auto',
-                          maxHeight: 180,
-                          objectFit: 'contain',
-                          display: 'block',
-                          backgroundColor: mediaFallbackSurface,
-                        }}
-                      />
-                    </div>
-                  </div>
+                {isOrchestratedVideoClip && (
+                  <LazyVideoContinuityInspector nodeId={id} data={data} />
                 )}
 
                 {connectedCharacterOptions.length > 0 && !useMediaFocusToolbar && (
@@ -8395,43 +10784,50 @@ const rewritePromptWithCharacters = React.useCallback(
                   </Paper>
                 )}
 
-                {showUpstreamReferenceStrip && (
-                  <UpstreamReferenceStrip
-                    targetNodeId={id}
-                    items={upstreamReferenceItems}
-                    onReorder={handleReorderUpstreamReference}
-                    onRemove={handleRemoveUpstreamReference}
-                    onToggleCanvasReferencePicker={handleToggleCanvasReferencePicker}
-                    canvasReferencePickerActive={canvasReferencePickerActive}
+                {useMediaFocusToolbar && (isImageNode || isVideoNode) && !isPortraitTextureNode ? (
+                  <LazyLibTvMediaQuickActions
+                    kind={isVideoNode ? 'video' : 'image'}
+                    disabled={nodeReadOnly || isRunning}
+                    referenceActive={canvasReferencePickerActive}
+                    markerActive={isVideoNode ? videoMarkers.length > 0 || videoMarkerOpen : annotateOpen}
+                    onReference={handleToggleCanvasReferencePicker}
+                    onMarker={handleOpenMediaMarker}
+                    onStyle={isImageNode ? () => setStyleImagePickerOpen(true) : undefined}
+                    onEffect={isVideoNode ? () => setMediaPromptLibraryKind('effect') : undefined}
+                    onCharacters={isVideoNode ? () => setCharacterLibraryOpen(true) : undefined}
+                    onCameraMovement={isVideoNode ? () => setMediaPromptLibraryKind('camera') : undefined}
+                    onFocus={handleFocusNode}
                   />
-                )}
+                ) : null}
 
-                {canUseStructuredPromptEditor && !isPlainTextNode && (
-                  <Group className="tc-task-node__prompt-mode-switch" justify="space-between" gap={8}>
-                    <Text className="tc-task-node__prompt-mode-switch-label" size="xs" c="dimmed">
-                      提示词编辑模式
-                    </Text>
-                    <Group className="tc-task-node__prompt-mode-switch-control" gap={8}>
-                      {structuredPromptRefineLoading ? (
-                        <Loader className="tc-task-node__prompt-mode-switch-loader" size="xs" />
-                      ) : null}
-                      <Switch
-                        className="tc-task-node__prompt-mode-switch-input"
-                        size="xs"
-                        checked={isStructuredPromptMode}
-                        disabled={viewOnly || structuredPromptRefineLoading}
-                        label="JSON"
-                        onChange={(event) => handleStructuredPromptModeChange(event.currentTarget.checked)}
-                      />
-                    </Group>
-                  </Group>
-                )}
+                {isPortraitTextureNode ? (
+                  <LazyPortraitTextureControls
+                    strength={normalizePortraitTextureStrength((data as Record<string, unknown>).portraitTextureStrength)}
+                    selectionConfirmed={(data as Record<string, unknown>).portraitTextureSelectionStatus === 'confirmed'}
+                    onStrengthChange={(strength) => {
+                      const normalizedStrength = normalizePortraitTextureStrength(strength)
+                      const currentOperationSpec = (data as Record<string, unknown>).imageOperationSpec
+                      updateNodeData(id, {
+                        portraitTextureStrength: normalizedStrength,
+                        ...(currentOperationSpec
+                          ? {
+                            imageOperationSpec: updateImageOperationParameters(currentOperationSpec, {
+                              strength: normalizedStrength,
+                            }),
+                          }
+                          : {}),
+                      })
+                    }}
+                  />
+                ) : null}
 
-                {isPlainTextNode ? null : isStructuredPromptMode ? (
-                  <StructuredPromptSection
+
+                {isPlainTextNode || isVideoComposeNode ? null : isStructuredPromptMode ? (
+                  <LazyStructuredPromptSection
                     structuredValue={structuredPromptValue}
                     loading={structuredPromptRefineLoading}
                     externalError={structuredPromptErrorMessage}
+                    readOnly={isOrchestratedVideoClip}
                     onCommit={handleCommitStructuredPrompt}
                     onRefine={
                       viewOnly
@@ -8442,58 +10838,30 @@ const rewritePromptWithCharacters = React.useCallback(
                     }
                   />
                 ) : (
-                  <PromptSection
+                  <LazyPromptSection
                     layout={useMediaFocusToolbar ? 'media-focus' : 'default'}
                     hideBrainButton={useMediaFocusToolbar || isVideoNode}
-                    hidePresetSection={useMediaFocusToolbar}
-                    hideAnchorBindingSection={useMediaFocusToolbar}
-                    isCharacterNode={isCharacterNode}
-                    isComposerNode={isComposerNode}
-                    isStoryboardNode={isStoryboardNode}
+                    readOnly={nodeReadOnly || isRunning || isOrchestratedVideoClip}
                     prompt={prompt}
                     setPrompt={setPrompt}
                     onUpdateNodeData={(patch) => updateNodeData(id, patch)}
                     placeholder={
-                      isVideoNode
-                        ? '描述这条视频要生成的画面、动作和情绪'
-                        : undefined
+                      (data as Record<string, unknown>).libTvImageOperationKey === 'portrait-adjust'
+                        ? '上传图片或输入补充描述，选择质感强度，让人物更自然、更真实'
+                        : isVideoNode
+                        ? '描述你想要生成的画面内容，@引用素材'
+                        : isImageNode
+                          ? '可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜'
+                          : undefined
                     }
-                    minRows={isVideoNode ? 3 : 2}
-                    maxRows={6}
-                    suggestionsAllowed={suggestionsAllowed}
-                    suggestionsEnabled={suggestionsEnabled}
-                    setSuggestionsEnabled={setSuggestionsEnabled}
-                    promptSuggestions={promptSuggestions}
-                    activeSuggestion={activeSuggestion}
-                    setActiveSuggestion={setActiveSuggestion}
-                    setPromptSuggestions={setPromptSuggestions}
-                    markPromptUsed={(value) => markDraftPromptUsed(value, 'sora').catch(() => {})}
+                    minRows={2}
                     mentionOpen={mentionOpen}
                     mentionItems={mentionItems}
-                    mentionLoading={mentionLoading}
-                    mentionFilter={mentionFilter}
                     setMentionFilter={setMentionFilter}
                     setMentionOpen={setMentionOpen}
                     mentionMetaRef={mentionMetaRef}
                     onMentionApplied={handleMentionApplied}
-                    showAssetBinding={Boolean(primaryBindableAsset?.url)}
-                    assetBindingId={assetBindingId}
-                    setAssetBindingId={setAssetBindingId}
-                    onBindPrimaryAssetReference={handleBindPrimaryAssetReference}
-                    bindAssetDisabled={!primaryBindableAsset?.url}
-                    bindAssetStatusText={assetBindStatusText}
-                    showAnchorBinding={hasAnchorBinding}
-                    anchorBindingKind={anchorBindingKind}
-                    setAnchorBindingKind={(value) => {
-                      if (!value) return
-                      setAnchorBindingKind(value as PublicFlowAnchorBindingKind)
-                    }}
-                    anchorBindingLabel={anchorBindingLabel}
-                    setAnchorBindingLabel={setAnchorBindingLabel}
-                    onBindPrimaryAnchor={() => { void handleBindPrimaryAnchor() }}
-                    bindAnchorLoading={bindAnchorLoading}
-                    bindAnchorDisabled={bindAnchorLoading || !primaryImageForAnchorBinding}
-                    bindAnchorStatusText={anchorBindStatusText}
+                    onPickFromLibrary={useMediaFocusToolbar ? undefined : handlePickFromLibrary}
                     isDarkUi={isDarkUi}
                     nodeShellText={nodeShellText}
                     onOpenPromptSamples={
@@ -8501,15 +10869,25 @@ const rewritePromptWithCharacters = React.useCallback(
                         ? undefined
                         : () => setPromptSamplesOpen(true)
                     }
-                    presetOptions={allowNodePresetForPrompt ? promptPresetOptions : undefined}
-                    presetValue={allowNodePresetForPrompt ? selectedPresetId : null}
-                    presetDisabled={viewOnly}
-                    onPresetChange={allowNodePresetForPrompt ? handlePresetChange : undefined}
-                    onOpenCreatePresetModal={
-                      allowNodePresetForPrompt && !viewOnly
-                        ? () => setPresetModalOpen(true)
+                    promptLibraryMediaType={
+                      isVideoNode
+                        ? 'video'
+                        : isImageNode || kind === 'imageEdit'
+                          ? 'image'
+                          : undefined
+                    }
+                    onSelectPromptLibraryPrompt={
+                      isVideoNode || isImageNode || kind === 'imageEdit'
+                        ? handleApplyPromptLibraryEntry
                         : undefined
                     }
+                    promptInputMinHeight={
+                      typeof (data as any).promptInputMinHeight === 'number'
+                        ? (data as any).promptInputMinHeight
+                        : undefined
+                    }
+                    canvasScale={toolbarScale}
+                    projectId={String(currentProject?.id || '')}
                   />
                 )}
 
@@ -8527,6 +10905,7 @@ const rewritePromptWithCharacters = React.useCallback(
                       ) : null}
                       {mediaFocusControlChipsNode ? (
                         <div className="tc-task-node__toolbar-controls-main">
+                          {modelCatalogNotice}
                           {mediaFocusControlChipsNode}
                         </div>
                       ) : null}
@@ -8538,74 +10917,64 @@ const rewritePromptWithCharacters = React.useCallback(
           </div>
         </NodeToolbar>
       )}
-	      <PromptSampleDrawer
-	        opened={promptSamplesOpen}
-	        nodeKind={kind}
-	        onClose={() => setPromptSamplesOpen(false)}
-        onApplySample={handleApplyPromptSample}
-      />
-      <Modal
-        className="task-node-preset-modal"
-        opened={presetModalOpen}
-        onClose={() => setPresetModalOpen(false)}
-        title="新增预设能力"
-        centered
-        size="md"
-      >
-        <Stack className="task-node-preset-modal__stack" gap="sm">
-          <Select
-            className="task-node-preset-modal__type"
-            label="类型"
-            data={[
-              { value: 'text', label: '文本' },
-              { value: 'image', label: '图片' },
-              { value: 'video', label: '视频' },
-            ]}
-            value={newPresetType}
-            onChange={(value) => setNewPresetType((value as LlmNodePresetType) || 'text')}
-            allowDeselect={false}
-          />
-          <TextInput
-            className="task-node-preset-modal__title"
-            label="预设名称"
-            placeholder="例如：产品卖点增强"
-            value={newPresetTitle}
-            onChange={(e) => setNewPresetTitle(e.currentTarget.value)}
-          />
-          <Textarea
-            className="task-node-preset-modal__prompt"
-            label="提示词"
-            placeholder="输入该预设的提示词模板"
-            minRows={5}
-            value={newPresetPrompt}
-            onChange={(e) => setNewPresetPrompt(e.currentTarget.value)}
-          />
-          <Group className="task-node-preset-modal__actions" justify="flex-end" gap="xs">
-            <Button
-              className="task-node-preset-modal__cancel"
-              variant="subtle"
-              onClick={() => setPresetModalOpen(false)}
-            >
-              取消
-            </Button>
-            <Button
-              className="task-node-preset-modal__save"
-              onClick={() => { void handleCreateNodePreset() }}
-              loading={presetSaving}
-            >
-              保存预设
-            </Button>
-          </Group>
-          {presetLoading && (
-            <Text className="task-node-preset-modal__loading" size="xs" c="dimmed">
-              正在同步预设列表...
-            </Text>
-          )}
-        </Stack>
-      </Modal>
-
+      {pendingIntentConfig !== null ? (
+        <LazyIntentConfigModal
+          opened
+          onCancel={() => setPendingIntentConfig(null)}
+          onConfirm={({ imageModel, imageSize }) => {
+            if (!pendingIntentConfig) return
+            persistRecentGenerationPrefs({ imageModel, imageSize })
+            void dispatchIntent(pendingIntentConfig.intent, id, {
+              chapterContext: pendingIntentConfig.chapterContext,
+              generationConfig: { imageModel, imageSize },
+            })
+            setPendingIntentConfig(null)
+          }}
+        />
+      ) : null}
+      {promptSamplesOpen ? (
+        <LazyPromptSampleDrawer
+          opened
+          nodeKind={kind}
+          onClose={() => setPromptSamplesOpen(false)}
+          onApplySample={handleApplyPromptSample}
+        />
+      ) : null}
+      {stylePickerOpen ? (
+        <LazyImagePickerModal
+          opened
+          onClose={() => setStylePickerOpen(false)}
+          onSelect={handleStylePickerSelect}
+        />
+      ) : null}
+      {styleImagePickerOpen ? (
+        <LazyStyleImagePickerModal
+          opened
+          onClose={() => setStyleImagePickerOpen(false)}
+          onConfirm={handleStyleImageConfirm}
+          projectId={currentProject?.id ?? null}
+          teamId={currentProject?.teamId ?? null}
+          currentStyleImages={styleImages}
+          onRemoveCurrent={handleStyleImageRemove}
+        />
+      ) : null}
+      {mediaPromptLibraryKind ? (
+        <LazyMediaPromptLibraryModal
+          opened
+          kind={mediaPromptLibraryKind}
+          onClose={() => setMediaPromptLibraryKind(null)}
+          onSelect={handleSelectMediaPromptLibraryItem}
+        />
+      ) : null}
+      {characterLibraryOpen ? (
+        <LazyAiCharacterLibraryModal
+          opened
+          onClose={() => setCharacterLibraryOpen(false)}
+          onApplyToCanvas={handleApplyCharacterFromLibrary}
+        />
+      ) : null}
       {veoImageModalMode && (
-        <VeoImageModal
+        <LazyVeoImageModal
           opened
           mode={veoImageModalMode}
           statusColor={color}
@@ -8625,21 +10994,36 @@ const rewritePromptWithCharacters = React.useCallback(
           onSetFirstFrameUrl={handleSetFirstFrameUrl}
           onSetLastFrameUrl={handleSetLastFrameUrl}
           onToggleReference={handleReferenceToggle}
+          continueToLastFrame={continueVeoSelectionToLastFrame}
+          onContinueToLastFrame={() => {
+            setContinueVeoSelectionToLastFrame(false)
+            setVeoImageModalMode('last')
+          }}
         />
       )}
 
-      {poseEditorModal}
+      {isVideoNode && videoMarkerOpen ? (
+        <LazyVideoMarkerToolbar
+          opened
+          currentTimeSeconds={videoMarkerPlayback.currentTime}
+          durationSeconds={videoMarkerPlayback.duration}
+          markerCount={videoMarkers.length}
+          saving={videoMarkerSaving}
+          onClose={() => setVideoMarkerOpen(false)}
+          onSave={(draft) => { void handleSaveVideoMarker(draft) }}
+        />
+      ) : null}
+
       {imageViewEditorModal}
+      {imageViewLightingToolbar}
 
       {isVideoNode && videoExpanded && (
-        <VideoResultModal
-          opened={videoExpanded}
+        <LazyVideoResultModal
+          opened
           onClose={() => setVideoExpanded(false)}
           videos={videoResults}
           primaryIndex={videoPrimaryIndex}
-          adoptedIndex={adoptedVideoIndex}
           onSelectPrimary={handleSetPrimaryVideo}
-          onAdopt={handleAdoptVideo}
           onPreview={(video) => {
             const openPreview = useUIStore.getState().openPreview
             openPreview({
@@ -8651,25 +11035,83 @@ const rewritePromptWithCharacters = React.useCallback(
           galleryCardBackground={galleryCardBackground}
           mediaFallbackSurface={mediaFallbackSurface}
           mediaFallbackText={mediaFallbackText}
-          isStoryboardNode={isStoryboardNode}
         />
       )}
 
-      {/* More panel rendered directly under the top toolbar with 4px gap */}
+      {/* Multi-angle editor for regular image nodes (NodeToolbar, attaches below node) */}
+      {!isPanoramic && (kind === 'image' || kind === 'imageEdit') && imageNodeMultiAngleOpen && (
+        <PanoramicMultiAngleEditor
+          isOpen={true}
+          imageUrl={primaryImageUrl}
+          camera={imageNodeCamera}
+          viewerRef={null}
+          prompt={imageNodeMultiAnglePrompt}
+          onCameraChange={setImageNodeCamera}
+          onPromptChange={setImageNodeMultiAnglePrompt}
+          onCapture={handleImageNodeMultiAngleCapture}
+          onClose={() => setImageNodeMultiAngleOpen(false)}
+          loading={imageNodeMultiAngleGenerating}
+          creditCost={panoramicCredits > 0 ? panoramicCredits : undefined}
+        />
+      )}
+
+      {/* Grid split mode: overlay is rendered inside ImageContent, toolbar above via NodeToolbar */}
+
+      {isPanoramic && panoramicFullscreenOpen && createPortal(
+        <div
+          className="nodrag nopan"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 8900,
+            background: '#000',
+          }}
+        >
+          <PanoramicViewer
+            imageUrl={primaryImageUrl}
+            camera={panoramicCamera}
+            showGrid={panoramicGridVisible}
+            onCameraChange={handlePanoramicCameraChange}
+          />
+          <button
+            onClick={() => setPanoramicFullscreenOpen(false)}
+            style={{
+              position: 'absolute',
+              top: 16,
+              right: 16,
+              zIndex: 1,
+              background: 'rgba(0,0,0,0.6)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              color: '#fff',
+              borderRadius: 8,
+              padding: '6px 14px',
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+          >
+            关闭全屏
+          </button>
+        </div>,
+        document.body,
+      )}
+
+      {saveToLibraryOpen ? (
+        <LazySaveToLibraryModal
+          open
+          onClose={() => setSaveToLibraryOpen(false)}
+          projectId={String(currentProject?.id || '')}
+          imageUrl={primaryImageUrl || ''}
+          nodeName={currentLabel}
+          teamId={currentProject?.teamId ?? null}
+        />
+      ) : null}
+
+      </div>
     </div>
   )
 }
 
-const areTaskNodePropsEqual = (prev: NodeProps<TaskNodeType>, next: NodeProps<TaskNodeType>) => {
-  if (prev.id !== next.id) return false
-  if (prev.selected !== next.selected) return false
-  if (prev.dragging !== next.dragging) return false
-  if (prev.data !== next.data) return false
-  if (prev.width !== next.width) return false
-  if (prev.height !== next.height) return false
-  if (prev.isConnectable !== next.isConnectable) return false
-  if (prev.parentId !== next.parentId) return false
-  return true
-}
-
+// Default export is the HEAVY interactive body, loaded as a lazy chunk by TaskNodeCard (the eager
+// node-type entry registered with React Flow). Only TaskNodeCard should reference it, via
+// React.lazy(() => import('./TaskNode')); importing it directly pulls in the full ~10k-line editor.
 export default React.memo(TaskNodeInner, areTaskNodePropsEqual)

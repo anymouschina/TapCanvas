@@ -62,11 +62,11 @@ const TEXTUAL_NODE_SIZE = { w: 420, h: 240 }
 const IMAGE_NODE_SIZE = { w: 420, h: 280 }
 const VIDEO_NODE_SIZE = { w: 460, h: 260 }
 const SMALL_NODE_SIZE = { w: 320, h: 180 }
-const INTERNAL_GAP_X = 56
-const INTERNAL_GAP_Y = 40
+const INTERNAL_GAP_X = 32
+const INTERNAL_GAP_Y = 32
 const GROUP_OUTER_PADDING = 16
-const GROUP_GAP_X = 140
-const GROUP_GAP_Y = 120
+const GROUP_GAP_X = 80
+const GROUP_GAP_Y = 80
 const MIN_DISTANCE_X = 220
 const MIN_DISTANCE_Y = 140
 
@@ -79,9 +79,16 @@ const PRODUCTION_LAYER_ORDER: Record<ProductionLayer, number> = {
   evidence: 0,
   constraints: 1,
   anchors: 2,
-  expansion: 3,
-  execution: 4,
-  results: 5,
+  preproduction: 3,
+  draft: 4,
+  expansion: 5,
+  blocking_diagram: 6,
+  keyframe: 7,
+  execution: 8,
+  results: 9,
+  design_board: 10,
+  master_board: 11,
+  preview: 12,
 }
 
 function getNodeKind(node: LayoutPlanNode): string {
@@ -305,15 +312,15 @@ function applyDirectedLayout(nodes: LayoutPlanNode[], edges: LayoutPlanEdge[]): 
 
 function applyColumnLayout(nodes: LayoutPlanNode[]): SizedNode[] {
   const sorted = [...nodes].sort(comparePlanNodes)
-  let cursorY = 0
+  let cursorX = 0
   return sorted.map((node) => {
     const layoutSize = estimateNodeSize(node)
     const positioned: SizedNode = {
       ...node,
       layoutSize,
-      position: { x: 0, y: cursorY },
+      position: { x: cursorX, y: 0 },
     }
-    cursorY += layoutSize.h + INTERNAL_GAP_Y
+    cursorX += layoutSize.w + INTERNAL_GAP_X
     return positioned
   })
 }
@@ -366,9 +373,7 @@ function applyHybridLaneLayout(nodes: LayoutPlanNode[]): SizedNode[] {
 function layoutGroupNodes(nodes: LayoutPlanNode[], edges: LayoutPlanEdge[]): SizedNode[] {
   const kinds = nodes.map(getNodeKind)
   const allTextual = kinds.every((kind) => PLAN_TEXTUAL_KINDS.has(kind))
-  const allStoryboardShots = false
   if (allTextual) return applyColumnLayout(nodes)
-  if (allStoryboardShots) return applyStoryboardStripLayout(nodes)
   return applyDirectedLayout(nodes, edges) ?? applyHybridLaneLayout(nodes)
 }
 

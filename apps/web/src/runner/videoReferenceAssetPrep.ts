@@ -1,4 +1,5 @@
 import { uploadServerAssetFile, type TaskKind } from '../api/server'
+import { isTapCanvasHostedUploadUrl } from '../canvas/nodes/taskNode/hostedUploadUrl'
 
 export type PreparedVideoReferenceAssetRole = 'target' | 'reference'
 
@@ -180,6 +181,17 @@ async function uploadPreparedReferenceAsset(input: {
   prompt?: string
   taskKind: TaskKind
 }): Promise<PreparedVideoReferenceAsset> {
+  // 已在自有 TOS 上的图片直接复用，不重复下载/填充/上传
+  if (isTapCanvasHostedUploadUrl(input.sourceUrl)) {
+    return {
+      assetId: '',
+      url: input.sourceUrl,
+      role: input.role === 'target' ? 'target' : 'reference',
+      sourceUrl: input.sourceUrl,
+      width: input.targetWidth,
+      height: input.targetHeight,
+    }
+  }
   const file = await buildPaddedReferenceFile({
     sourceUrl: input.sourceUrl,
     targetWidth: input.targetWidth,

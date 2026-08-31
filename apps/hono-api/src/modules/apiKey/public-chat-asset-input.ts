@@ -8,6 +8,8 @@ export const PUBLIC_CHAT_ASSET_ROLES = [
 	"target",
 	"reference",
 	"character",
+	"scene",
+	"prop",
 	"product",
 	"style",
 	"context",
@@ -17,15 +19,20 @@ export const PUBLIC_CHAT_ASSET_ROLES = [
 export type PublicChatAssetRole = (typeof PUBLIC_CHAT_ASSET_ROLES)[number];
 
 export type PublicChatAssetInput = {
+	nodeId?: string;
 	assetId?: string;
+	assetRefId?: string;
 	url?: string;
 	role?: PublicChatAssetRole;
 	weight?: number;
 	note?: string;
+	name?: string;
 };
 
 export type NormalizedPublicChatAssetInput = {
+	nodeId: string | null;
 	assetId: string | null;
+	assetRefId: string | null;
 	url: string;
 	role: PublicChatAssetRole;
 	weight: number | null;
@@ -114,30 +121,44 @@ export class PublicChatAssetInputNormalizer {
 		for (const item of value) {
 			if (!item || typeof item !== "object") continue;
 			const input = item as PublicChatAssetInput;
+			const nodeId =
+				typeof input.nodeId === "string" && input.nodeId.trim()
+					? input.nodeId.trim().slice(0, 160)
+					: "";
 			const assetId =
 				typeof input.assetId === "string" && input.assetId.trim()
 					? input.assetId.trim()
+					: "";
+			const assetRefId =
+				typeof input.assetRefId === "string" && input.assetRefId.trim()
+					? input.assetRefId.trim().slice(0, 160)
 					: "";
 			const role = normalizeAssetRole(input.role);
 			const note = normalizeNote(input.note);
 			const weight = normalizeWeight(input.weight);
 
 			let resolvedUrl = toAbsoluteHttpUrl(input.url, opts.origin);
-			let resolvedName: string | null = null;
+			let resolvedName =
+				typeof input.name === "string" && input.name.trim()
+					? input.name.trim().slice(0, 200)
+					: null;
 			if (assetId) {
 				const row = await getAssetByIdForUser(opts.db, assetId, opts.userId);
-				if (!row) continue;
-				const fromAsset = extractAssetPrimaryUrl(row, opts.origin);
-				if (fromAsset) resolvedUrl = fromAsset;
-				resolvedName =
-					typeof row.name === "string" && row.name.trim() ? row.name.trim() : null;
+				if (row) {
+					const fromAsset = extractAssetPrimaryUrl(row, opts.origin);
+					if (fromAsset) resolvedUrl = fromAsset;
+					resolvedName =
+						typeof row.name === "string" && row.name.trim() ? row.name.trim() : resolvedName;
+				}
 			}
 			if (!resolvedUrl || resolvedUrl.length > 2048) continue;
-			const dedupeKey = `${role}|${resolvedUrl}`;
+			const dedupeKey = `${role}|${nodeId}|${assetId}|${assetRefId}|${resolvedUrl}`;
 			if (seen.has(dedupeKey)) continue;
 			seen.add(dedupeKey);
 			out.push({
+				nodeId: nodeId || null,
 				assetId: assetId || null,
+				assetRefId: assetRefId || null,
 				url: resolvedUrl,
 				role,
 				weight,
@@ -149,4 +170,3 @@ export class PublicChatAssetInputNormalizer {
 		return out;
 	}
 }
-

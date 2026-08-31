@@ -3,7 +3,6 @@ package controller
 import (
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -26,9 +25,9 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 		baseURL = channel.GetBaseURL()
 	}
 
-	adaptor := relay.GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channel.Type)))
+	adaptor := relay.GetTaskAdaptor(task.Platform)
 	if adaptor == nil {
-		return "", fmt.Errorf("gemini task adaptor not found")
+		return "", fmt.Errorf("task adaptor %q not found", task.Platform)
 	}
 
 	if apiKey == "" {
@@ -161,9 +160,9 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 		baseURL = channel.GetBaseURL()
 	}
 
-	adaptor := relay.GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channel.Type)))
+	adaptor := relay.GetTaskAdaptor(task.Platform)
 	if adaptor == nil {
-		return "", fmt.Errorf("vertex task adaptor not found")
+		return "", fmt.Errorf("task adaptor %q not found", task.Platform)
 	}
 
 	key := getVertexTaskKey(channel, task)

@@ -1,10 +1,12 @@
 import React from 'react'
-import { ActionIcon, Avatar, Badge, Button, Divider, Group, Loader, Modal, NumberInput, Pagination, Paper, Select, Stack, Switch, Table, Text, TextInput, Tooltip, Title } from '@mantine/core'
-import { IconRefresh, IconSearch, IconSettings, IconTrash } from '@tabler/icons-react'
-import { adjustAdminUserTeamCredits, deleteAdminUser, listAdminUsers, updateAdminUser, type AdminUserDto } from '../api/server'
+import { ActionIcon, Avatar, Badge, Button, Divider, Group, Loader, Modal, NumberInput, Pagination, Paper, Select, Stack, Switch, Table, Tabs, Text, TextInput, Tooltip, Title } from '@mantine/core'
+import { IconCrown, IconHistory, IconRefresh, IconSearch, IconSettings, IconTrash } from '@tabler/icons-react'
+import { adjustAdminUserCredits, deleteAdminUser, listAdminUsers, listCommerceProducts, setAdminUserMembership, updateAdminUser, type AdminUserDto, type CommerceProductDto } from '../api/server'
 import { useAuth } from '../auth/store'
 import { PanelCard } from './PanelCard'
 import { toast } from './toast'
+import UserCreditsDrawer from './userAdmin/UserCreditsDrawer'
+import AdminCreditGrantRecords from './userAdmin/AdminCreditGrantRecords'
 
 const PAGE_SIZE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '20', label: '20 / 页' },
@@ -29,9 +31,72 @@ function formatCredits(value?: number | null): string {
   return String(Math.max(0, n))
 }
 
+type PersonalPlanOption = {
+  value: string
+  label: string
+  productId: string
+  skuId: string | null
+  durationDays: number
+}
+
+function parseProductConfig(product: CommerceProductDto): Record<string, unknown> {
+  if (!product.entitlementConfigJson) return {}
+  try {
+    const parsed: unknown = JSON.parse(product.entitlementConfigJson)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function buildPersonalPlanOptions(products: CommerceProductDto[]): PersonalPlanOption[] {
+  return products.flatMap<PersonalPlanOption>((product) => {
+    const config = parseProductConfig(product)
+    const baseDurationDays = Math.max(1, Math.trunc(Number(config.durationDays ?? 30)))
+    const skuConfigs = config.skuConfigs && typeof config.skuConfigs === 'object' && !Array.isArray(config.skuConfigs)
+      ? config.skuConfigs as Record<string, unknown>
+      : {}
+    if (!product.skus.length) {
+      return [{ value: product.id, label: product.title, productId: product.id, skuId: null, durationDays: baseDurationDays }]
+    }
+    return product.skus.filter((sku) => sku.status === 'active').map((sku) => {
+      const skuConfig = skuConfigs[sku.id] && typeof skuConfigs[sku.id] === 'object'
+        ? skuConfigs[sku.id] as Record<string, unknown>
+        : {}
+      return {
+        value: `${product.id}:${sku.id}`,
+        label: `${product.title} / ${sku.name}`,
+        productId: product.id,
+        skuId: sku.id,
+        durationDays: Math.max(1, Math.trunc(Number(skuConfig.durationDays ?? baseDurationDays))),
+      }
+    })
+  })
+}
+
+function addDaysAsLocalInput(days: number): string {
+  const date = new Date(Date.now() + Math.max(1, days) * 86_400_000)
+  const offsetMs = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16)
+}
+
+function isoAsLocalInput(value: string): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return ''
+  const offsetMs = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16)
+}
+
+function planValueFromCode(planCode: string): string {
+  const parts = planCode.split(':')
+  if (parts[0] !== 'membership' || !parts[1]) return ''
+  return parts[2] && parts[2] !== 'default' ? `${parts[1]}:${parts[2]}` : parts[1]
+}
+
 export default function StatsUserManagement({ className }: { className?: string }): JSX.Element {
   const rootClassName = ['stats-users', className].filter(Boolean).join(' ')
   const currentUserId = useAuth((s) => (s.user?.sub ? String(s.user.sub) : ''))
+  const [activeTab, setActiveTab] = React.useState<'accounts' | 'grants'>('accounts')
 
   const [q, setQ] = React.useState('')
   const [includeDeleted, setIncludeDeleted] = React.useState(false)
@@ -47,6 +112,23 @@ export default function StatsUserManagement({ className }: { className?: string 
   const [creditsDelta, setCreditsDelta] = React.useState<number | ''>(100)
   const [creditsNote, setCreditsNote] = React.useState('')
   const [creditsSubmitting, setCreditsSubmitting] = React.useState(false)
+
+  const [membershipOpen, setMembershipOpen] = React.useState(false)
+  const [membershipUser, setMembershipUser] = React.useState<AdminUserDto | null>(null)
+  const [personalPlanOptions, setPersonalPlanOptions] = React.useState<PersonalPlanOption[]>([])
+  const [selectedPlanValue, setSelectedPlanValue] = React.useState('')
+  const [membershipEndAt, setMembershipEndAt] = React.useState('')
+  const [membershipPlansLoading, setMembershipPlansLoading] = React.useState(false)
+  const [membershipSubmitting, setMembershipSubmitting] = React.useState(false)
+
+  const [logsOpen, setLogsOpen] = React.useState(false)
+  const [logsUser, setLogsUser] = React.useState<AdminUserDto | null>(null)
+
+  const openLogs = (u: AdminUserDto) => {
+    if (!u?.id) return
+    setLogsUser(u)
+    setLogsOpen(true)
+  }
 
   const reload = React.useCallback(async () => {
     setLoading(true)
@@ -90,10 +172,6 @@ export default function StatsUserManagement({ className }: { className?: string 
       toast('游客账号没有可调整积分（请先注册/登录）', 'error')
       return
     }
-    if (!u.teamId) {
-      toast('该用户暂无可调整的团队积分账户', 'error')
-      return
-    }
     setCreditsUser(u)
     setCreditsDelta(100)
     setCreditsNote('')
@@ -103,8 +181,6 @@ export default function StatsUserManagement({ className }: { className?: string 
   const submitCredits = async () => {
     const u = creditsUser
     if (!u?.id) return
-    if (!u.teamId) return
-
     const delta = typeof creditsDelta === 'number' && Number.isFinite(creditsDelta) ? Math.trunc(creditsDelta) : 0
     if (!delta) {
       toast('请填写非 0 的调整值', 'error')
@@ -114,17 +190,73 @@ export default function StatsUserManagement({ className }: { className?: string 
     setCreditsSubmitting(true)
     markUpdating(u.id, true)
     try {
-      const updated = await adjustAdminUserTeamCredits(u.id, { delta, ...(creditsNote.trim() ? { note: creditsNote.trim() } : {}) })
+      const updated = await adjustAdminUserCredits(u.id, { delta, ...(creditsNote.trim() ? { note: creditsNote.trim() } : {}) })
       setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))
       setCreditsUser(updated)
       setCreditsOpen(false)
       toast('已保存', 'success')
     } catch (err: unknown) {
-      console.error('adjust team credits failed', err)
+      console.error('adjust personal credits failed', err)
       toast(err instanceof Error ? err.message : '保存失败', 'error')
     } finally {
       setCreditsSubmitting(false)
       markUpdating(u.id, false)
+    }
+  }
+
+  const openMembershipEditor = async (u: AdminUserDto): Promise<void> => {
+    if (u.deletedAt || u.guest) return
+    setMembershipUser(u)
+    setSelectedPlanValue(u.membership ? planValueFromCode(u.membership.planCode) : '')
+    setMembershipEndAt(u.membership ? isoAsLocalInput(u.membership.endAt) : addDaysAsLocalInput(30))
+    setMembershipOpen(true)
+    setMembershipPlansLoading(true)
+    try {
+      const response = await listCommerceProducts({ status: 'active', entitlementType: 'membership', page: 1, size: 100 })
+      const options = buildPersonalPlanOptions(response.items)
+      setPersonalPlanOptions(options)
+      if (!u.membership && options[0]) {
+        setSelectedPlanValue(options[0].value)
+        setMembershipEndAt(addDaysAsLocalInput(options[0].durationDays))
+      }
+    } catch (error: unknown) {
+      setPersonalPlanOptions([])
+      toast(error instanceof Error ? error.message : '加载个人套餐失败', 'error')
+    } finally {
+      setMembershipPlansLoading(false)
+    }
+  }
+
+  const submitMembership = async (): Promise<void> => {
+    const user = membershipUser
+    if (!user) return
+    const option = personalPlanOptions.find((item) => item.value === selectedPlanValue) ?? null
+    if (!option) {
+      if (!user.membership) {
+        toast('请选择个人套餐', 'error')
+        return
+      }
+      if (!window.confirm(`确定取消「${user.login}」当前的个人套餐？`)) return
+    }
+    const endAt = option ? new Date(membershipEndAt) : null
+    if (option && (!endAt || !Number.isFinite(endAt.getTime()) || endAt <= new Date())) {
+      toast('套餐有效期必须晚于当前时间', 'error')
+      return
+    }
+    setMembershipSubmitting(true)
+    markUpdating(user.id, true)
+    try {
+      const updated = await setAdminUserMembership(user.id, option
+        ? { productId: option.productId, skuId: option.skuId, endAt: endAt?.toISOString() }
+        : { productId: null })
+      setItems((current) => current.map((item) => item.id === updated.id ? updated : item))
+      setMembershipOpen(false)
+      toast(option ? '个人套餐与有效期已更新' : '个人套餐已取消', 'success')
+    } catch (error: unknown) {
+      toast(error instanceof Error ? error.message : '更新个人套餐失败', 'error')
+    } finally {
+      setMembershipSubmitting(false)
+      markUpdating(user.id, false)
     }
   }
 
@@ -198,9 +330,9 @@ export default function StatsUserManagement({ className }: { className?: string 
       <Group className="stats-users-header" justify="space-between" align="center">
         <Stack className="stats-users-header-left" gap={2}>
           <Title className="stats-users-title" order={4}>用户管理</Title>
-          <Text className="stats-users-subtitle" size="xs" c="dimmed">设置管理员 / 禁用 / 删除账号 / 调整积分（个人账户或团队共享；删除=逻辑删除；设置管理员后用户需重新登录）</Text>
+          <Text className="stats-users-subtitle" size="xs" c="dimmed">管理个人账号、个人套餐、有效期与积分；团队共享账号及协作席位请在团队管理中调整。</Text>
         </Stack>
-        <Group className="stats-users-header-right" gap={8} align="center">
+        {activeTab === 'accounts' ? <Group className="stats-users-header-right" gap={8} align="center">
           <TextInput
             className="stats-users-search"
             value={q}
@@ -230,9 +362,19 @@ export default function StatsUserManagement({ className }: { className?: string 
               <IconRefresh className="stats-users-refresh-icon" size={14} />
             </ActionIcon>
           </Tooltip>
-        </Group>
+        </Group> : null}
       </Group>
 
+      <Tabs className="stats-users-tabs" value={activeTab} onChange={(value) => {
+        if (value === 'accounts' || value === 'grants') setActiveTab(value)
+      }}>
+        <Tabs.List className="stats-users-tabs-list">
+          <Tabs.Tab className="stats-users-tab" value="accounts">账号</Tabs.Tab>
+          <Tabs.Tab className="stats-users-tab" value="grants">积分发放记录</Tabs.Tab>
+        </Tabs.List>
+      </Tabs>
+
+      {activeTab === 'grants' ? <AdminCreditGrantRecords /> : <>
       <Divider className="stats-users-divider" my="sm" />
 
       {loading ? (
@@ -266,7 +408,7 @@ export default function StatsUserManagement({ className }: { className?: string 
           </Group>
 
           <div className="stats-users-table-wrap" style={{ width: '100%', minWidth: 0, overflowX: 'auto' }}>
-            <Table className="stats-users-table" striped highlightOnHover withTableBorder withColumnBorders style={{ minWidth: 1160 }}>
+            <Table className="stats-users-table" striped highlightOnHover withTableBorder withColumnBorders style={{ minWidth: 1320 }}>
               <Table.Thead className="stats-users-table-head">
                 <Table.Tr className="stats-users-table-head-row">
                   <Table.Th className="stats-users-table-head-cell">用户</Table.Th>
@@ -274,6 +416,7 @@ export default function StatsUserManagement({ className }: { className?: string 
                   <Table.Th className="stats-users-table-head-cell">手机号</Table.Th>
                   <Table.Th className="stats-users-table-head-cell">状态</Table.Th>
                   <Table.Th className="stats-users-table-head-cell">积分</Table.Th>
+                  <Table.Th className="stats-users-table-head-cell">个人套餐</Table.Th>
                   <Table.Th className="stats-users-table-head-cell">最近在线</Table.Th>
                   <Table.Th className="stats-users-table-head-cell">创建时间</Table.Th>
                   <Table.Th className="stats-users-table-head-cell">ID</Table.Th>
@@ -284,7 +427,7 @@ export default function StatsUserManagement({ className }: { className?: string 
               <Table.Tbody className="stats-users-table-body">
                 {items.length === 0 ? (
                   <Table.Tr className="stats-users-table-row-empty">
-                    <Table.Td className="stats-users-table-cell-empty" colSpan={9}>
+                    <Table.Td className="stats-users-table-cell-empty" colSpan={10}>
                       <Text className="stats-users-empty" size="sm" c="dimmed">暂无用户</Text>
                     </Table.Td>
                   </Table.Tr>
@@ -303,7 +446,7 @@ export default function StatsUserManagement({ className }: { className?: string 
                             <Group className="stats-users-user-line" gap={8} align="center">
                               <Text className="stats-users-login" size="sm" fw={600}>{u.login || '—'}</Text>
                               {u.role === 'admin' && (<Badge className="stats-users-admin-badge" size="xs" variant="light" color="gray">admin</Badge>)}
-                              {u.guest && (<Badge className="stats-users-guest-badge" size="xs" variant="light" color="blue">guest</Badge>)}
+                              {u.guest && (<Badge className="stats-users-guest-badge" size="xs" variant="light" color="gray">guest</Badge>)}
                               {isSelf && (<Badge className="stats-users-self-badge" size="xs" variant="light" color="teal">me</Badge>)}
                             </Group>
                             <Text className="stats-users-name" size="xs" c="dimmed">{u.name || '—'}</Text>
@@ -332,27 +475,39 @@ export default function StatsUserManagement({ className }: { className?: string 
                       </Table.Td>
 
                       <Table.Td className="stats-users-table-cell">
-                        {u.teamId ? (
+                        {u.accountId ? (
                           <Stack className="stats-users-credits" gap={2}>
                             <Text className="stats-users-credits-team" size="xs" c="dimmed">
-                              {u.teamName || u.teamId.slice(0, 8)}
+                              {u.accountName || u.accountId.slice(0, 8)}
                             </Text>
                             <Group className="stats-users-credits-badges" gap={6} wrap="wrap">
-                              <Badge className="stats-users-credits-available" size="xs" variant="light" color={(u.teamCreditsAvailable || 0) > 0 ? 'grape' : 'gray'}>
-                                可用 {formatCredits(u.teamCreditsAvailable)}
+                              <Badge className="stats-users-credits-available" size="xs" variant="light" color={(u.creditsAvailable || 0) > 0 ? 'grape' : 'gray'}>
+                                可用 {formatCredits(u.creditsAvailable)}
                               </Badge>
-                              {(u.teamCreditsFrozen || 0) > 0 ? (
+                              {(u.creditsFrozen || 0) > 0 ? (
                                 <Badge className="stats-users-credits-frozen" size="xs" variant="light" color="yellow">
-                                  冻结 {formatCredits(u.teamCreditsFrozen)}
+                                  冻结 {formatCredits(u.creditsFrozen)}
                                 </Badge>
                               ) : null}
                               <Badge className="stats-users-credits-total" size="xs" variant="light" color="gray">
-                                总 {formatCredits(u.teamCredits)}
+                                总 {formatCredits(u.credits)}
                               </Badge>
                             </Group>
                           </Stack>
                         ) : (
                           <Text className="stats-users-credits-empty" size="sm" c="dimmed">—</Text>
+                        )}
+                      </Table.Td>
+
+                      <Table.Td className="stats-users-table-cell">
+                        {u.membership ? (
+                          <Stack className="stats-users-membership" gap={2}>
+                            <Text className="stats-users-membership-plan" size="xs" fw={600}>{u.membership.planCode}</Text>
+                            <Text className="stats-users-membership-limit" size="xs" c="dimmed">每月 {formatCredits(u.membership.monthlyCredits)} · 每日 {formatCredits(u.membership.dailyGiftCredits)}</Text>
+                            <Text className="stats-users-membership-expiry" size="xs" c="dimmed">至 {formatTime(u.membership.endAt)}</Text>
+                          </Stack>
+                        ) : (
+                          <Text className="stats-users-membership-empty" size="xs" c="dimmed">未开通</Text>
                         )}
                       </Table.Td>
 
@@ -386,9 +541,21 @@ export default function StatsUserManagement({ className }: { className?: string 
                             onChange={() => void onToggleDisabled(u)}
                             label="禁用"
                           />
+                          <Tooltip className="stats-users-logs-tooltip" label="查看积分日志" withArrow>
+                            <ActionIcon
+                              className="stats-users-logs"
+                              size="sm"
+                              variant="subtle"
+                              aria-label="日志"
+                              disabled={updating}
+                              onClick={() => openLogs(u)}
+                            >
+                              <IconHistory className="stats-users-logs-icon" size={14} />
+                            </ActionIcon>
+                          </Tooltip>
                           <Tooltip
                             className="stats-users-credits-edit-tooltip"
-                            label={!u.teamId ? (u.guest ? '游客账号无团队积分' : '暂无团队积分账户') : '调整团队积分'}
+                            label={u.guest ? '游客账号无个人积分' : '调整个人积分'}
                             withArrow
                           >
                             <ActionIcon
@@ -396,10 +563,22 @@ export default function StatsUserManagement({ className }: { className?: string 
                               size="sm"
                               variant="subtle"
                               aria-label="积分"
-                              disabled={deleted || updating || !u.teamId}
+                              disabled={deleted || updating || u.guest}
                               onClick={() => openCreditsEditor(u)}
                             >
                               <IconSettings className="stats-users-credits-edit-icon" size={14} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip className="stats-users-membership-edit-tooltip" label={u.guest ? '游客账号不能设置套餐' : '调整个人套餐与有效期'} withArrow>
+                            <ActionIcon
+                              className="stats-users-membership-edit"
+                              size="sm"
+                              variant="subtle"
+                              aria-label="个人套餐"
+                              disabled={deleted || updating || u.guest}
+                              onClick={() => void openMembershipEditor(u)}
+                            >
+                              <IconCrown className="stats-users-membership-edit-icon" size={14} />
                             </ActionIcon>
                           </Tooltip>
                           <Tooltip className="stats-users-delete-tooltip" label={deleted ? '已删除' : isSelf ? '不能删除自己' : '删除'} withArrow>
@@ -440,6 +619,7 @@ export default function StatsUserManagement({ className }: { className?: string 
           ) : null}
         </Stack>
       )}
+      </>}
 
       <Modal
         className="stats-users-credits-modal"
@@ -451,31 +631,31 @@ export default function StatsUserManagement({ className }: { className?: string 
       >
         <Stack className="stats-users-credits-modal-stack" gap="md">
           <Text className="stats-users-credits-modal-hint" size="xs" c="dimmed">
-            说明：若用户已加入团队，这里调整的是团队共享积分；若未加入团队，则调整其个人账户积分（personal_*）。
+            这里只调整用户自己的个人账户积分。协作团队使用独立共享积分池，请在团队管理中操作。
           </Text>
 
           <Group className="stats-users-credits-modal-meta" gap="xs" wrap="wrap">
-            <Badge className="stats-users-credits-modal-meta-badge" variant="light" color="gray">{creditsUser?.teamRole ? '团队' : '个人账户'}</Badge>
+            <Badge className="stats-users-credits-modal-meta-badge" variant="light" color="gray">个人账户</Badge>
             <Text className="stats-users-credits-modal-meta-team" size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>
-              {creditsUser?.teamName || creditsUser?.teamId || '—'}
+              {creditsUser?.accountName || creditsUser?.accountId || '—'}
             </Text>
-            <Badge className="stats-users-credits-modal-meta-badge" variant="light" color="grape">可用</Badge>
-            <Text className="stats-users-credits-modal-meta-available" size="sm" fw={600}>{formatCredits(creditsUser?.teamCreditsAvailable)}</Text>
+            <Badge className="stats-users-credits-modal-meta-badge" variant="light" color="gray">可用</Badge>
+            <Text className="stats-users-credits-modal-meta-available" size="sm" fw={600}>{formatCredits(creditsUser?.creditsAvailable)}</Text>
             <Badge className="stats-users-credits-modal-meta-badge" variant="light" color="yellow">冻结</Badge>
-            <Text className="stats-users-credits-modal-meta-frozen" size="sm" fw={600}>{formatCredits(creditsUser?.teamCreditsFrozen)}</Text>
+            <Text className="stats-users-credits-modal-meta-frozen" size="sm" fw={600}>{formatCredits(creditsUser?.creditsFrozen)}</Text>
             <Badge className="stats-users-credits-modal-meta-badge" variant="light" color="gray">总额</Badge>
-            <Text className="stats-users-credits-modal-meta-total" size="sm" fw={600}>{formatCredits(creditsUser?.teamCredits)}</Text>
+            <Text className="stats-users-credits-modal-meta-total" size="sm" fw={600}>{formatCredits(creditsUser?.credits)}</Text>
           </Group>
 
           <NumberInput
             className="stats-users-credits-modal-delta"
             label="调整值（可正可负）"
-            description="正数=充值；负数=扣减。扣减时需保证扣减后积分 >= 冻结额度。"
+            description="正数=管理员分配；负数=扣减。扣减时需保证扣减后积分 >= 冻结额度。"
             value={creditsDelta}
             onChange={(v) => setCreditsDelta(typeof v === 'number' && Number.isFinite(v) ? v : '')}
-            min={-1_000_000}
-            max={1_000_000}
-            step={10}
+            min={-10_000_000}
+            max={10_000_000}
+            step={100}
           />
 
           <TextInput
@@ -497,6 +677,59 @@ export default function StatsUserManagement({ className }: { className?: string 
           </Group>
         </Stack>
       </Modal>
+
+      <Modal
+        className="stats-users-membership-modal"
+        opened={membershipOpen}
+        onClose={() => setMembershipOpen(false)}
+        title={membershipUser ? `个人套餐：${membershipUser.login}` : '个人套餐'}
+        centered
+        radius="md"
+      >
+        <Stack className="stats-users-membership-modal-stack" gap="md">
+          <Text className="stats-users-membership-modal-hint" size="xs" c="dimmed">
+            候选项只包含系统商品目录中的个人套餐。团队套餐与协作席位必须在团队管理中设置。
+          </Text>
+          <Select
+            className="stats-users-membership-modal-plan"
+            label="个人套餐"
+            placeholder={membershipPlansLoading ? '正在加载套餐' : '选择套餐'}
+            data={personalPlanOptions.map((option) => ({ value: option.value, label: option.label }))}
+            value={selectedPlanValue || null}
+            onChange={(value) => {
+              const nextValue = value ?? ''
+              setSelectedPlanValue(nextValue)
+              const option = personalPlanOptions.find((item) => item.value === nextValue)
+              if (option) setMembershipEndAt(addDaysAsLocalInput(option.durationDays))
+            }}
+            searchable
+            clearable={Boolean(membershipUser?.membership)}
+            disabled={membershipPlansLoading}
+            nothingFoundMessage="暂无已启用的个人套餐"
+          />
+          {selectedPlanValue ? (
+            <TextInput
+              className="stats-users-membership-modal-expiry"
+              label="有效期至"
+              type="datetime-local"
+              value={membershipEndAt}
+              onChange={(event) => setMembershipEndAt(event.currentTarget.value)}
+            />
+          ) : null}
+          <Group className="stats-users-membership-modal-actions" justify="flex-end" gap={8}>
+            <Button className="stats-users-membership-modal-cancel" variant="subtle" onClick={() => setMembershipOpen(false)} disabled={membershipSubmitting}>取消</Button>
+            <Button className="stats-users-membership-modal-submit" color={selectedPlanValue ? undefined : 'red'} onClick={() => void submitMembership()} loading={membershipSubmitting}>
+              {selectedPlanValue ? '保存' : '取消当前套餐'}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <UserCreditsDrawer
+        opened={logsOpen}
+        user={logsUser}
+        onClose={() => setLogsOpen(false)}
+      />
     </PanelCard>
   )
 }

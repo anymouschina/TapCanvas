@@ -3,13 +3,13 @@ package vertex
 import (
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 
@@ -37,13 +37,23 @@ var Cache = asynccache.NewAsyncCache(asynccache.Options{
 	},
 })
 
+func ResetAccessTokenCache(channelID int) {
+	channelCacheKey := fmt.Sprintf("access-token-%d", channelID)
+	Cache.DeleteIf(func(key string) bool {
+		return key == channelCacheKey || strings.HasPrefix(key, channelCacheKey+"-")
+	})
+}
+
 func getAccessToken(a *Adaptor, info *relaycommon.RelayInfo) (string, error) {
-	var cacheKey string
+	accountIndex := 0
 	if info.ChannelIsMultiKey {
-		cacheKey = fmt.Sprintf("access-token-%d-%d", info.ChannelId, info.ChannelMultiKeyIndex)
-	} else {
-		cacheKey = fmt.Sprintf("access-token-%d", info.ChannelId)
+		accountIndex = info.ChannelMultiKeyIndex
 	}
+	egressCellID := info.EgressCellID
+	if egressCellID == "" {
+		egressCellID = "direct"
+	}
+	cacheKey := fmt.Sprintf("access-token-%d-%d-%s", info.ChannelId, accountIndex, egressCellID)
 	val, err := Cache.Get(cacheKey)
 	if err == nil {
 		return val.(string), nil
@@ -129,7 +139,7 @@ func exchangeJwtForAccessToken(signedJWT string, info *relaycommon.RelayInfo) (s
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := common.DecodeJson(resp.Body, &result); err != nil {
 		return "", err
 	}
 
@@ -172,7 +182,7 @@ func exchangeJwtForAccessTokenWithProxy(signedJWT string, proxy string) (string,
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := common.DecodeJson(resp.Body, &result); err != nil {
 		return "", err
 	}
 

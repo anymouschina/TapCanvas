@@ -3,7 +3,7 @@ export const STUDIO_PATH = '/studio'
 export const GITHUB_OAUTH_CALLBACK_PATH = '/oauth/github'
 
 export type StudioOwnerType = 'project' | 'chapter' | 'shot'
-export type StudioPanel = 'nanoComic'
+export type StudioPanel = never
 
 export function isStudioRoute(pathname?: string): boolean {
   const path =
@@ -16,6 +16,17 @@ export function isStudioRoute(pathname?: string): boolean {
   return path === STUDIO_PATH || path.startsWith(`${STUDIO_PATH}/`)
 }
 
+export function isDocsMcpRoute(pathname?: string): boolean {
+  const path =
+    typeof pathname === 'string'
+      ? pathname
+      : typeof window !== 'undefined'
+        ? window.location.pathname || ''
+        : ''
+
+  return path === '/docs/mcp' || path.startsWith('/docs/mcp/')
+}
+
 export function isGithubOauthCallbackRoute(pathname?: string): boolean {
   const path =
     typeof pathname === 'string'
@@ -25,6 +36,17 @@ export function isGithubOauthCallbackRoute(pathname?: string): boolean {
         : ''
 
   return path === GITHUB_OAUTH_CALLBACK_PATH
+}
+
+export function resolveCodexPreviewId(pathname?: string): string | null {
+  const path =
+    typeof pathname === 'string'
+      ? pathname
+      : typeof window !== 'undefined'
+        ? window.location.pathname || ''
+        : ''
+  const match = path.match(/^\/preview\/([A-Za-z0-9_-]{16,160})\/?$/)
+  return match ? match[1] : null
 }
 
 export function buildStudioUrl(input?: string | null | {
@@ -45,7 +67,7 @@ export function buildStudioUrl(input?: string | null | {
     : null
   const normalizedOwnerId = typeof options.ownerId === 'string' ? options.ownerId.trim() : ''
   const normalizedFlowId = typeof options.flowId === 'string' ? options.flowId.trim() : ''
-  const normalizedPanel = options.panel === 'nanoComic' ? options.panel : null
+  const normalizedPanel = options.panel ?? null
   const normalizedChapter =
     typeof options.chapter === 'number' && Number.isFinite(options.chapter) && options.chapter > 0
       ? Math.trunc(options.chapter)
@@ -109,17 +131,6 @@ export function buildStudioUrl(input?: string | null | {
   }
 }
 
-export function buildProjectUrl(projectId: string): string {
-  const normalizedProjectId = String(projectId || '').trim()
-  return `/projects/${encodeURIComponent(normalizedProjectId)}`
-}
-
-export function buildProjectDirectoryUrl(projectId: string): string {
-  const normalizedProjectId = String(projectId || '').trim()
-  if (!normalizedProjectId) return '/projects'
-  return `/projects?projectId=${encodeURIComponent(normalizedProjectId)}`
-}
-
 export function buildProjectChapterUrl(projectId: string, chapterId: string, shotId?: string | null): string {
   const normalizedProjectId = String(projectId || '').trim()
   const normalizedChapterId = String(chapterId || '').trim()
@@ -128,4 +139,10 @@ export function buildProjectChapterUrl(projectId: string, chapterId: string, sho
     return `/projects/${encodeURIComponent(normalizedProjectId)}/chapters/${encodeURIComponent(normalizedChapterId)}/shots/${encodeURIComponent(normalizedShotId)}`
   }
   return `/projects/${encodeURIComponent(normalizedProjectId)}/chapters/${encodeURIComponent(normalizedChapterId)}`
+}
+
+export function buildProjectChapterCanvasUrl(projectId: string, chapterId: string): string {
+  const normalizedProjectId = String(projectId || '').trim()
+  const normalizedChapterId = String(chapterId || '').trim()
+  return `/projects/${encodeURIComponent(normalizedProjectId)}/chapters/${encodeURIComponent(normalizedChapterId)}/canvas`
 }

@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_salt TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_updated_at TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_code TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_user_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_bound_at TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invite_code ON users(invite_code);
+CREATE INDEX IF NOT EXISTS idx_users_referrer_user_id ON users(referrer_user_id);
 
 -- Email login codes (passwordless OTP)
 CREATE TABLE IF NOT EXISTS email_login_codes (
@@ -47,21 +52,6 @@ CREATE TABLE IF NOT EXISTS email_login_codes (
 CREATE INDEX IF NOT EXISTS idx_email_login_codes_email_created_at ON email_login_codes(email, created_at);
 CREATE INDEX IF NOT EXISTS idx_email_login_codes_email_expires_at ON email_login_codes(email, expires_at);
 
--- Phone login codes (passwordless OTP)
-CREATE TABLE IF NOT EXISTS phone_login_codes (
-	id TEXT PRIMARY KEY,
-	phone TEXT NOT NULL,
-	code_salt TEXT NOT NULL,
-	code_hash TEXT NOT NULL,
-	expires_at TEXT NOT NULL,
-	used_at TEXT,
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_phone_login_codes_phone_created_at ON phone_login_codes(phone, created_at);
-CREATE INDEX IF NOT EXISTS idx_phone_login_codes_phone_expires_at ON phone_login_codes(phone, expires_at);
-
 -- Teams (enterprise mode) + shared credits
 CREATE TABLE IF NOT EXISTS teams (
 	id TEXT PRIMARY KEY,
@@ -72,7 +62,6 @@ CREATE TABLE IF NOT EXISTS teams (
 	updated_at TEXT NOT NULL
 );
 
--- Single-team mode: each user can join at most one team for now
 CREATE TABLE IF NOT EXISTS team_memberships (
 	team_id TEXT NOT NULL,
 	user_id TEXT NOT NULL,
@@ -84,7 +73,7 @@ CREATE TABLE IF NOT EXISTS team_memberships (
 	FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_team_memberships_user_id ON team_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_user_id ON team_memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_team_memberships_team_id ON team_memberships(team_id);
 
 -- Team invites (share code to join)
@@ -120,12 +109,61 @@ CREATE TABLE IF NOT EXISTS team_credit_ledger (
 	actor_user_id TEXT,
 	note TEXT,
 	created_at TEXT NOT NULL,
+	api_key_id TEXT,
 	UNIQUE (team_id, entry_type, task_id),
 	FOREIGN KEY (team_id) REFERENCES teams(id),
 	FOREIGN KEY (actor_user_id) REFERENCES users(id)
 );
 
+-- Existing databases created before per-API-key billing attribution need the
+-- same append-only schema repair before required data migrations are replayed.
+ALTER TABLE team_credit_ledger ADD COLUMN IF NOT EXISTS api_key_id TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_team_credit_ledger_team_created_at ON team_credit_ledger(team_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_team_credit_ledger_api_key_created ON team_credit_ledger(api_key_id, created_at);
+
+-- Credit grants are retained as spendable batches. Temporary batches sort by
+-- expiry; permanent batches have a NULL expiry and are consumed last.
+CREATE TABLE IF NOT EXISTS team_credit_batches (
+	id TEXT PRIMARY KEY,
+	team_id TEXT NOT NULL,
+	source_type TEXT NOT NULL,
+	source_key TEXT NOT NULL,
+	original_amount INTEGER NOT NULL CHECK (original_amount > 0),
+	remaining_amount INTEGER NOT NULL CHECK (remaining_amount >= 0),
+	reserved_amount INTEGER NOT NULL DEFAULT 0 CHECK (reserved_amount >= 0 AND reserved_amount <= remaining_amount),
+	expires_at TEXT,
+	granted_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (team_id, source_type, source_key),
+	FOREIGN KEY (team_id) REFERENCES teams(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_credit_batches_spend_order
+	ON team_credit_batches(team_id, expires_at, granted_at);
+
+-- Every reserve/deduct/release/direct charge records the exact source batches
+-- it touched. This keeps settlement and refunds traceable to the original grant.
+CREATE TABLE IF NOT EXISTS team_credit_allocations (
+	id TEXT PRIMARY KEY,
+	team_id TEXT NOT NULL,
+	ledger_entry_id TEXT NOT NULL,
+	batch_id TEXT NOT NULL,
+	priority INTEGER NOT NULL,
+	amount INTEGER NOT NULL CHECK (amount > 0),
+	expired_amount INTEGER NOT NULL DEFAULT 0 CHECK (expired_amount >= 0 AND expired_amount <= amount),
+	created_at TEXT NOT NULL,
+	UNIQUE (ledger_entry_id, batch_id),
+	FOREIGN KEY (team_id) REFERENCES teams(id),
+	FOREIGN KEY (ledger_entry_id) REFERENCES team_credit_ledger(id),
+	FOREIGN KEY (batch_id) REFERENCES team_credit_batches(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_credit_allocations_ledger_priority
+	ON team_credit_allocations(team_id, ledger_entry_id, priority);
+CREATE INDEX IF NOT EXISTS idx_team_credit_allocations_batch
+	ON team_credit_allocations(batch_id);
 
 -- Model credit costs (admin-configurable; used for team credit deductions)
 CREATE TABLE IF NOT EXISTS model_credit_costs (
@@ -167,13 +205,20 @@ CREATE TABLE IF NOT EXISTS projects (
 	name TEXT NOT NULL,
 	is_public INTEGER NOT NULL DEFAULT 0,
 	owner_id TEXT,
+	clone_count INTEGER NOT NULL DEFAULT 0,
+	sort_weight INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
+	project_kind TEXT NOT NULL DEFAULT 'creative',
 	FOREIGN KEY (owner_id) REFERENCES users(id)
 );
 
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS sort_weight INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_kind TEXT NOT NULL DEFAULT 'creative';
 CREATE INDEX IF NOT EXISTS idx_projects_owner_id ON projects(owner_id);
 CREATE INDEX IF NOT EXISTS idx_projects_is_public ON projects(is_public);
+CREATE INDEX IF NOT EXISTS idx_projects_sort_weight ON projects(sort_weight DESC);
+CREATE INDEX IF NOT EXISTS idx_projects_owner_kind_updated ON projects(owner_id, project_kind, updated_at DESC);
 
 -- Flows table (migrated from Prisma Flow model)
 CREATE TABLE IF NOT EXISTS flows (
@@ -206,6 +251,72 @@ CREATE TABLE IF NOT EXISTS flow_versions (
 CREATE INDEX IF NOT EXISTS idx_flow_versions_flow_id ON flow_versions(flow_id);
 CREATE INDEX IF NOT EXISTS idx_flow_versions_user_id ON flow_versions(user_id);
 
+-- User-approved workflow capabilities exposed to Small T.
+-- The source version/hash are intentionally frozen so canvas edits cannot be
+-- reused silently; runtime access is revalidated before every execution.
+CREATE TABLE IF NOT EXISTS agent_capability_attachments (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	capability_kind TEXT NOT NULL,
+	source_id TEXT NOT NULL,
+	source_version_id TEXT NOT NULL,
+	descriptor_json TEXT NOT NULL,
+	descriptor_sha256 TEXT NOT NULL,
+	conflict_report_json TEXT NOT NULL,
+	route_decisions_json TEXT,
+	conflict_report_revision INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_capability_attachments_user_source
+	ON agent_capability_attachments(user_id, capability_kind, source_id);
+CREATE INDEX IF NOT EXISTS idx_agent_capability_attachments_user_updated
+	ON agent_capability_attachments(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_capability_attachments_source_version
+	ON agent_capability_attachments(source_version_id);
+
+-- Per-user routing authority for Skills. An absent row means the visible Skill
+-- remains enabled; disabled rows record whether the user switched it off or a
+-- workflow explicitly replaced it as the single primary route.
+CREATE TABLE IF NOT EXISTS agent_capability_preferences (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	capability_kind TEXT NOT NULL,
+	capability_id TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	disabled_reason TEXT,
+	replaced_by_capability_id TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_capability_preferences_user_capability
+	ON agent_capability_preferences(user_id, capability_kind, capability_id);
+CREATE INDEX IF NOT EXISTS idx_agent_capability_preferences_user_enabled
+	ON agent_capability_preferences(user_id, enabled, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_capability_preferences_replaced_by
+	ON agent_capability_preferences(replaced_by_capability_id);
+
+-- Platform-wide authority for Small T built-in capabilities. Missing rows use
+-- the enabled state declared by the built-in runtime catalog; an explicit
+-- disabled row removes the capability for every user and every live session.
+CREATE TABLE IF NOT EXISTS agent_builtin_capability_settings (
+	capability_id TEXT PRIMARY KEY,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	updated_by_user_id TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_builtin_capability_settings_enabled
+	ON agent_builtin_capability_settings(enabled, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_builtin_capability_settings_updated_by
+	ON agent_builtin_capability_settings(updated_by_user_id);
+
 -- Workflow executions (n8n-like: each run binds to an immutable flow_version snapshot)
 CREATE TABLE IF NOT EXISTS workflow_executions (
 	id TEXT PRIMARY KEY,
@@ -226,6 +337,39 @@ CREATE TABLE IF NOT EXISTS workflow_executions (
 
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_owner_id ON workflow_executions(owner_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_flow_id ON workflow_executions(flow_id);
+
+-- Immutable capability-call audit identity. Node inputs/outputs and timings are
+-- read through the referenced frozen workflow execution and its node-run ledger.
+CREATE TABLE IF NOT EXISTS agent_capability_invocations (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	attachment_id TEXT NOT NULL,
+	capability_id TEXT NOT NULL,
+	capability_name TEXT NOT NULL,
+	source_id TEXT NOT NULL,
+	source_version_id TEXT NOT NULL,
+	descriptor_sha256 TEXT NOT NULL,
+	workflow_execution_id TEXT NOT NULL,
+	agent_execution_id TEXT,
+	session_id TEXT,
+	tool_call_id TEXT,
+	input_json TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES users(id),
+	FOREIGN KEY (workflow_execution_id) REFERENCES workflow_executions(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_capability_invocations_execution
+	ON agent_capability_invocations(workflow_execution_id);
+CREATE INDEX IF NOT EXISTS idx_agent_capability_invocations_user_created
+	ON agent_capability_invocations(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_capability_invocations_attachment_created
+	ON agent_capability_invocations(attachment_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_capability_invocations_agent_execution
+	ON agent_capability_invocations(agent_execution_id);
+CREATE INDEX IF NOT EXISTS idx_agent_capability_invocations_session
+	ON agent_capability_invocations(session_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_flow_version_id ON workflow_executions(flow_version_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_status ON workflow_executions(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_created_at ON workflow_executions(created_at);
@@ -235,7 +379,7 @@ CREATE TABLE IF NOT EXISTS workflow_node_runs (
 	id TEXT PRIMARY KEY,
 	execution_id TEXT NOT NULL,
 	node_id TEXT NOT NULL,
-	status TEXT NOT NULL, -- queued | running | success | failed | canceled | skipped
+	status TEXT NOT NULL, -- pending | queued | running | waiting_external | success | failed | canceled | skipped | not_selected
 	attempt INTEGER NOT NULL DEFAULT 1,
 	error_message TEXT,
 	output_refs TEXT, -- JSON: asset refs / URLs / metadata
@@ -376,6 +520,57 @@ CREATE TABLE IF NOT EXISTS task_statuses (
 CREATE INDEX IF NOT EXISTS idx_task_statuses_status ON task_statuses(status);
 CREATE INDEX IF NOT EXISTS idx_task_statuses_created_at ON task_statuses(created_at);
 CREATE INDEX IF NOT EXISTS idx_task_statuses_user_provider ON task_statuses(user_id, provider);
+CREATE INDEX IF NOT EXISTS idx_task_statuses_provider_status_created
+	ON task_statuses(provider, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_statuses_provider_status_updated
+	ON task_statuses(provider, status, updated_at);
+
+-- Immutable, version-pinned workflow plugin manifests. A manifest never grants
+-- authority by itself; workflow_plugin_admissions is the independent host decision.
+CREATE TABLE IF NOT EXISTS workflow_plugin_versions (
+	id TEXT PRIMARY KEY,
+	plugin_id TEXT NOT NULL,
+	plugin_version TEXT NOT NULL,
+	publisher_kind TEXT NOT NULL CHECK (publisher_kind IN ('platform', 'user', 'team')),
+	publisher_id TEXT NOT NULL,
+	manifest_json TEXT NOT NULL,
+	manifest_sha256 TEXT NOT NULL CHECK (manifest_sha256 ~ '^[0-9a-f]{64}$'),
+	runtime_owner_kind TEXT NOT NULL CHECK (runtime_owner_kind IN ('host', 'agents-cli', 'hono-api', 'isolated-worker')),
+	runtime_owner_id TEXT NOT NULL,
+	runtime_version TEXT NOT NULL,
+	created_by_actor TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_plugin_versions_identity
+	ON workflow_plugin_versions(plugin_id, plugin_version);
+CREATE INDEX IF NOT EXISTS idx_workflow_plugin_versions_manifest_sha256
+	ON workflow_plugin_versions(manifest_sha256);
+CREATE INDEX IF NOT EXISTS idx_workflow_plugin_versions_publisher
+	ON workflow_plugin_versions(publisher_kind, publisher_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_plugin_versions_runtime_owner
+	ON workflow_plugin_versions(runtime_owner_kind, runtime_owner_id, runtime_version);
+
+CREATE TABLE IF NOT EXISTS workflow_plugin_admissions (
+	id TEXT PRIMARY KEY,
+	plugin_version_id TEXT NOT NULL,
+	status TEXT NOT NULL CHECK (status IN ('admitted', 'revoked')),
+	granted_permissions_json TEXT NOT NULL,
+	decision_revision INTEGER NOT NULL DEFAULT 1 CHECK (decision_revision > 0),
+	decided_by_actor TEXT NOT NULL,
+	reason TEXT,
+	admitted_at TEXT NOT NULL,
+	revoked_at TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (plugin_version_id) REFERENCES workflow_plugin_versions(id) ON DELETE RESTRICT,
+	CHECK ((status = 'admitted' AND revoked_at IS NULL) OR (status = 'revoked' AND revoked_at IS NOT NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_plugin_admissions_version
+	ON workflow_plugin_admissions(plugin_version_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_plugin_admissions_status_updated
+	ON workflow_plugin_admissions(status, updated_at DESC);
 
 -- Task results (stored final results for sync vendors / unified polling)
 CREATE TABLE IF NOT EXISTS task_results (
@@ -429,6 +624,27 @@ CREATE TABLE IF NOT EXISTS video_generation_histories (
 CREATE INDEX IF NOT EXISTS idx_video_history_user ON video_generation_histories(user_id);
 CREATE INDEX IF NOT EXISTS idx_video_history_task ON video_generation_histories(task_id);
 CREATE INDEX IF NOT EXISTS idx_video_history_provider ON video_generation_histories(provider);
+
+-- 视频整片后台自主驱动（L3）：持久化一次整章 run 的状态，供后台 worker 续跑到 concatenated。
+CREATE TABLE IF NOT EXISTS video_runs (
+  id            TEXT PRIMARY KEY,
+  owner_id      TEXT NOT NULL,
+  flow_id       TEXT,
+  project_id    TEXT,
+  chapter_id    TEXT,
+  recipe_id     TEXT,
+  state         TEXT NOT NULL DEFAULT 'scheduled',
+  story_plan    TEXT,
+  total_clips   INTEGER NOT NULL DEFAULT 0,
+  clips_done    INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT,
+  last_drive_at TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  completed_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_video_runs_state_updated ON video_runs(state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_video_runs_flow_state ON video_runs(flow_id, state);
 
 -- Vendor task refs (mapping vendor task ids to pid for follow-up operations)
 CREATE TABLE IF NOT EXISTS vendor_task_refs (
@@ -571,6 +787,7 @@ CREATE TABLE IF NOT EXISTS llm_node_presets (
 	description TEXT,
 	enabled INTEGER NOT NULL DEFAULT 1,
 	sort_order INTEGER,
+	meta TEXT,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	FOREIGN KEY (owner_id) REFERENCES users(id)
@@ -586,6 +803,8 @@ CREATE TABLE IF NOT EXISTS agent_skills (
 	name TEXT NOT NULL,
 	description TEXT,
 	content TEXT NOT NULL,
+	logo_url TEXT,
+	category TEXT NOT NULL DEFAULT '系统技能',
 	enabled INTEGER NOT NULL DEFAULT 1,
 	visible INTEGER NOT NULL DEFAULT 1,
 	sort_order INTEGER,
@@ -594,6 +813,32 @@ CREATE TABLE IF NOT EXISTS agent_skills (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_skills_enabled_visible_sort ON agent_skills(enabled, visible, sort_order);
+
+CREATE TABLE IF NOT EXISTS user_skill_assets (
+	id TEXT PRIMARY KEY,
+	owner_id TEXT NOT NULL,
+	file_name TEXT NOT NULL,
+	name TEXT NOT NULL,
+	description TEXT,
+	content TEXT NOT NULL,
+	logo_url TEXT,
+	force_full_context INTEGER NOT NULL DEFAULT 0,
+	size_bytes INTEGER NOT NULL,
+	sha256 TEXT NOT NULL,
+	marketplace_product_id TEXT,
+	marketplace_price_cents INTEGER,
+	marketplace_currency TEXT,
+	marketplace_listed_at TEXT,
+	source_marketplace_product_id TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_skill_assets_owner_file ON user_skill_assets(owner_id, file_name);
+CREATE INDEX IF NOT EXISTS idx_user_skill_assets_owner_updated ON user_skill_assets(owner_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_skill_assets_marketplace_product ON user_skill_assets(marketplace_product_id);
+CREATE INDEX IF NOT EXISTS idx_user_skill_assets_source_product ON user_skill_assets(source_marketplace_product_id);
 
 CREATE TABLE IF NOT EXISTS agent_presets (
 	id TEXT PRIMARY KEY,
@@ -649,6 +894,10 @@ CREATE TABLE IF NOT EXISTS assets (
 
 CREATE INDEX IF NOT EXISTS idx_assets_owner ON assets(owner_id);
 CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_assets_owner_active_project_directory
+	ON assets(owner_id)
+	WHERE project_id IS NULL
+		AND (data::jsonb ->> 'kind') = 'projectFsState';
 
 -- Storyboard pipeline (plan/render/rerender/timeline/metrics)
 CREATE TABLE IF NOT EXISTS storyboard_assets (
@@ -886,6 +1135,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	key_hash TEXT NOT NULL,
 	allowed_origins TEXT NOT NULL, -- JSON array of origins or ["*"]
 	enabled INTEGER NOT NULL DEFAULT 1,
+	kind TEXT NOT NULL DEFAULT 'user', -- 'user' | 'internal_system'
 	last_used_at TEXT,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
@@ -895,7 +1145,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
 CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner_id);
 
--- Commerce: merchants / products / orders / payments (WeChat H5 direct-connect)
+-- Commerce catalog: products remain available for administrator-managed entitlements.
 CREATE TABLE IF NOT EXISTS merchants (
 	id TEXT PRIMARY KEY,
 	owner_id TEXT NOT NULL UNIQUE,
@@ -966,118 +1216,6 @@ CREATE TABLE IF NOT EXISTS product_skus (
 CREATE INDEX IF NOT EXISTS idx_product_skus_product ON product_skus(product_id);
 CREATE INDEX IF NOT EXISTS idx_product_skus_owner ON product_skus(owner_id);
 
-CREATE TABLE IF NOT EXISTS orders (
-	id TEXT PRIMARY KEY,
-	owner_id TEXT NOT NULL,
-	merchant_id TEXT NOT NULL,
-	order_no TEXT NOT NULL UNIQUE,
-	status TEXT NOT NULL DEFAULT 'pending_payment', -- pending_payment | paid | canceled | refund_pending | partially_refunded | refunded
-	payment_status TEXT NOT NULL DEFAULT 'unpaid', -- unpaid | paid | refund_pending | partially_refunded | refunded
-	currency TEXT NOT NULL DEFAULT 'CNY',
-	total_amount_cents INTEGER NOT NULL DEFAULT 0,
-	paid_amount_cents INTEGER NOT NULL DEFAULT 0,
-	refund_amount_cents INTEGER NOT NULL DEFAULT 0, -- reserved for phase-1
-	refund_status TEXT, -- reserved for phase-1
-	refund_reason TEXT, -- reserved for phase-1
-	buyer_note TEXT,
-	paid_at TEXT,
-	canceled_at TEXT,
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL,
-	FOREIGN KEY (owner_id) REFERENCES users(id),
-	FOREIGN KEY (merchant_id) REFERENCES merchants(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_orders_owner_created ON orders(owner_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_owner_status ON orders(owner_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_owner_payment_status ON orders(owner_id, payment_status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_merchant_created ON orders(merchant_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS order_items (
-	id TEXT PRIMARY KEY,
-	order_id TEXT NOT NULL,
-	product_id TEXT NOT NULL,
-	sku_id TEXT,
-	title_snapshot TEXT NOT NULL,
-	sku_name_snapshot TEXT,
-	unit_price_cents INTEGER NOT NULL DEFAULT 0,
-	quantity INTEGER NOT NULL DEFAULT 1,
-	total_price_cents INTEGER NOT NULL DEFAULT 0,
-	cover_image_url_snapshot TEXT,
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL,
-	FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
-	FOREIGN KEY (product_id) REFERENCES products(id),
-	FOREIGN KEY (sku_id) REFERENCES product_skus(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
-CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
-
-CREATE TABLE IF NOT EXISTS order_status_events (
-	id TEXT PRIMARY KEY,
-	order_id TEXT NOT NULL,
-	owner_id TEXT NOT NULL,
-	from_status TEXT,
-	to_status TEXT NOT NULL,
-	event_type TEXT NOT NULL, -- created | payment_confirmed | canceled | refunded
-	reason TEXT,
-	payload_json TEXT,
-	created_at TEXT NOT NULL,
-	FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
-	FOREIGN KEY (owner_id) REFERENCES users(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_order_status_events_order_created ON order_status_events(order_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_order_status_events_owner_created ON order_status_events(owner_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS payments (
-	id TEXT PRIMARY KEY,
-	owner_id TEXT NOT NULL,
-	order_id TEXT NOT NULL,
-	provider TEXT NOT NULL, -- wechat
-	trade_type TEXT NOT NULL, -- H5
-	out_trade_no TEXT NOT NULL UNIQUE,
-	prepay_id TEXT,
-	transaction_id TEXT,
-	status TEXT NOT NULL DEFAULT 'created', -- created | pending | success | failed | closed | refunding | refunded
-	total_amount_cents INTEGER NOT NULL DEFAULT 0,
-	currency TEXT NOT NULL DEFAULT 'CNY',
-	refund_amount_cents INTEGER NOT NULL DEFAULT 0, -- reserved for phase-1
-	refund_status TEXT, -- reserved for phase-1
-	refund_reason TEXT, -- reserved for phase-1
-	raw_request_json TEXT,
-	raw_response_json TEXT,
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL,
-	succeeded_at TEXT,
-	closed_at TEXT,
-	FOREIGN KEY (owner_id) REFERENCES users(id),
-	FOREIGN KEY (order_id) REFERENCES orders(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_payments_order_created ON payments(order_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_payments_owner_status_created ON payments(owner_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_payments_transaction_id ON payments(transaction_id);
-
-CREATE TABLE IF NOT EXISTS payment_callbacks (
-	id TEXT PRIMARY KEY,
-	payment_id TEXT,
-	provider TEXT NOT NULL, -- wechat
-	event_type TEXT NOT NULL,
-	out_trade_no TEXT,
-	transaction_id TEXT,
-	signature_valid INTEGER NOT NULL DEFAULT 0,
-	payload_json TEXT NOT NULL,
-	headers_json TEXT,
-	error_message TEXT,
-	created_at TEXT NOT NULL,
-	FOREIGN KEY (payment_id) REFERENCES payments(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_payment_callbacks_payment_created ON payment_callbacks(payment_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_payment_callbacks_out_trade_created ON payment_callbacks(out_trade_no, created_at DESC);
-
 -- Commerce dictionary (owner-scoped enum/config dictionary)
 CREATE TABLE IF NOT EXISTS commerce_dictionaries (
 	id TEXT PRIMARY KEY,
@@ -1101,7 +1239,7 @@ CREATE TABLE IF NOT EXISTS product_entitlements (
 	id TEXT PRIMARY KEY,
 	product_id TEXT NOT NULL,
 	owner_id TEXT NOT NULL,
-	entitlement_type TEXT NOT NULL DEFAULT 'none', -- none | points_topup | monthly_quota
+	entitlement_type TEXT NOT NULL DEFAULT 'none', -- none | points_topup | membership
 	config_json TEXT,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
@@ -1216,21 +1354,67 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 	id TEXT PRIMARY KEY,
 	owner_id TEXT NOT NULL,
 	plan_code TEXT NOT NULL,
-	source_order_id TEXT,
 	status TEXT NOT NULL DEFAULT 'active', -- active | expired | canceled
 	start_at TEXT NOT NULL,
 	end_at TEXT NOT NULL,
 	duration_days INTEGER NOT NULL,
 	daily_limit INTEGER NOT NULL,
+	billing_team_id TEXT,
+	billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+	monthly_credits INTEGER NOT NULL DEFAULT 0,
+	daily_gift_credits INTEGER NOT NULL DEFAULT 0,
+	concurrency_limit INTEGER NOT NULL DEFAULT 1,
+	capacity_label TEXT NOT NULL DEFAULT '',
+	credit_grant_count INTEGER NOT NULL DEFAULT 1,
+	credit_grants_issued INTEGER NOT NULL DEFAULT 0,
+	next_credit_grant_at TEXT,
 	timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	canceled_at TEXT,
-	FOREIGN KEY (owner_id) REFERENCES users(id),
-	FOREIGN KEY (source_order_id) REFERENCES orders(id)
+	FOREIGN KEY (owner_id) REFERENCES users(id)
 );
 
+-- CREATE TABLE IF NOT EXISTS is a no-op on deployments where `subscriptions`
+-- predates the membership-credit columns, so the columns above never appear and
+-- the credit-due index below fails with 42703. Backfill them explicitly, like
+-- every other evolved table in this file.
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS billing_team_id TEXT;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS billing_cycle TEXT NOT NULL DEFAULT 'monthly';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS monthly_credits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS daily_gift_credits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS concurrency_limit INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS capacity_label TEXT NOT NULL DEFAULT '';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS credit_grant_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS credit_grants_issued INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS next_credit_grant_at TEXT;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS canceled_at TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_subscriptions_owner_status_time ON subscriptions(owner_id, status, start_at, end_at);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_membership_credit_due ON subscriptions(status, next_credit_grant_at);
+
+CREATE TABLE IF NOT EXISTS membership_credit_grants (
+	id TEXT PRIMARY KEY,
+	subscription_id TEXT NOT NULL,
+	owner_id TEXT NOT NULL,
+	team_id TEXT NOT NULL,
+	grant_type TEXT NOT NULL,
+	grant_key TEXT NOT NULL,
+	amount INTEGER NOT NULL,
+	granted_at TEXT NOT NULL,
+	expires_at TEXT,
+	expired_amount INTEGER NOT NULL DEFAULT 0,
+	processed_at TEXT,
+	UNIQUE (subscription_id, grant_type, grant_key),
+	FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
+	FOREIGN KEY (owner_id) REFERENCES users(id),
+	FOREIGN KEY (team_id) REFERENCES teams(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_membership_credit_grants_owner_time ON membership_credit_grants(owner_id, granted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_membership_credit_grants_team_time ON membership_credit_grants(team_id, granted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_membership_credit_grants_expiry ON membership_credit_grants(grant_type, expires_at, processed_at);
 
 CREATE TABLE IF NOT EXISTS subscription_daily_quotas (
 	id TEXT PRIMARY KEY,
@@ -1264,27 +1448,6 @@ CREATE TABLE IF NOT EXISTS subscription_quota_events (
 
 CREATE INDEX IF NOT EXISTS idx_subscription_quota_events_owner_created ON subscription_quota_events(owner_id, created_at DESC);
 
--- Entitlement application logs (idempotent guard for paid order callbacks)
-CREATE TABLE IF NOT EXISTS order_entitlements (
-	id TEXT PRIMARY KEY,
-	owner_id TEXT NOT NULL,
-	order_id TEXT NOT NULL,
-	order_item_id TEXT NOT NULL,
-	product_id TEXT NOT NULL,
-	entitlement_type TEXT NOT NULL,
-	status TEXT NOT NULL, -- applied | skipped | failed
-	result_json TEXT,
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL,
-	UNIQUE (order_item_id, entitlement_type),
-	FOREIGN KEY (owner_id) REFERENCES users(id),
-	FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
-	FOREIGN KEY (order_item_id) REFERENCES order_items(id) ON DELETE CASCADE,
-	FOREIGN KEY (product_id) REFERENCES products(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_order_entitlements_owner_created ON order_entitlements(owner_id, created_at DESC);
-
 CREATE TABLE IF NOT EXISTS chapters (
 	id TEXT PRIMARY KEY,
 	owner_id TEXT NOT NULL,
@@ -1310,3 +1473,353 @@ CREATE TABLE IF NOT EXISTS chapters (
 
 CREATE INDEX IF NOT EXISTS idx_chapters_owner_project_sort ON chapters(owner_id, project_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_chapters_project_last_worked ON chapters(project_id, last_worked_at);
+ALTER TABLE chapters ADD COLUMN IF NOT EXISTS canvas_flow TEXT;
+
+-- Public prompt library. Original attribution is retained as provenance while
+-- the public card author remains the fixed collection label.
+CREATE TABLE IF NOT EXISTS prompt_library_entries (
+  id TEXT PRIMARY KEY,
+  canonical_hash TEXT NOT NULL CONSTRAINT idx_prompt_library_entries_hash UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT,
+  prompt_text TEXT NOT NULL,
+  prompt_text_original TEXT,
+  media_type TEXT NOT NULL,
+  author_label TEXT NOT NULL DEFAULT '搜集自网络',
+  published_at TEXT,
+  latest_source_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  community_like_count INTEGER NOT NULL DEFAULT 0,
+  community_comment_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_entries_media_latest ON prompt_library_entries(media_type, latest_source_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_entries_updated ON prompt_library_entries(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS prompt_library_sources (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL REFERENCES prompt_library_entries(id) ON DELETE CASCADE,
+  source_site TEXT NOT NULL,
+  source_prompt_id TEXT NOT NULL,
+  source_url TEXT NOT NULL CONSTRAINT idx_prompt_library_sources_url UNIQUE,
+  source_author TEXT,
+  source_author_url TEXT,
+  original_language TEXT,
+  model_slug TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  original_source_url TEXT,
+  categories_json TEXT,
+  like_count INTEGER NOT NULL DEFAULT 0,
+  view_count INTEGER NOT NULL DEFAULT 0,
+  share_count INTEGER NOT NULL DEFAULT 0,
+  comment_count INTEGER NOT NULL DEFAULT 0,
+  bookmark_count INTEGER NOT NULL DEFAULT 0,
+  quote_count INTEGER NOT NULL DEFAULT 0,
+  fetched_at TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_sources_entry ON prompt_library_sources(entry_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_sources_model_fetched ON prompt_library_sources(model_slug, fetched_at DESC);
+
+CREATE TABLE IF NOT EXISTS prompt_library_models (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL REFERENCES prompt_library_entries(id) ON DELETE CASCADE,
+  model_slug TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CONSTRAINT idx_prompt_library_models_entry_slug UNIQUE(entry_id, model_slug)
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_models_slug ON prompt_library_models(model_slug);
+
+CREATE TABLE IF NOT EXISTS prompt_library_media (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL REFERENCES prompt_library_entries(id) ON DELETE CASCADE,
+  source_id TEXT REFERENCES prompt_library_sources(id) ON DELETE SET NULL,
+  media_kind TEXT NOT NULL,
+  media_url TEXT NOT NULL,
+  thumbnail_url TEXT,
+  width INTEGER,
+  height INTEGER,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  CONSTRAINT idx_prompt_library_media_entry_url UNIQUE(entry_id, media_url)
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_media_entry_order ON prompt_library_media(entry_id, sort_order);
+
+-- Community reactions for crawled prompt-library entries.
+CREATE TABLE IF NOT EXISTS prompt_library_likes (
+	id TEXT PRIMARY KEY,
+	entry_id TEXT NOT NULL,
+	user_id TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	FOREIGN KEY (entry_id) REFERENCES prompt_library_entries(id) ON DELETE CASCADE,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+	UNIQUE (entry_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_likes_entry ON prompt_library_likes(entry_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_likes_user ON prompt_library_likes(user_id);
+
+CREATE TABLE IF NOT EXISTS prompt_library_comments (
+	id TEXT PRIMARY KEY,
+	entry_id TEXT NOT NULL,
+	user_id TEXT NOT NULL,
+	content TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	FOREIGN KEY (entry_id) REFERENCES prompt_library_entries(id) ON DELETE CASCADE,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_comments_entry_created ON prompt_library_comments(entry_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_comments_user ON prompt_library_comments(user_id);
+
+CREATE TABLE IF NOT EXISTS prompt_library_crawl_runs (
+  id TEXT PRIMARY KEY,
+  target_site TEXT NOT NULL,
+  status TEXT NOT NULL,
+  actor_user_id TEXT,
+  discovered_count INTEGER NOT NULL DEFAULT 0,
+  processed_count INTEGER NOT NULL DEFAULT 0,
+  imported_count INTEGER NOT NULL DEFAULT 0,
+  deduplicated_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  current_url TEXT,
+  error_message TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_crawl_runs_status_created ON prompt_library_crawl_runs(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS prompt_library_crawl_targets (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES prompt_library_crawl_runs(id) ON DELETE CASCADE,
+  source_url TEXT NOT NULL,
+  source_prompt_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  entry_id TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CONSTRAINT idx_prompt_library_crawl_targets_run_url UNIQUE(run_id, source_url)
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_crawl_targets_run_status ON prompt_library_crawl_targets(run_id, status, created_at);
+ALTER TABLE chapters ADD COLUMN IF NOT EXISTS canvas_flow_revision INTEGER NOT NULL DEFAULT 0;
+
+-- Referral campaign configuration (single row, id=1)
+CREATE TABLE IF NOT EXISTS referral_config (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	enabled INTEGER NOT NULL DEFAULT 0,
+	title TEXT NOT NULL DEFAULT '邀请好友，注册赠送',
+	body TEXT NOT NULL DEFAULT '好友完成注册后获得欢迎额度',
+	cta_text TEXT NOT NULL DEFAULT '复制我的邀请链接',
+	image_url TEXT,
+	anti_self_check INTEGER NOT NULL DEFAULT 1,
+	anti_self_window_days INTEGER NOT NULL DEFAULT 30,
+	invitee_welcome_credits INTEGER NOT NULL DEFAULT 1000,
+	updated_at TEXT NOT NULL
+);
+
+-- Referral bonus grant log (idempotency + audit)
+CREATE TABLE IF NOT EXISTS referral_grant_log (
+	id TEXT PRIMARY KEY,
+	source_topup_ledger_id TEXT NOT NULL,
+	referrer_user_id TEXT NOT NULL,
+	invitee_user_id TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	granted_credits INTEGER NOT NULL,
+	ledger_entry_id TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	UNIQUE(source_topup_ledger_id, referrer_user_id, kind),
+	FOREIGN KEY (referrer_user_id) REFERENCES users(id),
+	FOREIGN KEY (invitee_user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_referral_grant_log_referrer
+	ON referral_grant_log(referrer_user_id, created_at);
+
+-- 【编排域状态机 P1·2026-07-11】BeatSheet/authoring 态/依赖图底座/章级合同（与 prisma migration 20260711150000 同步）。
+ALTER TABLE video_runs ADD COLUMN IF NOT EXISTS film_bible TEXT;
+ALTER TABLE video_runs ADD COLUMN IF NOT EXISTS adaptation_strategy TEXT;
+ALTER TABLE video_runs ADD COLUMN IF NOT EXISTS beat_sheet TEXT;
+ALTER TABLE video_runs ADD COLUMN IF NOT EXISTS authoring_state TEXT;
+CREATE INDEX IF NOT EXISTS idx_video_runs_authoring_state ON video_runs(authoring_state, updated_at);
+ALTER TABLE chapters ADD COLUMN IF NOT EXISTS adaptation_contract TEXT;
+CREATE TABLE IF NOT EXISTS authoring_artifacts (
+	id TEXT PRIMARY KEY,
+	run_id TEXT NOT NULL,
+	artifact_key TEXT NOT NULL,
+	content_hash TEXT NOT NULL,
+	derived_from TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending', -- pending|running|waiting_external|ready|failed|stale
+	payload TEXT,
+	error TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_authoring_artifacts_run_key ON authoring_artifacts(run_id, artifact_key);
+CREATE INDEX IF NOT EXISTS idx_authoring_artifacts_run_status ON authoring_artifacts(run_id, status);
+
+-- One-click production external effect ledger + append-only bounded workflow events.
+CREATE TABLE IF NOT EXISTS production_effects (
+	id TEXT PRIMARY KEY,
+	run_id TEXT NOT NULL,
+	workflow_node_id TEXT NOT NULL CHECK (workflow_node_id IN ('production-contract','story-adaptation','clip-contracts','asset-preparation','media-production','composition','delivery')),
+	effect_key TEXT NOT NULL,
+	revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+	operation TEXT NOT NULL,
+	input_hash TEXT NOT NULL,
+	status TEXT NOT NULL DEFAULT 'reserved' CHECK (status IN ('reserved','submitting','accepted','materialized','rejected_pre_upstream','uncertain','failed','cancelled')),
+	provider TEXT,
+	provider_task_id TEXT,
+	provider_receipt TEXT,
+	asset_url TEXT,
+	error_code TEXT,
+	error_message TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	accepted_at TEXT,
+	materialized_at TEXT,
+	finished_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_production_effects_run_key_revision ON production_effects(run_id, effect_key, revision);
+CREATE INDEX IF NOT EXISTS idx_production_effects_run_node_status ON production_effects(run_id, workflow_node_id, status);
+CREATE INDEX IF NOT EXISTS idx_production_effects_provider_task ON production_effects(provider, provider_task_id);
+
+CREATE TABLE IF NOT EXISTS production_workflow_events (
+	id TEXT PRIMARY KEY,
+	run_id TEXT NOT NULL,
+	seq INTEGER NOT NULL CHECK (seq > 0),
+	workflow_node_id TEXT NOT NULL CHECK (workflow_node_id IN ('production-contract','story-adaptation','clip-contracts','asset-preparation','media-production','composition','delivery')),
+	event_kind TEXT NOT NULL CHECK (event_kind IN ('agent_turn','tool_call','effect','artifact','diagnostic','status')),
+	payload_ref TEXT,
+	artifact_ids TEXT NOT NULL DEFAULT '[]',
+	effect_ids TEXT NOT NULL DEFAULT '[]',
+	created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_production_workflow_events_run_seq ON production_workflow_events(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_production_workflow_events_run_node_seq ON production_workflow_events(run_id, workflow_node_id, seq);
+
+-- Durable AI execution journal. Deploy migrations own this schema; the API
+-- request path performs readiness checks only and never creates/changes it.
+CREATE TABLE IF NOT EXISTS execution_traces (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	scope_type TEXT NOT NULL,
+	scope_id TEXT NOT NULL,
+	task_id TEXT,
+	request_kind TEXT NOT NULL,
+	input_summary TEXT NOT NULL,
+	decision_log_json TEXT,
+	tool_calls_json TEXT,
+	meta_json TEXT,
+	result_summary TEXT,
+	error_code TEXT,
+	error_detail TEXT,
+	created_at TEXT NOT NULL,
+	status TEXT NOT NULL DEFAULT 'succeeded',
+	session_key TEXT,
+	workflow_key TEXT,
+	started_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	finished_at TEXT,
+	next_event_seq BIGINT NOT NULL DEFAULT 0,
+	logical_task_id TEXT,
+	root_trace_id TEXT,
+	parent_trace_id TEXT,
+	physical_run_id TEXT,
+	workflow_run_id TEXT
+);
+-- CREATE TABLE IF NOT EXISTS does not evolve an already-existing runtime-era
+-- journal table. Keep these additive repairs before every index that consumes
+-- the newer columns; the following Prisma migration owns data backfills and
+-- NOT NULL enforcement.
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS meta_json TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'succeeded';
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS session_key TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS workflow_key TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS started_at TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS updated_at TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS finished_at TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS next_event_seq BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS logical_task_id TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS root_trace_id TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS parent_trace_id TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS physical_run_id TEXT;
+ALTER TABLE execution_traces ADD COLUMN IF NOT EXISTS workflow_run_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_execution_traces_user_scope ON execution_traces(user_id, scope_type, scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_traces_root_started ON execution_traces(user_id, root_trace_id, started_at ASC);
+CREATE INDEX IF NOT EXISTS idx_execution_traces_logical_task ON execution_traces(user_id, logical_task_id, started_at ASC);
+CREATE INDEX IF NOT EXISTS idx_execution_traces_user_status_updated ON execution_traces(user_id, status, updated_at ASC);
+CREATE INDEX IF NOT EXISTS idx_execution_traces_parent ON execution_traces(user_id, parent_trace_id);
+
+CREATE TABLE IF NOT EXISTS execution_trace_events (
+	id TEXT PRIMARY KEY,
+	trace_id TEXT NOT NULL REFERENCES execution_traces(id) ON DELETE CASCADE,
+	user_id TEXT NOT NULL,
+	seq BIGINT NOT NULL,
+	producer_event_id TEXT NOT NULL,
+	event_type TEXT NOT NULL,
+	event_class TEXT NOT NULL,
+	event_key TEXT NOT NULL,
+	phase TEXT,
+	status TEXT,
+	logical_task_id TEXT,
+	root_trace_id TEXT,
+	parent_trace_id TEXT,
+	physical_run_id TEXT,
+	workflow_run_id TEXT,
+	workflow_node_id TEXT,
+	agent_id TEXT,
+	parent_agent_id TEXT,
+	tool_call_id TEXT,
+	effect_id TEXT,
+	provider_task_id TEXT,
+	span_id TEXT,
+	parent_span_id TEXT,
+	attempt INTEGER CHECK (attempt IS NULL OR attempt > 0),
+	payload_json TEXT NOT NULL,
+	payload_size_bytes INTEGER NOT NULL,
+	payload_truncated BOOLEAN NOT NULL DEFAULT FALSE,
+	created_at TEXT NOT NULL
+);
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS producer_event_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS event_class TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS logical_task_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS root_trace_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS parent_trace_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS physical_run_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS workflow_run_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS workflow_node_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS agent_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS parent_agent_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS tool_call_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS effect_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS provider_task_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS span_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS parent_span_id TEXT;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS attempt INTEGER;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS payload_size_bytes INTEGER;
+ALTER TABLE execution_trace_events ADD COLUMN IF NOT EXISTS payload_truncated BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_execution_trace_events_trace_seq ON execution_trace_events(trace_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_execution_trace_events_trace_producer ON execution_trace_events(trace_id, producer_event_id);
+CREATE INDEX IF NOT EXISTS idx_execution_trace_events_trace_seq ON execution_trace_events(trace_id, seq ASC);
+CREATE INDEX IF NOT EXISTS idx_execution_trace_events_user_created ON execution_trace_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_trace_events_workflow_node ON execution_trace_events(workflow_run_id, workflow_node_id, seq ASC);
+CREATE INDEX IF NOT EXISTS idx_execution_trace_events_tool_call ON execution_trace_events(tool_call_id, seq ASC);
+
+-- Cross-process run-drive leases. PostgreSQL is authoritative; there is no
+-- process-memory or Redis fallback because a fallback would permit duplicate effects.
+CREATE TABLE IF NOT EXISTS production_run_leases (
+  lease_key TEXT PRIMARY KEY,
+  token TEXT NOT NULL,
+  acquired_at TIMESTAMPTZ(3) NOT NULL,
+  expires_at TIMESTAMPTZ(3) NOT NULL,
+  updated_at TIMESTAMPTZ(3) NOT NULL,
+  CONSTRAINT chk_production_run_lease_window CHECK (expires_at > acquired_at)
+);
+CREATE INDEX IF NOT EXISTS idx_production_run_leases_expires_at ON production_run_leases(expires_at);
+ALTER TABLE chapters ADD COLUMN IF NOT EXISTS film_spec TEXT;

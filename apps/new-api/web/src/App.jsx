@@ -32,6 +32,7 @@ import { StatusContext } from './context/Status';
 import PasswordResetForm from './components/auth/PasswordResetForm';
 import PasswordResetConfirm from './components/auth/PasswordResetConfirm';
 import Channel from './pages/Channel';
+import AccountSessions from './pages/AccountSessions';
 import Token from './pages/Token';
 import Redemption from './pages/Redemption';
 import TopUp from './pages/TopUp';
@@ -141,6 +142,14 @@ function App() {
           }
         />
         <Route
+          path='/console/account-sessions'
+          element={
+            <AdminRoute>
+              <AccountSessions />
+            </AdminRoute>
+          }
+        />
+        <Route
           path='/console/token'
           element={
             <PrivateRoute>
@@ -157,7 +166,7 @@ function App() {
           }
         />
         <Route
-          path='/console/docs'
+          path='/docs'
           element={
             <Suspense fallback={<Loading />}>
               <DocsPage />

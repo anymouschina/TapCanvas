@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+export const LLUBAN_CHANNEL_TYPE = 75;
+export const LLUBAN_PROVIDER_URL = 'https://tt-api.lluban.com/';
+
 export const CHANNEL_OPTIONS = [
+  { value: LLUBAN_CHANNEL_TYPE, color: 'blue', label: '鲁班 API（推荐）' },
   { value: 1, color: 'green', label: 'OpenAI' },
   {
     value: 2,
@@ -219,11 +223,58 @@ export const CHANNEL_OPTIONS = [
     color: 'cyan',
     label: 'Code0AI',
   },
+  {
+    value: 67,
+    color: 'orange',
+    label: '灵镜AI (Lingjing)',
+  },
+  {
+    value: 69,
+    color: 'teal',
+    label: 'Evolink',
+  },
+  {
+    value: 70,
+    color: 'cyan',
+    label: 'Kiro (AWS CodeWhisperer)',
+  },
+  {
+    value: 72,
+    color: 'teal',
+    label: 'Megaby',
+  },
+  {
+    value: 74,
+    color: 'orange',
+    label: 'AI Studio To API',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.
 export const MODEL_FETCHABLE_CHANNEL_TYPES = new Set([
-  1, 4, 14, 34, 17, 26, 27, 24, 47, 25, 20, 23, 31, 40, 42, 48, 43, 59,
+  1, 4, 14, 34, 17, 26, 27, 24, 47, 25, 20, 23, 31, 40, 42, 48, 43, 59, 69, 72,
+  74,
+]);
+
+// Channel type for Anthropic Claude (supports both x-api-key and订阅式 OAuth)。
+export const CLAUDE_CHANNEL_TYPE = 14;
+// Channel type for Codex (OpenAI OAuth)。
+export const CODEX_CHANNEL_TYPE = 57;
+// Channel type for Google Gemini (API Key / OAuth multi-account)。
+export const GEMINI_CHANNEL_TYPE = 24;
+
+// Browser-backed Google AI Studio runtime managed through Studio Importer.
+export const AI_STUDIO_TO_API_CHANNEL_TYPE = 74;
+
+export const VERTEX_CHANNEL_TYPE = 41;
+
+// Channel types that expose an OAuth authorization entry in the edit modal.
+// Codex 渠道密钥本身即为 OAuth JSON；Claude 渠道在使用订阅模式时密钥也为 OAuth JSON
+// （裸 API Key 仍走原 x-api-key 路径，OAuth 入口仅作为可选生成方式）。
+export const OAUTH_CHANNEL_TYPES = new Set([
+  CLAUDE_CHANNEL_TYPE,
+  CODEX_CHANNEL_TYPE,
+  GEMINI_CHANNEL_TYPE,
 ]);
 
 export const MODEL_TABLE_PAGE_SIZE = 10;

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"sync"
@@ -11,12 +12,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 )
 
 type Pricing struct {
 	ModelName              string                  `json:"model_name"`
+	ModelKind              string                  `json:"model_kind,omitempty"`
 	Description            string                  `json:"description,omitempty"`
 	Icon                   string                  `json:"icon,omitempty"`
 	Tags                   string                  `json:"tags,omitempty"`
@@ -38,10 +41,12 @@ type Pricing struct {
 }
 
 type ParamPricing struct {
-	Currency    string               `json:"currency"`
-	BillingMode string               `json:"billing_mode"`
-	Formula     string               `json:"formula,omitempty"`
-	Results     []ParamPricingResult `json:"results,omitempty"`
+	Currency                string               `json:"currency"`
+	BillingMode             string               `json:"billing_mode"`
+	Formula                 string               `json:"formula,omitempty"`
+	ReferenceImageFreeCount int                  `json:"reference_image_free_count,omitempty"`
+	ReferenceImagePriceCNY  float64              `json:"reference_image_price_cny,omitempty"`
+	Results                 []ParamPricingResult `json:"results,omitempty"`
 }
 
 type ParamPricingResult struct {
@@ -69,10 +74,12 @@ var (
 	updatePricingLock    sync.Mutex
 
 	// 缓存映射：模型名 -> 启用分组 / 计费类型 / kind
-	modelEnableGroups     = make(map[string][]string)
-	modelQuotaTypeMap     = make(map[string]int)
-	modelKindMap          = make(map[string]string)
-	modelEnableGroupsLock = sync.RWMutex{}
+	modelEnableGroups        = make(map[string][]string)
+	modelQuotaTypeMap        = make(map[string]int)
+	modelKindMap             = make(map[string]string)
+	modelEnableGroupsLock    = sync.RWMutex{}
+	configuredPricingByModel = make(map[string]ModelPricingConfig)
+	configuredPricingLock    sync.RWMutex
 )
 
 type linearVideoPricingRule struct {
@@ -81,18 +88,23 @@ type linearVideoPricingRule struct {
 }
 
 type fixedImagePricingRule struct {
-	specKey           string
-	aspectRatio       string
-	resolution        string
-	quality           string
-	apimartCurrentUSD float64
-	cnyPrice          float64 // when > 0, used directly instead of apimartCurrentUSD conversion
+	specKey     string
+	aspectRatio string
+	resolution  string
+	quality     string
+	cnyPrice    float64
 }
 
 // Rates in CNY per second; credits = ceil(cnyPerSecond * durationSeconds * creditsPerCny).
-// Source: APIMart official prices ($/s) × 7.3 (USD→CNY) × 1.2 (20% markup). creditsPerCny default = 10.
+// Source: APIMart official prices ($/s) × 7.3 (USD→CNY) × 1.2 (20% markup). TapCanvas currently uses 100 credits/CNY.
 // 2026-05-17: All video model rates increased by 20%.
 var linearVideoPricingRules = map[string][]linearVideoPricingRule{
+	// Seedance 2.5 retail pricing is aligned with Tanva: 1.5x the current
+	// Seedance 2.0 retail rate after its 1.5/1.2 price-scale adjustment.
+	"doubao-seedance-2.5": {
+		{resolution: "480p", cnyPerSecond: 1.875},
+		{resolution: "720p", cnyPerSecond: 2.25},
+	},
 	// legacy model IDs (260128 snapshot) — same rates as 2.0 base
 	"doubao-seedance-2-0-260128": {
 		{resolution: "480p", cnyPerSecond: 0.7945},
@@ -162,6 +174,8 @@ var linearVideoPricingRules = map[string][]linearVideoPricingRule{
 		{resolution: "1080p", cnyPerSecond: 0.9811},
 		{resolution: "720p+sound", cnyPerSecond: 1.1038},
 		{resolution: "1080p+sound", cnyPerSecond: 1.4717},
+		{resolution: "720p+video", cnyPerSecond: 1.6556},
+		{resolution: "1080p+video", cnyPerSecond: 2.2075},
 		{resolution: "4k", cnyPerSecond: 4.6927},
 		{resolution: "4k+sound", cnyPerSecond: 4.6927},
 	},
@@ -170,8 +184,63 @@ var linearVideoPricingRules = map[string][]linearVideoPricingRule{
 		{resolution: "1080p", cnyPerSecond: 0.9811},
 		{resolution: "720p+sound", cnyPerSecond: 1.1038},
 		{resolution: "1080p+sound", cnyPerSecond: 1.4717},
+		{resolution: "720p+video", cnyPerSecond: 1.6556},
+		{resolution: "1080p+video", cnyPerSecond: 2.2075},
 		{resolution: "4k", cnyPerSecond: 4.6927},
 		{resolution: "4k+sound", cnyPerSecond: 4.6927},
+	},
+	// Shared public price sources for the same-name FunAI models. The FunAI
+	// channel applies price_ratio=0.5 at runtime and during publication; these
+	// rules remain the single full-price source and are not copied per channel.
+	"seedance-2.0": {
+		{resolution: "720p", cnyPerSecond: 0.2400},
+	},
+	"kling-o3": {
+		{resolution: "720p", cnyPerSecond: 0.0600},
+		{resolution: "1080p", cnyPerSecond: 0.0600},
+		{resolution: "2160p", cnyPerSecond: 0.0600},
+		{resolution: "4k", cnyPerSecond: 0.0600},
+	},
+	// --- Evolink (api.evolink.ai) video models -------------------------------
+	// Pricing aligned to APIMart's equivalents (user directive 2026-06-22):
+	//   kling-o3-*  → APIMart kling-v3 rates
+	//   seedance-2.0(-reference) → APIMart doubao-seedance-2.0 rates
+	//   seedance-2.0-fast-*      → APIMart doubao-seedance-2.0-fast rates
+	//   seedance-2.0-mini-*      → no APIMart "mini" tier; use the closest cheaper
+	//                              tier (fast). Adjust in admin if Evolink prices it lower.
+	// These feed the /api/pricing snapshot only; the new-api charge is flat per
+	// call (see defaultModelPrice + the BaseBilling TaskAdaptor), matching APIMart.
+	"kling-o3-image-to-video": {
+		{resolution: "720p", cnyPerSecond: 0.7358},
+		{resolution: "1080p", cnyPerSecond: 0.9811},
+	},
+	"kling-o3-reference-to-video": {
+		{resolution: "720p", cnyPerSecond: 0.7358},
+		{resolution: "1080p", cnyPerSecond: 0.9811},
+	},
+	"kling-o3-video-edit": {
+		{resolution: "720p", cnyPerSecond: 0.7358},
+		{resolution: "1080p", cnyPerSecond: 0.9811},
+	},
+	"seedance-2.0-reference-to-video": {
+		{resolution: "480p", cnyPerSecond: 0.7945},
+		{resolution: "720p", cnyPerSecond: 1.7100},
+		{resolution: "1080p", cnyPerSecond: 3.8544},
+	},
+	"seedance-2.0-fast-image-to-video": {
+		{resolution: "480p", cnyPerSecond: 0.6395},
+		{resolution: "720p", cnyPerSecond: 1.3753},
+		{resolution: "1080p", cnyPerSecond: 1.3753},
+	},
+	"seedance-2.0-fast-reference-to-video": {
+		{resolution: "480p", cnyPerSecond: 0.6395},
+		{resolution: "720p", cnyPerSecond: 1.3753},
+		{resolution: "1080p", cnyPerSecond: 1.3753},
+	},
+	"seedance-2.0-mini-reference-to-video": {
+		{resolution: "480p", cnyPerSecond: 0.6395},
+		{resolution: "720p", cnyPerSecond: 1.3753},
+		{resolution: "1080p", cnyPerSecond: 1.3753},
 	},
 	// kling-v3-omni: APIMart official prices × 7.3 × 1.5 × 1.2
 	// 720p $0.084, 1080p $0.112, 720p+sound $0.112, 720p+video $0.126
@@ -195,6 +264,30 @@ var linearVideoPricingRules = map[string][]linearVideoPricingRule{
 		{resolution: "1080p+video", cnyPerSecond: 2.2075},
 		{resolution: "4k", cnyPerSecond: 7.0391},
 		{resolution: "4k+sound", cnyPerSecond: 7.0391},
+	},
+	// pixverse-v6: APIMart 官方价(USD/s) × 7.3 (USD→CNY) × 2 (markup).
+	// NOTE: 倍率 ×2 是本模型专属，区别于其它视频模型的 ×1.2；audio 档用 +sound 后缀。
+	//   360p $0.02, 540p $0.03, 720p $0.04, 1080p $0.08
+	//   360p+audio $0.03, 540p+audio $0.04, 720p+audio $0.05, 1080p+audio $0.10
+	"pixverse-v6": {
+		{resolution: "360p", cnyPerSecond: 0.292},
+		{resolution: "540p", cnyPerSecond: 0.438},
+		{resolution: "720p", cnyPerSecond: 0.584},
+		{resolution: "1080p", cnyPerSecond: 1.168},
+		{resolution: "360p+sound", cnyPerSecond: 0.438},
+		{resolution: "540p+sound", cnyPerSecond: 0.584},
+		{resolution: "720p+sound", cnyPerSecond: 0.730},
+		{resolution: "1080p+sound", cnyPerSecond: 1.460},
+	},
+	"pixverse-v6-apimart": {
+		{resolution: "360p", cnyPerSecond: 0.292},
+		{resolution: "540p", cnyPerSecond: 0.438},
+		{resolution: "720p", cnyPerSecond: 0.584},
+		{resolution: "1080p", cnyPerSecond: 1.168},
+		{resolution: "360p+sound", cnyPerSecond: 0.438},
+		{resolution: "540p+sound", cnyPerSecond: 0.584},
+		{resolution: "720p+sound", cnyPerSecond: 0.730},
+		{resolution: "1080p+sound", cnyPerSecond: 1.460},
 	},
 	// kling motion-control: APIMart retail price × 7.3 × 1.2 (USD → CNY).
 	// No resolution param upstream — `mode` (std|pro) is what differs in price.
@@ -230,6 +323,23 @@ var linearVideoPricingRules = map[string][]linearVideoPricingRule{
 	"sora2": {
 		{resolution: "720p", cnyPerSecond: 0.1},
 	},
+	// MiniMax H3 via Metaso uses the operator's explicit public retail table.
+	// It is not derived from the shared 30% channel markup used by Megaby.
+	"minimax-h3": {
+		{resolution: "768p", cnyPerSecond: 0.24},
+		{resolution: "1440p", cnyPerSecond: 0.40},
+	},
+	// grok-imagine-1.5-video: APIMart 官方价 $0.00875/s × 7.3 (USD→CNY) × 1.6 (markup)
+	//   = 0.1022 CNY/s. Flat across the 480p/720p `quality` tiers (single upstream
+	//   per-second price), so both resolution keys carry the same rate.
+	"grok-imagine-1.5-video": {
+		{resolution: "480p", cnyPerSecond: 0.1022},
+		{resolution: "720p", cnyPerSecond: 0.1022},
+	},
+	"grok-imagine-1.5-video-apimart": {
+		{resolution: "480p", cnyPerSecond: 0.1022},
+		{resolution: "720p", cnyPerSecond: 0.1022},
+	},
 }
 
 // fixedVideoPricingSpec encodes a flat CNY price for a single (resolution × duration) spec.
@@ -250,18 +360,18 @@ var fixedVideoPricingSpecs = map[string][]fixedVideoPricingSpec{
 	// 720P = 1080P price for same duration; 4K is higher.
 	// Official price = APIMart current / 0.8. Our price = official × 1.2 × 7.3.
 	"omni-flash-ext": {
-		{resolution: "720p",  duration: 4,  cnyPrice: 1.6425},
-		{resolution: "720p",  duration: 6,  cnyPrice: 1.8615},
-		{resolution: "720p",  duration: 8,  cnyPrice: 1.9710},
-		{resolution: "720p",  duration: 10, cnyPrice: 2.1900},
-		{resolution: "1080p", duration: 4,  cnyPrice: 1.6425},
-		{resolution: "1080p", duration: 6,  cnyPrice: 1.8615},
-		{resolution: "1080p", duration: 8,  cnyPrice: 1.9710},
+		{resolution: "720p", duration: 4, cnyPrice: 1.6425},
+		{resolution: "720p", duration: 6, cnyPrice: 1.8615},
+		{resolution: "720p", duration: 8, cnyPrice: 1.9710},
+		{resolution: "720p", duration: 10, cnyPrice: 2.1900},
+		{resolution: "1080p", duration: 4, cnyPrice: 1.6425},
+		{resolution: "1080p", duration: 6, cnyPrice: 1.8615},
+		{resolution: "1080p", duration: 8, cnyPrice: 1.9710},
 		{resolution: "1080p", duration: 10, cnyPrice: 2.1900},
-		{resolution: "4k",    duration: 4,  cnyPrice: 3.2850},
-		{resolution: "4k",    duration: 6,  cnyPrice: 3.7230},
-		{resolution: "4k",    duration: 8,  cnyPrice: 3.9420},
-		{resolution: "4k",    duration: 10, cnyPrice: 4.3800},
+		{resolution: "4k", duration: 4, cnyPrice: 3.2850},
+		{resolution: "4k", duration: 6, cnyPrice: 3.7230},
+		{resolution: "4k", duration: 8, cnyPrice: 3.9420},
+		{resolution: "4k", duration: 10, cnyPrice: 4.3800},
 	},
 }
 
@@ -271,26 +381,19 @@ var (
 )
 
 func GetPricing() []Pricing {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		updatePricingLock.Lock()
-		defer updatePricingLock.Unlock()
-		// Double check after acquiring the lock
-		if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-			modelSupportEndpointsLock.Lock()
-			defer modelSupportEndpointsLock.Unlock()
-			updatePricing()
-		}
+	pricing, err := GetPricingWithError()
+	if err != nil {
+		common.SysError("refresh pricing failed: " + err.Error())
 	}
-	return pricingMap
+	return pricing
 }
 
-// GetVendors 返回当前定价接口使用到的供应商信息
-func GetVendors() []PricingVendor {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		// 保证先刷新一次
-		GetPricing()
-	}
-	return vendorsList
+// GetPricingWithError returns the current pricing snapshot and surfaces cache
+// refresh failures to management APIs instead of presenting stale data as a
+// successful refresh.
+func GetPricingWithError() ([]Pricing, error) {
+	snapshot, err := GetPricingCatalogSnapshotWithError()
+	return snapshot.Pricing, err
 }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
@@ -301,7 +404,7 @@ func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 	modelSupportEndpointsLock.RLock()
 	defer modelSupportEndpointsLock.RUnlock()
 	if endpoints, ok := modelSupportEndpointTypes[model]; ok {
-		return endpoints
+		return cloneEndpointTypes(endpoints)
 	}
 	return make([]constant.EndpointType, 0)
 }
@@ -321,27 +424,24 @@ func imageSpecKey(aspectRatio string, resolution string, quality string) string 
 	return fmt.Sprintf("image:%s:%s:%s", normalizedAspect, normalizedResolution, normalizedQuality)
 }
 
-func apimartUSDToPremiumCNY(value float64) float64 {
-	return value * 7.3 * 1.6
-}
-
 func fixedImagePricingRules(modelName string) []fixedImagePricingRule {
 	switch CanonicalModelKey(modelName) {
 	case "gemini-2.5-flash-image-preview":
 		return []fixedImagePricingRule{
-			{specKey: "image:1k", resolution: "1k", apimartCurrentUSD: 0.0125},
+			{specKey: "image:1k", resolution: "1k", cnyPrice: 0.4},
 		}
 	case "gemini-3-pro-image-preview":
 		return []fixedImagePricingRule{
-			{specKey: "image:1k", resolution: "1k", cnyPrice: 0.7},
-			{specKey: "image:2k", resolution: "2k", cnyPrice: 0.7},
-			{specKey: "image:4k", resolution: "4k", cnyPrice: 0.9},
+			{specKey: "image:1k", resolution: "1k", cnyPrice: 1.3},
+			{specKey: "image:2k", resolution: "2k", cnyPrice: 1.3},
+			{specKey: "image:4k", resolution: "4k", cnyPrice: 2.4},
 		}
 	case "gemini-3.1-flash-image-preview":
 		return []fixedImagePricingRule{
-			{specKey: "image:1k", resolution: "1k", cnyPrice: 0.6},
-			{specKey: "image:2k", resolution: "2k", cnyPrice: 0.7},
-			{specKey: "image:4k", resolution: "4k", cnyPrice: 1.1},
+			{specKey: "image:0.5k", resolution: "0.5k", cnyPrice: 0.45},
+			{specKey: "image:1k", resolution: "1k", cnyPrice: 0.65},
+			{specKey: "image:2k", resolution: "2k", cnyPrice: 1.0},
+			{specKey: "image:4k", resolution: "4k", cnyPrice: 1.55},
 		}
 	case "gemini-3-pro-image-preview-ultra":
 		return []fixedImagePricingRule{
@@ -355,18 +455,43 @@ func fixedImagePricingRules(modelName string) []fixedImagePricingRule {
 			{specKey: "image:2k", resolution: "2k", cnyPrice: 2.3},
 			{specKey: "image:4k", resolution: "4k", cnyPrice: 2.6},
 		}
-	case "gpt-image-2", "gpt-image-2-vip":
+	// saver = mlai-gemini 特价渠道对外名称（1 点 = ¥0.1）：1K=3pt 2K=3pt 4K=5pt。
+	// 与 -ultra 同构：底模同为 gemini-3-pro-image-preview，仅渠道与定价不同。
+	case "gemini-3-pro-image-preview-saver":
 		return []fixedImagePricingRule{
-			{specKey: "image:1k", resolution: "1k", cnyPrice: 0.2},
+			{specKey: "image:1k", resolution: "1k", cnyPrice: 0.3},
 			{specKey: "image:2k", resolution: "2k", cnyPrice: 0.3},
-			{specKey: "image:4k", resolution: "4k", cnyPrice: 0.4},
+			{specKey: "image:4k", resolution: "4k", cnyPrice: 0.5},
 		}
-	// Official-tier models: fixed CNY prices corresponding to official API pricing.
-	case "gpt-image-2-official", "gemini-3-pro-image-preview-official":
+	case "gpt-image-2":
 		return []fixedImagePricingRule{
-			{specKey: "image:1k", resolution: "1k", cnyPrice: 1.5},
-			{specKey: "image:2k", resolution: "2k", cnyPrice: 1.8},
-			{specKey: "image:4k", resolution: "4k", cnyPrice: 2.5},
+			{specKey: "image:1k:low", resolution: "1k", quality: "low", cnyPrice: 0.3},
+			{specKey: "image:2k:low", resolution: "2k", quality: "low", cnyPrice: 0.4},
+			{specKey: "image:4k:low", resolution: "4k", quality: "low", cnyPrice: 0.5},
+			{specKey: "image:1k:medium", resolution: "1k", quality: "medium", cnyPrice: 0.6},
+			{specKey: "image:2k:medium", resolution: "2k", quality: "medium", cnyPrice: 1.2},
+			{specKey: "image:4k:medium", resolution: "4k", quality: "medium", cnyPrice: 1.9},
+			{specKey: "image:1k:high", resolution: "1k", quality: "high", cnyPrice: 2.3},
+			{specKey: "image:2k:high", resolution: "2k", quality: "high", cnyPrice: 4.6},
+			{specKey: "image:4k:high", resolution: "4k", quality: "high", cnyPrice: 7.6},
+		}
+	case "gpt-image-2-official":
+		return []fixedImagePricingRule{
+			{specKey: "image:1k:low", resolution: "1k", quality: "low", cnyPrice: 0.3},
+			{specKey: "image:2k:low", resolution: "2k", quality: "low", cnyPrice: 0.4},
+			{specKey: "image:4k:low", resolution: "4k", quality: "low", cnyPrice: 0.5},
+			{specKey: "image:1k:medium", resolution: "1k", quality: "medium", cnyPrice: 0.6},
+			{specKey: "image:2k:medium", resolution: "2k", quality: "medium", cnyPrice: 1.2},
+			{specKey: "image:4k:medium", resolution: "4k", quality: "medium", cnyPrice: 1.9},
+			{specKey: "image:1k:high", resolution: "1k", quality: "high", cnyPrice: 2.3},
+			{specKey: "image:2k:high", resolution: "2k", quality: "high", cnyPrice: 4.6},
+			{specKey: "image:4k:high", resolution: "4k", quality: "high", cnyPrice: 7.6},
+		}
+	case "gemini-3-pro-image-preview-official":
+		return []fixedImagePricingRule{
+			{specKey: "image:1k", resolution: "1k", cnyPrice: 1.3},
+			{specKey: "image:2k", resolution: "2k", cnyPrice: 1.3},
+			{specKey: "image:4k", resolution: "4k", cnyPrice: 2.4},
 		}
 	default:
 		return nil
@@ -374,10 +499,7 @@ func fixedImagePricingRules(modelName string) []fixedImagePricingRule {
 }
 
 func fixedImageRuleCNY(rule fixedImagePricingRule) float64 {
-	if rule.cnyPrice > 0 {
-		return rule.cnyPrice
-	}
-	return apimartUSDToPremiumCNY(rule.apimartCurrentUSD)
+	return rule.cnyPrice
 }
 
 // FixedImagePriceCNYForTier returns the per-image CNY price for modelName at the given
@@ -415,6 +537,273 @@ func fixedImageBasePriceCNY(modelName string) (float64, bool) {
 		return minPrice, true
 	}
 	return 0, false
+}
+
+// systemDefaultModelPricingConfig exposes the built-in media price registry
+// through the same structured contract used by model-level pricing overrides.
+// The management API uses this to show the rule that is actually effective
+// instead of presenting an empty form while relay billing still uses it.
+func systemDefaultModelPricingConfig(modelName string) *ModelPricingConfig {
+	imageRules := fixedImagePricingRules(modelName)
+	if len(imageRules) > 0 {
+		specs := make([]ModelPricingSpec, 0, len(imageRules))
+		for _, rule := range imageRules {
+			specKey := strings.TrimSpace(rule.specKey)
+			if specKey == "" {
+				specKey = imageSpecKey(rule.aspectRatio, rule.resolution, rule.quality)
+			}
+			specs = append(specs, ModelPricingSpec{
+				SpecKey:    specKey,
+				Resolution: strings.ToLower(strings.TrimSpace(rule.resolution)),
+				PriceCNY:   fixedImageRuleCNY(rule),
+			})
+		}
+		return &ModelPricingConfig{
+			Currency:               PricingCurrencyCNY,
+			BillingMode:            PricingBillingModeFixedBySpec,
+			ReferenceImagePriceCNY: builtInReferenceImagePriceCNY(modelName),
+			Specs:                  specs,
+		}
+	}
+
+	canonicalModel := CanonicalModelKey(modelName)
+	if fixedSpecs := fixedVideoPricingSpecs[canonicalModel]; len(fixedSpecs) > 0 {
+		specs := make([]ModelPricingSpec, 0, len(fixedSpecs))
+		for _, spec := range fixedSpecs {
+			specs = append(specs, ModelPricingSpec{
+				SpecKey:         fmt.Sprintf("video:%s:%ds", spec.resolution, spec.duration),
+				Resolution:      strings.ToLower(strings.TrimSpace(spec.resolution)),
+				DurationSeconds: spec.duration,
+				PriceCNY:        spec.cnyPrice,
+			})
+		}
+		return &ModelPricingConfig{
+			Currency:    PricingCurrencyCNY,
+			BillingMode: PricingBillingModeFixedBySpec,
+			Specs:       specs,
+		}
+	}
+
+	linearRules := linearVideoPricingRules[canonicalModel]
+	if len(linearRules) == 0 {
+		return nil
+	}
+	specs := make([]ModelPricingSpec, 0, len(linearRules))
+	for _, rule := range linearRules {
+		specs = append(specs, ModelPricingSpec{
+			Resolution:   strings.ToLower(strings.TrimSpace(rule.resolution)),
+			CNYPerSecond: rule.cnyPerSecond,
+		})
+	}
+	return &ModelPricingConfig{
+		Currency:    PricingCurrencyCNY,
+		BillingMode: PricingBillingModeLinearBySpec,
+		Specs:       specs,
+	}
+}
+
+func resolveEffectiveModelPricingConfig(
+	modelName string,
+	rawPricingConfig string,
+) (*ModelPricingConfig, string, error) {
+	config, err := ParseModelPricingConfig(rawPricingConfig)
+	if err != nil {
+		return nil, SpecPricingSourceNone, err
+	}
+	if config != nil {
+		if config.IsDisabled() {
+			return nil, SpecPricingSourceDisabled, nil
+		}
+		return config, SpecPricingSourceModel, nil
+	}
+	systemDefault := systemDefaultModelPricingConfig(modelName)
+	if systemDefault == nil {
+		return nil, SpecPricingSourceNone, nil
+	}
+	return systemDefault, SpecPricingSourceSystemDefault, nil
+}
+
+func configuredModelPricingConfigFrom(
+	configuredPricing map[string]ModelPricingConfig,
+	modelName string,
+) (ModelPricingConfig, bool) {
+	trimmedModelName := strings.TrimSpace(modelName)
+	if config, ok := configuredPricing[trimmedModelName]; ok {
+		return config, true
+	}
+	for _, key := range RoutingModelCandidates(modelName) {
+		if key == trimmedModelName {
+			continue
+		}
+		if config, ok := configuredPricing[key]; ok {
+			return config, true
+		}
+	}
+	return ModelPricingConfig{}, false
+}
+
+func configuredModelPricingConfig(modelName string) (ModelPricingConfig, bool) {
+	// Pricing cache publication holds the write side of this lock while it swaps
+	// both the public catalog and the billing lookup. This read lock prevents a
+	// charge from observing a half-published refresh.
+	modelSupportEndpointsLock.RLock()
+	defer modelSupportEndpointsLock.RUnlock()
+	configuredPricingLock.RLock()
+	defer configuredPricingLock.RUnlock()
+	return configuredModelPricingConfigFrom(configuredPricingByModel, modelName)
+}
+
+// VideoSpecPriceCNY 返回视频模型在 (分辨率 × 时长) 规格下发布的 CNY 价格 ——
+// 与 /api/pricing 暴露给下游（画布积分定价）的是同一张规格价表，任务计费按它
+// 折算可保证「用户实际花费」与 new-api 台账一致。找不到对应规格时返回 (0, false)。
+func VideoSpecPriceCNY(modelName string, resolution string, durationSeconds int) (float64, bool) {
+	if durationSeconds <= 0 {
+		return 0, false
+	}
+	res := strings.TrimSpace(strings.ToLower(resolution))
+	if res == "" {
+		return 0, false
+	}
+	if config, configured := configuredModelPricingConfig(modelName); configured {
+		if price, ok := config.FixedPriceCNY(res, durationSeconds); ok {
+			return price, true
+		}
+		return config.LinearPriceCNY(res, durationSeconds)
+	}
+	systemDefault := systemDefaultModelPricingConfig(modelName)
+	if systemDefault == nil {
+		return 0, false
+	}
+	if price, ok := systemDefault.FixedPriceCNY(res, durationSeconds); ok {
+		return price, true
+	}
+	return systemDefault.LinearPriceCNY(res, durationSeconds)
+}
+
+// EffectiveFixedSpecPriceCNY is authoritative: a persisted disabled or partial
+// model configuration never falls through to a hidden system-default row.
+func EffectiveFixedSpecPriceCNY(modelName, resolution string, durationSeconds int) (float64, bool) {
+	if config, configured := configuredModelPricingConfig(modelName); configured {
+		return config.FixedPriceCNY(resolution, durationSeconds)
+	}
+	systemDefault := systemDefaultModelPricingConfig(modelName)
+	if systemDefault == nil {
+		return 0, false
+	}
+	return systemDefault.FixedPriceCNY(resolution, durationSeconds)
+}
+
+func isGptImage2QualityPricingModel(modelName string) bool {
+	canonical := CanonicalModelKey(modelName)
+	return canonical == "gpt-image-2" || canonical == "gpt-image-2-official"
+}
+
+func builtInReferenceImagePriceCNY(modelName string) float64 {
+	if isGptImage2QualityPricingModel(modelName) {
+		return 0.1
+	}
+	if CanonicalModelKey(modelName) == "minimax-h3" {
+		return 0.065
+	}
+	return 0
+}
+
+func builtInReferenceImageFreeCount(modelName string) int {
+	if CanonicalModelKey(modelName) == "minimax-h3" {
+		return 5
+	}
+	return 0
+}
+
+// EffectiveImageReferencePriceCNY publishes and charges the same additive
+// per-reference-image price. An explicit model config remains authoritative.
+func EffectiveImageReferencePriceCNY(modelName string) float64 {
+	if config, configured := configuredModelPricingConfig(modelName); configured {
+		return config.ReferenceImagePriceCNY
+	}
+	return builtInReferenceImagePriceCNY(modelName)
+}
+
+// EffectiveImageReferenceFreeCount keeps submission billing aligned with the
+// same free-reference allowance published by /api/pricing.
+func EffectiveImageReferenceFreeCount(modelName string) int {
+	if config, configured := configuredModelPricingConfig(modelName); configured {
+		return config.ReferenceImageFreeCount
+	}
+	return builtInReferenceImageFreeCount(modelName)
+}
+
+// NormalizeGptImage2Quality maps the public request vocabulary onto the three
+// Tencent premium billing tiers. auto/standard/empty preserve the established
+// low-cost default; hd is the long-standing OpenAI alias for high.
+func NormalizeGptImage2Quality(quality string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(quality)) {
+	case "", "auto", "standard", "low":
+		return "low", true
+	case "medium":
+		return "medium", true
+	case "high", "hd":
+		return "high", true
+	default:
+		return "", false
+	}
+}
+
+func fixedImageSpecPriceCNY(config ModelPricingConfig, modelName, resolution, quality string) (float64, bool) {
+	res := strings.ToLower(strings.TrimSpace(resolution))
+	if res == "" {
+		return 0, false
+	}
+	if isGptImage2QualityPricingModel(modelName) {
+		normalizedQuality, ok := NormalizeGptImage2Quality(quality)
+		if !ok {
+			return 0, false
+		}
+		if price, found := config.FixedPriceCNYBySpecKey(
+			fmt.Sprintf("image:%s:%s", res, normalizedQuality),
+		); found {
+			return price, true
+		}
+		return 0, false
+	}
+	if price, found := config.FixedPriceCNYBySpecKey("image:" + res); found {
+		return price, true
+	}
+	return config.FixedPriceCNY(res, 0)
+}
+
+// EffectiveFixedImageSpecPriceCNY resolves the exact image selling price used
+// by both the public pricing snapshot and post-generation quota accounting.
+func EffectiveFixedImageSpecPriceCNY(modelName, resolution, quality string) (float64, bool) {
+	if config, configured := configuredModelPricingConfig(modelName); configured {
+		return fixedImageSpecPriceCNY(config, modelName, resolution, quality)
+	}
+	systemDefault := systemDefaultModelPricingConfig(modelName)
+	if systemDefault == nil {
+		return 0, false
+	}
+	return fixedImageSpecPriceCNY(*systemDefault, modelName, resolution, quality)
+}
+
+// effectivePublishedBasePriceCNY preserves the public model_price contract:
+// model-level spec overrides and built-in fixed image tiers may provide a
+// per-request base, while a built-in linear video rate must remain exclusively
+// in param_pricing because CNY/second is not a per-request price.
+func effectivePublishedBasePriceCNY(modelName string) (float64, bool) {
+	if config, configured := configuredModelPricingConfig(modelName); configured {
+		return config.BasePriceCNY()
+	}
+	return fixedImageBasePriceCNY(modelName)
+}
+
+func effectivePublishedBasePriceCNYFrom(
+	configuredPricing map[string]ModelPricingConfig,
+	modelName string,
+) (float64, bool) {
+	if config, configured := configuredModelPricingConfigFrom(configuredPricing, modelName); configured {
+		return config.BasePriceCNY()
+	}
+	return fixedImageBasePriceCNY(modelName)
 }
 
 func extractDurationOptions(meta *Model) []int {
@@ -460,6 +849,12 @@ func extractDurationOptions(meta *Model) []int {
 }
 
 func buildParamPricing(modelName string, meta *Model) *ParamPricing {
+	if config, err := ParseModelPricingConfig(metaPricingConfig(meta)); err == nil && config != nil {
+		if config.IsDisabled() {
+			return nil
+		}
+		return buildConfiguredParamPricing(*config, meta)
+	}
 	imageRules := fixedImagePricingRules(modelName)
 	if len(imageRules) > 0 {
 		results := make([]ParamPricingResult, 0, len(imageRules))
@@ -477,10 +872,11 @@ func buildParamPricing(modelName string, meta *Model) *ParamPricing {
 			})
 		}
 		return &ParamPricing{
-			Currency:    "CNY",
-			BillingMode: "fixed_by_image_spec",
-			Formula:     "price_cny = apimart_current_price_usd * 7.3 * 1.6",
-			Results:     results,
+			Currency:               "CNY",
+			BillingMode:            "fixed_by_image_spec",
+			Formula:                "price_cny = fixed image spec selling price + reference_image_count * reference_image_price_cny",
+			ReferenceImagePriceCNY: builtInReferenceImagePriceCNY(modelName),
+			Results:                results,
 		}
 	}
 
@@ -528,24 +924,288 @@ func buildParamPricing(modelName string, meta *Model) *ParamPricing {
 			})
 		}
 	}
+	referenceImageFreeCount := builtInReferenceImageFreeCount(modelName)
+	referenceImagePriceCNY := builtInReferenceImagePriceCNY(modelName)
+	formula := strings.Join(formulaLines, "; ")
+	if referenceImagePriceCNY > 0 {
+		formula = strings.Join(append(formulaLines, "reference images above the free allowance are additive"), "; ")
+	}
 	return &ParamPricing{
-		Currency:    "CNY",
-		BillingMode: "linear_by_duration_and_resolution",
-		Formula:     strings.Join(formulaLines, "; "),
-		Results:     results,
+		Currency:                "CNY",
+		BillingMode:             "linear_by_duration_and_resolution",
+		Formula:                 formula,
+		ReferenceImageFreeCount: referenceImageFreeCount,
+		ReferenceImagePriceCNY:  referenceImagePriceCNY,
+		Results:                 results,
 	}
 }
 
-func updatePricing() {
+func metaPricingConfig(meta *Model) string {
+	if meta == nil {
+		return ""
+	}
+	return meta.PricingConfig
+}
+
+func buildConfiguredParamPricing(config ModelPricingConfig, meta *Model) *ParamPricing {
+	if config.IsDisabled() {
+		return nil
+	}
+	results := make([]ParamPricingResult, 0, len(config.Specs))
+	if config.BillingMode == PricingBillingModeFixedBySpec {
+		for _, spec := range config.Specs {
+			specKey := strings.TrimSpace(spec.SpecKey)
+			if specKey == "" {
+				if spec.DurationSeconds > 0 {
+					specKey = fmt.Sprintf("video:%s:%ds", spec.Resolution, spec.DurationSeconds)
+				} else {
+					specKey = fmt.Sprintf("image:%s", spec.Resolution)
+				}
+			}
+			results = append(results, ParamPricingResult{SpecKey: specKey, Resolution: strings.ToLower(strings.TrimSpace(spec.Resolution)), DurationSeconds: spec.DurationSeconds, PriceCNY: spec.PriceCNY, PriceDisplayCNY: formatCNY(spec.PriceCNY)})
+		}
+		return &ParamPricing{Currency: PricingCurrencyCNY, BillingMode: PricingBillingModeFixedBySpec, Formula: "price_cny = configured fixed spec price + max(reference_image_count - reference_image_free_count, 0) * reference_image_price_cny", ReferenceImageFreeCount: config.ReferenceImageFreeCount, ReferenceImagePriceCNY: config.ReferenceImagePriceCNY, Results: results}
+	}
+	durations := extractDurationOptions(meta)
+	if len(durations) == 0 {
+		return nil
+	}
+	results = make([]ParamPricingResult, 0, len(config.Specs)*len(durations))
+	formulaLines := make([]string, 0, len(config.Specs))
+	for _, spec := range config.Specs {
+		formulaLines = append(formulaLines, fmt.Sprintf("%s: price_cny = duration_seconds * %.6f", spec.Resolution, spec.CNYPerSecond))
+		for _, duration := range durations {
+			price := spec.CNYPerSecond * float64(duration)
+			results = append(results, ParamPricingResult{SpecKey: fmt.Sprintf("video:%s:%ds", spec.Resolution, duration), Resolution: strings.ToLower(strings.TrimSpace(spec.Resolution)), DurationSeconds: duration, PriceCNY: price, PriceDisplayCNY: formatCNY(price)})
+		}
+	}
+	return &ParamPricing{Currency: PricingCurrencyCNY, BillingMode: PricingBillingModeLinearBySpec, Formula: strings.Join(formulaLines, "; "), Results: results}
+}
+
+// maxChannelPriceRatioByCanonicalModel 计算每个 canonical 模型在所有启用渠道中的
+// 最高渠道价格倍率（channels.setting.price_ratio，缺省=1.0）。发布价按最贵渠道定价，
+// 保证下游（画布积分）扣费足以覆盖任一实际路由到的渠道成本。
+func maxChannelPriceRatioByCanonicalModel(abilities []AbilityWithChannel) map[string]float64 {
+	settingRatioCache := make(map[string]float64)
+	parseRatio := func(settingJSON string) float64 {
+		if strings.TrimSpace(settingJSON) == "" {
+			return 1.0
+		}
+		if v, ok := settingRatioCache[settingJSON]; ok {
+			return v
+		}
+		ratio := 1.0
+		var setting dto.ChannelSettings
+		if err := common.Unmarshal([]byte(settingJSON), &setting); err == nil {
+			ratio = setting.GetPriceRatio()
+		}
+		settingRatioCache[settingJSON] = ratio
+		return ratio
+	}
+	out := make(map[string]float64)
+	for _, ability := range abilities {
+		canonical := CanonicalModelKey(ability.Model)
+		if canonical == "" {
+			continue
+		}
+		ratio := parseRatio(ability.ChannelSetting)
+		if existing, ok := out[canonical]; !ok || ratio > existing {
+			out[canonical] = ratio
+		}
+	}
+	return out
+}
+
+func maxChannelVideoPriceFloorByCanonicalModel(abilities []AbilityWithChannel) map[string]float64 {
+	out := make(map[string]float64)
+	for _, ability := range abilities {
+		canonical := CanonicalModelKey(ability.Model)
+		if canonical == "" || strings.TrimSpace(ability.ChannelSetting) == "" {
+			continue
+		}
+		var settings dto.ChannelSettings
+		if err := common.Unmarshal([]byte(ability.ChannelSetting), &settings); err != nil {
+			continue
+		}
+		floor := settings.GetMinVideoPriceCNYPerSecond()
+		if existing, ok := out[canonical]; !ok || floor > existing {
+			out[canonical] = floor
+		}
+	}
+	return out
+}
+
+// pricingModelReferenceByCanonicalModel separates the public catalog identity
+// from its live price source. Every enabled channel for the same public model
+// must resolve to the same source; conflicting contracts fail the snapshot
+// refresh instead of publishing an arbitrary price.
+func pricingModelReferenceByCanonicalModel(abilities []AbilityWithChannel) (map[string]string, error) {
+	out := make(map[string]string)
+	for _, ability := range abilities {
+		publicModel := CanonicalModelKey(ability.Model)
+		if publicModel == "" {
+			continue
+		}
+		settings := dto.ChannelSettings{}
+		if strings.TrimSpace(ability.ChannelSetting) != "" {
+			if err := common.Unmarshal([]byte(ability.ChannelSetting), &settings); err != nil {
+				return nil, fmt.Errorf(
+					"channel %d model %s has invalid pricing settings: %w",
+					ability.ChannelId,
+					ability.Model,
+					err,
+				)
+			}
+		}
+		priceSource, err := settings.ResolvePricingModelName(ability.Model)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"channel %d model %s has invalid pricing model reference: %w",
+				ability.ChannelId,
+				ability.Model,
+				err,
+			)
+		}
+		canonicalSource := CanonicalModelKey(priceSource)
+		if canonicalSource == "" {
+			return nil, fmt.Errorf(
+				"channel %d model %s resolved an empty pricing model reference",
+				ability.ChannelId,
+				ability.Model,
+			)
+		}
+		if existing, configured := out[publicModel]; configured && existing != canonicalSource {
+			return nil, fmt.Errorf(
+				"public model %s has conflicting pricing sources %s and %s",
+				publicModel,
+				existing,
+				canonicalSource,
+			)
+		}
+		out[publicModel] = canonicalSource
+	}
+	return out, nil
+}
+
+// applyChannelPriceRatioToPricing 把渠道最高价格倍率应用到发布价：
+// param_pricing 每个规格的 CNY 价与固定按次 ModelPrice 同步放大。
+// token 倍率（ModelRatio）不放大 —— token 计费的渠道倍率在结算时相乘。
+func applyChannelPricingContractToPricing(p *Pricing, ratio, minVideoPriceCNYPerSecond float64) {
+	if ratio <= 0 {
+		return
+	}
+	if p.QuotaType == 1 && p.ModelPrice > 0 {
+		p.ModelPrice *= ratio
+	}
+	if p.ParamPricing != nil {
+		if ratio != 1.0 || minVideoPriceCNYPerSecond > 0 {
+			ratioFormula := fmt.Sprintf("discounted_price_cny = source_price_cny * %.6f", ratio)
+			if minVideoPriceCNYPerSecond > 0 {
+				ratioFormula += fmt.Sprintf(
+					"; published_price_cny = max(discounted_price_cny, duration_seconds * %.6f)",
+					minVideoPriceCNYPerSecond,
+				)
+			} else {
+				ratioFormula += "; published_price_cny = discounted_price_cny"
+			}
+			if sourceFormula := strings.TrimSpace(p.ParamPricing.Formula); sourceFormula != "" {
+				ratioFormula += "; source formula: " + sourceFormula
+			}
+			p.ParamPricing.Formula = ratioFormula
+		}
+		if p.ParamPricing.ReferenceImagePriceCNY > 0 {
+			p.ParamPricing.ReferenceImagePriceCNY *= ratio
+		}
+		for i := range p.ParamPricing.Results {
+			if p.ParamPricing.Results[i].PriceCNY > 0 {
+				p.ParamPricing.Results[i].PriceCNY *= ratio
+				if p.ParamPricing.Results[i].DurationSeconds > 0 && minVideoPriceCNYPerSecond > 0 {
+					floorPrice := float64(p.ParamPricing.Results[i].DurationSeconds) * minVideoPriceCNYPerSecond
+					if floorPrice > p.ParamPricing.Results[i].PriceCNY {
+						p.ParamPricing.Results[i].PriceCNY = floorPrice
+					}
+				}
+				p.ParamPricing.Results[i].PriceDisplayCNY = formatCNY(p.ParamPricing.Results[i].PriceCNY)
+			}
+		}
+		if minVideoPriceCNYPerSecond > 0 {
+			minPublishedSpecPrice := 0.0
+			for _, result := range p.ParamPricing.Results {
+				if result.PriceCNY > 0 && (minPublishedSpecPrice == 0 || result.PriceCNY < minPublishedSpecPrice) {
+					minPublishedSpecPrice = result.PriceCNY
+				}
+			}
+			if minPublishedSpecPrice > 0 {
+				p.ModelPrice = minPublishedSpecPrice
+				p.QuotaType = 1
+			}
+		}
+	}
+}
+
+func resolveAbilityEndpointTypes(ability AbilityWithChannel) ([]string, error) {
+	if strings.TrimSpace(ability.ChannelSetting) == "" {
+		return nil, fmt.Errorf(
+			"channel %d model %q has no explicit protocol setting",
+			ability.ChannelId,
+			ability.Model,
+		)
+	}
+
+	var settings dto.ChannelSettings
+	if err := common.Unmarshal([]byte(ability.ChannelSetting), &settings); err != nil {
+		return nil, fmt.Errorf(
+			"channel %d model %q has invalid setting: %w",
+			ability.ChannelId,
+			ability.Model,
+			err,
+		)
+	}
+	resolvedProtocol, err := ResolveProtocolBinding(settings, ability.Model)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"channel %d model %q has invalid protocol binding: %w",
+			ability.ChannelId,
+			ability.Model,
+			err,
+		)
+	}
+
+	endpointTypes := make([]string, 0, len(resolvedProtocol.Protocol.EndpointTypes))
+	for _, endpointType := range resolvedProtocol.Protocol.EndpointTypes {
+		endpointTypes = append(endpointTypes, string(endpointType))
+	}
+	return endpointTypes, nil
+}
+
+func updatePricing() error {
 	//modelRatios := common.GetModelRatios()
 	enableAbilities, err := GetAllEnableAbilityWithChannels()
 	if err != nil {
-		common.SysLog(fmt.Sprintf("GetAllEnableAbilityWithChannels error: %v", err))
-		return
+		return fmt.Errorf("读取可用模型渠道失败: %w", err)
+	}
+	maxChannelPriceRatio := maxChannelPriceRatioByCanonicalModel(enableAbilities)
+	maxChannelVideoPriceFloor := maxChannelVideoPriceFloorByCanonicalModel(enableAbilities)
+	pricingModelReference, err := pricingModelReferenceByCanonicalModel(enableAbilities)
+	if err != nil {
+		return fmt.Errorf("解析模型计价引用失败: %w", err)
 	}
 	// 预加载模型元数据与供应商一次，避免循环查询
 	var allMeta []Model
-	_ = DB.Find(&allMeta).Error
+	if err := DB.Find(&allMeta).Error; err != nil {
+		return fmt.Errorf("读取模型元数据失败: %w", err)
+	}
+	for index := range allMeta {
+		meta := &allMeta[index]
+		if _, err := ParseModelPricingConfig(meta.PricingConfig); err != nil {
+			return fmt.Errorf(
+				"模型 %d(%s) 的定价配置无效: %w",
+				meta.Id,
+				meta.ModelName,
+				err,
+			)
+		}
+	}
 	metaMap := make(map[string]*Model)
 	prefixList := make([]*Model, 0)
 	suffixList := make([]*Model, 0)
@@ -597,7 +1257,9 @@ func updatePricing() {
 
 	// 预加载供应商
 	var vendors []Vendor
-	_ = DB.Find(&vendors).Error
+	if err := DB.Find(&vendors).Error; err != nil {
+		return fmt.Errorf("读取模型供应商失败: %w", err)
+	}
 	vendorMap := make(map[int]*Vendor)
 	for i := range vendors {
 		vendorMap[vendors[i].Id] = &vendors[i]
@@ -606,16 +1268,19 @@ func updatePricing() {
 	// 初始化默认供应商映射
 	initDefaultVendorMapping(metaMap, vendorMap, enableAbilities)
 
-	// 构建对前端友好的供应商列表
-	vendorsList = make([]PricingVendor, 0, len(vendorMap))
+	// 构建对前端友好的供应商列表。刷新完整校验通过前只写局部状态。
+	nextVendorsList := make([]PricingVendor, 0, len(vendorMap))
 	for _, v := range vendorMap {
-		vendorsList = append(vendorsList, PricingVendor{
+		nextVendorsList = append(nextVendorsList, PricingVendor{
 			ID:          v.Id,
 			Name:        v.Name,
 			Description: v.Description,
 			Icon:        v.Icon,
 		})
 	}
+	sort.Slice(nextVendorsList, func(left, right int) bool {
+		return nextVendorsList[left].ID < nextVendorsList[right].ID
+	})
 
 	modelGroupsMap := make(map[string]*types.Set[string])
 	canonicalMetaMap := make(map[string]*Model)
@@ -711,7 +1376,25 @@ func updatePricing() {
 			}
 		}
 	}
-
+	configuredPricing := make(map[string]ModelPricingConfig)
+	for index := range allMeta {
+		meta := &allMeta[index]
+		if meta.NameRule != NameRuleExact {
+			continue
+		}
+		config, err := ParseModelPricingConfig(meta.PricingConfig)
+		if err != nil || config == nil {
+			continue
+		}
+		configuredPricing[meta.ModelName] = *config
+	}
+	for canonicalModel, meta := range canonicalMetaMap {
+		config, err := ParseModelPricingConfig(meta.PricingConfig)
+		if err != nil || config == nil {
+			continue
+		}
+		configuredPricing[canonicalModel] = *config
+	}
 	//这里使用切片而不是Set，因为一个模型可能支持多个端点类型，并且第一个端点是优先使用端点
 	modelSupportEndpointsStr := make(map[string][]string)
 
@@ -722,92 +1405,95 @@ func updatePricing() {
 			continue
 		}
 		endpoints := modelSupportEndpointsStr[canonicalModel]
-		channelTypes := common.GetEndpointTypesByChannelType(ability.ChannelType, canonicalModel)
-		for _, channelType := range channelTypes {
-			if !common.StringsContains(endpoints, string(channelType)) {
-				endpoints = append(endpoints, string(channelType))
+		resolvedEndpointTypes, err := resolveAbilityEndpointTypes(ability)
+		if err != nil {
+			common.SysLog(fmt.Sprintf(
+				"Warning: skip endpoint publication for channel %d model %q: %v",
+				ability.ChannelId,
+				ability.Model,
+				err,
+			))
+			continue
+		}
+		for _, endpointType := range resolvedEndpointTypes {
+			if !common.StringsContains(endpoints, endpointType) {
+				endpoints = append(endpoints, endpointType)
 			}
 		}
 		modelSupportEndpointsStr[canonicalModel] = endpoints
 	}
 
-	// 再补充模型自定义端点：若配置有效则替换默认端点，不做合并
-	for modelName, meta := range canonicalMetaMap {
-		if strings.TrimSpace(meta.Endpoints) == "" {
+	canonicalModelNames := make([]string, 0, len(canonicalMetaMap))
+	for modelName := range canonicalMetaMap {
+		canonicalModelNames = append(canonicalModelNames, modelName)
+	}
+	sort.Strings(canonicalModelNames)
+
+	// 再补充 object-form 模型自定义端点：有效配置替换渠道端点，不做合并。
+	// 旧版数组/纯字符串配置继续由渠道协议目录提供端点类型。
+	modelEndpointOverrides := make(map[string]map[string]common.EndpointInfo)
+	for _, modelName := range canonicalModelNames {
+		meta := canonicalMetaMap[modelName]
+		overrides, objectForm, err := parseModelEndpointOverrides(meta.Endpoints)
+		if err != nil {
+			common.SysLog(fmt.Sprintf(
+				"Warning: ignore invalid endpoint override for model %q: %v",
+				modelName,
+				err,
+			))
 			continue
 		}
-		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
-			endpoints := make([]string, 0, len(raw))
-			for k, v := range raw {
-				switch v.(type) {
-				case string, map[string]interface{}:
-					if !common.StringsContains(endpoints, k) {
-						endpoints = append(endpoints, k)
-					}
-				}
-			}
-			if len(endpoints) > 0 {
-				modelSupportEndpointsStr[modelName] = endpoints
-			}
+		if !objectForm {
+			continue
 		}
+		modelEndpointOverrides[modelName] = overrides
+		if len(overrides) == 0 {
+			continue
+		}
+		endpoints := make([]string, 0, len(overrides))
+		for endpointType := range overrides {
+			endpoints = append(endpoints, endpointType)
+		}
+		sort.Strings(endpoints)
+		modelSupportEndpointsStr[modelName] = endpoints
 	}
 
-	modelSupportEndpointTypes = make(map[string][]constant.EndpointType)
+	nextModelSupportEndpointTypes := make(map[string][]constant.EndpointType)
 	for model, endpoints := range modelSupportEndpointsStr {
 		supportedEndpoints := make([]constant.EndpointType, 0)
 		for _, endpointStr := range endpoints {
 			endpointType := constant.EndpointType(endpointStr)
 			supportedEndpoints = append(supportedEndpoints, endpointType)
 		}
-		modelSupportEndpointTypes[model] = supportedEndpoints
+		nextModelSupportEndpointTypes[model] = supportedEndpoints
 	}
-
-	// 构建全局 supportedEndpointMap（默认 + 自定义覆盖）
-	supportedEndpointMap = make(map[string]common.EndpointInfo)
-	// 1. 默认端点
-	for _, endpoints := range modelSupportEndpointTypes {
-		for _, et := range endpoints {
-			if info, ok := common.GetDefaultEndpointInfo(et); ok {
-				if _, exists := supportedEndpointMap[string(et)]; !exists {
-					supportedEndpointMap[string(et)] = info
-				}
+	for _, modelName := range canonicalModelNames {
+		meta := canonicalMetaMap[modelName]
+		if strings.EqualFold(strings.TrimSpace(meta.Kind), "audio") {
+			nextModelSupportEndpointTypes[modelName] = []constant.EndpointType{
+				constant.EndpointTypeAudioSpeech,
 			}
 		}
 	}
-	// 2. 自定义端点（models 表）覆盖默认
-	for _, meta := range canonicalMetaMap {
-		if strings.TrimSpace(meta.Endpoints) == "" {
+
+	nextPricingMap := make([]Pricing, 0)
+	for model, groups := range modelGroupsMap {
+		supportedEndpointTypes := nextModelSupportEndpointTypes[model]
+		if len(supportedEndpointTypes) == 0 {
+			common.SysLog(fmt.Sprintf(
+				"Warning: exclude model %q from pricing catalog because no valid endpoint was resolved",
+				model,
+			))
 			continue
 		}
-		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
-			for k, v := range raw {
-				switch val := v.(type) {
-				case string:
-					supportedEndpointMap[k] = common.EndpointInfo{Path: val, Method: "POST"}
-				case map[string]interface{}:
-					ep := common.EndpointInfo{Method: "POST"}
-					if p, ok := val["path"].(string); ok {
-						ep.Path = p
-					}
-					if m, ok := val["method"].(string); ok {
-						ep.Method = strings.ToUpper(m)
-					}
-					supportedEndpointMap[k] = ep
-				default:
-					// ignore unsupported types
-				}
-			}
+		pricingModel := model
+		if referencedModel, ok := pricingModelReference[model]; ok {
+			pricingModel = referencedModel
 		}
-	}
-
-	pricingMap = make([]Pricing, 0)
-	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
 			EnableGroup:            groups.Items(),
-			SupportedEndpointTypes: modelSupportEndpointTypes[model],
+			SupportedEndpointTypes: supportedEndpointTypes,
 		}
 
 		// 补充模型元数据（描述、标签、供应商、状态）
@@ -817,73 +1503,105 @@ func updatePricing() {
 				continue
 			}
 			pricing.Description = meta.Description
+			pricing.ModelKind = strings.TrimSpace(meta.Kind)
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
-			pricing.ParamPricing = buildParamPricing(model, meta)
+			pricing.ParamPricing = buildParamPricing(pricingModel, meta)
 		}
-		if pricing.ParamPricing == nil {
-			pricing.ParamPricing = buildParamPricing(model, nil)
+		if _, hasMeta := canonicalMetaMap[model]; !hasMeta && pricing.ParamPricing == nil {
+			pricing.ParamPricing = buildParamPricing(pricingModel, nil)
 		}
-		modelPrice, findPrice := fixedImageBasePriceCNY(model)
+		modelPrice, findPrice := effectivePublishedBasePriceCNYFrom(configuredPricing, pricingModel)
 		if !findPrice {
-			modelPrice, findPrice = findCanonicalModelPrice(model)
+			modelPrice, findPrice = findCanonicalModelPrice(pricingModel)
 		}
 		if findPrice {
 			pricing.ModelPrice = modelPrice
 			pricing.QuotaType = 1
 		} else {
-			modelRatio, completionRatio := findCanonicalModelRatio(model)
+			modelRatio, completionRatio := findCanonicalModelRatio(pricingModel)
 			pricing.ModelRatio = modelRatio
 			pricing.CompletionRatio = completionRatio
 			pricing.QuotaType = 0
 		}
-		if cacheRatio, ok := findCanonicalCacheRatio(model); ok {
+		if cacheRatio, ok := findCanonicalCacheRatio(pricingModel); ok {
 			pricing.CacheRatio = &cacheRatio
 		}
-		if createCacheRatio, ok := findCanonicalCreateCacheRatio(model); ok {
+		if createCacheRatio, ok := findCanonicalCreateCacheRatio(pricingModel); ok {
 			pricing.CreateCacheRatio = &createCacheRatio
 		}
-		if imageRatio, ok := findCanonicalImageRatio(model); ok {
+		if imageRatio, ok := findCanonicalImageRatio(pricingModel); ok {
 			pricing.ImageRatio = &imageRatio
 		}
-		if audioRatio, ok := findCanonicalAudioRatio(model); ok {
+		if audioRatio, ok := findCanonicalAudioRatio(pricingModel); ok {
 			pricing.AudioRatio = &audioRatio
 		}
-		if audioCompletionRatio, ok := findCanonicalAudioCompletionRatio(model); ok {
+		if audioCompletionRatio, ok := findCanonicalAudioCompletionRatio(pricingModel); ok {
 			pricing.AudioCompletionRatio = &audioCompletionRatio
 		}
-		pricingMap = append(pricingMap, pricing)
+		// 渠道价格倍率：发布价取该模型所有启用渠道中的最高倍率
+		//（channels.setting.price_ratio），保证下游（画布积分）按最贵渠道定价。
+		channelRatio := maxChannelPriceRatio[model]
+		if channelRatio <= 0 {
+			channelRatio = 1.0
+		}
+		videoPriceFloor := maxChannelVideoPriceFloor[model]
+		if channelRatio != 1.0 || videoPriceFloor > 0 {
+			applyChannelPricingContractToPricing(&pricing, channelRatio, videoPriceFloor)
+		}
+		nextPricingMap = append(nextPricingMap, pricing)
+	}
+
+	endpointContracts := make([]modelEndpointContract, 0, len(nextPricingMap))
+	for _, pricing := range nextPricingMap {
+		endpointContracts = append(endpointContracts, modelEndpointContract{
+			ModelName:     pricing.ModelName,
+			EndpointTypes: pricing.SupportedEndpointTypes,
+			Overrides:     modelEndpointOverrides[pricing.ModelName],
+		})
+	}
+	nextSupportedEndpointMap, err := buildSupportedEndpointCatalog(endpointContracts)
+	if err != nil {
+		return fmt.Errorf("构建公开端点目录失败: %w", err)
 	}
 
 	// 防止大更新后数据不通用
-	if len(pricingMap) > 0 {
-		pricingMap[0].PricingVersion = "5a90f2b86c08bd983a9a2e6d66c255f4eaef9c4bc934386d2b6ae84ef0ff1f1f"
+	if len(nextPricingMap) > 0 {
+		nextPricingMap[0].PricingVersion = "5a90f2b86c08bd983a9a2e6d66c255f4eaef9c4bc934386d2b6ae84ef0ff1f1f"
 	}
 
-	// 刷新缓存映射，供高并发快速查询
-	modelEnableGroupsLock.Lock()
-	modelEnableGroups = make(map[string][]string)
-	modelQuotaTypeMap = make(map[string]int)
-	modelKindMap = make(map[string]string)
-	for _, p := range pricingMap {
-		modelEnableGroups[p.ModelName] = p.EnableGroup
-		modelQuotaTypeMap[p.ModelName] = p.QuotaType
+	nextModelEnableGroups := make(map[string][]string, len(nextPricingMap))
+	nextModelQuotaTypeMap := make(map[string]int, len(nextPricingMap))
+	nextModelKindMap := make(map[string]string, len(allMeta))
+	for _, pricing := range nextPricingMap {
+		nextModelEnableGroups[pricing.ModelName] = pricing.EnableGroup
+		nextModelQuotaTypeMap[pricing.ModelName] = pricing.QuotaType
 	}
-	for i := range allMeta {
-		m := &allMeta[i]
-		if m.Kind != "" {
-			modelKindMap[m.ModelName] = m.Kind
+	for index := range allMeta {
+		meta := &allMeta[index]
+		if meta.Kind != "" {
+			nextModelKindMap[meta.ModelName] = meta.Kind
 		}
 	}
-	modelEnableGroupsLock.Unlock()
 
+	// All fallible work is complete. Publish every pricing-related cache while
+	// the caller still holds modelSupportEndpointsLock's write side. Billing
+	// and derived-map readers use the same publication barrier.
+	configuredPricingLock.Lock()
+	modelEnableGroupsLock.Lock()
+	pricingMap = nextPricingMap
+	vendorsList = nextVendorsList
+	supportedEndpointMap = nextSupportedEndpointMap
+	modelSupportEndpointTypes = nextModelSupportEndpointTypes
+	configuredPricingByModel = configuredPricing
+	modelEnableGroups = nextModelEnableGroups
+	modelQuotaTypeMap = nextModelQuotaTypeMap
+	modelKindMap = nextModelKindMap
 	lastGetPricingTime = time.Now()
-}
-
-// GetSupportedEndpointMap 返回全局端点到路径的映射
-func GetSupportedEndpointMap() map[string]common.EndpointInfo {
-	return supportedEndpointMap
+	modelEnableGroupsLock.Unlock()
+	configuredPricingLock.Unlock()
+	return nil
 }
 
 func findCanonicalModelPrice(model string) (float64, bool) {

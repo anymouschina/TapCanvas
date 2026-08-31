@@ -1,0 +1,863 @@
+## Host path conventions
+## - This file lives at the repository root.
+## - TAPCANVAS_SHARED_ROOT can override the repository root for flattened deployments.
+x-new-api-build: &new-api-build
+  context: ./apps/new-api
+  dockerfile: Dockerfile
+  args:
+    DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+    # SKIP_WEB_BUILD=1 is the deployment path: host-built dist only needs a
+    # copy/check stage. An in-image Web build must explicitly provide Bun and
+    # set NEW_API_SKIP_WEB_BUILD=0.
+    BUN_IMAGE: ${NEW_API_BUN_IMAGE:-docker.m.daocloud.io/library/alpine:3.20}
+    GO_IMAGE: ${NEW_API_GO_IMAGE:-docker.m.daocloud.io/library/golang:1.26.1-alpine}
+    RUNTIME_IMAGE: ${NEW_API_RUNTIME_IMAGE:-docker.m.daocloud.io/library/debian:bookworm-slim}
+    NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    GO_PROXY: ${NEW_API_GO_PROXY:-https://goproxy.cn,direct}
+    APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+    SKIP_WEB_BUILD: ${NEW_API_SKIP_WEB_BUILD:-1}
+    HTTP_PROXY: ""
+    HTTPS_PROXY: ""
+    NO_PROXY: ""
+    ALL_PROXY: ""
+    http_proxy: ""
+    https_proxy: ""
+    no_proxy: ""
+    all_proxy: ""
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/pgvector/pgvector:pg16}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tapcanvas}
+      POSTGRES_USER: ${POSTGRES_USER:-tapcanvas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tapcanvas}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tapcanvas} -d ${POSTGRES_DB:-tapcanvas}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - hono_api_postgres:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  agents-bridge:
+    image: ${TAPCANVAS_AGENTS_BRIDGE_IMAGE:-tapcanvas/agents-bridge:local}
+    restart: unless-stopped
+    init: true
+    build:
+      context: ./apps/hono-api
+      dockerfile: Dockerfile.agents-bridge
+      args:
+        DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        NO_PROXY: ""
+        http_proxy: ""
+        https_proxy: ""
+        no_proxy: ""
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      # Dockerfile 默认的 /pnpm/store 没有挂载持久卷，会让每次 bridge 重启都从零下载。
+      # 与本服务下方的 pnpm_store volume 保持同一路径，启动依赖校验才能真实复用缓存。
+      npm_config_store_dir: /app/.pnpm-store
+      # 启动校验使用部署级网关；Hono 每轮仍会传入 owner-scoped 精确地址与短期凭据。
+      AGENTS_API_BASE_URL: ${AGENTS_API_BASE_URL:-http://new-api:4455/v1}
+      AGENTS_API_KEY: ${AGENTS_API_KEY:-${NEW_API_INTERNAL_TOKEN:-}}
+      AGENTS_API_STYLE: ${AGENTS_API_STYLE:-chat}
+      AGENTS_EMBEDDING_BASE_URL: ${AGENTS_EMBEDDING_BASE_URL:-http://new-api:4455/v1}
+      AGENTS_EMBEDDING_MODEL: ${AGENTS_EMBEDDING_MODEL:-doubao-embedding-vision-251215}
+      AGENTS_EMBEDDING_DIMENSIONS: ${AGENTS_EMBEDDING_DIMENSIONS:-2048}
+      AGENTS_EMBEDDING_API_KEY: ${AGENTS_EMBEDDING_API_KEY:-}
+      AGENTS_BRIDGE_BODY_LIMIT_BYTES: "8000000"
+      AGENTS_REQUEST_TIMEOUT_MS: "600000"
+      AGENTS_WORKSPACE_ROOT: /runtime/workspace
+      AGENTS_SKILLS_DIR: /runtime/workspace/skills
+      DSH_HOME: /runtime/workspace/.agents/deepseek-harness
+      DSH_TELEMETRY_DISABLED: "1"
+      AGENTS_BRIDGE_NODE_HEAP_MB: ${AGENTS_BRIDGE_NODE_HEAP_MB:-1536}
+      NODE_OPTIONS: --max-old-space-size=${AGENTS_BRIDGE_NODE_HEAP_MB:-1536}
+      TS_NODE_TRANSPILE_ONLY: "1"
+      NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      NPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      PNPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      pnpm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+    working_dir: /runtime/workspace
+    command: >-
+      sh -lc '
+      mkdir -p /runtime/bootstrap/apps/agents-cli /runtime/workspace/skills /runtime/workspace/project-data &&
+      cp /opt/tapcanvas-src/apps/agents-cli/package.json /runtime/bootstrap/apps/agents-cli/package.json &&
+      cp /opt/tapcanvas-src/apps/agents-cli/pnpm-lock.yaml /runtime/bootstrap/apps/agents-cli/pnpm-lock.yaml &&
+      cp /opt/tapcanvas-src/apps/agents-cli/tsconfig.json /runtime/bootstrap/apps/agents-cli/tsconfig.json &&
+      cp -R /opt/tapcanvas-src/apps/agents-cli/src /runtime/bootstrap/apps/agents-cli/src &&
+      cp -R /opt/tapcanvas-src/apps/agents-cli/scripts /runtime/bootstrap/apps/agents-cli/scripts &&
+      cp -R /opt/tapcanvas-src/apps/agents-cli/harness /runtime/bootstrap/apps/agents-cli/harness &&
+      cd /runtime/bootstrap/apps/agents-cli &&
+      pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} &&
+      pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --frozen-lockfile &&
+      node scripts/validate-tapcanvas-runtime.mjs &&
+      ln -sfn /runtime/bootstrap/apps/agents-cli/node_modules /runtime/workspace/node_modules &&
+      node --loader ts-node/esm src/cli/index.ts serve --host 0.0.0.0 --port 8799 --body-limit ${AGENTS_BRIDGE_BODY_LIMIT_BYTES:-8000000}
+      '
+    volumes:
+      - ./apps/agents-cli:/opt/tapcanvas-src/apps/agents-cli:ro
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/runtime/workspace/project-data
+      - agents_node_modules:/runtime/bootstrap/apps/agents-cli/node_modules
+      # DeepSeek Harness 的会话与设置由 DSH_HOME 指向共享卷。
+      - agents_runtime:/runtime/workspace/.agents
+      # Skills 直接只读挂载，更新 SKILL.md 后无需重建依赖卷。
+      - ./apps/agents-cli/skills:/runtime/workspace/skills:ro
+      - ./apps/agents-cli/knowledge:/runtime/workspace/knowledge:ro
+      - pnpm_store:/app/.pnpm-store
+    tmpfs:
+      - /runtime/bootstrap
+    # 不再直接 host-publish 8799：多副本会抢同一宿主端口起不来。
+    # 宿主入口改由 agents-bridge-lb（nginx 反代）暴露在 8799；容器间仍走服务名 agents-bridge:8799。
+    healthcheck:
+      # 探针必须先于 Docker health timeout 自行退出。裸 fetch 在服务阻塞时不会
+      # 超时，Docker Desktop 可能残留每轮 node 探针，最终形成进程/CPU 反馈环。
+      test: ["CMD", "node", "-e", "const t=setTimeout(()=>process.exit(1),2000);fetch('http://127.0.0.1:8799/health').then((r)=>{clearTimeout(t);process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      # 全新部署需要先把 agents-cli 依赖安装进持久卷；冷启动期间不应被误判为故障。
+      start_period: ${AGENTS_BRIDGE_HEALTH_START_PERIOD:-5m}
+    deploy:
+      # 默认单副本完成共享 agents_node_modules 的依赖校验/安装，避免冷启时多个 pnpm
+      # 同时改写同一卷。确认首个副本 healthy 后，可显式设置 AGENTS_BRIDGE_REPLICAS=2 扩容。
+      replicas: ${AGENTS_BRIDGE_REPLICAS:-1}
+      resources:
+        limits:
+          # 每副本独立 2g：N 副本需要 N×2g 宿主内存
+          memory: 2g
+
+  # agents-bridge 负载均衡反代：无状态请求分散，同一 chat session 一致性绑定同一副本。
+  # HAProxy server-template 把 Docker DNS 的每个副本地址物化为独立 hash peer。
+  agents-bridge-lb:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/haproxy:3.0-alpine
+    restart: unless-stopped
+    depends_on:
+      agents-bridge:
+        condition: service_healthy
+    volumes:
+      - ./apps/hono-api/docker/agents-bridge-lb.haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      # 宿主调试入口（call.mjs 等直连 localhost:8799 仍可用，经反代转到某个副本）
+      - "${AGENTS_BRIDGE_HOST_PORT:-8799}:8799"
+    # 关键：用 CMD-SHELL 并清空 *_proxy。宿主代理(如 Clash 127.0.0.1:1087)会经 Colima 泄进容器环境，
+    # busybox wget 遵守 http_proxy → 健康探测打 8799 时被路由到容器内不存在的代理 → 误判 unhealthy
+    # → 阻塞 api 启动。其它服务用 node fetch(undici 默认忽略 http_proxy)故不受影响。
+    healthcheck:
+      test: ["CMD-SHELL", "http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= wget -qO- http://127.0.0.1:8799/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  api:
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      # 进程内硬超时避免服务阻塞时健康探针自身堆积。
+      test: ["CMD", "node", "-e", "const t=setTimeout(()=>process.exit(1),2000);fetch('http://127.0.0.1:8788/health/version').then((r)=>{clearTimeout(t);process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Fresh 卷需要先安装 API 依赖并执行数据库准备；启动期只等待，不伪报故障。
+      start_period: ${API_HEALTH_START_PERIOD:-10m}
+    build:
+      context: ./apps/hono-api
+      dockerfile: Dockerfile
+      args:
+        DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+        PREINSTALL_APP_DEPS: "0"
+        # 本地默认跳过 hyperframes（onnxruntime-node 拉原生二进制耗时数分钟，本地迭代不碰该工具）。
+        # 需要在本地验证 tapcanvas_hyperframes_render 时：SKIP_HYPERFRAMES=0 docker-compose build api
+        SKIP_HYPERFRAMES: ${SKIP_HYPERFRAMES:-1}
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        NO_PROXY: ""
+        http_proxy: ""
+        https_proxy: ""
+        no_proxy: ""
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      # 未配置完整 TOS/R2 契约时，API 自动写入 /app/assets/public 并通过
+      # /assets/local/* 代理；配置不完整仍会显式失败。
+      NODE_ENV: development
+      PORT: ${PORT:-8788}
+      # API 只持有远程代理；ExecutionDO 与节点调度状态只存在于专用 Worker。
+      WORKFLOW_RUNTIME_REMOTE_BASE_URL: http://workflow-runtime-worker:8790
+      # 仅本地开发/Admin 工作流使用；执行器仍会逐节点校验 adminWorkflow 权限，
+      # 并在无网络、空环境的独立 Node 子进程内限制为 5 秒。生产 compose 不继承此默认值。
+      WORKFLOW_LOCAL_JAVASCRIPT_ENABLED: ${WORKFLOW_LOCAL_JAVASCRIPT_ENABLED:-true}
+      TAP_CREDITS_PER_CNY: ${TAP_CREDITS_PER_CNY:-100}
+      NODE_OPTIONS: "--max-old-space-size=3500"
+      # 画布 Yjs 实时层灰度开关（默认 off；`export CANVAS_YJS_WS=on` 才挂载 /yjs WebSocket 房间）
+      CANVAS_YJS_WS: ${CANVAS_YJS_WS:-off}
+      # 故事板锚定预检默认由代码开启；只有明确的运维配置 STORYBOARD_ANCHOR_GATE=0 才关闭。
+      # 节奏碎毯软告警（montage 把连贯叙事碎成均匀 4s 毯时 estimate 附 pacingCarpetWarning）；默认 ON
+      VIDEO_PACING_CARPET_WARN: ${VIDEO_PACING_CARPET_WARN:-1}
+      # 坏死任务恢复（孤儿回收）：finalizer tick 扫「有卡死视频节点、已静置(无活 run)」的章节画布，
+      # reconcile 回收上游已完成/失败结果，治「run 取消/删除/未落库 → 在飞 clip 永卡生成中」；默认 ON
+      VIDEO_ORPHAN_RECOVERY: ${VIDEO_ORPHAN_RECOVERY:-1}
+      # start/loop 正常路径同步等待真实终态。worker 仅恢复断线后超过租约窗口的已受理媒体任务，
+      # 不负责用户交付、不唤醒对话；三处服务必须保持一致。
+      VIDEO_SYNC_WAIT_TIMEOUT_MS: ${VIDEO_SYNC_WAIT_TIMEOUT_MS:-1200000}
+      VIDEO_SYNC_POLL_INTERVAL_MS: ${VIDEO_SYNC_POLL_INTERVAL_MS:-5000}
+      VIDEO_RUN_RECOVERY: ${VIDEO_RUN_RECOVERY:-true}
+      VIDEO_RUN_RECOVERY_STALE_MS: ${VIDEO_RUN_RECOVERY_STALE_MS:-300000}
+      VIDEO_AUTHORING_DRIVE_STALE_MS: ${VIDEO_AUTHORING_DRIVE_STALE_MS:-5000}
+      # 仅非编排/手工视频提示词使用的 sanitizer。完整成片的结构化 prompt 携带
+      # promptDeliveryContract，必须逐字直达供应商，本开关无权删词、追加音频句或合并负向底座。
+      VIDEO_PROMPT_SANITIZE: ${VIDEO_PROMPT_SANITIZE:-1}
+      # 【去硬闸 2026-06-30 用户拍板·已撤下列 env 强制，落回代码默认 OFF】
+      #  · VIDEO_SHOT_APPROVAL_BIND（曾 =1）：把 critic+shotApprovalToken 塞进 start 关键路径，critic 8-30s 来回里
+      #    estimate 缓存/令牌接连过期→start 凑不齐→整片起不来(ch1《买活》实测)；且 estimate-plan-cache 已锁死
+      #    「start 复用 estimate 那份计划」，本闸冗余。critic 退为可选自律。需要硬绑再 VIDEO_SHOT_APPROVAL_BIND=1。
+      #  · VIDEO_CLIP_STRUCTURE_GATE（曾 =off）：与 critic 子集+shotApprovalToken 绑定重叠的冗余 422，已删。要硬拦再 =1。
+      # Use an in-network DSN for containers. Do not reuse host-localhost DSN here.
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      PG_BACKUP_DIR: /app/backups
+      REDIS_URL: redis://redis:6379
+      AUTH_PHONE_OTP_TRACE: "1"
+      AGENTS_BRIDGE_AUTOSTART: "0"
+      # 经 nginx 反代访问 bridge 多副本（直连 agents-bridge:8799 会被 undici keep-alive 钉死在单副本）
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
+      # collab agent 记录在副本进程内·LB 无粘性：按 Compose 服务 DNS 的全部 A 记录逐 IP 直查。
+      # 非 Compose 部署可把 DNS host 显式设为空，并通过 REPLICA_URLS 提供静态拓扑。
+      AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}
+      AGENTS_BRIDGE_REPLICA_PORT: ${AGENTS_BRIDGE_REPLICA_PORT:-8799}
+      AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
+      # 宿主机直跑使用 NEW_API_INTERNAL_BASE_URL=http://127.0.0.1:4455；容器内必须走
+      # Compose 服务名。使用独立变量，避免同一 .env 的 host-local 地址污染容器网络。
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      NEW_API_PUBLIC_BASE_URL: ${NEW_API_PUBLIC_BASE_URL:-http://localhost:${NEW_API_PORT:-4455}}
+      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_HOST_PORT:-80}/assets/local}
+      NEW_API_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:-}
+      NEW_API_SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      # media-worker(Go) gRPC：设了地址即启用（poster 抽帧优先走 worker，RPC 失败自动回退本地 ffmpeg）。
+      # 整体回退 = 置空 MEDIA_WORKER_GRPC_ADDR 重建 api。
+      MEDIA_WORKER_GRPC_ADDR: ${MEDIA_WORKER_GRPC_ADDR:-media-worker:9090}
+      AGENTS_BRIDGE_TOKEN: ${AGENTS_BRIDGE_TOKEN:-}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      # 必须覆盖 bridge 侧 60s 同模型输入门禁与前置装配开销，避免外层先误报 admission timeout。
+      AGENTS_BRIDGE_ADMISSION_TIMEOUT_MS: "90000"
+      # 并发闸（跑在 hono-api 单进程里的全局计数器，不设=无限）。
+      # 多副本后总并发约 = 副本数 × 每副本可承载；默认按 2 副本给 24，满了排队、队列再满返回 429。
+      # 真正的硬顶仍是上游 LLM 的 429，调大前先确认渠道配额。按服务器规格 / 副本数显式调整：
+      AGENTS_BRIDGE_MAX_CONCURRENCY: ${AGENTS_BRIDGE_MAX_CONCURRENCY:-24}
+      AGENTS_BRIDGE_MAX_QUEUE_DEPTH: ${AGENTS_BRIDGE_MAX_QUEUE_DEPTH:-50}
+      # Ultra 账户当前提供 100 路并发；本地进程的全局容量仍独立受上面的
+      # MAX_CONCURRENCY 约束，超过进程容量的请求进入队列而不是业务失败。
+      AGENTS_BRIDGE_MAX_PER_USER: ${AGENTS_BRIDGE_MAX_PER_USER:-100}
+      # IMAGE_GLOBAL_CONCURRENCY: "16"
+      AGENTS_BRIDGE_DEBUG_LOG: "1"
+      CONSULT_AGENTS_DOCS_ROOT: /runtime/workspace/docs
+      DEBUG_HTTP_LOG: "${DEBUG_HTTP_LOG:-1}"
+      DEBUG_HTTP_LOG_BODY_LIMIT: "${DEBUG_HTTP_LOG_BODY_LIMIT:-32768}"
+      TAPCANVAS_STARTUP_STATE_DIR: ${TAPCANVAS_STARTUP_STATE_DIR:-/app/.tapcanvas-startup}
+      TAPCANVAS_STARTUP_FORCE_RECONCILE: ${TAPCANVAS_STARTUP_FORCE_RECONCILE:-0}
+      TASK_LOCAL_PROMPT_AGENT_TIMEOUT_MS: "300000"
+      BOOK_DERIVATION_QUEUE_CONCURRENCY: "2"
+      BOOK_DERIVATION_QUEUE_MAX_WAIT_MS: "1800000"
+      BOOK_METADATA_BATCH_CONCURRENCY: "16"
+      BOOK_METADATA_ENSURE_WINDOW_BATCH_CONCURRENCY: "3"
+      BOOK_CHARACTER_PROFILE_BATCH_CONCURRENCY: "50"
+      BOOK_CHARACTER_GRAPH_BATCH_CONCURRENCY: "50"
+      BOOK_METADATA_BATCH_MAX_CHARS: "200000"
+      BOOK_METADATA_ENSURE_WINDOW_BATCH_MAX_CHARS: "60000"
+      BOOK_METADATA_BATCH_MAX_CHAPTERS: "15"
+      BOOK_METADATA_ENSURE_WINDOW_BATCH_MAX_CHAPTERS: "8"
+      BOOK_METADATA_STAGE_WINDOW_CHAPTERS: "100"
+      BOOK_METADATA_INITIAL_CHAPTERS: "100"
+      BOOK_RAW_CHUNK_MAX_BYTES: "10240"
+      BOOK_CHAPTER_SNIPPET_MAX_CHARS: "6000"
+      BOOK_METADATA_ENSURE_WINDOW_SNIPPET_MAX_CHARS: "1800"
+      BOOK_CHARACTER_PROFILE_STAGE_WINDOW_CHAPTERS: "180"
+      BOOK_CHARACTER_GRAPH_STAGE_WINDOW_CHAPTERS: "160"
+      NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      NPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      PNPM_CONFIG_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      pnpm_config_registry: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      PG_BACKUP_KEEP_LATEST: "3"
+    ports:
+      - "${API_HOST_PORT:-8788}:8788"
+    depends_on:
+      agents-bridge-lb:
+        condition: service_healthy
+      new-api:
+        condition: service_healthy
+      new-api-patch:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # The prepare step fingerprints dependencies, DB/catalog inputs, and API sources.
+    # Warm restarts only validate those fingerprints; schema changes still force the
+    # original backup -> generate -> bootstrap -> migrate -> seed -> sync sequence.
+    command: sh -lc "node scripts/prepare-container-start.mjs && exec node dist/main.js"
+    volumes:
+      - ./apps/hono-api:/app
+      - ./assets/public:/app/assets/public
+      # 覆盖源码 bind 中的开发者 .env；容器只能读取本次显式选择的部署环境文件。
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}:/app/.env:ro
+      - ${TAPCANVAS_SHARED_ROOT:-.}/sql:/app/sql:ro
+      - ${TAPCANVAS_SHARED_ROOT:-.}/packages:/packages:ro
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+      - ./apps/agents-cli:/workspace/apps/agents-cli
+      # sync-system-skills keeps the production-stable absolute source path.
+      # Keep local compose aligned so an API restart cannot fail before serving requests.
+      - ./apps/agents-cli/skills:/apps/agents-cli/skills:ro
+      - ./apps/agents-cli/knowledge:/apps/agents-cli/knowledge:ro
+      - hono_api_db_backups:/app/backups
+      - pnpm_store:/app/.pnpm-store
+      - api_node_modules:/app/node_modules
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  # Codex 任务的远程构建控制面。此进程只消费 Redis 队列、把私有源码 tarball
+  # 交给 Vercel Sandbox 并记录事实证据；不会在 TapCanvas 容器内运行用户命令，
+  # 也不挂载用户 workspace。普通本地开发无需本服务及其远程凭据；如需远程构建，
+  # 完整配置 .env 后使用
+  # `docker-compose --profile codex-remote-build up -d codex-remote-builder` 显式启用；
+  # 配置不完整或 worker 没有有效 heartbeat 时，API 会分别显式失败，禁止盲目排队。
+  # concurrency=1 + limiter=1/s 在 worker 内硬限制。
+  codex-remote-builder:
+    profiles: ["codex-remote-build"]
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: development
+      # .env 的 DATABASE_URL 面向宿主机，容器内必须显式使用 Compose 服务名。
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      REDIS_URL: redis://redis:6379
+      NODE_OPTIONS: "--max-old-space-size=768"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+    command: ["pnpm", "codex-remote-builder"]
+    healthcheck:
+      test: ["CMD", "node", "dist/codex-remote-builder.js", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./apps/hono-api:/app
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}:/app/.env:ro
+      - ${TAPCANVAS_SHARED_ROOT:-.}/packages:/packages:ro
+      - pnpm_store:/app/.pnpm-store
+      - api_node_modules:/app/node_modules
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  # Go 媒体处理微服务（gRPC 控制面 + TOS 数据面）：poster/probe/concat/mux/抽帧/切段/理解代理
+  # 已全部迁入（M2 完成，见 docs/superpowers/specs/2026-07-06-media-worker-grpc-design.md）。
+  # api 侧各 TS 函数内部 worker 优先、RPC 失败自动回退本地 ffmpeg——worker 挂了不影响功能，只影响峰值内存。
+  # 无状态、无 DB；横向扩容直接调 MEDIA_WORKER_REPLICAS（副本间无协调，api 端 grpc 逐调用负载均衡由
+  # docker DNS + 短连接语义承担；副本>1 时如需严格均衡再上 lb，poster 类短任务无此必要）。
+  # tc.tanvas.cn 生产入口（profile "webprod"）：宿主机构建 dist 后由 Caddy 静态服务+反代 api。
+  # 构建：cd apps/web && npx vite build --mode production（VITE_API_BASE 缺省 /api 相对自身）
+  # 启动：docker-compose --profile webprod up -d web-prod → http://tc.tanvas.cn（需路由器转发 80）
+  web-prod:
+    profiles: ["webprod"]
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${WEB_HOST_PORT:-80}:80"
+    volumes:
+      - ./apps/web/dist:/srv:ro
+      - ./apps/hono-api/web-prod.Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+
+  media-worker:
+    image: ${TAPCANVAS_MEDIA_WORKER_IMAGE:-tapcanvas/media-worker:local}
+    restart: unless-stopped
+    build:
+      context: ./apps/media-worker
+      dockerfile: Dockerfile
+      args:
+        DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+        GO_IMAGE: ${MEDIA_WORKER_GO_IMAGE:-docker.m.daocloud.io/library/golang:1.24.4-alpine}
+        RUNTIME_IMAGE: ${MEDIA_WORKER_RUNTIME_IMAGE:-docker.m.daocloud.io/library/alpine:3.20}
+        GO_PROXY: ${MEDIA_WORKER_GO_PROXY:-https://goproxy.cn,direct}
+        APK_MIRROR: ${APK_MIRROR:-mirrors.aliyun.com}
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        NO_PROXY: ""
+        ALL_PROXY: ""
+        http_proxy: ""
+        https_proxy: ""
+        no_proxy: ""
+        all_proxy: ""
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      MEDIA_WORKER_PORT: "9090"
+      # M2 后 worker 承载 concat 级重编码（单任务数百 MB RSS），并发 4×~400MB 贴着 2g 上限；
+      # 超限任务返回 RESOURCE_EXHAUSTED → api 回退本地。加副本优先于调大并发。
+      MEDIA_WORKER_MAX_FFMPEG: ${MEDIA_WORKER_MAX_FFMPEG:-4}
+      FFMPEG_SUBPROCESS_TIMEOUT_MS: ${FFMPEG_SUBPROCESS_TIMEOUT_MS:-900000}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+    expose:
+      - "9090"
+    healthcheck:
+      test: ["CMD", "media-worker", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      replicas: ${MEDIA_WORKER_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 2g
+
+  redis:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+    expose:
+      - "6379"
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - hono_api_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  new-api-db-init:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/postgres:16-alpine
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-tapcanvas}
+      NEW_API_PATCH_DB_HOST: postgres
+      NEW_API_PATCH_DB_PORT: 5432
+      NEW_API_PATCH_DB_NAME: ${NEW_API_POSTGRES_DB:-tapcanvas_new_api}
+      NEW_API_PATCH_DB_USER: ${POSTGRES_USER:-tapcanvas}
+    command: ["/bin/sh", "/opt/tapcanvas/ensure-new-api-database.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./apps/hono-api/docker/ensure-new-api-database.sh:/opt/tapcanvas/ensure-new-api-database.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  new-api-schema-init:
+    image: ${NEW_API_IMAGE:-tapcanvas/new-api:local}
+    build: *new-api-build
+    restart: "no"
+    command: ["--migrate-only"]
+    environment:
+      SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
+      TZ: ${NEW_API_TZ:-Asia/Shanghai}
+      TAPCANVAS_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:-}
+      TAPCANVAS_INTERNAL_TOKEN_REQUIRED: "true"
+      TAPCANVAS_ROOT_USERNAME: ${NEW_API_ROOT_USERNAME:-admin}
+      TAPCANVAS_ROOT_PASSWORD: ${NEW_API_ROOT_PASSWORD:-123456}
+      SESSION_SECRET: ${NEW_API_SESSION_SECRET:-}
+      CRYPTO_SECRET: ${NEW_API_CRYPTO_SECRET:-}
+    depends_on:
+      new-api-db-init:
+        condition: service_completed_successfully
+    volumes:
+      - ${TAPCANVAS_NEW_API_DATA_ROOT:-./apps/new-api/data}:/data
+      - ${TAPCANVAS_NEW_API_LOG_ROOT:-./apps/new-api/logs}:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  new-api:
+    image: ${NEW_API_IMAGE:-tapcanvas/new-api:local}
+    restart: unless-stopped
+    build: *new-api-build
+    ports:
+      - "${NEW_API_PORT:-4455}:4455"
+    environment:
+      PORT: ${NEW_API_INTERNAL_PORT:-4455}
+      SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
+      REDIS_CONN_STRING: ${NEW_API_REDIS_CONN_STRING:-redis://redis:6379}
+      TZ: ${NEW_API_TZ:-Asia/Shanghai}
+      TAPCANVAS_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:-}
+      TAPCANVAS_INTERNAL_TOKEN_REQUIRED: "true"
+      TAPCANVAS_ROOT_USERNAME: ${NEW_API_ROOT_USERNAME:-admin}
+      TAPCANVAS_ROOT_PASSWORD: ${NEW_API_ROOT_PASSWORD:-123456}
+      ERROR_LOG_ENABLED: ${NEW_API_ERROR_LOG_ENABLED:-true}
+      BATCH_UPDATE_ENABLED: ${NEW_API_BATCH_UPDATE_ENABLED:-true}
+      # 内部自用部署，放开所有限流；如需重新启用可在 .env 设为 true
+      GLOBAL_API_RATE_LIMIT_ENABLE: ${NEW_API_GLOBAL_API_RATE_LIMIT_ENABLE:-false}
+      GLOBAL_WEB_RATE_LIMIT_ENABLE: ${NEW_API_GLOBAL_WEB_RATE_LIMIT_ENABLE:-false}
+      CRITICAL_RATE_LIMIT_ENABLE: ${NEW_API_CRITICAL_RATE_LIMIT_ENABLE:-false}
+      SEARCH_RATE_LIMIT_ENABLE: ${NEW_API_SEARCH_RATE_LIMIT_ENABLE:-false}
+      NODE_NAME: ${NEW_API_NODE_NAME:-new-api-node-1}
+      WEB_DIST_DIR: ${NEW_API_WEB_DIST_DIR:-/runtime/web/dist}
+      # 图片生成（gpt-image-2 等）可能耗时超过 5 分钟，需显式延长 upstream HTTP 超时
+      RELAY_TIMEOUT: ${NEW_API_RELAY_TIMEOUT:-1200}
+      SERVER_ADDRESS: ${SERVER_ADDRESS:-}
+      # Gemini 账号刷新/发现走已验证的 beqlee.icu Worker；userinfo 当前未配置已验证的代理，仍直连官方地址。
+      GEMINI_BASE_URL: ${NEW_API_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}
+      GEMINI_CODE_ASSIST_BASE_URL: ${NEW_API_GEMINI_CODE_ASSIST_BASE_URL:-https://cloudcode-pa.beqlee.icu}
+      GEMINI_CODE_ASSIST_DAILY_BASE_URL: ${NEW_API_GEMINI_CODE_ASSIST_DAILY_BASE_URL:-https://daily-cloudcode-pa.beqlee.icu}
+      GEMINI_OAUTH_CLIENT_ID: ${NEW_API_GEMINI_OAUTH_CLIENT_ID:-}
+      GEMINI_OAUTH_CLIENT_SECRET: ${NEW_API_GEMINI_OAUTH_CLIENT_SECRET:-}
+      GEMINI_AI_STUDIO_OAUTH_CLIENT_ID: ${NEW_API_GEMINI_AI_STUDIO_OAUTH_CLIENT_ID:-}
+      GEMINI_AI_STUDIO_OAUTH_CLIENT_SECRET: ${NEW_API_GEMINI_AI_STUDIO_OAUTH_CLIENT_SECRET:-}
+      GEMINI_CODE_ASSIST_OAUTH_CLIENT_ID: ${NEW_API_GEMINI_CODE_ASSIST_OAUTH_CLIENT_ID:-}
+      GEMINI_CODE_ASSIST_OAUTH_CLIENT_SECRET: ${NEW_API_GEMINI_CODE_ASSIST_OAUTH_CLIENT_SECRET:-}
+      GEMINI_ANTIGRAVITY_OAUTH_CLIENT_ID: ${NEW_API_GEMINI_ANTIGRAVITY_OAUTH_CLIENT_ID:-}
+      GEMINI_ANTIGRAVITY_OAUTH_CLIENT_SECRET: ${NEW_API_GEMINI_ANTIGRAVITY_OAUTH_CLIENT_SECRET:-}
+      GEMINI_OAUTH_AUTHORIZE_URL: ${NEW_API_GEMINI_OAUTH_AUTHORIZE_URL:-https://accounts.google.com/o/oauth2/v2/auth}
+      GEMINI_OAUTH_TOKEN_URL: ${NEW_API_GEMINI_OAUTH_TOKEN_URL:-https://oauth2.beqlee.icu/token}
+      GEMINI_OAUTH_USERINFO_URL: ${NEW_API_GEMINI_OAUTH_USERINFO_URL:-https://www.googleapis.com/oauth2/v3/userinfo}
+      GEMINI_OAUTH_AI_STUDIO_REDIRECT_URI: ${NEW_API_GEMINI_OAUTH_AI_STUDIO_REDIRECT_URI:-http://localhost:1455/auth/callback}
+      GEMINI_OAUTH_CODE_ASSIST_REDIRECT_URI: ${NEW_API_GEMINI_OAUTH_CODE_ASSIST_REDIRECT_URI:-https://codeassist.google.com/authcode}
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      all_proxy: ""
+      # 固定 session 密钥，避免容器重建后所有用户被踢出
+      SESSION_SECRET: ${NEW_API_SESSION_SECRET:-}
+      CRYPTO_SECRET: ${NEW_API_CRYPTO_SECRET:-}
+      # 火山 ARK 素材审核闭环（seedance-2.0 官渠）：与 api 服务共用同一套 .env 凭据
+      VOLC_ARK_ACCESS_KEY: ${VOLC_ARK_ACCESS_KEY:-}
+      VOLC_ARK_SECRET_KEY: ${VOLC_ARK_SECRET_KEY:-}
+      VOLC_ARK_REGION: ${VOLC_ARK_REGION:-cn-beijing}
+      VOLC_ARK_API_HOST: ${VOLC_ARK_API_HOST:-open.volcengineapi.com}
+      VOLC_ARK_PROJECT_NAME: ${VOLC_ARK_PROJECT_NAME:-default}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      new-api-patch:
+        condition: service_completed_successfully
+    volumes:
+      - ${TAPCANVAS_NEW_API_DATA_ROOT:-./apps/new-api/data}:/data
+      - ${TAPCANVAS_NEW_API_LOG_ROOT:-./apps/new-api/logs}:/app/logs
+      - ./apps/new-api/web/dist:/runtime/web/dist:ro
+    healthcheck:
+      test: ["CMD-SHELL", "http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= wget -q -O - http://127.0.0.1:4455/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  new-api-patch:
+    image: ${DOCKERHUB_REGISTRY:-docker.io}/postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      new-api-schema-init:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-tapcanvas}
+      NEW_API_PATCH_ENABLED: ${NEW_API_PATCH_ENABLED:-1}
+      NEW_API_PATCH_DB_HOST: postgres
+      NEW_API_PATCH_DB_PORT: 5432
+      NEW_API_PATCH_DB_NAME: ${NEW_API_POSTGRES_DB:-tapcanvas_new_api}
+      NEW_API_PATCH_DB_USER: ${POSTGRES_USER:-tapcanvas}
+      NEW_API_GEMINI_BASE_URL: ${NEW_API_GEMINI_BASE_URL:-}
+      NVTOKENS_API_KEY: ${NVTOKENS_API_KEY:-}
+      FUNAI_API_KEY: ${FUNAI_API_KEY:-}
+      METASO_MINIMAX_API_KEY: ${METASO_MINIMAX_API_KEY:-}
+      KLONG_API_KEY: ${KLONG_API_KEY:-}
+      ARK_DEEPSEEK_API_KEY: ${ARK_DEEPSEEK_API_KEY:-}
+      GOOGLE_GEMINI_API_KEY: ${GOOGLE_GEMINI_API_KEY:-}
+      MEGABY_API_KEY: ${MEGABY_API_KEY:-}
+      NEWAPIAI_334_API_KEY: ${NEWAPIAI_334_API_KEY:-}
+      NEWAPIAI_334_ENABLED: ${NEWAPIAI_334_ENABLED:-0}
+    command: ["/bin/sh", "/opt/tapcanvas/run-new-api-patches.sh"]
+    volumes:
+      - ./apps/new-api/patches:/patches:ro
+      - ./apps/hono-api/docker/run-new-api-patches.sh:/opt/tapcanvas/run-new-api-patches.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  credit-finalizer-worker:
+    # 这是后台计费结算与视频 run 驱动的唯一 Compose 所有权槽位。
+    # 服务名为了原位替换历史容器保持不变，实际只运行 dist/inprocess-worker.js；
+    # 旧 HTTP 回调 worker 和另一个 inprocess-worker profile 都不再属于部署拓扑。
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 10m
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_HOST_PORT:-80}/assets/local}
+      # Workflow node jobs execute in this worker, so required media operations
+      # must see the same gRPC endpoint as the API process. Keeping this only on
+      # `api` makes concat fail after every provider clip has already succeeded.
+      MEDIA_WORKER_GRPC_ADDR: ${MEDIA_WORKER_GRPC_ADDR:-media-worker:9090}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      TAP_CREDITS_PER_CNY: ${TAP_CREDITS_PER_CNY:-100}
+      # 与 api 同款：动态解析 Compose 服务的全部 A 记录；静态拓扑必须显式关闭 DNS。
+      AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}
+      AGENTS_BRIDGE_REPLICA_PORT: ${AGENTS_BRIDGE_REPLICA_PORT:-8799}
+      AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
+      # 仅恢复同步请求断线后超过租约窗口的 durable run；不承担正常交付。
+      VIDEO_RUN_RECOVERY: ${VIDEO_RUN_RECOVERY:-true}
+      VIDEO_RUN_RECOVERY_STALE_MS: ${VIDEO_RUN_RECOVERY_STALE_MS:-300000}
+      VIDEO_AUTHORING_DRIVE_STALE_MS: ${VIDEO_AUTHORING_DRIVE_STALE_MS:-5000}
+      INPROCESS_MEDIA_RECOVERY_EVERY_MS: ${INPROCESS_MEDIA_RECOVERY_EVERY_MS:-60000}
+      # 真实媒体一旦落入 task_results，用户级任务最多只等待一个 5 秒扫描窗口收口。
+      INPROCESS_ASYNC_CONTINUATION_SWEEP_EVERY_MS: ${INPROCESS_ASYNC_CONTINUATION_SWEEP_EVERY_MS:-5000}
+      # 桌面文档任务通常会跨多个物理窗口；本地默认占满 runtime 已设的安全上限，
+      # 避免两个旧长任务把新 PPT/XLSX 交付在队列中饿死。
+      ASYNC_AGENT_CONTINUATION_CONCURRENCY: ${ASYNC_AGENT_CONTINUATION_CONCURRENCY:-4}
+      INPROCESS_HEALTH_MAX_AGE_MS: ${INPROCESS_HEALTH_MAX_AGE_MS:-180000}
+      # 【防宿主 Docker CLI 代理注入·2026-07-07】~/.docker/config.json 的 proxies 会把宿主代理
+      # (如 127.0.0.1:1087·容器内=自杀回环)注进每个容器；pnpm 认这些 env → 启动期 install 必死
+      # → 本 worker 曾 98 连崩、视频驱动循环整段瘫痪(ch5-v1 永卡 scheduled)。与 agents-bridge 同款清空。
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile && pnpm inprocess:worker"
+    healthcheck:
+      test: ["CMD", "node", "dist/inprocess-worker-healthcheck.js"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 120s
+    volumes:
+      - ./apps/hono-api:/app
+      - ./assets/public:/app/assets/public
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}:/app/.env:ro
+      - ${TAPCANVAS_SHARED_ROOT:-.}/packages:/packages:ro
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+      - pnpm_store:/app/.pnpm-store
+      - api_node_modules:/app/node_modules
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2g
+
+  workflow-runtime-worker:
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30m
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      agents-bridge-lb:
+        condition: service_healthy
+      media-worker:
+        condition: service_healthy
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: development
+      NODE_OPTIONS: "--max-old-space-size=3500"
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
+      AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}
+      AGENTS_BRIDGE_REPLICA_PORT: ${AGENTS_BRIDGE_REPLICA_PORT:-8799}
+      AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_HOST_PORT:-80}/assets/local}
+      # Workflow IR media nodes execute here rather than in `api`; concat must
+      # inherit the same mandatory endpoint after paid clips have succeeded.
+      MEDIA_WORKER_GRPC_ADDR: ${MEDIA_WORKER_GRPC_ADDR:-media-worker:9090}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      WORKFLOW_NODE_WORKER_CONCURRENCY: ${WORKFLOW_NODE_WORKER_CONCURRENCY:-8}
+      WORKFLOW_RUNTIME_PORT: "8790"
+      # 显式清空，防止 env_file 把 Worker 自身错误切成远程代理。
+      WORKFLOW_RUNTIME_REMOTE_BASE_URL: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile && pnpm workflow-runtime:worker"
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /tmp/tapcanvas-workflow-runtime-ready.json"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 120s
+    expose:
+      - "8790"
+    volumes:
+      - ./apps/hono-api:/app
+      - ./assets/public:/app/assets/public
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}:/app/.env:ro
+      - ${TAPCANVAS_SHARED_ROOT:-.}/packages:/packages:ro
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+      - pnpm_store:/app/.pnpm-store
+      - api_node_modules:/app/node_modules
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 4g
+
+  async-image-worker:
+    restart: unless-stopped
+    init: true
+    # 图片/视频供应商调用可持续到 25 分钟；Compose 默认 10 秒强杀会把已受理任务
+    # 误判为 stalled。先让 BullMQ worker 停止取新任务，并给当前任务完整退出窗口。
+    stop_grace_period: 30m
+    image: ${TAPCANVAS_API_IMAGE:-tapcanvas/api:local}
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      agents-bridge-lb:
+        condition: service_healthy
+    env_file:
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
+    environment:
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
+      AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
+      AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}
+      AGENTS_BRIDGE_REPLICA_PORT: ${AGENTS_BRIDGE_REPLICA_PORT:-8799}
+      AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
+      TAPCANVAS_API_INTERNAL_BASE: http://api:8788
+      NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
+      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_HOST_PORT:-80}/assets/local}
+      AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      npm_config_proxy: ""
+      npm_config_https_proxy: ""
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile && pnpm async-image:worker"
+    volumes:
+      - ./apps/hono-api:/app
+      - ./assets/public:/app/assets/public
+      - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}:/app/.env:ro
+      - ${TAPCANVAS_SHARED_ROOT:-.}/packages:/packages:ro
+      - ${TAPCANVAS_PROJECT_DATA_ROOT:-./project-data}:/app/project-data
+      - pnpm_store:/app/.pnpm-store
+      - api_node_modules:/app/node_modules
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+volumes:
+  pnpm_store:
+    driver: local
+  hono_api_postgres:
+    driver: local
+  hono_api_db_backups:
+    driver: local
+  api_node_modules:
+    driver: local
+  agents_node_modules:
+    driver: local
+  agents_runtime:
+    driver: local
+  hono_api_redis:
+    driver: local
+  victoria_logs_data:
+    driver: local

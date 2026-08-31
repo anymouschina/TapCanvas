@@ -1,0 +1,148 @@
+.workflow-trigger-content {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 12px;
+  color: var(--mantine-color-gray-1);
+}
+
+.workflow-trigger-content::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: var(--tc-color-text-tertiary, #7b828e);
+  content: '';
+  opacity: 0.68;
+}
+
+.workflow-trigger-content__header,
+.workflow-trigger-content__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-trigger-content__header {
+  justify-content: flex-start;
+}
+
+.workflow-trigger-content__glyph-frame {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--tc-radius-pill, 999px);
+  background: var(--tc-color-text-primary, #eef0f4);
+  color: var(--tc-color-app-bg, #0a0a0b);
+}
+
+.workflow-trigger-content__glyph {
+  display: block;
+}
+
+.workflow-trigger-content__heading {
+  min-width: 0;
+}
+
+.workflow-trigger-content__eyebrow,
+.workflow-trigger-content__ownership,
+.workflow-trigger-content__fact-label {
+  color: var(--tc-color-text-tertiary, var(--mantine-color-dimmed));
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.workflow-trigger-content__kind {
+  display: block;
+  margin-top: 1px;
+  color: var(--tc-color-text-secondary, var(--mantine-color-gray-3));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.workflow-trigger-content--schedule .workflow-trigger-content__description {
+  padding-left: 8px;
+  border-left: 2px solid var(--tc-color-border-strong, rgba(198, 203, 211, 0.24));
+}
+
+.workflow-trigger-content--invalid::before {
+  background: var(--tc-color-danger, #f87171);
+  opacity: 1;
+}
+
+.workflow-trigger-content__description {
+  margin: 8px 0 0;
+  color: var(--tc-color-text-secondary, var(--mantine-color-gray-2));
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.workflow-trigger-content__description--error {
+  color: var(--tc-color-danger, #f87171);
+}
+
+.workflow-trigger-content__facts {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.workflow-trigger-content__fact {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.workflow-trigger-content__fact-label,
+.workflow-trigger-content__fact-value {
+  min-width: 0;
+  margin: 0;
+}
+
+.workflow-trigger-content__fact-value {
+  overflow: hidden;
+  color: var(--tc-color-text-secondary, var(--mantine-color-gray-3));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-trigger-content__footer {
+  min-width: 0;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.workflow-trigger-content__ownership {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-trigger-content__run {
+  flex: 0 0 auto;
+  color: var(--tc-color-text-primary, var(--mantine-color-gray-1));
+}
+
+.workflow-trigger-content__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.workflow-trigger-content__run-icon {
+  display: block;
+}

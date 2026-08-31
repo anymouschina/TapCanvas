@@ -75,3 +75,31 @@ func TestGetRandomSatisfiedChannelExpandsCanonicalModel(t *testing.T) {
 		t.Fatalf("GetRandomSatisfiedChannel(gpt-image-2) channel = %#v, want channel 45", channel)
 	}
 }
+
+func TestCacheGetUniqueChannelByNameAndType(t *testing.T) {
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	previousChannelsIDM := channelsIDM
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+		channelsIDM = previousChannelsIDM
+	})
+
+	common.MemoryCacheEnabled = true
+	channelsIDM = map[int]*Channel{
+		91: {Id: 91, Name: "google-gemini-official", Type: 24},
+		92: {Id: 92, Name: "beqlee-gemini", Type: 24},
+	}
+
+	channel, err := CacheGetUniqueChannelByNameAndType("google-gemini-official", 24)
+	if err != nil {
+		t.Fatalf("CacheGetUniqueChannelByNameAndType returned error: %v", err)
+	}
+	if channel == nil || channel.Id != 91 {
+		t.Fatalf("resolved channel = %#v, want channel 91", channel)
+	}
+
+	channelsIDM[93] = &Channel{Id: 93, Name: "google-gemini-official", Type: 24}
+	if _, err := CacheGetUniqueChannelByNameAndType("google-gemini-official", 24); err == nil {
+		t.Fatal("duplicate forced channels must fail explicitly")
+	}
+}

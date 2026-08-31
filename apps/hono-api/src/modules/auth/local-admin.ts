@@ -19,7 +19,6 @@ export function resolveLocalDevRole(
 	c: AppContext,
 	role: string | null | undefined,
 ): string | null {
-	if (isLocalDevRequest(c)) return "admin";
 	const normalized = typeof role === "string" ? role.trim().toLowerCase() : "";
 	return normalized || null;
 }

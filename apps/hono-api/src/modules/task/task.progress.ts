@@ -1,89 +1,23 @@
+import { getSharedRedis } from "../../platform/redis-shared";
+import { TaskProgressStore } from "./task-progress-store";
 import {
 	TaskProgressSnapshotSchema,
 	type TaskProgressSnapshotDto,
 } from "./task.schemas";
 
-export type TaskProgressSubscriber = {
-	push: (event: TaskProgressSnapshotDto) => void;
-};
-
-const taskProgressSubscribers = new Map<
-	string,
-	Set<TaskProgressSubscriber>
->();
-
-const latestByUser = new Map<
-	string,
-	Map<string, TaskProgressSnapshotDto>
->();
-
-type StoredKeyInput = {
-	vendor?: string;
-	nodeId?: string;
-	taskId?: string;
-};
-
-function normalizeVendorKey(vendor?: string): string {
-	const v = (vendor || "").trim().toLowerCase();
-	if (v === "google") return "gemini";
-	return v;
+// Single store for the per-user "latest pending snapshot" used by GET
+// /tasks/pending. Backed by Redis when REDIS_URL is set (self-expiring + shared
+// across api replicas, so polling works behind a round-robin LB); otherwise a
+// bounded in-memory store with TTL + per-user LRU. Either way it can no longer
+// grow without bound — the previous Map leaked a permanent entry per user and
+// pinned every non-terminal task forever. Set TASK_PROGRESS_REDIS=0 to force the
+// in-memory backend even when REDIS_URL is present.
+function resolveStore(): TaskProgressStore {
+	const useRedis = String(process.env.TASK_PROGRESS_REDIS ?? "1") !== "0";
+	return new TaskProgressStore({ redis: useRedis ? getSharedRedis() : null });
 }
 
-function makeStoredKey(input: StoredKeyInput): string {
-	const vendor = normalizeVendorKey(input.vendor);
-	const nodeId = (input.nodeId || "").trim();
-	const taskId = (input.taskId || "").trim();
-	return [
-		vendor || "*",
-		nodeId || "*",
-		taskId || "*",
-	].join("|");
-}
-
-export function addTaskProgressSubscriber(
-	userId: string,
-	subscriber: TaskProgressSubscriber,
-): void {
-	const existing = taskProgressSubscribers.get(userId);
-	if (existing) {
-		existing.add(subscriber);
-	} else {
-		taskProgressSubscribers.set(userId, new Set([subscriber]));
-	}
-}
-
-export function removeTaskProgressSubscriber(
-	userId: string,
-	subscriber: TaskProgressSubscriber,
-): void {
-	const existing = taskProgressSubscribers.get(userId);
-	if (!existing) return;
-	existing.delete(subscriber);
-	if (existing.size === 0) {
-		taskProgressSubscribers.delete(userId);
-	}
-}
-
-function storeLatestSnapshot(
-	userId: string,
-	event: TaskProgressSnapshotDto,
-) {
-	const key = makeStoredKey({
-		vendor: event.vendor,
-		nodeId: event.nodeId,
-		taskId: event.taskId,
-	});
-	let store = latestByUser.get(userId);
-	if (!store) {
-		store = new Map<string, TaskProgressSnapshotDto>();
-		latestByUser.set(userId, store);
-	}
-	if (event.status === "succeeded" || event.status === "failed") {
-		store.delete(key);
-		return;
-	}
-	store.set(key, event);
-}
+const store = resolveStore();
 
 export function emitTaskProgress(
 	userId: string,
@@ -107,43 +41,16 @@ export function emitTaskProgress(
 		timestamp: event.timestamp ?? Date.now(),
 	});
 
-	// Persist latest snapshot for pending queries
-	storeLatestSnapshot(userId, payload);
-
-	const subscribers = taskProgressSubscribers.get(userId);
-	if (!subscribers || subscribers.size === 0) return;
-	for (const sub of subscribers) {
-		try {
-			sub.push(payload);
-		} catch (err) {
-			console.warn("[task-progress] subscriber push failed", err);
-		}
-	}
+	// Persist latest snapshot for pending queries (fire-and-forget: this is a
+	// read-through cache, never block the emitting path on it).
+	void store.store(userId, payload).catch((err) => {
+		console.warn("[task-progress] store failed", err);
+	});
 }
 
 export function getPendingTaskSnapshots(
 	userId: string,
 	vendor?: string,
-): TaskProgressSnapshotDto[] {
-	const store = latestByUser.get(userId);
-	if (!store) return [];
-	const targetVendor = normalizeVendorKey(vendor);
-	const result: TaskProgressSnapshotDto[] = [];
-	for (const snapshot of store.values()) {
-		if (!snapshot) continue;
-		if (
-			snapshot.status !== "queued" &&
-			snapshot.status !== "running"
-		) {
-			continue;
-		}
-		if (
-			targetVendor &&
-			normalizeVendorKey(snapshot.vendor) !== targetVendor
-		) {
-			continue;
-		}
-		result.push(snapshot);
-	}
-	return result;
+): Promise<TaskProgressSnapshotDto[]> {
+	return store.getPending(userId, vendor);
 }

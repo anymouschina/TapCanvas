@@ -20,12 +20,6 @@ describe("getConfig", () => {
 				RESEND_API_KEY: "rk",
 				RESEND_FROM: "noreply@example.com",
 				EMAIL_LOGIN_DEBUG: "1",
-				PHONE_LOGIN_DEBUG: "0",
-				ALIYUN_SMS_ACCESS_KEY_ID: "ak",
-				ALIYUN_SMS_ACCESS_KEY_SECRET: "aks",
-				ALIYUN_SMS_SIGN_NAME: "tapcanvas",
-				ALIYUN_SMS_TEMPLATE_CODE: "tpl",
-				ALIYUN_SMS_ENDPOINT: "sms.endpoint",
 			}),
 		);
 
@@ -36,12 +30,6 @@ describe("getConfig", () => {
 		expect(config.resendApiKey).toBe("rk");
 		expect(config.resendFrom).toBe("noreply@example.com");
 		expect(config.emailLoginDebug).toBe(true);
-		expect(config.phoneLoginDebug).toBe(false);
-		expect(config.aliyunSmsAccessKeyId).toBe("ak");
-		expect(config.aliyunSmsAccessKeySecret).toBe("aks");
-		expect(config.aliyunSmsSignName).toBe("tapcanvas");
-		expect(config.aliyunSmsTemplateCode).toBe("tpl");
-		expect(config.aliyunSmsEndpoint).toBe("sms.endpoint");
 	});
 
 	it("uses explicit defaults when env fields are missing", () => {
@@ -54,11 +42,5 @@ describe("getConfig", () => {
 		expect(config.resendApiKey).toBeNull();
 		expect(config.resendFrom).toBeNull();
 		expect(config.emailLoginDebug).toBe(false);
-		expect(config.phoneLoginDebug).toBe(false);
-		expect(config.aliyunSmsAccessKeyId).toBeNull();
-		expect(config.aliyunSmsAccessKeySecret).toBeNull();
-		expect(config.aliyunSmsSignName).toBeNull();
-		expect(config.aliyunSmsTemplateCode).toBeNull();
-		expect(config.aliyunSmsEndpoint).toBeNull();
 	});
 });

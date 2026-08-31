@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { AppError } from "../../middleware/error";
+import { BookIndexStoreError, readBookIndex } from "../asset/book-index-store";
 import { resolveProjectDataRepoRoot } from "../asset/project-data-root";
 
 function sanitizePathSegment(raw: string): string {
-  return raw.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return String(raw || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
 }
 
 function buildProjectBooksRoot(projectId: string, userId: string): string {
@@ -26,12 +28,17 @@ function buildBookIndexPath(projectId: string, userId: string, bookId: string): 
 
 async function readBookIndexSafe(indexPath: string): Promise<Record<string, unknown> | null> {
   try {
-    const raw = await fs.readFile(indexPath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
+    return await readBookIndex(indexPath);
+  } catch (error) {
+    if (error instanceof BookIndexStoreError && error.code === "book_index_not_found") return null;
+    if (error instanceof BookIndexStoreError) {
+      throw new AppError(error.message, {
+        status: 500,
+        code: error.code,
+        details: error.details,
+      });
+    }
+    throw error;
   }
 }
 
@@ -48,12 +55,7 @@ export async function resolveProjectBookDirectoryName(input: {
   const directDirName = sanitizePathSegment(input.requestedBookId);
   if (directDirName) {
     const directIndexPath = buildBookIndexPath(input.projectId, input.userId, directDirName);
-    try {
-      await fs.access(directIndexPath);
-      return directDirName;
-    } catch {
-      // continue fallback scan
-    }
+    if (await readBookIndexSafe(directIndexPath)) return directDirName;
   }
   const entries = await fs.readdir(booksRoot, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
@@ -66,4 +68,15 @@ export async function resolveProjectBookDirectoryName(input: {
     }
   }
   return null;
+}
+
+export async function resolveProjectBookDirectoryPath(input: {
+  projectId: string;
+  userId: string;
+  requestedBookId: string;
+}): Promise<string | null> {
+  const directoryName = await resolveProjectBookDirectoryName(input);
+  return directoryName
+    ? path.join(buildProjectBooksRoot(input.projectId, input.userId), directoryName)
+    : null;
 }

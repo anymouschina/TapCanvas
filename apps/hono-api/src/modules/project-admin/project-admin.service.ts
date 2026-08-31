@@ -3,7 +3,7 @@ import path from "node:path";
 import { AppError } from "../../middleware/error";
 import type { AppContext } from "../../types";
 import { isAdminRequest } from "../team/team.service";
-import { getProjectById, updateProjectName, updateProjectPublic } from "../project/project.repo";
+import { getProjectById, updateProjectName, updateProjectPublic, updateProjectSortWeight } from "../project/project.repo";
 import { deleteProjectGraph } from "../project/project-delete";
 import {
 	normalizeOwnerId,
@@ -70,6 +70,8 @@ function mapRowToDto(row: any): AdminProjectDto {
 			typeof row.owner_login === "string" ? row.owner_login : row.owner_login ?? null,
 		ownerName:
 			typeof row.owner_name === "string" ? row.owner_name : row.owner_name ?? null,
+		cloneCount: typeof row.clone_count === "number" ? row.clone_count : 0,
+		sortWeight: typeof row.sort_weight === "number" ? row.sort_weight : 0,
 		flowCount: normalizeFlowCount(row.flow_count),
 		createdAt: String(row.created_at || ""),
 		updatedAt: String(row.updated_at || ""),
@@ -107,6 +109,7 @@ export async function updateAdminProject(
 		templateTitle?: string;
 		templateDescription?: string;
 		templateCoverUrl?: string;
+		sortWeight?: number;
 	},
 ): Promise<AdminProjectDto> {
 	requireAdmin(c);
@@ -163,6 +166,10 @@ export async function updateAdminProject(
 			updatedBy: "admin",
 			nowIso,
 		});
+	}
+
+	if (typeof input.sortWeight === "number") {
+		await updateProjectSortWeight(projectId, input.sortWeight);
 	}
 
 	const updated = await getProjectForAdmin(c.env.DB, projectId);

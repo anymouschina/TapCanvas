@@ -1,0 +1,85 @@
+.tc-canvas-performance-harness {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--mantine-color-body);
+}
+
+.tc-canvas-performance-harness__canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.tc-canvas-performance-harness__loading {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: var(--mantine-color-dimmed);
+  font-size: 13px;
+}
+
+.tc-canvas-performance-harness__status {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px 9px;
+  color: var(--mantine-color-text);
+  background: color-mix(in srgb, var(--mantine-color-body) 88%, transparent);
+  font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.tc-canvas-performance-harness__status-label {
+  white-space: nowrap;
+}
+
+.tc-canvas-performance-harness__metrics {
+  display: flex;
+  gap: 10px;
+  color: var(--mantine-color-dimmed);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tc-canvas-performance-harness__metric {
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-canvas-performance-harness__error {
+  max-width: min(80vw, 720px);
+  color: var(--mantine-color-red-5);
+  white-space: normal;
+}
+
+.tc-canvas-performance-harness__run {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 70;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  color: var(--mantine-color-text);
+  background: color-mix(in srgb, var(--mantine-color-body) 88%, transparent);
+  border: 0;
+  cursor: pointer;
+}
+
+.tc-canvas-performance-harness__run:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.tc-canvas-performance-harness__run-icon {
+  display: block;
+}

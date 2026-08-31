@@ -1,0 +1,11 @@
+# dev 镜像构建上下文（compose build.context = . = apps/hono-api）。
+# 之前没有此文件，COPY src 之外的隐式上下文会把宿主 node_modules/dist 一并打包，又慢又脏。
+node_modules
+dist
+.turbo
+backups
+logs
+*.log
+project-data
+.DS_Store
+coverage

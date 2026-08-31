@@ -43,5 +43,10 @@ const (
 	APIType147AI
 	APITypeAmux
 	APITypeCode0AI
+	APITypeLingjing
+	APITypeRunningHub
+	APITypeEvolink
+	APITypeKiro
+	APITypeFlow2API
 	APITypeDummy // this one is only for count, do not add any channel after this
 )

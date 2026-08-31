@@ -15,7 +15,7 @@ type PublicVisionResult = {
 
 type PublicVisionFn = (input: {
   vendor: string
-  modelKey: string
+  modelKey?: string
   imageUrl: string
   prompt: string
 }) => Promise<PublicVisionResult | null | undefined>
@@ -116,7 +116,6 @@ export async function deriveStyleHintsFromReferenceImage(
   try {
     const visionResult = await publicVision({
       vendor: 'auto',
-      modelKey: 'gemini-3.1-flash-image-preview',
       imageUrl: normalizedUrl,
       prompt: visionPrompt,
     })
@@ -169,8 +168,11 @@ export async function persistStyleReferenceImage(input: {
     referenceImages: [url],
   }
   const nextIndex = await input.confirmProjectBookStyle(input.projectId, input.bookId, payload)
-  const nextAssets = readRecord(nextIndex.assets) || {}
-  const nextStyleBible = readRecord(nextAssets.styleBible) || { styleName: '参考图锁定风格', styleLocked: true }
+  const nextAssets = nextIndex.assets
+  const nextStyleBible = nextAssets?.styleBible
+  if (!nextAssets || !nextStyleBible) {
+    throw new Error('风格参考图已提交，但服务端未返回完整 styleBible')
+  }
   const serverReferences = Array.isArray(nextStyleBible.referenceImages)
     ? dedupeTrimmedList(nextStyleBible.referenceImages.map(String), 1)
     : []

@@ -1,14 +1,13 @@
 import { parseImagePromptSpecV2, type ImagePromptSpecV2 } from '@tapcanvas/image-prompt-spec'
 import { runPublicTask } from '../../../api/server'
-import { getAuthToken } from '../../../auth/store'
+import { hasAuthSession } from '../../../auth/store'
 import { useUIStore } from '../../../ui/uiStore'
 import { extractTextFromTaskResult } from '../taskNodeHelpers'
 
 type RefineStructuredPromptInput = {
   prompt: string
   negativePrompt?: string
-  systemPrompt?: string
-  modelAlias?: string
+  modelKey?: string
   productionMetadata?: unknown
 }
 
@@ -71,12 +70,11 @@ export async function refineStructuredImagePrompt(
 
   const ui = useUIStore.getState()
   const apiKey = (ui.publicApiKey || '').trim()
-  const token = getAuthToken()
-  if (!apiKey && !token) {
+  if (!apiKey && !hasAuthSession()) {
     throw new Error('请先登录后再试')
   }
 
-  const extraSystemPrompt = readTrimmedString(input.systemPrompt)
+  const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
   const anchorLines = buildLockedAnchorLines(input.productionMetadata)
   const negativePrompt = readTrimmedString(input.negativePrompt)
 
@@ -92,7 +90,6 @@ export async function refineStructuredImagePrompt(
   ].join('\n')
 
   const promptText = [
-    extraSystemPrompt ? `补充润色偏好：\n${extraSystemPrompt}` : null,
     '当前图片 prompt：',
     prompt,
     negativePrompt ? `negativePrompt：\n${negativePrompt}` : null,
@@ -115,12 +112,14 @@ export async function refineStructuredImagePrompt(
     .join('\n\n')
 
   const taskRes = await runPublicTask(apiKey, {
+    vendor: 'auto',
+    ...(vendorCandidates.length > 0 ? { vendorCandidates } : {}),
     request: {
       kind: 'prompt_refine',
       prompt: promptText,
       extras: {
         systemPrompt,
-        ...(input.modelAlias ? { modelAlias: input.modelAlias } : {}),
+        ...(input.modelKey ? { modelKey: input.modelKey } : {}),
         persistAssets: false,
       },
     },

@@ -7,6 +7,8 @@ type AgentSkillRow = {
 	name: string;
 	description: string | null;
 	content: string;
+	logo_url: string | null;
+	category: string;
 	enabled: number;
 	visible: number;
 	sort_order: number | null;
@@ -85,6 +87,8 @@ export async function upsertAgentSkillRow(
 		name: string;
 		description: string | null;
 		content: string;
+		logoUrl: string | null;
+		category: string;
 		enabled: boolean;
 		visible: boolean;
 		sortOrder: number | null;
@@ -100,6 +104,8 @@ export async function upsertAgentSkillRow(
 			name: input.name,
 			description: input.description,
 			content: input.content,
+			logo_url: input.logoUrl,
+			category: input.category,
 			enabled: input.enabled ? 1 : 0,
 			visible: input.visible ? 1 : 0,
 			sort_order: input.sortOrder,
@@ -110,6 +116,8 @@ export async function upsertAgentSkillRow(
 			name: input.name,
 			description: input.description,
 			content: input.content,
+			logo_url: input.logoUrl,
+			category: input.category,
 			enabled: input.enabled ? 1 : 0,
 			visible: input.visible ? 1 : 0,
 			sort_order: input.sortOrder,

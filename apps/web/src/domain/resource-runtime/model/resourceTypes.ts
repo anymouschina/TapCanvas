@@ -2,9 +2,9 @@ export type ResourcePriority = 'critical' | 'visible' | 'prefetch' | 'background
 
 export type ResourceLifecycleState = 'idle' | 'queued' | 'loading' | 'ready' | 'failed' | 'released'
 
-export type ResourceKind = 'image' | 'thumbnail' | 'preview' | 'mosaicSource' | 'videoFrame'
+export type ResourceKind = 'image' | 'thumbnail' | 'preview' | 'videoFrame'
 
-export type ResourceVariantKey = 'thumbnail' | 'preview' | 'original' | 'mosaic-source' | 'video-frame'
+export type ResourceVariantKey = 'thumbnail' | 'preview' | 'original' | 'video-frame'
 
 export type ResourceFitMode = 'cover' | 'contain' | 'fill'
 
@@ -12,11 +12,14 @@ export type ResourceCachePolicy = 'ephemeral' | 'viewport' | 'session'
 
 export type ResourceOwnerSurface =
   | 'task-node-main-image'
+  | 'task-node-skeleton'
   | 'task-node-candidate'
   | 'task-node-upstream-reference'
   | 'preview-modal'
-  | 'mosaic-runner'
   | 'reference-sheet'
+  | 'asset-library'
+  | 'storyboard-recipe-picker'
+  | 'emotion-preview'
 
 export type ImageTransportKind = 'none' | 'object-url' | 'worker-object-url' | 'direct-url'
 

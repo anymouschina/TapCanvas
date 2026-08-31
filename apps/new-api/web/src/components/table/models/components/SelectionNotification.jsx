@@ -35,6 +35,9 @@ const SelectionNotification = ({
   onAddPrefill,
   onClear,
   onCopy,
+  onEnable,
+  onDisable,
+  statusUpdating = false,
 }) => {
   // 根据选中数量决定显示/隐藏或更新通知
   useEffect(() => {
@@ -66,6 +69,24 @@ const SelectionNotification = ({
           <Button size='small' type='secondary' theme='solid' onClick={onCopy}>
             {t('复制名称')}
           </Button>
+          <Button
+            size='small'
+            type='primary'
+            theme='solid'
+            onClick={onEnable}
+            disabled={statusUpdating}
+          >
+            {t('启用所选')}
+          </Button>
+          <Button
+            size='small'
+            type='warning'
+            theme='solid'
+            onClick={onDisable}
+            disabled={statusUpdating}
+          >
+            {t('禁用所选')}
+          </Button>
           <Button size='small' type='danger' theme='solid' onClick={onDelete}>
             {t('删除所选')}
           </Button>
@@ -85,7 +106,17 @@ const SelectionNotification = ({
       // 取消全部勾选时关闭通知
       Notification.close(NOTICE_ID);
     }
-  }, [selectedKeys, t, onDelete, onAddPrefill, onClear, onCopy]);
+  }, [
+    selectedKeys,
+    t,
+    onDelete,
+    onAddPrefill,
+    onClear,
+    onCopy,
+    onEnable,
+    onDisable,
+    statusUpdating,
+  ]);
 
   // 卸载时确保关闭通知
   useEffect(() => {

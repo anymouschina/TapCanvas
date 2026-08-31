@@ -260,6 +260,114 @@ func TestApplyChannelBoundImageModelDoesNotUseOfficialTierForBaseRequest(t *test
 	}
 }
 
+// Regression: a 2K gpt-image-2 request that lands on a base/1K-only channel must be
+// reported as a retryable channel-capability error (not a hard request error) so the
+// relay loop can exclude this channel and fall through to one that serves the tier
+// (e.g. an APIMart channel with the -pro/-vip/official variants).
+func TestApplyChannelBoundImageModelBaseOnly2KIsRetryableCapabilityError(t *testing.T) {
+	t.Parallel()
+
+	c := imageTierTestContext(
+		[]string{"gpt-image-2"},
+		`{}`,
+	)
+	request := imageRequestWithExtra(t, map[string]string{"resolution": "2K"})
+	request.Model = "gpt-image-2"
+	info := imageTierRelayInfoWithChannelType("gpt-image-2", constant.ChannelTypeOpenAI)
+
+	err := applyChannelBoundImageModel(c, info, &request)
+	if err == nil {
+		t.Fatal("expected applyChannelBoundImageModel to reject 2K on a base-only channel")
+	}
+	if !isChannelImageCapabilityError(err) {
+		t.Fatalf("expected a retryable channel-capability error, got %T: %v", err, err)
+	}
+}
+
+func TestApplyChannelBoundImageModelKeepsLingjingBaseFor2K(t *testing.T) {
+	t.Parallel()
+
+	c := imageTierTestContext(
+		[]string{"gpt-image-2"},
+		`{}`,
+	)
+	request := imageRequestWithExtra(t, map[string]string{"resolution": "2K"})
+	request.Model = "gpt-image-2"
+	info := imageTierRelayInfoWithChannelType("gpt-image-2", constant.ChannelTypeLingjing)
+
+	if err := applyChannelBoundImageModel(c, info, &request); err != nil {
+		t.Fatalf("applyChannelBoundImageModel error: %v", err)
+	}
+	if request.Model != "gpt-image-2" {
+		t.Fatalf("request.Model = %q", request.Model)
+	}
+	if info.UpstreamModelName != "gpt-image-2" {
+		t.Fatalf("UpstreamModelName = %q", info.UpstreamModelName)
+	}
+}
+
+func TestApplyChannelBoundImageModelKeepsCodexBaseFor2K(t *testing.T) {
+	t.Parallel()
+
+	c := imageTierTestContext(
+		[]string{"gpt-image-2"},
+		`{}`,
+	)
+	request := imageRequestWithExtra(t, map[string]string{"resolution": "2K"})
+	request.Model = "gpt-image-2"
+	info := imageTierRelayInfoWithChannelType("gpt-image-2", constant.ChannelTypeCodex)
+
+	if err := applyChannelBoundImageModel(c, info, &request); err != nil {
+		t.Fatalf("applyChannelBoundImageModel error: %v", err)
+	}
+	if request.Model != "gpt-image-2" {
+		t.Fatalf("request.Model = %q", request.Model)
+	}
+	if info.UpstreamModelName != "gpt-image-2" {
+		t.Fatalf("UpstreamModelName = %q", info.UpstreamModelName)
+	}
+}
+
+func TestApplyChannelBoundImageModelKeepsGaiscBaseFor4K(t *testing.T) {
+	t.Parallel()
+
+	c := imageTierTestContext(
+		[]string{"gpt-image-2"},
+		`{}`,
+	)
+	request := imageRequestWithExtra(t, map[string]string{"resolution": "4K"})
+	request.Model = "gpt-image-2"
+	info := imageTierRelayInfoWithChannelType("gpt-image-2", constant.ChannelTypeGaiscImage)
+
+	if err := applyChannelBoundImageModel(c, info, &request); err != nil {
+		t.Fatalf("applyChannelBoundImageModel error: %v", err)
+	}
+	if request.Model != "gpt-image-2" {
+		t.Fatalf("request.Model = %q", request.Model)
+	}
+	if info.UpstreamModelName != "gpt-image-2" {
+		t.Fatalf("UpstreamModelName = %q", info.UpstreamModelName)
+	}
+}
+
+func TestSelectChannelBoundImageTierModelKeepsTencentBaseFor4K(t *testing.T) {
+	t.Parallel()
+
+	request := imageRequestWithExtra(t, map[string]string{"resolution": "4K"})
+	got, ok, err := selectChannelBoundImageTierModel(
+		"gpt-image-2",
+		imageResolutionTier(request),
+		[]string{"gpt-image-2"},
+		imageTierRelayInfoWithChannelType("gpt-image-2", constant.ChannelTypeTencent),
+	)
+	if err != nil {
+		t.Fatalf("selectChannelBoundImageTierModel error: %v", err)
+	}
+	if ok {
+		t.Fatalf("unexpected tier model %q (base should be kept for native-high-res channel)", got)
+	}
+}
+
 func TestApplyChannelBoundImageModelRejectsUnconfiguredExplicitOfficialOnApimartChannel(t *testing.T) {
 	t.Parallel()
 

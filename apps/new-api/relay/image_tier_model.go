@@ -2,6 +2,7 @@ package relay
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,58 @@ import (
 
 const gptImage2CanonicalModel = "gpt-image-2"
 const gptImage2OfficialModel = "gpt-image-2-official"
+
+// channelTypesWithNativeHighResGptImage2 lists channel types whose *base*
+// gpt-image-2 model natively serves 2K/4K (the upstream reads resolution from the
+// request and renders at that tier on the base model name). These are the
+// non-APIMart counterpart to isApimartChannel: APIMart splits resolution into
+// separate -vip/-pro/-official SKUs and so needs a tier-model upgrade, but these
+// providers do not — forcing an upgrade on them rejects a perfectly capable
+// channel. Keep this keyed on *dedicated* channel types (or image-only channels)
+// so a generic chat channel sharing a type can never be falsely whitelisted; the
+// gate only fires for channels that actually carry base gpt-image-2 anyway.
+var channelTypesWithNativeHighResGptImage2 = map[int]bool{
+	constant.ChannelTypeLingjing:   true, // 灵镜AI: base gpt-image-2 supports 2K/4K natively (https://llm.lingjingai.cn/api-docs)
+	constant.ChannelTypeTencent:    true, // Tencent VOD image: base serves high-res natively
+	constant.ChannelTypeEvolink:    true, // Evolink: base gpt-image-2 reads resolution(1K/2K/4K) natively (https://docs.evolink.ai/en/api-manual/image-series/gpt-image-2/gpt-image-2-image-generation)
+	constant.ChannelTypeCodex:      true, // Codex Responses image tool serves the requested size on the base gpt-image-2 model
+	constant.ChannelTypeGaiscImage: true, // G-AISC image2 channel serves official pixel dimensions on the base model
+}
+
+// channelImageCapabilityError marks errors where the currently selected channel
+// simply cannot serve the requested image (e.g. a 2K/4K gpt-image-2 request hit a
+// channel that only carries the base/1K tier, or an official SKU landed on a
+// non-APIMart channel). These are NOT request-level validation errors — another
+// candidate channel may well satisfy the request, so the relay should retry on the
+// next channel instead of failing hard.
+type channelImageCapabilityError struct {
+	err error
+}
+
+func (e *channelImageCapabilityError) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *channelImageCapabilityError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func newChannelImageCapabilityError(format string, args ...interface{}) error {
+	return &channelImageCapabilityError{err: fmt.Errorf(format, args...)}
+}
+
+// isChannelImageCapabilityError reports whether err (or anything it wraps) is a
+// channel-capability mismatch that should be retried on a different channel.
+func isChannelImageCapabilityError(err error) bool {
+	var capErr *channelImageCapabilityError
+	return errors.As(err, &capErr)
+}
 
 func applyChannelBoundImageModel(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ImageRequest) error {
 	if info == nil || request == nil {
@@ -42,7 +95,7 @@ func applyChannelBoundImageModel(c *gin.Context, info *relaycommon.RelayInfo, re
 	if err != nil {
 		return err
 	}
-	if shouldKeepApimartBaseGptImage2Model(upstreamModel, mappedModel, resolutionTier, channelModels, info) {
+	if shouldKeepBaseGptImage2Model(upstreamModel, mappedModel, resolutionTier, channelModels, info) {
 		mappedModel = upstreamModel
 		mapped = upstreamModel != info.OriginModelName
 	}
@@ -83,7 +136,7 @@ func selectChannelBoundImageTierModel(currentModel string, resolutionTier string
 	if !isGptImage2RoutableModel(currentModel) {
 		return "", false, nil
 	}
-	if shouldUseApimartBaseGptImage2ForHighResolution(currentModel, resolutionTier, channelModels, info) {
+	if shouldUseBaseGptImage2ForHighResolution(currentModel, resolutionTier, channelModels, info) {
 		return "", false, nil
 	}
 	requiredRanks := requiredGptImage2TierRanks(resolutionTier)
@@ -102,21 +155,30 @@ func selectChannelBoundImageTierModel(currentModel string, resolutionTier string
 			return candidate, candidate != currentModel, nil
 		}
 	}
-	return "", false, fmt.Errorf("gpt-image-2 %s request requires a real tier model on the selected channel; channel models=%s", resolutionTier, strings.Join(channelModels, ","))
+	return "", false, newChannelImageCapabilityError("gpt-image-2 %s request requires a real tier model on the selected channel; channel models=%s", resolutionTier, strings.Join(channelModels, ","))
 }
 
-func shouldUseApimartBaseGptImage2ForHighResolution(currentModel string, resolutionTier string, channelModels []string, info *relaycommon.RelayInfo) bool {
+func shouldUseBaseGptImage2ForHighResolution(currentModel string, resolutionTier string, channelModels []string, info *relaycommon.RelayInfo) bool {
 	if resolutionTier == "1K" || !isGptImage2BaseModel(currentModel) {
 		return false
 	}
-	if !isApimartChannel(info) {
+	if !channelHasModel(channelModels, gptImage2CanonicalModel) {
 		return false
 	}
-	return channelHasModel(channelModels, gptImage2CanonicalModel)
+	return isApimartChannel(info) || channelBaseGptImage2SupportsHighResolution(info)
 }
 
-func shouldKeepApimartBaseGptImage2Model(selectedModel string, mappedModel string, resolutionTier string, channelModels []string, info *relaycommon.RelayInfo) bool {
-	if !shouldUseApimartBaseGptImage2ForHighResolution(selectedModel, resolutionTier, channelModels, info) {
+// channelBaseGptImage2SupportsHighResolution reports whether the selected
+// channel's base gpt-image-2 renders 2K/4K without a tier-model upgrade.
+func channelBaseGptImage2SupportsHighResolution(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelMeta == nil {
+		return false
+	}
+	return channelTypesWithNativeHighResGptImage2[info.ChannelType]
+}
+
+func shouldKeepBaseGptImage2Model(selectedModel string, mappedModel string, resolutionTier string, channelModels []string, info *relaycommon.RelayInfo) bool {
+	if !shouldUseBaseGptImage2ForHighResolution(selectedModel, resolutionTier, channelModels, info) {
 		return false
 	}
 	return strings.TrimSpace(mappedModel) != strings.TrimSpace(selectedModel)
@@ -160,14 +222,14 @@ func validateOfficialImageSkuChannel(selectedModel string, channelModels []strin
 		return nil
 	}
 	if info == nil || info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeApimart {
-		return fmt.Errorf("%s must route through an APIMart official SKU channel", selectedModel)
+		return newChannelImageCapabilityError("%s must route through an APIMart official SKU channel", selectedModel)
 	}
 	for _, channelModel := range channelModels {
 		if strings.TrimSpace(channelModel) == selectedModel {
 			return nil
 		}
 	}
-	return fmt.Errorf("%s is not bound to the selected channel", selectedModel)
+	return newChannelImageCapabilityError("%s is not bound to the selected channel", selectedModel)
 }
 
 func isGptImage2RoutableModel(modelName string) bool {
@@ -258,6 +320,8 @@ func stringExtraValue(raw json.RawMessage) string {
 
 func normalizeImageResolutionTier(value string) string {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "0.5K", "512", "512P":
+		return "0.5K"
 	case "2K":
 		return "2K"
 	case "4K":

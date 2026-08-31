@@ -1,12 +1,29 @@
 import type { Edge, Node } from '@xyflow/react'
+import {
+  createImageOperationState,
+  imageOperationMaskUrl,
+  parseImageOperationSpec,
+  type ImageOperationSpec,
+} from '@tapcanvas/image-operation-protocol'
+import { isReferenceOnlyCanvasEdge } from '@tapcanvas/canvas-edge-semantics'
 import { normalizePublicFlowAnchorBindings, type PublicFlowAnchorBinding } from '@tapcanvas/flow-anchor-bindings'
-import type { ProjectBookIndexDto, ProjectRoleCardAssetDto, TaskKind, TaskRequestDto, TaskResultDto } from '../api/server'
+import type {
+  MaterialAssetDto,
+  ProjectBookIndexDto,
+  ProjectRoleCardAssetDto,
+  TaskAssetDto,
+  TaskKind,
+  TaskRequestDto,
+  TaskResultDto,
+} from '../api/server'
 import {
   agentsChat,
   ensureProjectBookMetadataWindow,
+  fetchProxiedImageBlob,
   getProjectBookIndex,
   listProjectBooks,
   listProjectRoleCardAssets,
+  listMaterialAssets,
   listServerAssets,
   runPublicTask,
   uploadServerAssetFile,
@@ -17,21 +34,33 @@ import {
   upsertProjectRoleCardAsset,
   upsertProjectBookStoryboardChunk,
 } from '../api/server'
-import { getAuthToken } from '../auth/store'
+import { hasAuthSession } from '../auth/store'
 import { useUIStore } from '../ui/uiStore'
 import { toast } from '../ui/toast'
 import { notifyAssetRefresh } from '../ui/assetEvents'
 import { isAnthropicModel } from '../config/modelSource'
-import { getDefaultModel } from '../config/models'
-import { resolveExecutableImageModel } from '../config/useModelOptions'
+import {
+  findModelOptionByIdentifier,
+  getModelOptionRequestAlias,
+  preloadModelOptions,
+  resolveExecutableImageModel,
+} from '../config/useModelOptions'
+import {
+  DEFAULT_VIDEO_REFERENCE_IMAGE_LIMIT,
+  parseVideoModelCatalogConfig,
+} from '../config/modelCatalogMeta'
+import { resolveCatalogVideoVendor } from '../config/modelRouting'
 import { normalizeOrientation, type Orientation } from '../utils/orientation'
 import { buildVideoBillingSpecKey, normalizeVideoResolution } from '../utils/videoBillingSpec'
+import { buildKlingMotionControlExtras, isKlingMotionControlModel, normalizeKlingKeepOriginalSound } from '../utils/klingMotionControl'
+import { isKlingV3OmniVideoModel, normalizeKlingVideoReferType } from '../utils/klingV3'
 import {
   buildVideoDurationPatch,
   parseVideoDurationFromSpecKey,
   readVideoDurationSeconds,
 } from '../utils/videoDuration'
 import { isRemoteUrl } from '../canvas/nodes/taskNode/utils'
+import { isTapCanvasHostedUploadUrl } from '../canvas/nodes/taskNode/hostedUploadUrl'
 import {
   normalizeStoryboardScenes,
   serializeStoryboardScenes,
@@ -39,7 +68,12 @@ import {
   STORYBOARD_MAX_TOTAL_DURATION,
 } from '../canvas/nodes/storyboardUtils'
 import { resolveTaskErrorDisplay } from './taskErrorClassifier'
-import { mergeExecutionPromptSequence } from './promptAssembly'
+import { mergeExecutionPromptSequence, selectExecutionUpstreamPrompts } from './promptAssembly'
+import { resolveProviderTaskFailure } from './mediaTaskRuntime'
+import {
+  collectTextExecutionPromptCandidates,
+  resolveExecutionPromptSourceCategory,
+} from './executionPromptSource'
 import {
   collectNodeReferenceImageUrls,
   readNodeFirstFrameUrl,
@@ -63,7 +97,18 @@ import {
   buildVideoAssetResultItem,
   mergeReferenceAssetInputs,
   type AssetResultItem,
+  type RuntimeReferenceAssetInput,
 } from './assetReference'
+import {
+  collectPromptMentionAliases,
+  extractPromptMentionTokens,
+  normalizePromptMentionAlias,
+} from './promptMentionAliases'
+import {
+  isEligibleForGlobalStyleReference,
+  mergeGlobalStyleReferenceImages,
+  mergeGlobalStylePrompt,
+} from './globalStyleReferenceInjection'
 import {
   composeLabeledReferenceSheetBlob,
   uploadMergedReferenceSheet,
@@ -71,6 +116,12 @@ import {
 } from './referenceSheet'
 import { parseImageEditSizeDimensions } from '../canvas/nodes/taskNode/imageEditSize'
 import { appendImageEditFocusGuidePrompt } from '../canvas/nodes/taskNode/imageEditFocusGuide'
+import { buildPortraitTextureExecutionPrompt } from '../canvas/nodes/taskNode/portraitTextureContract'
+import { buildCinematicCameraPrompt } from '../canvas/nodes/taskNode/cameraControlContract'
+import {
+  getProjectImageSettings,
+  mergeChapterCreativeOverrideIntoProjectImageSettings,
+} from '../canvas/projectImageSettingsStore'
 import {
   buildStoryboardEditorPatch,
   resolveStoryboardEditorCellAspect,
@@ -92,8 +143,34 @@ import {
   resolveSemanticNodeVisualReferenceBinding,
   upsertSemanticNodeAnchorBinding,
 } from '../canvas/utils/semanticBindings'
+import { taskHubRuntime, configureTaskHub } from './taskHub'
+import { withCanvasGenerationContext } from './generationAssetContext'
+import {
+  deriveShotPromptsFromStructuredData,
+  normalizeStoryboardStructuredData,
+  STORYBOARD_DIRECTOR_V12_SCHEMA_VERSION,
+} from '../storyboard/storyboardStructure'
+
+configureTaskHub({
+  fetch: async (taskId, kind, prompt) => {
+    const { apiKey } = requirePublicApiRuntime()
+    const res = await fetchPublicTaskResult(apiKey, {
+      taskId: taskId.trim(),
+      taskKind: kind,
+      prompt,
+    })
+    return res.result
+  },
+})
 
 const { appendImageViewPrompt } = imageViewControlsModule
+
+function getRuntimeProjectImageSettings(projectId: string) {
+  return mergeChapterCreativeOverrideIntoProjectImageSettings(
+    getProjectImageSettings(projectId),
+    useUIStore.getState().currentChapterCreativeOverride,
+  )
+}
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
@@ -126,28 +203,106 @@ function nowLabel() {
   return new Date().toLocaleTimeString()
 }
 
+function readTrimmedRunnerText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeImageBillingSpecSegment(value: unknown): string {
+  const raw = readTrimmedRunnerText(value).toLowerCase()
+  if (!raw) return ''
+  return raw.replace(/:/g, '_').replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
+}
+
+function buildImageBillingSpecKey(input: {
+  modelKey: string
+  aspectRatio: string
+  imageSize?: string
+  resolution?: string
+  quality?: string
+}): string | null {
+  const resolution =
+    normalizeImageBillingSpecSegment(input.resolution) ||
+    normalizeImageBillingSpecSegment(input.imageSize)
+  if (!resolution) return null
+  const modelKey = input.modelKey.trim().toLowerCase()
+  const quality = normalizeImageBillingSpecSegment(input.quality)
+	if (modelKey.includes('gpt-image-2')) {
+		return `image:${resolution}:${quality || 'low'}`
+  }
+  return null
+}
+
+export function buildCharacterBiblePromptHint(data: unknown): string {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return ''
+  const record = data as Record<string, unknown>
+  const bible =
+    record.characterBible && typeof record.characterBible === 'object' && !Array.isArray(record.characterBible)
+      ? (record.characterBible as Record<string, unknown>)
+      : null
+  if (!bible) return ''
+
+  const identityHint =
+    readTrimmedRunnerText(record.characterIdentityHint) ||
+    readTrimmedRunnerText(bible.identityHint) ||
+    readTrimmedRunnerText(bible.name)
+  const worldview =
+    readTrimmedRunnerText(record.characterWorldview) ||
+    readTrimmedRunnerText(bible.filterWorldview)
+  const theme =
+    readTrimmedRunnerText(record.characterTheme) ||
+    readTrimmedRunnerText(bible.filterTheme)
+  const scene = readTrimmedRunnerText(record.characterScene) || readTrimmedRunnerText(bible.scene)
+  const era = readTrimmedRunnerText(record.characterEra) || readTrimmedRunnerText(bible.era)
+  const timePeriod =
+    readTrimmedRunnerText(record.characterTimePeriod) ||
+    readTrimmedRunnerText(bible.timePeriod)
+  const traits =
+    readTrimmedRunnerText(record.characterTraitsSummary) ||
+    [
+      readTrimmedRunnerText(bible.gender),
+      readTrimmedRunnerText(bible.ageGroup),
+      readTrimmedRunnerText(bible.species),
+      readTrimmedRunnerText(bible.physique),
+      readTrimmedRunnerText(bible.heightLevel),
+      readTrimmedRunnerText(bible.hairColor),
+      readTrimmedRunnerText(bible.temperament),
+    ]
+      .filter(Boolean)
+      .join(' / ')
+  const outfit = readTrimmedRunnerText(bible.outfit)
+  const distinctiveFeatures = readTrimmedRunnerText(bible.distinctiveFeatures)
+
+  const lines = [
+    identityHint ? `角色事实锚点：${identityHint}` : '',
+    traits ? `角色特征：${traits}` : '',
+    outfit ? `服装约束：${outfit}` : '',
+    distinctiveFeatures ? `辨识特征：${distinctiveFeatures}` : '',
+    worldview ? `世界观：${worldview}` : '',
+    theme ? `主题：${theme}` : '',
+    era ? `时代大类：${era}` : '',
+    timePeriod ? `时代细分：${timePeriod}` : '',
+    scene ? `场景事实：${scene}` : '',
+    '执行要求：若 referenceImages 中已给出角色参考图或三视图，必须保持同一角色身份、脸型、发型、服装主元素与关键配饰，不得改人设。',
+  ].filter(Boolean)
+
+  return lines.length ? lines.join('\n') : ''
+}
+
 const DEFAULT_TASK_POLL_TIMEOUT_MS = 600_000
 const MAX_VIDEO_DURATION_SECONDS = 15
 const SORA2_PRO_MAX_VIDEO_DURATION_SECONDS = 25
 const IMAGE_NODE_KINDS = new Set(['image', 'imageEdit', 'storyboard'])
 const VIDEO_RENDER_NODE_KINDS = new Set(['video', 'composeVideo'])
-const NON_EXECUTABLE_REMOTE_NODE_KINDS = new Set(['text'])
+const NON_EXECUTABLE_REMOTE_NODE_KINDS = new Set(['text', 'workflowStage', 'workflowTrigger'])
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
-const DEFAULT_IMAGE_MODEL = getDefaultModel('image')
-const DEFAULT_IMAGE_EDIT_MODEL = getDefaultModel('imageEdit')
-
 function isVideoRenderKind(kind: string | null | undefined): boolean {
   return typeof kind === 'string' && VIDEO_RENDER_NODE_KINDS.has(kind)
 }
 
 function isStoryboardEditorKind(kind: string | null | undefined): boolean {
   return kind === 'storyboard'
-}
-
-function resolveDefaultImageModelForTask(taskKind: 'text_to_image' | 'image_edit'): string {
-  return taskKind === 'image_edit' ? DEFAULT_IMAGE_EDIT_MODEL : DEFAULT_IMAGE_MODEL
 }
 
 function resolveImageTaskVendor(selectedModel: string, explicitVendor?: string | null): string {
@@ -183,14 +338,37 @@ type RoleCardMentionResult = { urls: string[]; matched: string[]; missing: strin
 type PromptAssetRef = {
   assetRefId: string
   assetRefIdKey: string
+  mentionKeys: string[]
   url: string
   assetId: string | null
   name: string
   updatedAtTs: number
+  sourceNodeId?: string | null
+  role?: 'style' | 'reference'
 }
-type PromptAssetMentionResult = { urls: string[]; matched: string[]; missing: string[]; ambiguous: string[] }
+type PromptAssetMentionResult = {
+  urls: string[]
+  matched: string[]
+  missing: string[]
+  ambiguous: string[]
+  sourceNodeIds: string[]
+  assetInputs: RuntimeReferenceAssetInput[]
+}
 const PROJECT_ASSET_MENTION_CACHE = new Map<string, { at: number; refs: PromptAssetRef[] }>()
 const PROJECT_ASSET_MENTION_CACHE_TTL_MS = 60_000
+const MATERIAL_ASSET_MENTION_CACHE = new Map<string, { at: number; refs: PromptAssetRef[] }>()
+const MATERIAL_ASSET_MENTION_CACHE_TTL_MS = 60_000
+
+function createEmptyPromptAssetMentionResult(): PromptAssetMentionResult {
+  return {
+    urls: [],
+    matched: [],
+    missing: [],
+    ambiguous: [],
+    sourceNodeIds: [],
+    assetInputs: [],
+  }
+}
 
 function normalizeMentionToken(raw: string): string {
   return String(raw || '')
@@ -204,19 +382,6 @@ function normalizeMentionTokenCompact(raw: string): string {
   return normalizeMentionToken(raw).replace(/\s+/g, '')
 }
 
-function extractPromptMentionTokens(raw: string): string[] {
-  const matches = String(raw || '').match(/@[^\s@]+/g) || []
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const match of matches) {
-    const normalized = normalizeMentionToken(match)
-    if (!normalized || seen.has(normalized)) continue
-    seen.add(normalized)
-    out.push(normalized)
-  }
-  return out
-}
-
 function readPromptAssetReferenceUrl(record: Record<string, unknown>): string {
   const readUrl = (value: unknown): string => {
     const trimmed = typeof value === 'string' ? value.trim() : ''
@@ -228,7 +393,12 @@ function readPromptAssetReferenceUrl(record: Record<string, unknown>): string {
     const url = readUrl((item as Record<string, unknown>).url)
     if (url) return url
   }
-  const directImageUrl = readUrl(record.imageUrl)
+  const directImageUrl =
+    readUrl(record.imageUrl) ||
+    readUrl(record.referenceImageUrl) ||
+    readUrl(record.previewUrl) ||
+    readUrl(record.thumbnailUrl) ||
+    readUrl(record.url)
   if (directImageUrl) return directImageUrl
   const videoResults = Array.isArray(record.videoResults) ? record.videoResults : []
   for (const item of videoResults) {
@@ -240,6 +410,13 @@ function readPromptAssetReferenceUrl(record: Record<string, unknown>): string {
     if (url) return url
   }
   return readUrl(record.videoThumbnailUrl) || readUrl(record.videoUrl)
+}
+
+function readPromptAssetRole(record: Record<string, unknown>): 'style' | 'reference' | undefined {
+  const rawRole = String(record.assetRole || record.referenceRole || record.role || '').trim().toLowerCase()
+  if (rawRole === 'style') return 'style'
+  if (rawRole === 'reference') return 'reference'
+  return undefined
 }
 
 function normalizeRoleCardStateKey(raw: string): string {
@@ -412,16 +589,37 @@ function buildCanvasPromptAssetRefs(nodes: Node[]): PromptAssetRef[] {
   for (const node of nodes) {
     const primaryAsset = extractNodePrimaryAssetReference(node)
     if (!primaryAsset) continue
-    const assetRefIdKey = normalizeMentionToken(primaryAsset.assetRefId)
-    if (!assetRefIdKey || seen.has(assetRefIdKey)) continue
-    seen.add(assetRefIdKey)
+    const data = node.data && typeof node.data === 'object' && !Array.isArray(node.data)
+      ? node.data as Record<string, unknown>
+      : {}
+    const mentionKeys = collectPromptMentionAliases({
+      nodeId: node.id,
+      assetId: primaryAsset.assetId,
+      assetRefId: primaryAsset.assetRefId,
+      aliases: [
+        data.assetId,
+        data.assetRefId,
+        data.assetVersionId,
+        data.referenceAssetId,
+        data.referenceAssetVersionId,
+        data.styleId,
+      ],
+      name: primaryAsset.displayName,
+    })
+    if (!mentionKeys.length) continue
+    const seenKey = `${node.id}\u0000${primaryAsset.url}`
+    if (seen.has(seenKey)) continue
+    seen.add(seenKey)
     out.push({
       assetRefId: primaryAsset.assetRefId,
-      assetRefIdKey,
+      assetRefIdKey: normalizePromptMentionAlias(primaryAsset.assetRefId) || mentionKeys[0]!,
+      mentionKeys,
       url: primaryAsset.url,
       assetId: primaryAsset.assetId,
       name: primaryAsset.displayName,
       updatedAtTs: 0,
+      sourceNodeId: node.id,
+      role: readPromptAssetRole(data),
     })
   }
   return out
@@ -436,23 +634,39 @@ async function refreshProjectAssetMentionCacheIfNeeded(input: {
   if (cached && now - cached.at <= PROJECT_ASSET_MENTION_CACHE_TTL_MS) return cached
   const result = await listServerAssets({ projectId: input.projectId, kind: 'generation', limit: 200 })
   const refs = (Array.isArray(result.items) ? result.items : [])
-    .map((asset) => {
+    .map((asset): PromptAssetRef | null => {
       const rawData = asset?.data
       const data = rawData && typeof rawData === 'object' && !Array.isArray(rawData)
         ? rawData as Record<string, unknown>
         : {}
       const assetRefId = String(data.assetRefId || asset.name || asset.id || '').trim()
-      const assetRefIdKey = normalizeMentionToken(assetRefId)
       const url = readPromptAssetReferenceUrl(data)
-      if (!assetRefIdKey || !url) return null
+      const assetId = String(asset.id || '').trim() || null
+      const name = String(data.assetName || asset.name || assetRefId).trim() || assetRefId
+      const mentionKeys = collectPromptMentionAliases({
+        assetId,
+        assetRefId,
+        aliases: [
+          data.assetId,
+          data.assetRefId,
+          data.assetVersionId,
+          data.referenceAssetId,
+          data.referenceAssetVersionId,
+          data.styleId,
+        ],
+        name,
+      })
+      if (!mentionKeys.length || !url) return null
       return {
         assetRefId,
-        assetRefIdKey,
+        assetRefIdKey: normalizePromptMentionAlias(assetRefId) || mentionKeys[0]!,
+        mentionKeys,
         url,
-        assetId: String(asset.id || '').trim() || null,
-        name: String(data.assetName || asset.name || assetRefId).trim() || assetRefId,
+        assetId,
+        name,
         updatedAtTs: Date.parse(String(asset.updatedAt || asset.createdAt || '')) || 0,
-      } satisfies PromptAssetRef
+        role: readPromptAssetRole(data),
+      }
     })
     .filter((item): item is PromptAssetRef => item !== null)
     .sort((left, right) => right.updatedAtTs - left.updatedAtTs)
@@ -461,11 +675,84 @@ async function refreshProjectAssetMentionCacheIfNeeded(input: {
   return refreshed
 }
 
+async function refreshMaterialAssetMentionCacheIfNeeded(input: {
+  cacheKey: string
+}): Promise<{ at: number; refs: PromptAssetRef[] }> {
+  const now = Date.now()
+  const cached = MATERIAL_ASSET_MENTION_CACHE.get(input.cacheKey)
+  if (cached && now - cached.at <= MATERIAL_ASSET_MENTION_CACHE_TTL_MS) return cached
+  const assets = await listMaterialAssets()
+  const refs = assets
+    .map((asset: MaterialAssetDto): PromptAssetRef | null => {
+      const data = asset.latestVersion?.data || {}
+      const assetRefId = String(data.assetRefId || asset.name || asset.id || '').trim()
+      const assetId = String(asset.id || '').trim() || null
+      const name = String(data.assetName || asset.name || assetRefId).trim() || assetRefId
+      const url = readPromptAssetReferenceUrl(data)
+      const mentionKeys = collectPromptMentionAliases({
+        assetId,
+        assetRefId,
+        aliases: [
+          asset.latestVersion?.id,
+          data.assetId,
+          data.assetRefId,
+          data.assetVersionId,
+          data.referenceAssetId,
+          data.referenceAssetVersionId,
+          data.styleId,
+        ],
+        name,
+      })
+      if (!mentionKeys.length || !url) return null
+      return {
+        assetRefId,
+        assetRefIdKey: normalizePromptMentionAlias(assetRefId) || mentionKeys[0]!,
+        mentionKeys,
+        url,
+        assetId,
+        name,
+        updatedAtTs: Date.parse(String(asset.updatedAt || asset.createdAt || '')) || 0,
+        role: asset.kind === 'style' ? 'style' : 'reference',
+      }
+    })
+    .filter((item): item is PromptAssetRef => item !== null)
+    .sort((left, right) => right.updatedAtTs - left.updatedAtTs)
+  const refreshed = { at: now, refs }
+  MATERIAL_ASSET_MENTION_CACHE.set(input.cacheKey, refreshed)
+  return refreshed
+}
+
+function buildLockedStylePromptAssetRef(projectId: string): PromptAssetRef | null {
+  const lockedStyle = getRuntimeProjectImageSettings(projectId).lockedStyle
+  const url = String(lockedStyle?.referenceImageUrl || '').trim()
+  if (!url) return null
+  const styleId = String(lockedStyle?.styleId || '').trim()
+  const materialId = styleId.startsWith('material:') ? styleId.slice('material:'.length) : styleId
+  const name = String(lockedStyle?.styleName || '').trim() || materialId || 'style'
+  const mentionKeys = collectPromptMentionAliases({
+    assetId: materialId,
+    assetRefId: styleId,
+    aliases: [styleId, materialId],
+    name,
+  })
+  if (!mentionKeys.length) return null
+  return {
+    assetRefId: styleId || materialId || name,
+    assetRefIdKey: mentionKeys[0]!,
+    mentionKeys,
+    url,
+    assetId: materialId || null,
+    name,
+    updatedAtTs: 0,
+    role: 'style',
+  }
+}
+
 async function resolveAssetImagesByMentions(input: {
   prompt?: string | null
   nodes?: Node[]
 }): Promise<PromptAssetMentionResult> {
-  const empty: PromptAssetMentionResult = { urls: [], matched: [], missing: [], ambiguous: [] }
+  const empty = createEmptyPromptAssetMentionResult()
   const projectId = String((useUIStore.getState() as { currentProject?: { id?: string | null } })?.currentProject?.id || '').trim()
   const prompt = String(input.prompt || '').trim()
   if (!projectId || !prompt) return empty
@@ -474,14 +761,16 @@ async function resolveAssetImagesByMentions(input: {
 
   const canvasRefs = buildCanvasPromptAssetRefs(Array.isArray(input.nodes) ? input.nodes : [])
   const projectCache = await refreshProjectAssetMentionCacheIfNeeded({ cacheKey: projectId, projectId })
+  const materialCache = await refreshMaterialAssetMentionCacheIfNeeded({ cacheKey: 'account' })
+  const lockedStyleRef = buildLockedStylePromptAssetRef(projectId)
   const candidatesByMention = new Map<string, PromptAssetRef[]>()
-  for (const ref of [...canvasRefs, ...projectCache.refs]) {
-    const key = ref.assetRefIdKey
-    if (!key) continue
-    const list = candidatesByMention.get(key) || []
-    if (!list.some((item) => item.url === ref.url && item.assetId === ref.assetId)) {
-      list.push(ref)
-      candidatesByMention.set(key, list)
+  for (const ref of [...canvasRefs, ...projectCache.refs, ...materialCache.refs, ...(lockedStyleRef ? [lockedStyleRef] : [])]) {
+    for (const key of ref.mentionKeys) {
+      const list = candidatesByMention.get(key) || []
+      if (!list.some((item) => item.url === ref.url && item.assetId === ref.assetId && item.role === ref.role)) {
+        list.push(ref)
+        candidatesByMention.set(key, list)
+      }
     }
   }
 
@@ -490,6 +779,8 @@ async function resolveAssetImagesByMentions(input: {
   const matched: string[] = []
   const missing: string[] = []
   const ambiguous: string[] = []
+  const sourceNodeIds: string[] = []
+  const assetInputsByUrl = new Map<string, RuntimeReferenceAssetInput>()
 
   for (const mention of mentions) {
     const candidates = candidatesByMention.get(mention) || []
@@ -507,9 +798,23 @@ async function resolveAssetImagesByMentions(input: {
       urlSeen.add(candidate.url)
       urls.push(candidate.url)
     }
+    if (candidate.sourceNodeId && !sourceNodeIds.includes(candidate.sourceNodeId)) {
+      sourceNodeIds.push(candidate.sourceNodeId)
+    }
+    const binding: RuntimeReferenceAssetInput = {
+      url: candidate.url,
+      assetId: candidate.assetId,
+      assetRefId: candidate.assetRefId,
+      role: candidate.role || 'reference',
+      name: candidate.name,
+    }
+    const existingBinding = assetInputsByUrl.get(candidate.url)
+    if (!existingBinding || (binding.role === 'style' && existingBinding.role !== 'style')) {
+      assetInputsByUrl.set(candidate.url, binding)
+    }
   }
 
-  return { urls, matched, missing, ambiguous }
+  return { urls, matched, missing, ambiguous, sourceNodeIds, assetInputs: Array.from(assetInputsByUrl.values()) }
 }
 
 function pickRoleCardCandidate(mention: RoleCardMentionToken, candidates: RoleCardRef[]): RoleCardRef | 'missing' | 'ambiguous' {
@@ -1072,14 +1377,17 @@ function isRunTokenActive(getState: Getter, id: string, runToken: string): boole
   return readNodeRunToken(getState, id) === runToken
 }
 
-function requirePublicApiRuntime(): { apiKey: string } {
+function requirePublicApiRuntime(): { apiKey: string; vendorCandidates?: string[] } {
   const ui = useUIStore.getState() as any
   const apiKey = typeof ui?.publicApiKey === 'string' ? ui.publicApiKey.trim() : ''
-  const token = getAuthToken()
-  if (!apiKey && !token) {
+	if (!apiKey && !hasAuthSession()) {
     throw new Error('未登录：请先登录后再试')
   }
-  return { apiKey }
+  const candidates = Array.isArray(ui?.publicVendorCandidates) ? ui.publicVendorCandidates : []
+  const vendorCandidates = candidates
+    .map((v: any) => (typeof v === 'string' ? v.trim() : ''))
+    .filter(Boolean)
+  return { apiKey, ...(vendorCandidates.length ? { vendorCandidates } : {}) }
 }
 
 const TASK_LOG_REQUEST_MAX_CHARS = 12000
@@ -1112,6 +1420,10 @@ function buildReferenceSheetLogMeta(sheet: UploadedReferenceSheet | null | undef
       ...(entry.note ? { note: entry.note } : null),
     })),
   }
+}
+
+function shouldAutoMergeReferenceSheet(): boolean {
+  return false
 }
 
 function sanitizeTaskLogValue(value: unknown): unknown {
@@ -1187,9 +1499,18 @@ function appendRequestPayloadLog(input: {
   }
 }
 
-async function runAutoTask(request: TaskRequestDto): Promise<TaskResultDto> {
-  const { apiKey } = requirePublicApiRuntime()
-  const res = await runPublicTask(apiKey, { request })
+async function runTaskByVendor(vendor: string, request: TaskRequestDto): Promise<TaskResultDto> {
+  const normalizedVendor = String(vendor || '').trim()
+  if (!normalizedVendor) {
+    throw new Error('vendor is required')
+  }
+  const { apiKey, vendorCandidates } = requirePublicApiRuntime()
+  const contextualRequest = withCanvasGenerationContext(request, useUIStore.getState())
+  const res = await runPublicTask(apiKey, {
+    vendor: normalizedVendor,
+    ...(normalizedVendor === 'auto' && vendorCandidates ? { vendorCandidates } : {}),
+    request: contextualRequest,
+  })
   return res.result
 }
 
@@ -1235,6 +1556,7 @@ function beginPendingRequestProgress(
 async function runTaskByVendorWithPendingProgress(
   ctx: Pick<RunnerContext, 'id' | 'setNodeStatus' | 'isCanceled'>,
   options: {
+    vendor: string
     request: TaskRequestDto
     startProgress: number
     maxProgress: number
@@ -1251,7 +1573,7 @@ async function runTaskByVendorWithPendingProgress(
     stepMs: options.stepMs,
   })
   try {
-    const result = await runAutoTask(options.request)
+    const result = await runTaskByVendor(options.vendor, options.request)
     return {
       result,
       requestProgress: stopProgress(),
@@ -1262,16 +1584,23 @@ async function runTaskByVendorWithPendingProgress(
   }
 }
 
-async function runAutoChat(payload: {
+async function runChatByVendor(vendor: string, payload: {
   prompt: string
   systemPrompt?: string
-  modelAlias?: string
+  modelKey?: string
   referenceImages?: string[]
 }): Promise<TaskResultDto> {
+  const normalizedVendor = String(vendor || '').trim()
+  if (!normalizedVendor) {
+    throw new Error('vendor is required')
+  }
+  const { vendorCandidates } = requirePublicApiRuntime()
   const res = await agentsChat({
+    vendor: normalizedVendor,
+    ...(normalizedVendor === 'auto' && vendorCandidates ? { vendorCandidates } : {}),
     prompt: payload.prompt,
     ...(payload.systemPrompt ? { systemPrompt: payload.systemPrompt } : {}),
-    ...(payload.modelAlias ? { modelAlias: payload.modelAlias } : {}),
+    ...(payload.modelKey ? { modelKey: payload.modelKey } : {}),
     ...(Array.isArray(payload.referenceImages) && payload.referenceImages.length
       ? { referenceImages: payload.referenceImages }
       : {}),
@@ -1279,14 +1608,21 @@ async function runAutoChat(payload: {
   })
   const assets = Array.isArray(res.assets)
     ? res.assets
-        .map((a) => {
+        .map((a): TaskAssetDto => {
           const type = String(a?.type || '').trim().toLowerCase()
           const url = typeof a?.url === 'string' ? a.url.trim() : ''
-          if (!url) return null
-          if (type === 'video') return { type: 'video' as const, url, thumbnailUrl: a?.thumbnailUrl || null }
-          return { type: 'image' as const, url, thumbnailUrl: a?.thumbnailUrl || null }
+          if (!url) throw new Error('agents chat 返回了无效的资产 URL')
+          if (type !== 'image' && type !== 'video' && type !== 'audio') {
+            throw new Error(`agents chat 返回了不支持的资产类型：${type || 'missing'}`)
+          }
+          return {
+            type,
+            url,
+            ...((type === 'image' || type === 'video') && a?.thumbnailUrl
+              ? { thumbnailUrl: a.thumbnailUrl }
+              : null),
+          }
         })
-        .filter(Boolean) as Array<{ type: 'image' | 'video'; url: string; thumbnailUrl?: string | null }>
     : []
   return {
     id: res.id,
@@ -1359,67 +1695,6 @@ function updateTaskPollingProgress(
     progress: normalized,
   })
   return normalized
-}
-
-async function pollTaskResultUntilDone(
-  ctx: RunnerContext,
-  options: {
-    taskId: string
-    taskKind: TaskKind
-    prompt: string
-    vendor?: string
-    progressRange?: { min: number; max: number }
-    initialProgress?: number
-    pollIntervalMs?: number
-    pollTimeoutMs?: number
-    statusPatch?: Record<string, any>
-  },
-): Promise<TaskResultDto> {
-  const { id, setNodeStatus, appendLog, isCanceled } = ctx
-  const pollIntervalMs = options.pollIntervalMs ?? 2500
-  const pollTimeoutMs = options.pollTimeoutMs ?? DEFAULT_TASK_POLL_TIMEOUT_MS
-  const progressMin = options.progressRange?.min
-  let lastProgress = typeof progressMin === 'number' ? progressMin : 10
-  if (typeof options.initialProgress === 'number' && Number.isFinite(options.initialProgress)) {
-    lastProgress = Math.max(lastProgress, Math.min(95, Math.round(options.initialProgress)))
-  }
-  const startedAt = Date.now()
-
-  while (Date.now() - startedAt < pollTimeoutMs) {
-    if (isCanceled(id)) throw new Error('任务已取消')
-
-    let snapshot: TaskResultDto
-    try {
-      snapshot = await fetchTaskResult(options.taskId, options.taskKind, options.prompt)
-    } catch (err: any) {
-      const msg = err?.message || '查询任务进度失败'
-      appendLog(id, `[${nowLabel()}] error: ${msg}`)
-      await sleep(pollIntervalMs)
-      continue
-    }
-
-    if (snapshot.status === 'queued' || snapshot.status === 'running') {
-      lastProgress = updateTaskPollingProgress(
-        { id, setNodeStatus },
-        snapshot,
-        {
-          progressRange: options.progressRange,
-          statusPatch: options.statusPatch,
-          lastProgress,
-        },
-      )
-      await sleep(pollIntervalMs)
-      continue
-    }
-
-    if (snapshot.status === 'failed') {
-      throw new Error(extractTaskFailureMessage(snapshot))
-    }
-
-    return snapshot
-  }
-
-  throw new Error('任务轮询超时，服务端任务可能仍在继续，请稍后在历史或资产中确认结果')
 }
 
 type StoryboardImageStyle = 'realistic' | 'comic' | 'sketch' | 'strip'
@@ -1621,11 +1896,25 @@ async function ensureHostedImageUrl(url: string, meta?: {
   fileName?: string
 }): Promise<string> {
   const normalized = String(url || '').trim()
-  if (!/^data:image\/[^;]+;base64,/i.test(normalized)) return normalized
+  if (!normalized) return normalized
+
+  const isBase64 = /^data:image\/[^;]+;base64,/i.test(normalized)
+  const isExternalHttp = !isBase64
+    && (normalized.startsWith('http://') || normalized.startsWith('https://'))
+    && !isTapCanvasHostedUploadUrl(normalized)
+
+  if (!isBase64 && !isExternalHttp) return normalized
+
   try {
-    const resp = await fetch(normalized)
-    if (!resp.ok) return normalized
-    const blob = await resp.blob()
+    let blob: Blob
+    if (isBase64) {
+      const resp = await fetch(normalized)
+      if (!resp.ok) return normalized
+      blob = await resp.blob()
+    } else {
+      // External http URL - upload to TOS so future loads use our stable URL
+      blob = await fetchProxiedImageBlob(normalized)
+    }
     const mime = blob.type || 'image/png'
     const ext = mime.includes('jpeg') || mime.includes('jpg')
       ? 'jpg'
@@ -1700,7 +1989,8 @@ function collectReferenceImages(
   const collected: string[] = []
   for (const item of orderedItems) {
     if (item.sourceKind === 'video') {
-      collected.push(item.previewUrl)
+      // When actual video URL is available, skip thumbnail — it goes via upstreamVideoUrl instead
+      if (!item.videoUrl && item.previewUrl) collected.push(item.previewUrl)
       continue
     }
     const sourceNode = nodeById.get(item.sourceNodeId)
@@ -1713,6 +2003,38 @@ function collectReferenceImages(
   collectPoseReferenceUrlsFromNode(mostRecentImageNode).forEach((url) => collected.push(url))
 
   return Array.from(new Set(collected)).filter((url) => isRemoteUrl(url))
+}
+
+function collectUpstreamVideoReference(state: any, targetId: string): {
+  url: string
+  durationSeconds: number | null
+} {
+  if (!state) return { url: '', durationSeconds: null }
+  const edges = Array.isArray(state.edges) ? (state.edges as Edge[]) : []
+  const nodes = Array.isArray(state.nodes) ? (state.nodes as Node[]) : []
+  const orderedItems = collectOrderedUpstreamReferenceItems(nodes, edges, targetId)
+  for (const item of orderedItems) {
+    if (item.sourceKind === 'video' && item.videoUrl && isRemoteUrl(item.videoUrl)) {
+      const sourceNode = nodes.find((node) => node.id === item.sourceNodeId)
+      const sourceData = sourceNode?.data && typeof sourceNode.data === 'object'
+        ? sourceNode.data as Record<string, unknown>
+        : {}
+      const results = Array.isArray(sourceData.videoResults) ? sourceData.videoResults : []
+      const matchingResult = results.find((result) => {
+        if (!result || typeof result !== 'object' || Array.isArray(result)) return false
+        return String((result as Record<string, unknown>).url || '').trim() === item.videoUrl
+      })
+      const resultDuration = matchingResult && typeof matchingResult === 'object'
+        ? (matchingResult as Record<string, unknown>).duration
+        : undefined
+      const candidates = [sourceData.videoDurationSeconds, sourceData.durationSeconds, resultDuration]
+      const durationSeconds = candidates.find(
+        (value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0,
+      ) ?? null
+      return { url: item.videoUrl, durationSeconds }
+    }
+  }
+  return { url: '', durationSeconds: null }
 }
 
 function collectDynamicUpstreamReferenceEntries(
@@ -1856,7 +2178,7 @@ async function composeStoryboardReferenceSheetBlob(frameUrls: string[]): Promise
       ctx.drawImage(bitmap, dx, dy, drawW, drawH)
       ctx.restore()
     } catch {
-      ctx.fillStyle = '#111827'
+      ctx.fillStyle = '#141416'
       ctx.fillRect(x, y, cellSize, cellSize)
     } finally {
       if (bitmap) bitmap.close()
@@ -1925,7 +2247,24 @@ function buildRunnerContext(id: string, get: Getter): RunnerContext | null {
   const node = nodes.find((n: Node) => n.id === id)
   if (!node) return null
 
-  const data: any = node.data || {}
+  const rawData: any = node.data || {}
+  // 风格基底与摄影机控制都是项目级配置，所有节点共享。
+  // 在 runner 顶层 merge 进 data，下游 buildPromptFromState / collectNodeReferenceImageUrls 直接消费。
+  const projectIdForImageSettings = String((useUIStore.getState() as any)?.currentProject?.id || '')
+  const projectImageSettings = projectIdForImageSettings
+    ? getRuntimeProjectImageSettings(projectIdForImageSettings)
+    : null
+  const hasStyleImages = !!projectImageSettings && projectImageSettings.styleImages.length > 0
+  const hasCinematicCamera = !!projectImageSettings && !!projectImageSettings.imageCinematicCamera
+  const data: any = hasStyleImages || hasCinematicCamera
+    ? {
+        ...rawData,
+        ...(hasStyleImages ? { styleImages: projectImageSettings!.styleImages } : {}),
+        ...(hasCinematicCamera
+          ? { imageCinematicCamera: projectImageSettings!.imageCinematicCamera }
+          : {}),
+      }
+    : rawData
   const kind: string = data.kind || 'task'
   const taskKind = resolveTaskKind(kind)
   const prompt = buildPromptFromState(kind, data, state, id)
@@ -2120,19 +2459,11 @@ async function resolveRunnerImageModelBeforeExecution(ctx: RunnerContext, set: S
   }
   ctx.data = {
     ...ctx.data,
-    imageModel: resolution.value,
+    imageModel: resolution.requestModelKey,
     imageModelVendor: null,
   }
-  ctx.modelKey = resolution.value
-  if (resolution.reason === 'unavailable') {
-    const fallbackDesc =
-      resolution.source === 'firstAvailable'
-        ? `当前默认模型也不可用，已切到首个可用模型 ${resolution.value}`
-        : `已回退到默认模型 ${resolution.value}`
-    ctx.appendLog(ctx.id, `[${nowLabel()}] 当前图片模型 ${requestedModel || '(empty)'} 不在可用列表，${fallbackDesc}`)
-  } else if (resolution.reason === 'missing') {
-    ctx.appendLog(ctx.id, `[${nowLabel()}] 图片节点未配置模型，已补全为 ${resolution.value}`)
-  } else if (resolution.reason === 'canonicalized' && requestedModel !== resolution.value) {
+  ctx.modelKey = resolution.requestModelKey
+  if (resolution.reason === 'canonicalized' && requestedModel !== resolution.value) {
     ctx.appendLog(ctx.id, `[${nowLabel()}] 图片模型 ${requestedModel} 已规范化为 ${resolution.value}`)
   }
 }
@@ -2215,17 +2546,6 @@ function collectVideoSourcePrompts(sd: any): string[] {
   return promptCandidates
 }
 
-function collectTextSourcePrompts(sd: any): string[] {
-  const promptCandidates: string[] = []
-  if (typeof sd.prompt === 'string') promptCandidates.push(sd.prompt)
-  if (typeof sd.text === 'string') promptCandidates.push(sd.text)
-  if (Array.isArray(sd.textResults) && sd.textResults.length) {
-    const latest = sd.textResults[sd.textResults.length - 1] as { text?: string } | undefined
-    if (typeof latest?.text === 'string') promptCandidates.push(latest.text)
-  }
-  return promptCandidates
-}
-
 function appendNormalizedPromptCandidates(input: {
   sourceIsImage: boolean
   promptCandidates: string[]
@@ -2246,7 +2566,8 @@ function collectInboundSourcePrompts(input: {
   upstreamPromptItems: PromptBucketItem[]
 }): string[] {
   const targetIsVideoRender = VIDEO_RENDER_NODE_KINDS.has(input.kind)
-  if (IMAGE_NODE_KINDS.has(input.skind)) {
+  const sourceCategory = resolveExecutionPromptSourceCategory(input.skind)
+  if (sourceCategory === 'image') {
     return collectImageSourcePrompts({
       sd: input.sd,
       skind: input.skind,
@@ -2254,11 +2575,14 @@ function collectInboundSourcePrompts(input: {
       upstreamPromptItems: input.upstreamPromptItems,
     })
   }
-  if (VIDEO_RENDER_NODE_KINDS.has(input.skind)) {
+  if (sourceCategory === 'video') {
     return collectVideoSourcePrompts(input.sd)
   }
-  if (input.skind === 'text') {
-    return collectTextSourcePrompts(input.sd)
+  if (sourceCategory === 'text') {
+    const sourceData = input.sd && typeof input.sd === 'object' && !Array.isArray(input.sd)
+      ? input.sd as Record<string, unknown>
+      : {}
+    return collectTextExecutionPromptCandidates(input.skind, sourceData)
   }
   return []
 }
@@ -2269,82 +2593,75 @@ function buildPromptFromState(
   state: any,
   id: string,
 ): string {
-  const ownPrompt = IMAGE_NODE_KINDS.has(kind)
+  const rawOwnPrompt = IMAGE_NODE_KINDS.has(kind)
     ? resolveCompiledImagePrompt(data)
     : typeof data.prompt === 'string'
       ? data.prompt
       : ''
   if (isVideoRenderKind(kind)) {
-    const edges = (state.edges || []) as Edge[]
-    const inbound = edges.filter((edge) => edge.target === id)
+    // The video node's own prompt is the base instruction, but a connected
+    // text node is also an executable prompt source. The edge is not merely a
+    // visual annotation: its text must be compiled into the provider request.
+    // Keep media/reference nodes out of this prose merge; their URLs are
+    // collected separately by prepareVideoTaskInput.
+    const edges = Array.isArray(state.edges)
+      ? state.edges as Array<{ source?: unknown; target?: unknown; data?: unknown }>
+      : []
     const upstreamPromptItems: PromptBucketItem[] = []
-
-    if (inbound.length) {
-      inbound.forEach((edge) => {
-        const sourceNode = (state.nodes as Node[]).find((node: Node) => node.id === edge.source)
-        if (!sourceNode) return
-        const sourceData = sourceNode.data || {}
-        const sourceKind: string | undefined = (sourceData as any).kind
-        if (!sourceKind) return
-        const promptCandidates = collectInboundSourcePrompts({
-          kind,
-          skind: sourceKind,
-          sd: sourceData,
-          upstreamPromptItems,
+    const suppressUpstreamPrompts = Boolean((data as Record<string, unknown>)?.suppressUpstreamPrompts)
+    if (!suppressUpstreamPrompts) {
+      edges
+        .filter((edge) =>
+          edge.target === id &&
+          typeof edge.source === 'string' &&
+          !isReferenceOnlyCanvasEdge(edge),
+        )
+        .forEach((edge) => {
+          const source = (state.nodes as Node[]).find((node: Node) => node.id === edge.source)
+          if (!source || !source.data || typeof source.data !== 'object' || Array.isArray(source.data)) return
+          const sourceData = source.data as Record<string, unknown>
+          const sourceKind = typeof sourceData.kind === 'string' ? sourceData.kind : ''
+          if (resolveExecutionPromptSourceCategory(sourceKind) !== 'text') return
+          appendNormalizedPromptCandidates({
+            sourceIsImage: false,
+            promptCandidates: collectTextExecutionPromptCandidates(sourceKind, sourceData),
+            upstreamPromptItems,
+          })
         })
-        appendNormalizedPromptCandidates({
-          sourceIsImage: IMAGE_NODE_KINDS.has(sourceKind),
-          promptCandidates,
-          upstreamPromptItems,
-        })
-      })
     }
-
-    const mergedPrompts = mergeExecutionPromptSequence({
+    const upstreamPrompts = selectExecutionUpstreamPrompts({
       kind,
-      ownPrompt: ownPrompt.trim(),
-      upstreamPrompts: upstreamPromptItems.map((item) => item.text),
+      upstreamPromptItems,
+      inboundHasImage: false,
+    })
+    return mergeExecutionPromptSequence({
+      kind,
+      ownPrompt: rawOwnPrompt,
+      upstreamPrompts,
       cameraRefPrompts: [],
-    })
-    const seen = new Set<string>()
-    const dedupedPrompts = mergedPrompts.filter((value) => {
-      if (typeof value !== 'string') return false
-      const normalized = value.trim()
-      if (!normalized) return false
-      const key = normalizeTextDedupKey(normalized)
-      if (!key || seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    const mergedPrompt = dedupedPrompts.join('\n\n')
-    const firstFrameUrl =
-      (typeof data.firstFrameUrl === 'string' && data.firstFrameUrl.trim()) ||
-      (typeof data.veoFirstFrameUrl === 'string' && data.veoFirstFrameUrl.trim()) ||
-      ''
-    return optimizePromptForVideo({
-      prompt: mergedPrompt,
-      firstFrameUrl,
-    })
+    }).join('\n')
   }
 
   if (IMAGE_NODE_KINDS.has(kind)) {
     const edges = (state.edges || []) as any[]
-    const inbound = edges.filter((e) => e.target === id)
+    const inbound = edges.filter((e) => e.target === id && !isReferenceOnlyCanvasEdge(e))
     const upstreamPromptItems: PromptBucketItem[] = []
+    const suppressUpstreamPrompts = Boolean((data as Record<string, unknown>)?.suppressUpstreamPrompts)
     const inboundHasImage = inbound.some((edge) => {
       const src = (state.nodes as Node[]).find((n: Node) => n.id === edge.source)
       const skind: string | undefined = (src?.data as any)?.kind
-      return skind ? IMAGE_NODE_KINDS.has(skind) : false
+      return resolveExecutionPromptSourceCategory(skind) === 'image'
     })
-    if (inbound.length) {
+    if (inbound.length && !suppressUpstreamPrompts) {
       inbound.forEach((edge) => {
         const src = (state.nodes as Node[]).find((n: Node) => n.id === edge.source)
         if (!src) return
         const sd: any = src.data || {}
         const skind: string | undefined = sd.kind
         if (!skind) return
-        const sourceIsImage = IMAGE_NODE_KINDS.has(skind)
-        const sourceIsVideoRender = VIDEO_RENDER_NODE_KINDS.has(skind)
+        const sourceCategory = resolveExecutionPromptSourceCategory(skind)
+        const sourceIsImage = sourceCategory === 'image'
+        const sourceIsVideoRender = sourceCategory === 'video'
         if (sourceIsVideoRender) {
           // 当视频继续连接视频节点时，避免继承上游完整提示词以免重复堆叠
           return
@@ -2363,10 +2680,12 @@ function buildPromptFromState(
       })
     }
     const hasOwnPromptField = Object.prototype.hasOwnProperty.call(data, 'prompt')
-    const own = hasOwnPromptField ? ownPrompt : ''
-    const upstreamPrompts = inboundHasImage
-      ? upstreamPromptItems.filter((it) => !it.fromImage).map((it) => it.text) // 参考图场景下：保留上游非图像提示词，避免混入图像节点的提示词
-      : upstreamPromptItems.map((it) => it.text)
+    const own = hasOwnPromptField ? rawOwnPrompt : ''
+    const upstreamPrompts = selectExecutionUpstreamPrompts({
+      kind,
+      upstreamPromptItems,
+      inboundHasImage,
+    })
     const combinedBase = mergeExecutionPromptSequence({
       kind,
       ownPrompt: own,
@@ -2392,10 +2711,16 @@ function buildPromptFromState(
       return true
     })
     const basePrompt = combined.length ? combined.join('\n') : ((data.label as string) || '')
-    return appendImageViewPrompt(basePrompt, {
+    const withCameraViews = appendImageViewPrompt(basePrompt, {
       cameraControl: (data as Record<string, unknown>)?.imageCameraControl,
       lightingRig: (data as Record<string, unknown>)?.imageLightingRig,
     })
+    const cinematicCameraPrompt = buildCinematicCameraPrompt(
+      (data as Record<string, unknown>)?.imageCinematicCamera,
+    )
+    return cinematicCameraPrompt
+      ? `${withCameraViews}\n\n${cinematicCameraPrompt}`.trim()
+      : withCameraViews
   }
 
   return (data.prompt as string) || (data.label as string) || ''
@@ -2408,66 +2733,6 @@ function normalizeTextDedupKey(value: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
     .toLowerCase()
-}
-
-function optimizePromptForVideo(input: {
-  prompt: string
-  firstFrameUrl?: string
-  forceStoryboardStyleGoal?: boolean
-}): string {
-  const raw = String(input.prompt || '').replace(/\r\n/g, '\n')
-  if (!raw.trim()) return ''
-
-  const removeLinePatterns = [
-    /分镜生图/i,
-    /可裁切/i,
-    /网格图/i,
-    /4格|四宫格|9格|九宫格/i,
-    /referenceImages/i,
-    /说明：角色参考图/i,
-    /当前镜头[:：]?$/i,
-    /^\[[^\]]+\]$/,
-  ]
-  const lines = raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => !removeLinePatterns.some((re) => re.test(line)))
-
-  const dedupedLines: string[] = []
-  const seenLine = new Set<string>()
-  for (const line of lines) {
-    const key = normalizeTextDedupKey(line)
-    if (!key || seenLine.has(key)) continue
-    seenLine.add(key)
-    dedupedLines.push(line)
-  }
-
-  const chapterLine = dedupedLines.find((line) => /^章节[:：]/.test(line)) || ''
-  const titleLine = dedupedLines.find((line) => /^标题[:：]/.test(line)) || ''
-  const shotLines = dedupedLines.filter((line) => /^镜头\s*\d+\s*[:：]/.test(line))
-  const storyboardStyleGoalLine =
-    input.forceStoryboardStyleGoal || !!input.firstFrameUrl
-      ? '目标：使用图中画风，将分镜流畅运行起来；保持角色外观、服装、光线与美术风格连续，不切换写实/非写实体系。'
-      : ''
-
-  if (shotLines.length > 0) {
-    const intro = [
-      chapterLine,
-      titleLine,
-      storyboardStyleGoalLine,
-      '任务：将以下镜头生成一条连续视频，镜头间自然衔接，保持角色外观/服装/光线连续。',
-      input.firstFrameUrl
-        ? '已提供首帧图：必须从首帧构图起步，镜头1与首帧严格承接，再推进后续镜头。'
-        : '',
-      '要求：避免重复镜头文案，不要生成分镜网格，不要拼贴画面。',
-    ].filter(Boolean)
-    return [...intro, ...shotLines.slice(0, 12)].join('\n')
-  }
-
-  const collapsedBody = dedupedLines.join('\n')
-  const collapsed = [storyboardStyleGoalLine, collapsedBody].filter(Boolean).join('\n')
-  return collapsed.length > 2200 ? collapsed.slice(0, 2200) : collapsed
 }
 
 function computeSampleMeta(kind: string, data: any) {
@@ -2596,6 +2861,15 @@ function extractVideoUrlFromRawResponse(rawResponse: any): string | null {
     pickNonEmptyText(fromVideoUrlField) ||
     pickNonEmptyText(rawResponse?.videoUrl?.url) ||
     pickNonEmptyText(rawResponse?.videoUrl) ||
+    pickNonEmptyText(rawResponse?.result_url) ||
+    pickNonEmptyText(rawResponse?.resultUrl) ||
+    pickNonEmptyText(rawResponse?.metadata?.url) ||
+    pickNonEmptyText(rawResponse?.content?.video_url) ||
+    pickNonEmptyText(rawResponse?.content?.videoUrl) ||
+    pickNonEmptyText(rawResponse?.data?.video_url) ||
+    pickNonEmptyText(rawResponse?.data?.videoUrl) ||
+    pickNonEmptyText(rawResponse?.data?.content?.video_url) ||
+    pickNonEmptyText(rawResponse?.data?.content?.videoUrl) ||
     null
   if (fromVideoUrl) return fromVideoUrl
   const firstResult = getFirstTaskResult(rawResponse)
@@ -2635,6 +2909,7 @@ function parseInitialProgress(rawData: any): number {
 
 type GenericVideoTaskOptions = {
   prompt: string
+  vendor: string
   model: string
   aspectRatio: string
   orientation: Orientation
@@ -2649,9 +2924,13 @@ type GenericVideoTaskOptions = {
   uploadedFirstFrameAsset?: PreparedVideoReferenceAsset | null
   uploadedLastFrameAsset?: PreparedVideoReferenceAsset | null
   referenceSheet?: UploadedReferenceSheet | null
+  upstreamVideoUrl?: string
+  referenceVideoDurationSeconds?: number | null
+  autoReferenceImageUrls?: string[]
 }
 
 type PreparedVideoTaskInput = {
+  videoVendor: string
   videoModelValue: string
   finalPrompt: string
   videoDurationSeconds: number
@@ -2670,13 +2949,16 @@ type PreparedVideoTaskInput = {
   uploadedLastFrameAsset: PreparedVideoReferenceAsset | null
   referenceSheet: UploadedReferenceSheet | null
   remixTargetId: string | null
+  upstreamVideoUrl: string
+  referenceVideoDurationSeconds: number | null
+  autoReferenceImageUrls: string[]
 }
 
-function assertVideoModelConfigured(input: { data: any; videoModelValue?: string }): void {
-  const model = String(input.videoModelValue || (input.data as any)?.videoModel || '').trim().toLowerCase()
-  if (!model) {
-    throw new Error('视频模型未配置：请先在「系统管理 → 模型管理（Model Catalog）→ 模型（video）」启用至少 1 个视频模型，并在节点中选择。')
-  }
+function resolveVideoVendor(input: { data: any; videoModelValue?: string }): string {
+  return resolveCatalogVideoVendor({
+    explicitVendor: (input.data as any)?.videoModelVendor,
+    modelKey: input.videoModelValue || (input.data as any)?.videoModel,
+  })
 }
 
 function resolveVideoDurationSeconds(input: {
@@ -2700,45 +2982,171 @@ function resolveVideoDurationSeconds(input: {
   return resolved > 0 ? resolved : 5
 }
 
+function pickAllowedVideoDuration(
+  allowed: number[],
+  defaultDurationSeconds: number | undefined,
+  current: number,
+): number {
+  if (allowed.length === 0) return current > 0 ? current : 5
+  if (allowed.includes(current)) return current
+  if (typeof defaultDurationSeconds === 'number' && allowed.includes(defaultDurationSeconds)) {
+    return defaultDurationSeconds
+  }
+  return allowed[0] ?? 5
+}
+
+function pickAllowedVideoSize(
+  allowed: string[],
+  defaultSize: string | undefined,
+  current: string,
+): string {
+  if (allowed.length === 0) return current
+  if (current && allowed.includes(current)) return current
+  if (defaultSize && allowed.includes(defaultSize)) return defaultSize
+  return allowed[0] ?? current
+}
+
+function pickAllowedVideoResolution(
+  allowed: string[],
+  defaultResolution: string | undefined,
+  current: string,
+): string {
+  if (allowed.length === 0) return current
+  if (current && allowed.includes(current)) return current
+  if (defaultResolution && allowed.includes(defaultResolution)) return defaultResolution
+  return allowed[0] ?? current
+}
+
+function pickAllowedVideoOrientation(
+  allowed: Orientation[],
+  defaultOrientation: Orientation | undefined,
+  current: Orientation,
+): Orientation {
+  if (allowed.length === 0) return current
+  if (allowed.includes(current)) return current
+  if (defaultOrientation && allowed.includes(defaultOrientation)) return defaultOrientation
+  return allowed[0] ?? current
+}
+
+async function resolveVideoTaskSettingsFromCatalog(input: {
+  modelValue: string
+  durationSeconds: number
+  size: string
+  resolution: string
+  orientation: Orientation
+}): Promise<{
+  modelValue: string
+  durationSeconds: number
+  size: string
+  resolution: string
+  orientation: Orientation
+  maxReferenceImages: number
+}> {
+  const modelValue = String(input.modelValue || '').trim()
+  if (!modelValue) {
+    throw new Error('视频节点未配置模型：请先从系统模型目录中选择一个可用视频模型。')
+  }
+  const videoOptions = await preloadModelOptions('video')
+  if (videoOptions.length === 0) {
+    throw new Error('未找到可用视频模型：请先在系统模型管理中启用 video 模型。')
+  }
+  const matched = findModelOptionByIdentifier(videoOptions, modelValue)
+  if (!matched) {
+    throw new Error(`视频模型 ${modelValue} 当前不可用：请在系统模型管理中修复渠道、协议和价格，或重新选择模型。`)
+  }
+  const requestModelKey = getModelOptionRequestAlias(videoOptions, modelValue)
+  if (!requestModelKey) {
+    throw new Error(`视频模型 ${modelValue} 缺少请求模型键，请在系统模型管理中修复后重试。`)
+  }
+  const config = parseVideoModelCatalogConfig(matched?.meta)
+  if (!config) {
+    return {
+      ...input,
+      modelValue: requestModelKey,
+      maxReferenceImages: DEFAULT_VIDEO_REFERENCE_IMAGE_LIMIT,
+    }
+  }
+
+  const allowedDurations = config.durationOptions.map((option) => option.value)
+  const allowedSizes = config.sizeOptions.map((option) => option.value)
+  const allowedResolutions = config.resolutionOptions.map((option) => option.value)
+  const allowedOrientations = config.orientationOptions.map((option) => option.value)
+
+  return {
+    modelValue: requestModelKey,
+    durationSeconds: pickAllowedVideoDuration(
+      allowedDurations,
+      config.defaultDurationSeconds,
+      input.durationSeconds,
+    ),
+    size: pickAllowedVideoSize(allowedSizes, config.defaultSize, input.size),
+    resolution: pickAllowedVideoResolution(
+      allowedResolutions,
+      config.defaultResolution,
+      input.resolution,
+    ),
+    orientation: pickAllowedVideoOrientation(
+      allowedOrientations,
+      config.defaultOrientation,
+      input.orientation,
+    ),
+    maxReferenceImages:
+      typeof config.maxReferenceImages === 'number' && config.maxReferenceImages > 0
+        ? Math.trunc(config.maxReferenceImages)
+        : DEFAULT_VIDEO_REFERENCE_IMAGE_LIMIT,
+  }
+}
+
 async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoTaskInput> {
   const { id, data, state, prompt, kind, appendLog } = ctx
-  const orientation: Orientation = normalizeOrientation((data as any)?.orientation)
-  const aspectRatioSetting =
+  const rawOrientation: Orientation = normalizeOrientation((data as any)?.orientation)
+  const initialAspectRatioSetting =
     typeof (data as any)?.aspect === 'string' && (data as any).aspect.trim() ? (data as any).aspect.trim() : '16:9'
-  const videoModelValue =
+  const selectedVideoModelValue =
     typeof (data as any)?.videoModel === 'string' ? String((data as any).videoModel).trim() : ''
-  assertVideoModelConfigured({ data, videoModelValue })
-  const videoDurationSeconds = resolveVideoDurationSeconds({
+  const videoVendor = resolveVideoVendor({ data })
+  const rawVideoDurationSeconds = resolveVideoDurationSeconds({
     data,
     isStoryboard: kind === 'storyboard',
     storyboardTotalDuration: 0,
-    videoModelValue,
+    videoModelValue: selectedVideoModelValue,
   })
-  const videoSize =
+  const rawVideoSize =
     typeof (data as any)?.videoSize === 'string' ? String((data as any).videoSize).trim().replace(/\s+/g, '') : ''
-  const videoResolution = normalizeVideoResolution(
+  const rawVideoResolution = normalizeVideoResolution(
     (data as Record<string, unknown>)?.videoResolution ?? (data as Record<string, unknown>)?.resolution,
   )
-  const videoSpecKey =
-    typeof (data as any)?.videoSpecKey === 'string' && String((data as any).videoSpecKey).trim()
-      ? String((data as any).videoSpecKey).trim()
-      : buildVideoBillingSpecKey(videoResolution, videoDurationSeconds)
+  const constrainedVideoSettings = await resolveVideoTaskSettingsFromCatalog({
+    modelValue: selectedVideoModelValue,
+    durationSeconds: rawVideoDurationSeconds,
+    size: rawVideoSize,
+    resolution: rawVideoResolution,
+    orientation: rawOrientation,
+  })
+  const videoModelValue = constrainedVideoSettings.modelValue
+  const videoDurationSeconds = constrainedVideoSettings.durationSeconds
+  const videoSize = constrainedVideoSettings.size
+  const videoResolution = constrainedVideoSettings.resolution
+  const orientation = constrainedVideoSettings.orientation
+  const maxReferenceImages = constrainedVideoSettings.maxReferenceImages
+  const aspectRatioSetting = videoSize || initialAspectRatioSetting
+  const videoSpecKey = buildVideoBillingSpecKey(videoResolution, videoDurationSeconds)
   const finalPrompt = String(prompt || '').trim()
   const collectedReferenceImages = Array.from(
     new Set([
-      ...collectNodeReferenceImageUrls(data, 8),
+      ...collectNodeReferenceImageUrls(data, maxReferenceImages),
       ...collectReferenceImages(state, id)
         .map((u) => String(u || '').trim())
         .filter(Boolean),
     ]),
-  ).slice(0, 8)
+  ).slice(0, maxReferenceImages)
   const nodes = Array.isArray((state as { nodes?: unknown }).nodes)
     ? ((state as { nodes?: unknown }).nodes as Node[])
     : []
   const mentionAssetRefs = await resolveAssetImagesByMentions({
     prompt: finalPrompt,
     nodes,
-  }).catch(() => ({ urls: [] as string[], matched: [] as string[], missing: [] as string[], ambiguous: [] as string[] }))
+  }).catch(() => createEmptyPromptAssetMentionResult())
   if (mentionAssetRefs.matched.length) {
     appendLog(id, `[${nowLabel()}] 检测到资产引用：${mentionAssetRefs.matched.join('、')}，已自动注入参考资产`)
   }
@@ -2748,13 +3156,66 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
   if (mentionAssetRefs.ambiguous.length) {
     appendLog(id, `[${nowLabel()}] 资产引用存在同名冲突：${mentionAssetRefs.ambiguous.join('、')}，请保证引用ID唯一`)
   }
+  const globalStyleRefs = (() => {
+    // 单轨：与图片路径一致，画风锚定唯一真相源 = 项目「风格」槽（styleImages），
+    // 节点风格 chip 移除后即不再注入，不读 uiStore.activeStyleBible。
+    const pid = String((useUIStore.getState() as any)?.currentProject?.id || '').trim()
+    if (!pid) return [] as string[]
+    return getRuntimeProjectImageSettings(pid).styleImages
+      .map((u) => (typeof u === 'string' ? u.trim() : ''))
+      .filter(Boolean)
+  })()
+  const hasStyleAssetInput = Array.isArray((data as Record<string, unknown>)?.assetInputs)
+    && ((data as Record<string, unknown>).assetInputs as unknown[]).some(
+      (e) => e && typeof e === 'object' && (e as Record<string, unknown>).role === 'style',
+    )
+  const mentionStyleRefs = mentionAssetRefs.assetInputs
+    .filter((input) => input.role === 'style')
+    .map((input) => input.url)
+  const styleRefsToInject = Array.from(
+    new Set([
+      ...mentionStyleRefs,
+      ...(hasStyleAssetInput ? [] : globalStyleRefs),
+    ]),
+  )
+  const nonStyleCollected = styleRefsToInject.length > 0
+    ? Array.from(new Set([...collectedReferenceImages, ...mentionAssetRefs.urls]))
+        .filter((u) => !styleRefsToInject.includes(u))
+    : Array.from(new Set([...collectedReferenceImages, ...mentionAssetRefs.urls]))
+  // 全局约定：画风锚定图固定排在参考图末尾（与图片路径 mergeGlobalStyleReferenceImages 一致），
+  // 名额不足时优先保住风格图，截断内容参考。
+  const styleRefsKept = styleRefsToInject.slice(0, maxReferenceImages)
+  const mergedReferenceImages = [
+    ...nonStyleCollected.slice(0, Math.max(0, maxReferenceImages - styleRefsKept.length)),
+    ...styleRefsKept,
+  ]
   const referenceEntries = buildNamedReferenceEntries({
-    assetInputs: (data as Record<string, unknown>)?.assetInputs,
-    referenceImages: Array.from(new Set([...collectedReferenceImages, ...mentionAssetRefs.urls])).slice(0, 8),
+    assetInputs: hasStyleAssetInput
+      ? [
+          ...mentionAssetRefs.assetInputs,
+          ...((Array.isArray((data as Record<string, unknown>)?.assetInputs)
+            ? (data as Record<string, unknown>).assetInputs as unknown[]
+            : []) as object[]),
+        ]
+      : [
+          ...mentionAssetRefs.assetInputs,
+          ...styleRefsToInject
+            .filter((url) => !mentionStyleRefs.includes(url))
+            .map((url, idx) => ({
+              url,
+              role: 'style',
+              name: styleRefsToInject.length > 1 ? `风格参考${idx + 1}` : '风格参考',
+              assetRefId: `style-ref-${idx + 1}`,
+            })),
+          ...((Array.isArray((data as Record<string, unknown>)?.assetInputs)
+            ? (data as Record<string, unknown>).assetInputs as unknown[]
+            : []) as object[]),
+        ],
+    referenceImages: mergedReferenceImages,
     fallbackPrefix: 'ref',
-    limit: 8,
+    limit: maxReferenceImages,
   })
-  let autoReferenceImages = Array.from(new Set([...collectedReferenceImages, ...mentionAssetRefs.urls])).slice(0, 8)
+  let autoReferenceImages = mergedReferenceImages
   const firstFrameUrl = readNodeFirstFrameUrl(data)
   const lastFrameUrl = readNodeLastFrameUrl(data)
   const isSoraModel = isSoraVideoModel(videoModelValue)
@@ -2763,16 +3224,16 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
   let uploadedLastFrameAsset: PreparedVideoReferenceAsset | null = null
   let referenceSheet: UploadedReferenceSheet | null = null
 
-  if (autoReferenceImages.length > 2) {
+  if (shouldAutoMergeReferenceSheet() && autoReferenceImages.length > 2) {
     try {
-        const mergedReferenceSheet = await uploadMergedReferenceSheet({
-          id,
-          entries: referenceEntries,
-          prompt: finalPrompt,
-          vendor: 'auto',
-          modelKey: videoModelValue,
-          taskKind: 'text_to_video',
-        })
+      const mergedReferenceSheet = await uploadMergedReferenceSheet({
+        id,
+        entries: referenceEntries,
+        prompt: finalPrompt,
+        vendor: videoVendor,
+        modelKey: videoModelValue,
+        taskKind: 'text_to_video',
+      })
       if (mergedReferenceSheet) {
         referenceSheet = mergedReferenceSheet
         autoReferenceImages = [mergedReferenceSheet.url]
@@ -2790,7 +3251,7 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
       referenceImages: autoReferenceImages,
       aspectRatio: aspectRatioSetting,
       size: videoSize,
-      vendor: 'auto',
+      vendor: videoVendor,
       modelKey: videoModelValue,
       prompt: finalPrompt,
       taskKind: 'text_to_video',
@@ -2803,7 +3264,30 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
   if (autoReferenceImages.length && !firstFrameUrl) {
     appendLog(id, `[${nowLabel()}] 已收集参考图 ${autoReferenceImages.length} 张`)
   }
+  // 优先从 DAG 边收集上游视频 URL；若该 video 节点使用 sourcePrevVideoNodeId 直接引用
+  // 且已由 dag.ts injectVideoUpstreamRefsIfNeeded 解析并写入 data.sourceVideoUrl，则作为回退。
+  const connectedVideoReference = collectUpstreamVideoReference(state, id)
+  const videoDataRecord = data as Record<string, unknown>
+  const explicitSourceVideoUrl = typeof videoDataRecord.sourceVideoUrl === 'string' && isRemoteUrl(videoDataRecord.sourceVideoUrl.trim())
+    ? videoDataRecord.sourceVideoUrl.trim()
+    : ''
+  // A continuation node may point to the original node for graph provenance while
+  // carrying a separately uploaded, user-selected source segment. Preserve that
+  // explicit clipped asset instead of letting the provenance edge replace it.
+  const isContinuationWithExplicitSource = videoDataRecord.continuationMode === 'extend' && Boolean(explicitSourceVideoUrl)
+  const upstreamVideoUrl = isContinuationWithExplicitSource
+    ? explicitSourceVideoUrl
+    : connectedVideoReference.url || explicitSourceVideoUrl
+  const explicitReferenceDuration = (data as Record<string, unknown>)?.referenceVideoDurationSeconds
+  const referenceVideoDurationSeconds = (isContinuationWithExplicitSource ? null : connectedVideoReference.durationSeconds) ??
+    (typeof explicitReferenceDuration === 'number' && Number.isFinite(explicitReferenceDuration) && explicitReferenceDuration > 0
+      ? explicitReferenceDuration
+      : null)
+  if (upstreamVideoUrl) {
+    appendLog(id, `[${nowLabel()}] 检测到上游视频节点，已注入视频续写引用`)
+  }
   return {
+    videoVendor,
     videoModelValue,
     finalPrompt,
     videoDurationSeconds,
@@ -2822,6 +3306,9 @@ async function prepareVideoTaskInput(ctx: RunnerContext): Promise<PreparedVideoT
     uploadedLastFrameAsset,
     referenceSheet,
     remixTargetId: null,
+    upstreamVideoUrl,
+    referenceVideoDurationSeconds,
+    autoReferenceImageUrls: mergedReferenceImages,
   }
 }
 
@@ -2841,24 +3328,12 @@ function isTaskRunningSnapshot(snapshot: TaskResultDto): boolean {
   return snapshot.status === 'running' || snapshot.status === 'queued'
 }
 
-function resolveGenericVideoFailureMessage(snapshot: TaskResultDto, vendor: string): string {
-  const fallbackVendor = vendor.trim() || '视频'
-  return (
-    (typeof (snapshot.raw as any)?.failureReason === 'string' && (snapshot.raw as any).failureReason.trim()) ||
-    (typeof (snapshot.raw as any)?.response?.error === 'string' && (snapshot.raw as any).response.error.trim()) ||
-    (typeof (snapshot.raw as any)?.response?.message === 'string' && (snapshot.raw as any).response.message.trim()) ||
-    (typeof (snapshot.raw as any)?.error === 'string' && (snapshot.raw as any).error.trim()) ||
-    (typeof (snapshot.raw as any)?.message === 'string' && (snapshot.raw as any).message.trim()) ||
-    `${fallbackVendor} 视频任务失败`
-  )
-}
-
 function resolveGenericVideoAsset(snapshot: TaskResultDto): {
   url: string
   thumbnailUrl: string | null
   assetId: string | null
 } | null {
-  const primaryAsset = (snapshot.assets || []).find((asset) => asset.type === 'video' && asset.url) || (snapshot.assets || []).find((asset) => asset.url)
+  const primaryAsset = (snapshot.assets || []).find((asset) => asset.type === 'video' && asset.url)
   if (primaryAsset?.url) {
     return {
       url: primaryAsset.url,
@@ -2883,12 +3358,14 @@ async function finalizeGenericVideoSuccess(input: {
   prompt: string
   durationSeconds: number
   modelKey: string
+  vendor: string
+  autoReferenceImageUrls?: string[]
 }) {
-  const { snapshot, taskId, ctx, prompt, durationSeconds, modelKey } = input
+  const { snapshot, taskId, ctx, prompt, durationSeconds, modelKey, vendor, autoReferenceImageUrls } = input
   const { id, data, kind, setNodeStatus, appendLog, isCanceled } = ctx
   const resolvedAsset = resolveGenericVideoAsset(snapshot)
   if (!resolvedAsset?.url) {
-    const msg = '视频任务执行失败：未返回有效视频地址'
+    const msg = `${vendor} 视频任务执行失败：未返回有效视频地址`
     setNodeStatus(id, 'error', { progress: 0, lastError: msg })
     appendLog(id, `[${nowLabel()}] error: ${msg}`)
     return
@@ -2924,10 +3401,30 @@ async function finalizeGenericVideoSuccess(input: {
     videoPrimaryIndex: updatedVideoResults.length - 1,
     ...buildVideoDurationPatch(durationSeconds),
     videoModel: modelKey,
-    videoModelVendor: null,
+    videoModelVendor: vendor,
     videoTaskId: taskId,
   })
-  appendLog(id, `[${nowLabel()}] 视频生成完成。`)
+  appendLog(id, `[${nowLabel()}] ${vendor} 视频生成完成。`)
+  if (autoReferenceImageUrls && autoReferenceImageUrls.length > 0 && !isCanceled(id)) {
+    const storeState = ctx.getState()
+    if (typeof storeState?.onConnect === 'function') {
+      const refUrlSet = new Set(autoReferenceImageUrls.map((u) => String(u || '').trim()).filter(Boolean))
+      const canvasNodes: Node[] = Array.isArray(storeState.nodes) ? storeState.nodes : []
+      const canvasEdges: Edge[] = Array.isArray(storeState.edges) ? storeState.edges : []
+      const connected: string[] = []
+      for (const node of canvasNodes) {
+        if (node.id === id) continue
+        const primaryUrl = pickPrimaryImageFromNode(node)
+        if (!primaryUrl || !refUrlSet.has(primaryUrl)) continue
+        if (canvasEdges.some((e) => e.source === node.id && e.target === id)) continue
+        storeState.onConnect({ source: node.id, target: id, sourceHandle: null, targetHandle: null })
+        connected.push(node.id)
+      }
+      if (connected.length > 0) {
+        appendLog(id, `[${nowLabel()}] 已自动连接 ${connected.length} 个参考图片节点`)
+      }
+    }
+  }
   try {
     const semanticResult = await persistSemanticAssetMetadata({
       nodeId: id,
@@ -2939,7 +3436,7 @@ async function finalizeGenericVideoSuccess(input: {
         videoThumbnailUrl: resolvedAsset.thumbnailUrl || (data as any)?.videoThumbnailUrl || null,
         ...buildVideoDurationPatch(durationSeconds),
         videoModel: modelKey,
-        videoModelVendor: null,
+        videoModelVendor: vendor,
         videoTaskId: taskId,
       },
       mediaKind: 'video',
@@ -2983,6 +3480,8 @@ function buildVeoTaskExtras(input: {
   uploadedFirstFrameAsset?: PreparedVideoReferenceAsset | null
   uploadedLastFrameAsset?: PreparedVideoReferenceAsset | null
   referenceSheet?: UploadedReferenceSheet | null
+  upstreamVideoUrl?: string | null
+  referenceVideoDurationSeconds?: number | null
 }): Record<string, unknown> {
   const extras: Record<string, unknown> = {
     nodeKind: input.kind,
@@ -3037,6 +3536,14 @@ function buildVeoTaskExtras(input: {
   } else if (input.referenceImages.length && !input.firstFrameUrl) {
     extras.referenceImages = input.referenceImages
   }
+  if (input.upstreamVideoUrl && isRemoteUrl(String(input.upstreamVideoUrl))) {
+    extras.upstreamVideoUrl = input.upstreamVideoUrl
+    const isSeedance2 = /seedance[-_.]?2(?:[-_.]|$)/i.test(input.model)
+    if (isSeedance2 && (!Number.isFinite(input.referenceVideoDurationSeconds) || Number(input.referenceVideoDurationSeconds) <= 0)) {
+      throw new Error('参考视频时长缺失，无法计算 SD2 视频积分消耗')
+    }
+    if (isSeedance2) extras.referenceVideoDurationSeconds = input.referenceVideoDurationSeconds
+  }
   return extras
 }
 
@@ -3061,18 +3568,20 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
   taskId: string
   prompt: string
   model: string
+  vendor: string
   durationSeconds: number
+  autoReferenceImageUrls?: string[]
 }) {
   const { id, data, setNodeStatus, appendLog, isCanceled } = ctx
   const pollIntervalMs = 3000
-  const pollTimeoutMs = 600_000
+  const pollTimeoutMs = 1_200_000
   const startedAt = Date.now()
   let lastProgress = typeof (data as any)?.progress === 'number' ? (data as any).progress : 10
 
   while (Date.now() - startedAt < pollTimeoutMs) {
     if (isCanceled(id)) {
       setNodeStatus(id, 'error', { progress: 0, lastError: '任务已取消' })
-      appendLog(id, `[${nowLabel()}] 已取消视频任务`)
+      appendLog(id, `[${nowLabel()}] 已取消 ${options.vendor} 视频任务`)
       return
     }
 
@@ -3093,7 +3602,7 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
         statusPatch: {
           videoTaskId: options.taskId,
           videoModel: options.model,
-          videoModelVendor: null,
+          videoModelVendor: options.vendor,
         },
       })
       await sleep(pollIntervalMs)
@@ -3101,9 +3610,17 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
     }
 
     if (snapshot.status === 'failed') {
-      const msg = resolveGenericVideoFailureMessage(snapshot, '视频')
-      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-      appendLog(id, `[${nowLabel()}] error: ${msg}`)
+      const failure = resolveProviderTaskFailure(
+        snapshot.raw,
+        `${options.vendor.trim() || '视频'} 视频任务失败`,
+      )
+      setNodeStatus(id, 'error', {
+        progress: 0,
+        lastError: failure.message,
+        errorMessage: failure.message,
+        ...(failure.code ? { errorCode: failure.code } : {}),
+      })
+      appendLog(id, `[${nowLabel()}] error: ${failure.message}`)
       return
     }
 
@@ -3114,11 +3631,13 @@ async function pollGenericVideoResultClient(ctx: RunnerContext, options: {
       prompt: options.prompt,
       durationSeconds: options.durationSeconds,
       modelKey: options.model,
+      vendor: options.vendor,
+      autoReferenceImageUrls: options.autoReferenceImageUrls,
     })
     return
   }
 
-  const timeoutMsg = '视频任务查询超时，请稍后在控制台确认结果'
+  const timeoutMsg = `${options.vendor} 视频任务查询超时，请稍后在控制台确认结果`
   setNodeStatus(id, 'error', { progress: 0, lastError: timeoutMsg })
   appendLog(id, `[${nowLabel()}] error: ${timeoutMsg}`)
 }
@@ -3142,6 +3661,7 @@ async function runVideoTask(ctx: RunnerContext) {
     }
     await runGenericVideoTask(ctx, {
       prompt: prepared.finalPrompt,
+      vendor: prepared.videoVendor,
       model: prepared.videoModelValue,
       aspectRatio: prepared.aspectRatioSetting,
       size: prepared.videoSize,
@@ -3156,6 +3676,9 @@ async function runVideoTask(ctx: RunnerContext) {
       uploadedFirstFrameAsset: prepared.uploadedFirstFrameAsset,
       uploadedLastFrameAsset: prepared.uploadedLastFrameAsset,
       referenceSheet: prepared.referenceSheet,
+      upstreamVideoUrl: prepared.upstreamVideoUrl,
+      referenceVideoDurationSeconds: prepared.referenceVideoDurationSeconds,
+      autoReferenceImageUrls: prepared.autoReferenceImageUrls,
     })
   } catch (error: unknown) {
     const msg = error instanceof Error && error.message ? error.message : '视频任务执行失败'
@@ -3165,20 +3688,90 @@ async function runVideoTask(ctx: RunnerContext) {
   }
 }
 
-export async function syncImageNodeOnce(_id: string, _get: Getter) {
-  return
+export async function syncImageNodeOnce(id: string, get: Getter) {
+  const runTokenAtStart = readNodeRunToken(get, id)
+  const ctx = buildRunnerContext(id, get)
+  if (!ctx || !ctx.isImageTask) return
+
+  const isAborted = () => ctx.isCanceled(id) || readNodeRunToken(get, id) !== runTokenAtStart
+  if (isAborted()) return
+
+  const { data, setNodeStatus, appendLog } = ctx
+  const imageTaskId = typeof (data as any)?.imageTaskId === 'string' ? ((data as any).imageTaskId as string).trim() : ''
+  const imageTaskKind: TaskKind =
+    typeof (data as any)?.imageTaskKind === 'string' && (data as any).imageTaskKind.trim()
+      ? ((data as any).imageTaskKind as TaskKind)
+      : 'text_to_image'
+  if (!imageTaskId) return
+
+  let snapshot: TaskResultDto
+  try {
+    snapshot = await fetchTaskResult(imageTaskId, imageTaskKind, ctx.prompt)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '查询图像任务进度失败'
+    appendLog(id, `[${nowLabel()}] error: ${message}`)
+    return
+  }
+  if (isAborted()) return
+
+  if (isTaskRunningSnapshot(snapshot)) {
+    const pct = extractTaskProgressPercent(snapshot)
+    if (typeof pct === 'number') {
+      const current = typeof (data as any)?.progress === 'number' ? (data as any).progress as number : 10
+      const normalized = Math.min(95, Math.max(current, Math.max(5, Math.round(pct))))
+      setNodeStatus(id, snapshot.status === 'queued' ? 'queued' : 'running', {
+        progress: normalized,
+        imageTaskId,
+      })
+    }
+    return
+  }
+
+  if (snapshot.status === 'failed') {
+    const msg = extractTaskFailureMessage(snapshot)
+    setNodeStatus(id, 'error', { progress: 0, lastError: msg, imageTaskId: '' })
+    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    return
+  }
+
+  // succeeded
+  const rawUrl = extractFirstImageAssetUrl(snapshot)
+  if (!rawUrl) {
+    setNodeStatus(id, 'error', { progress: 0, lastError: '图像任务完成但未返回图片', imageTaskId: '' })
+    return
+  }
+  const existingResults = Array.isArray((data as any)?.imageResults) ? (data as any).imageResults as Array<Record<string, unknown>> : []
+  const newItem = buildImageAssetResultItem({ url: rawUrl, assetId: findTaskAssetIdByUrl(snapshot, rawUrl) })
+  setNodeStatus(id, 'success', {
+    progress: 100,
+    imageUrl: rawUrl,
+    imageResults: [...existingResults, newItem],
+    imagePrimaryIndex: existingResults.length,
+    imageTaskId: '',
+    lastResult: {
+      id: snapshot.id || imageTaskId,
+      at: Date.now(),
+      kind: ctx.kind,
+      preview: { type: 'image', src: rawUrl },
+    },
+  })
+  appendLog(id, `[${nowLabel()}] 图像任务已恢复完成。`)
 }
 
 async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTaskOptions) {
   const { id, data, kind, setNodeStatus, appendLog, endRunToken } = ctx
   try {
+    const normalizedVendor = normalizeVideoVendor(options.vendor)
+    if (!normalizedVendor) {
+      throw new Error('视频模型厂商未配置')
+    }
     const modelKey = options.model.trim() || String((data as any)?.videoModel || '').trim()
     if (!modelKey) {
       throw new Error('视频模型未配置')
     }
 
     setNodeStatus(id, 'running', { progress: 5 })
-    appendLog(id, `[${nowLabel()}] 调用自动路由视频模型 ${modelKey}…`)
+    appendLog(id, `[${nowLabel()}] 调用 ${normalizedVendor} 视频模型 ${modelKey}…`)
 
     const extras = buildVeoTaskExtras({
       kind,
@@ -3195,9 +3788,40 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
       uploadedFirstFrameAsset: options.uploadedFirstFrameAsset,
       uploadedLastFrameAsset: options.uploadedLastFrameAsset,
       referenceSheet: options.referenceSheet,
+      upstreamVideoUrl: options.upstreamVideoUrl,
+      referenceVideoDurationSeconds: options.referenceVideoDurationSeconds,
     })
     extras.durationSeconds = options.durationSeconds
     extras.orientation = options.orientation
+    extras.audio = (data as Record<string, unknown>).videoGenerateAudio !== false
+    // sourcePrevTaskId 由 dag.ts injectVideoUpstreamRefsIfNeeded 从上游 video 节点 data.taskId 解析并写入。
+    // 透传为 extras.prevTaskId，供 task.service.ts 注入 metadata.prevTaskId，
+    // 最终由 new-api pixverse adaptor 用作 extend_from_task_id（apimart 续写）。
+    const sourcePrevTaskId = String((data as any)?.sourcePrevTaskId || '').trim()
+    if (sourcePrevTaskId && !extras.prevTaskId) extras.prevTaskId = sourcePrevTaskId
+
+    if (isKlingMotionControlModel(modelKey)) {
+      const motionExtras = buildKlingMotionControlExtras({
+        data: data as Record<string, unknown>,
+        durationSeconds: options.durationSeconds,
+      })
+      extras.characterOrientation = motionExtras.characterOrientation
+      extras.motionMode = motionExtras.motionMode
+      extras.keepOriginalSound = motionExtras.keepOriginalSound
+      extras.watermarkEnabled = motionExtras.watermarkEnabled
+      extras.durationSeconds = motionExtras.durationSeconds
+    }
+
+    // kling-v3-omni「参考视频用途」：feature=动作迁移（上游参考视频只供动作/运镜，
+    // 新主体来自参考图）、base=底片重绘/续演。仅显式设置时透传，hono 只对 omni 注入。
+    if (isKlingV3OmniVideoModel(modelKey)) {
+      const referType = normalizeKlingVideoReferType((data as any)?.videoReferType)
+      if (referType) extras.videoReferType = referType
+      const rawKeepSound = (data as any)?.keepOriginalSound
+      if (rawKeepSound !== undefined && rawKeepSound !== null && String(rawKeepSound).trim() !== '') {
+        extras.keepOriginalSound = normalizeKlingKeepOriginalSound(rawKeepSound)
+      }
+    }
 
     const request: TaskRequestDto = {
       kind: 'text_to_video',
@@ -3205,6 +3829,7 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
       extras,
     }
     const { result: res, requestProgress } = await runTaskByVendorWithPendingProgress(ctx, {
+      vendor: normalizedVendor,
       request,
       startProgress: 5,
       maxProgress: 95,
@@ -3214,26 +3839,26 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
       appendLog,
       nodeId: id,
       result: res,
-      fallbackVendor: 'auto',
+      fallbackVendor: normalizedVendor,
       fallbackRequest: request,
     })
 
     const pendingTaskId = resolvePendingTaskIdFromResult(res)
     if (res.status === 'queued' || res.status === 'running') {
       if (!pendingTaskId) {
-        throw new Error('视频任务创建失败：未返回任务 ID')
+        throw new Error(`${normalizedVendor} 视频任务创建失败：未返回任务 ID`)
       }
 
       setNodeStatus(id, res.status === 'queued' ? 'queued' : 'running', {
         progress: Math.max(10, requestProgress),
         videoTaskId: pendingTaskId,
         videoModel: modelKey,
-        videoModelVendor: null,
+        videoModelVendor: normalizedVendor,
         lastResult: {
           id: pendingTaskId,
           at: Date.now(),
           kind,
-          preview: { type: 'text', value: `已创建视频任务（ID: ${pendingTaskId}）` },
+          preview: { type: 'text', value: `已创建 ${normalizedVendor} 视频任务（ID: ${pendingTaskId}）` },
         },
       })
       trySilentSaveProject()
@@ -3241,7 +3866,9 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
         taskId: pendingTaskId,
         prompt: options.prompt,
         model: modelKey,
+        vendor: normalizedVendor,
         durationSeconds: options.durationSeconds,
+        autoReferenceImageUrls: options.autoReferenceImageUrls,
       })
       return
     }
@@ -3253,6 +3880,8 @@ async function runGenericVideoTask(ctx: RunnerContext, options: GenericVideoTask
       prompt: options.prompt,
       durationSeconds: options.durationSeconds,
       modelKey,
+      vendor: normalizedVendor,
+      autoReferenceImageUrls: options.autoReferenceImageUrls,
     })
   } catch (error: unknown) {
     const message = error instanceof Error && error.message ? error.message : '视频任务执行失败'
@@ -3280,8 +3909,9 @@ export async function syncGenericVideoNodeOnce(id: string, get: Getter) {
     if (isAborted()) return
     appendLogRaw(nodeId, line)
   }
+  const vendor = normalizeVideoVendor((data as any)?.videoModelVendor || (data as any)?.videoVendor || '')
   const taskId = resolveActiveVideoTaskIdByVendor(data)
-  if (!taskId) return
+  if (!taskId || !vendor) return
 
   let snapshot: TaskResultDto
   try {
@@ -3301,16 +3931,24 @@ export async function syncGenericVideoNodeOnce(id: string, get: Getter) {
       statusPatch: {
         videoTaskId: taskId,
         videoModel: String((data as any)?.videoModel || '').trim() || undefined,
-        videoModelVendor: null,
+        videoModelVendor: vendor,
       },
     })
     return
   }
 
   if (snapshot.status === 'failed') {
-    const msg = resolveGenericVideoFailureMessage(snapshot, '视频')
-    setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-    appendLog(id, `[${nowLabel()}] error: ${msg}`)
+    const failure = resolveProviderTaskFailure(
+      snapshot.raw,
+      `${vendor.trim() || '视频'} 视频任务失败`,
+    )
+    setNodeStatus(id, 'error', {
+      progress: 0,
+      lastError: failure.message,
+      errorMessage: failure.message,
+      ...(failure.code ? { errorCode: failure.code } : {}),
+    })
+    appendLog(id, `[${nowLabel()}] error: ${failure.message}`)
     return
   }
 
@@ -3326,6 +3964,7 @@ export async function syncGenericVideoNodeOnce(id: string, get: Getter) {
       videoModelValue: String((data as any)?.videoModel || '').trim(),
     }),
     modelKey: String((data as any)?.videoModel || '').trim(),
+    vendor,
   })
 }
 
@@ -3337,233 +3976,122 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
     const sourceBookId = String((data as any)?.sourceBookId || '').trim()
     const isNovelStoryboard = !!sourceBookId
     const storyboardCount = isNovelStoryboard
-      ? clampInt((data as any)?.storyboardGroupSize || (data as any)?.storyboardCount, 1, 16, 1)
+      ? clampInt((data as any)?.storyboardGroupSize || (data as any)?.storyboardCount, 1, 25, 1)
       : clampInt((data as any)?.storyboardCount, 4, 16, 4)
     const storyboardAspect = normalizeStoryboardImageAspectRatio((data as any)?.storyboardAspectRatio)
     const storyboardStyle = normalizeStoryboardImageStyle((data as any)?.storyboardStyle)
 
-    const rawScript =
-      typeof (data as any)?.storyboardScript === 'string'
-        ? ((data as any).storyboardScript as string).trim()
-        : typeof (data as any)?.storyboard === 'string'
-          ? ((data as any).storyboard as string).trim()
-          : ''
     const rawTheme = typeof (data as any)?.prompt === 'string' ? ((data as any).prompt as string).trim() : ''
-    const fallback = rawTheme || ctx.prompt.trim() || String((data as any)?.label || '').trim()
-    const script = rawScript || fallback
-
-    if (!script) {
-      const msg = '缺少分镜脚本：请先填写「分镜脚本」或在 Prompt 中描述剧情主题。'
-      setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-      appendLog(id, `[${nowLabel()}] error: ${msg}`)
-      if (!isCanceled(id)) toast(msg, 'warning')
-      return
-    }
-
-    const isNoiseShotLine = (line: string) => {
-      const v = String(line || '').trim()
-      if (!v) return true
-      if (/^\d+\s*[-~到]\s*\d+\s*秒\s*[：:]/.test(v)) return true
-      if (/^\d+\s*秒\s*[：:]/.test(v)) return true
-      if (/^#{1,6}\s+/.test(v)) return true
-      if (/^\|.*\|$/.test(v)) return true
-      if (/^[-*_]{3,}$/.test(v)) return true
-      if (/^(统一参数|结构化分镜脚本|镜头列表|生产建议|全镜头通用约束|每镜头图像提示词|每镜头视频提示词)\b/i.test(v)) return true
-      if (/同时标注内容分级|避免露骨|已根据素材完成续写分镜|整合\s*\d+\s*-\s*\d+\s*连续可执行稿/i.test(v)) return true
-      if (/加载\s*TapCanvas\s*能力技能|基于小说正文与已完成|产出新增镜头|可执行分镜包|避免重复/i.test(v)) return true
-      if (/^角色一致性固定串/i.test(v)) return true
-      if (/^(?:-|•)?\s*(?:唯|萧夜|真宫寺唯|鸣神素子|萧羽)\s*[：:]/i.test(v)) return true
-      if (/^(?:-|•)?\s*(?:风格|style)\s*[：:]/i.test(v)) return true
-      if (/^(镜头|分镜)\s*[；;|]/.test(v)) return true
-      if (/^(plan|note|tips?|prompt list|shot list)[:：]?$/i.test(v)) return true
-      return false
-    }
-
-    const cleanLine = (line: string) =>
-      String(line || '')
-        .replace(/\*\*/g, '')
-        .replace(/`/g, '')
-        .replace(/https?:\/\/[^\s；;，,]+/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-    const isGenericShotPrompt = (line: string) =>
-      /第\d+章(电影级写实镜头|人物交互镜头|情绪推进镜头|转场收束镜头)/.test(String(line || '').trim())
-
-    const extractShotPrompts = (text: string) => {
-      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-      const prompts: string[] = []
-      for (const line of lines) {
-        const m =
-          line.match(/^(?:[-*]\s*)?(?:镜头|分镜)\s*(\d+)?\s*[：:.\u3001-]?\s*(.+)$/) ??
-          line.match(/^Shot\s+(\d+)\s*[:.-]\s*(.+)$/i) ??
-          line.match(/^\s*S?(\d{1,3})\s*[｜|:：]\s*(.+)$/i)
-        const prompt = cleanLine((m?.[2] ?? line).trim())
-        if (!prompt || isNoiseShotLine(prompt)) continue
-        prompts.push(prompt)
-      }
-      return prompts
-    }
-
     const explicitShotPrompts = Array.isArray((data as any)?.storyboardShotPrompts)
       ? ((data as any).storyboardShotPrompts as unknown[])
-          .map((x) => cleanLine(String(x || '')))
-          .filter((x) => x && !isNoiseShotLine(x) && !isGenericShotPrompt(x))
+          .map((value) => String(value || '').trim())
+          .filter(Boolean)
       : []
-    let planChunkPrompts: string[] = []
+    let storyboardArtifact: Record<string, unknown> | null = null
+    let authoritativePlanId = ''
+    let authoritativeTaskId = ''
+    let previousChunkId = ''
+    let chapterNo = 0
+    let shotPrompts: string[] = []
     if (isNovelStoryboard && projectId && sourceBookId) {
       const chapterRaw = Number((data as any)?.chapter ?? (data as any)?.materialChapter)
-      const chapterNo = Number.isFinite(chapterRaw) && chapterRaw > 0 ? Math.trunc(chapterRaw) : 0
+      chapterNo = Number.isFinite(chapterRaw) && chapterRaw > 0 ? Math.trunc(chapterRaw) : 0
       const planId = String((data as any)?.storyboardPlanId || '').trim()
       const chunkIndexRaw = Number((data as any)?.storyboardChunkIndex)
       const chunkIndex = Number.isFinite(chunkIndexRaw) && chunkIndexRaw >= 0 ? Math.trunc(chunkIndexRaw) : -1
-      const groupSizeRaw = Number((data as any)?.storyboardGroupSize || 1)
-      const groupSize = groupSizeRaw === 9 ? 9 : groupSizeRaw === 4 ? 4 : 1
-      try {
-        if (chapterNo > 0) {
-          appendLog(id, `[${nowLabel()}] 检查并补全当前章节元数据（第${chapterNo}章）...`)
-          const ensured = await ensureProjectBookMetadataWindow(projectId, sourceBookId, {
-            chapter: chapterNo,
-            mode: 'standard',
-            windowSize: 1,
-          })
-          appendLog(
-            id,
-            `[${nowLabel()}] 章节 ${ensured.windowStart} 元数据已校验：缺失前 ${ensured.missingBefore.length}，缺失后 ${ensured.missingAfter.length}，新增角色卡 ${ensured.roleCardsAdded}`,
-          )
+      if (!chapterNo || !planId || chunkIndex < 0) {
+        throw new Error('小说分镜生成缺少 chapter、storyboardPlanId 或 storyboardChunkIndex')
+      }
+      const idx = await getProjectBookIndex(projectId, sourceBookId)
+      const plans = Array.isArray(idx.assets?.storyboardPlans) ? idx.assets.storyboardPlans : []
+      const plan = plans.find((candidate) => candidate.planId === planId) ?? null
+      if (!plan || plan.chapter !== chapterNo) {
+        throw new Error('未找到当前章节精确 storyboardPlanId 对应的分镜计划')
+      }
+      storyboardArtifact = plan.storyboardArtifact
+      authoritativePlanId = plan.planId
+      authoritativeTaskId = plan.taskId.trim()
+      if (storyboardArtifact.schemaVersion !== STORYBOARD_DIRECTOR_V12_SCHEMA_VERSION) {
+        throw new Error('分镜计划缺少 storyboard-director/v1.2 原始 artifact')
+      }
+      if (!authoritativeTaskId) {
+        throw new Error('分镜计划缺少 taskId')
+      }
+      const nodeTaskId = String((data as any)?.storyboardTaskId || '').trim()
+      if (nodeTaskId && nodeTaskId !== authoritativeTaskId) {
+        throw new Error('节点 storyboardTaskId 与分镜计划不一致')
+      }
+      if (plan.groupSize !== storyboardCount) {
+        throw new Error(`节点分镜数量与分镜计划不一致：节点 ${storyboardCount}，计划 ${plan.groupSize}`)
+      }
+      previousChunkId = String((data as any)?.storyboardPreviousChunkId || '').trim()
+      if (chunkIndex > 0) {
+        if (!previousChunkId) {
+          throw new Error('跨 chunk 小说分镜缺少精确 storyboardPreviousChunkId')
         }
-        const idx = await getProjectBookIndex(projectId, sourceBookId)
-        const plans = Array.isArray((idx as any)?.assets?.storyboardPlans)
-          ? ((idx as any).assets.storyboardPlans as any[])
-          : []
-        const plan =
-          (planId ? plans.find((x) => String(x?.planId || '').trim() === planId) : null) ||
-          plans.find((x) => Number(x?.chapter) === chapterNo) ||
-          null
-        const planShots = Array.isArray(plan?.shotPrompts)
-          ? (plan.shotPrompts as unknown[])
-              .map((x) => cleanLine(String(x || '')))
-              .filter((x) => x && !isNoiseShotLine(x) && !isGenericShotPrompt(x))
-          : []
-        if (planShots.length) {
-          if (chunkIndex >= 0) {
-            const start = chunkIndex * groupSize
-            planChunkPrompts = planShots.slice(start, start + storyboardCount)
-          }
-          if (!planChunkPrompts.length) {
-            const shotStartRaw = Number((data as any)?.storyboardShotStart)
-            const shotEndRaw = Number((data as any)?.storyboardShotEnd)
-            if (Number.isFinite(shotStartRaw) && shotStartRaw > 0) {
-              const start = Math.max(0, Math.trunc(shotStartRaw) - 1)
-              const end = Number.isFinite(shotEndRaw) && shotEndRaw >= shotStartRaw
-                ? Math.min(planShots.length, Math.trunc(shotEndRaw))
-                : Math.min(planShots.length, start + storyboardCount)
-              planChunkPrompts = planShots.slice(start, end)
-            }
-          }
-        }
-      } catch (err: any) {
-        appendLog(id, `[${nowLabel()}] 读取章节分镜计划失败：${err?.message || 'unknown error'}`)
-      }
-    }
-
-    const extracted = explicitShotPrompts.length
-      ? explicitShotPrompts
-      : planChunkPrompts.length
-        ? planChunkPrompts
-        : extractShotPrompts(script).filter((x) => !isGenericShotPrompt(x))
-
-    if (isNovelStoryboard) {
-      if (!extracted.length) {
-        const msg = '小说分镜缺少可执行镜头：请先通过 agents-cli 生成章节分镜剧本并写入计划元数据'
-        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-        appendLog(id, `[${nowLabel()}] error: ${msg}`)
-        if (!isCanceled(id)) toast(msg, 'warning')
-        return
-      }
-      if (extracted.some((x) => isGenericShotPrompt(x))) {
-        const msg = '小说分镜镜头仍为模板文本：请先修复章节分镜剧本后重试'
-        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-        appendLog(id, `[${nowLabel()}] error: ${msg}`)
-        if (!isCanceled(id)) toast(msg, 'warning')
-        return
-      }
-      if (extracted.length < storyboardCount) {
-        const msg = `小说分镜镜头数量不足：期望 ${storyboardCount} 镜，实际 ${extracted.length} 镜。请先修复章节分镜剧本后重试`
-        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-        appendLog(id, `[${nowLabel()}] error: ${msg}`)
-        if (!isCanceled(id)) toast(msg, 'warning')
-        return
-      }
-    }
-    const shotPrompts = isNovelStoryboard
-      ? extracted.slice(0, storyboardCount)
-      : Array.from({ length: storyboardCount }, (_, i) => cleanLine(extracted[i] || extracted[0] || script)).filter(Boolean)
-
-    const compactFeatureText = (input: string) =>
-      String(input || '')
-        .trim()
-        .toLowerCase()
-        .replace(/[，。；：!！?？、]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-    const extractKeyframeFeature = (line: string, patterns: RegExp[]) => {
-      const parts = String(line || '')
-        .split(/[;\n]/)
-        .map((x) => String(x || '').trim())
-        .filter(Boolean)
-      for (const part of parts) {
-        for (const re of patterns) {
-          const m = part.match(re)
-          const v = String(m?.[1] || '').trim()
-          if (v) return compactFeatureText(v)
+        const previousChunk = idx.assets?.storyboardChunks?.find((chunk) => chunk.chunkId === previousChunkId) ?? null
+        if (
+          !previousChunk ||
+          previousChunk.taskId !== authoritativeTaskId ||
+          previousChunk.chapter !== chapterNo ||
+          previousChunk.groupSize !== storyboardCount ||
+          previousChunk.chunkIndex !== chunkIndex - 1 ||
+          !previousChunk.tailFrameUrl.trim()
+        ) {
+          throw new Error('storyboardPreviousChunkId 与当前计划不构成具有真实 tailFrameUrl 的直接前驱关系')
         }
       }
-      return ''
-    }
-    const keyframeFeatures = shotPrompts.map((line) => ({
-      action:
-        extractKeyframeFeature(line, [/^(?:主体动作|画面主体)\s*[：:]\s*(.+)$/i]) ||
-        compactFeatureText(String(line || '').replace(/^镜头\s*\d+\s*[：:]/, '').trim()),
-      shotType: extractKeyframeFeature(line, [/^(?:镜头类型|景别)\s*[：:]\s*(.+)$/i]),
-      camera: extractKeyframeFeature(line, [/^(?:机位(?:\/运动)?|机位\/运动)\s*[：:]\s*(.+)$/i]),
-    }))
-    if (shotPrompts.length > 1) {
-      const violations: string[] = []
-      for (let i = 1; i < keyframeFeatures.length; i += 1) {
-        const prev = keyframeFeatures[i - 1]
-        const curr = keyframeFeatures[i]
-        const changedCount =
-          (prev.action !== curr.action ? 1 : 0) +
-          (prev.shotType !== curr.shotType ? 1 : 0) +
-          (prev.camera !== curr.camera ? 1 : 0)
-        if (changedCount < 2) violations.push(`${i}-${i + 1}`)
+      const structured = normalizeStoryboardStructuredData(storyboardArtifact)
+      if (!structured || structured.sourceSchemaVersion !== STORYBOARD_DIRECTOR_V12_SCHEMA_VERSION) {
+        throw new Error('分镜计划的 v1.2 artifact 无法形成确定性结构投影')
       }
-      if (violations.length) {
-        const msg = `关键帧差异预检失败：相邻镜头 ${violations.join('、')} 变化不足（需在动作/景别/机位中至少变化两项）`
-        setNodeStatus(id, 'error', { progress: 0, lastError: msg })
-        appendLog(id, `[${nowLabel()}] error: ${msg}`)
-        if (!isCanceled(id)) toast(msg, 'warning')
-        return
+      const derivedPrompts = deriveShotPromptsFromStructuredData(structured)
+      const storedProjection = plan.storyboardStructured
+      if (storedProjection.sourceSchemaVersion !== STORYBOARD_DIRECTOR_V12_SCHEMA_VERSION) {
+        throw new Error('分镜计划缺少 storyboard-director/v1.2 确定性结构投影')
       }
+      const storedProjectionPrompts = deriveShotPromptsFromStructuredData(storedProjection)
+      if (
+        storedProjectionPrompts.length !== derivedPrompts.length ||
+        storedProjectionPrompts.some((prompt, index) => prompt !== derivedPrompts[index])
+      ) {
+        throw new Error('分镜计划的原始 artifact 与结构投影不一致')
+      }
+      const shotStartRaw = Number((data as any)?.storyboardShotStart)
+      const shotEndRaw = Number((data as any)?.storyboardShotEnd)
+      const shotStart = Number.isFinite(shotStartRaw) && shotStartRaw > 0 ? Math.trunc(shotStartRaw) : 0
+      const shotEnd = Number.isFinite(shotEndRaw) && shotEndRaw >= shotStart ? Math.trunc(shotEndRaw) : 0
+      const indexedPrompts = structured.shots
+        .map((shot, index) => ({ shotNo: shot.shotNo, prompt: derivedPrompts[index] || '' }))
+        .filter((entry) => entry.prompt)
+      const rangedPrompts = shotStart > 0 && shotEnd >= shotStart
+        ? indexedPrompts
+            .filter((entry) => typeof entry.shotNo === 'number' && entry.shotNo >= shotStart && entry.shotNo <= shotEnd)
+            .map((entry) => entry.prompt)
+        : []
+      if (rangedPrompts.length === storyboardCount) {
+        shotPrompts = rangedPrompts
+      } else if (derivedPrompts.length === storyboardCount && shotEnd - shotStart + 1 === storyboardCount) {
+        shotPrompts = derivedPrompts
+      } else {
+        throw new Error(`结构化分镜计划与当前 chunk 范围不一致：期望 ${storyboardCount} 镜，无法精确映射`)
+      }
+      if (
+        explicitShotPrompts.length > 0 &&
+        (explicitShotPrompts.length !== shotPrompts.length || explicitShotPrompts.some((prompt, index) => prompt !== shotPrompts[index]))
+      ) {
+        throw new Error('节点 storyboardShotPrompts 与结构化分镜计划不一致')
+      }
+    } else {
+      if (explicitShotPrompts.length !== storyboardCount) {
+        throw new Error(`故事板节点必须提供 ${storyboardCount} 条结构化 storyboardShotPrompts`)
+      }
+      shotPrompts = explicitShotPrompts
     }
 
-    const sanitizeTheme = (text: string) => {
-      if (!text) return ''
-      return text
-        .split(/\r?\n/)
-        .map((line) => cleanLine(line))
-        .filter((line) => line && !/^(镜头|分镜)\s*\d+/i.test(line) && !isNoiseShotLine(line))
-        .slice(0, 8)
-        .join('；')
-    }
-    const storyContextTheme = typeof (data as any)?.storyboardStoryContext === 'string'
-      ? sanitizeTheme((data as any).storyboardStoryContext)
-      : ''
-    const themeText = storyContextTheme || sanitizeTheme(rawTheme)
+    const themeText = isNovelStoryboard ? '' : rawTheme
 
-    const styleSuffix = isNovelStoryboard
-      ? '严格延续参考图的构图、光线、色彩与质感，不要切换到新的美术风格；统一角色设定'
-      : (() => {
+    const styleSuffix = (() => {
       switch (storyboardStyle) {
         case 'comic':
           return '美漫风格，粗线条，高对比，漫画渲染，统一角色设定'
@@ -3589,7 +4117,10 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
           ? { rows: 4, cols: 3, sheetAspectRatio: '4:3' }
           : { rows: 3, cols: 4, sheetAspectRatio: '3:4' }
       }
-      return { rows: 4, cols: 4, sheetAspectRatio: storyboardAspect as string }
+      if (storyboardCount <= 16) {
+        return { rows: 4, cols: 4, sheetAspectRatio: storyboardAspect as string }
+      }
+      return { rows: 5, cols: 5, sheetAspectRatio: storyboardAspect as string }
     })()
 
     const totalCells = gridLayout.rows * gridLayout.cols
@@ -3599,10 +4130,10 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       `画面为 ${gridLayout.rows} 行 × ${gridLayout.cols} 列等分网格（总共 ${totalCells} 格），每格大小一致、边界对齐，便于按网格裁切。`,
       '每格为独立画面，按从左到右、从上到下排列。',
       `每格画面构图比例为 ${storyboardAspect}。`,
-      '采用关键帧分镜模式：每格只表达关键动作与镜头变化，不做过细漫画化堆叠。',
-      '去同质化硬约束：相邻格至少在“主体动作/景别/机位运动”中变化两项，禁止重复构图与重复姿态。',
+      !isNovelStoryboard ? '采用关键帧分镜模式：每格只表达关键动作与镜头变化，不做过细漫画化堆叠。' : '',
+      !isNovelStoryboard ? '去同质化硬约束：相邻格至少在“主体动作/景别/机位运动”中变化两项，禁止重复构图与重复姿态。' : '',
       '不要在画面中出现任何文字、数字、字幕、对白气泡或水印。',
-      `统一角色设定与连续性；风格要求：${styleSuffix}。`,
+      !isNovelStoryboard ? `统一角色设定与连续性；风格要求：${styleSuffix}。` : '',
       '镜头列表（按顺序填入网格）：',
       ...shotPrompts.map((p, i) => `镜头 ${i + 1}：${p}`),
       totalCells > storyboardCount ? `剩余 ${totalCells - storyboardCount} 格保持空白纯色背景（不要内容）。` : '',
@@ -3614,19 +4145,18 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       typeof data.imageModel === 'string' && data.imageModel.trim()
         ? data.imageModel.trim()
         : ''
-    const selectedModel = storedImageModel || resolveDefaultImageModelForTask('image_edit')
+    if (!storedImageModel) {
+      throw new Error('分镜图片节点未配置模型：请先从系统模型目录中选择一个可用图片模型。')
+    }
+    const selectedModel = storedImageModel
     const modelLower = selectedModel.toLowerCase()
     const vendor = 'auto'
 
-    const systemPromptOpt =
-      (data as any)?.showSystemPrompt && typeof (data as any)?.systemPrompt === 'string'
-        ? (data as any).systemPrompt
-        : undefined
-    const promptForModel = systemPromptOpt ? `${systemPromptOpt}\n\n${gridPrompt}` : gridPrompt
+    const promptForModel = gridPrompt
 
     const edges = Array.isArray((state as any)?.edges) ? ((state as any).edges as any[]) : []
     const nodes = Array.isArray((state as any)?.nodes) ? ((state as any).nodes as Node[]) : []
-    const inbound = edges.filter((e) => e && e.target === id)
+    const inbound = edges.filter((e) => e && e.target === id && !isReferenceOnlyCanvasEdge(e))
     const lastEdge = inbound.length ? inbound[inbound.length - 1] : null
     const lastSourceNode = lastEdge ? nodes.find((n) => n.id === lastEdge.source) : null
     const lastSourceKind = lastSourceNode ? ((lastSourceNode.data as any)?.kind as string | undefined) : undefined
@@ -3646,7 +4176,7 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
     const mentionAssetRefs = await resolveAssetImagesByMentions({
       prompt: gridPrompt,
       nodes,
-    }).catch(() => ({ urls: [] as string[], matched: [] as string[], missing: [] as string[], ambiguous: [] as string[] }))
+    }).catch(() => createEmptyPromptAssetMentionResult())
     if (mentionRoleRefs.matched.length) {
       appendLog(id, `[${nowLabel()}] 检测到角色提及：${mentionRoleRefs.matched.join('、')}，已自动注入角色卡参考图`)
     }
@@ -3695,7 +4225,7 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       ),
     ).slice(0, 8)
     let mergedRoleReferenceSheet: UploadedReferenceSheet | null = null
-    if (roleReferenceEntries.length > 1) {
+    if (shouldAutoMergeReferenceSheet() && roleReferenceEntries.length > 1) {
       try {
         mergedRoleReferenceSheet = await uploadMergedReferenceSheet({
           id,
@@ -3741,6 +4271,10 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
         : typeof (data as any)?.resolution === 'string' && (data as any).resolution.trim()
           ? (data as any).resolution.trim()
           : undefined
+    const imageQualitySetting =
+      typeof (data as Record<string, unknown>)?.imageQuality === 'string' && String((data as Record<string, unknown>).imageQuality).trim()
+        ? String((data as Record<string, unknown>).imageQuality).trim()
+        : undefined
 
     setNodeStatus(id, 'running', {
       progress: 5,
@@ -3766,24 +4300,37 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
 
     const persist = useUIStore.getState().assetPersistenceEnabled
     const runtimeReferenceAssetInputs = mergeReferenceAssetInputs({
-      assetInputs: (data as Record<string, unknown>)?.assetInputs,
+      assetInputs: [
+        ...mentionAssetRefs.assetInputs,
+        ...((Array.isArray((data as Record<string, unknown>)?.assetInputs)
+          ? (data as Record<string, unknown>).assetInputs as unknown[]
+          : []) as object[]),
+      ],
       dynamicEntries: collectDynamicUpstreamReferenceEntries(state, id),
       referenceImages,
       limit: 8,
     })
-    const roleNameHint = roleReferenceEntries.length
+    const characterBibleHint = isNovelStoryboard ? '' : buildCharacterBiblePromptHint(data)
+    const roleNameHint = !isNovelStoryboard && roleReferenceEntries.length
       ? `角色一致性锁定：${roleReferenceEntries.map((x) => x.label).filter(Boolean).join('、')}。所有镜头保持脸型/发型/服装主色/关键配饰不变，仅允许姿态与机位变化。`
       : ''
-    const continuityHint = wantsImageEdit
+    const continuityHint = !isNovelStoryboard && wantsImageEdit
       ? hasStoryboardUpstream
         ? '如果提供了参考图（上一张分镜的最后一镜）：请让本次网格的镜头1在构图/主体位置/光线/时间上自然承接参考画面，再继续推进新内容；其余镜头保持角色与场景连续。'
         : '如果提供了参考图：请在角色外观（脸/发型/服装/配饰）、场景、光线与画风上保持一致，并在此基础上生成新的分镜网格。'
       : ''
     const finalPromptForModel = appendReferenceAliasSlotPrompt({
-      prompt: [promptForModel, roleNameHint, continuityHint].filter(Boolean).join('\n\n'),
+      prompt: [promptForModel, characterBibleHint, roleNameHint, continuityHint].filter(Boolean).join('\n\n'),
       assetInputs: runtimeReferenceAssetInputs,
       referenceImages,
       enabled: wantsImageEdit && !mergedRoleReferenceSheet,
+    })
+    const imageBillingSpecKey = buildImageBillingSpecKey({
+      modelKey: selectedModel,
+      aspectRatio: gridLayout.sheetAspectRatio,
+      imageSize: imageSizeSetting,
+      resolution: imageResolutionSetting,
+		quality: imageQualitySetting,
     })
     const request: TaskRequestDto = {
       kind: wantsImageEdit ? 'image_edit' : 'text_to_image',
@@ -3793,16 +4340,18 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
         nodeId: id,
         modelKey: selectedModel,
         aspectRatio: gridLayout.sheetAspectRatio,
+        ...(imageBillingSpecKey ? { specKey: imageBillingSpecKey, billingSpecKey: imageBillingSpecKey } : {}),
         ...(imageSizeSetting ? { imageSize: imageSizeSetting } : {}),
         ...(imageResolutionSetting ? { imageResolution: imageResolutionSetting, resolution: imageResolutionSetting } : {}),
+        ...(imageQualitySetting ? { quality: imageQualitySetting } : {}),
         ...(wantsImageEdit ? { referenceImages } : {}),
         ...(runtimeReferenceAssetInputs.length ? { assetInputs: runtimeReferenceAssetInputs } : {}),
         ...(mergedRoleReferenceSheet ? { referenceSheet: buildReferenceSheetLogMeta(mergedRoleReferenceSheet) } : {}),
-        ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
         persistAssets: persist,
       },
     }
     const pendingTask = await runTaskByVendorWithPendingProgress(ctx, {
+      vendor,
       request,
       startProgress: 5,
       maxProgress: 50,
@@ -3840,14 +4389,14 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       })
       appendLog(id, `[${nowLabel()}] 已创建分镜网格任务（ID: ${taskId}），开始轮询进度…`)
 
-      res = await pollTaskResultUntilDone(ctx, {
+      taskHubRuntime.registerTask({
         taskId,
-        taskKind: wantsImageEdit ? 'image_edit' : 'text_to_image',
+        kind: wantsImageEdit ? 'image_edit' : 'text_to_image',
         prompt: finalPromptForModel,
-        progressRange: { min: 10, max: 50 },
-        initialProgress: Math.max(10, requestProgress),
-        statusPatch: { imageTaskId: taskId, imageTaskKind: wantsImageEdit ? 'image_edit' : 'text_to_image' },
+        nodeId: id,
+        isCanceled: () => isCanceled(id),
       })
+      res = await taskHubRuntime.waitForTask(taskId)
     }
 
     const gridRawUrl = extractFirstImageAssetUrl(res)
@@ -3951,8 +4500,9 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       },
     })
 
+    let storyboardMetadataFailure = ''
     if ((kind === 'novelStoryboard' || kind === 'storyboardImage') && projectId && sourceBookId && shotItems.length > 0) {
-      const taskId = String((data as any)?.storyboardTaskId || (data as any)?.storyboardPlanId || '').trim()
+      const taskId = authoritativeTaskId
       const groupSizeRaw = Number((data as any)?.storyboardGroupSize || storyboardCount || 25)
       const groupSize: 1 | 4 | 9 | 25 = groupSizeRaw === 25 ? 25 : groupSizeRaw === 9 ? 9 : groupSizeRaw === 4 ? 4 : 25
       const chunkIndexRaw = Number((data as any)?.storyboardChunkIndex)
@@ -3964,38 +4514,62 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
         ? Math.trunc(shotEndRaw)
         : shotStart + Math.max(1, shotItems.length) - 1
       const tailFrameUrl = String(shotItems[shotItems.length - 1]?.url || '').trim()
-      if (taskId && tailFrameUrl) {
+      if (taskId && tailFrameUrl && storyboardArtifact && authoritativePlanId && chapterNo > 0) {
         try {
-          await upsertProjectBookStoryboardChunk(projectId, sourceBookId, {
-            chunkId: `task-${taskId}-g${groupSize}-i${chunkIndex}`,
-            planId: String((data as any)?.storyboardPlanId || '').trim() || undefined,
+          const persistedChunk = await upsertProjectBookStoryboardChunk(projectId, sourceBookId, {
+            chunkId: `plan-${authoritativePlanId}-g${groupSize}-i${chunkIndex}`,
+            planId: authoritativePlanId,
+            ...(previousChunkId ? { previousChunkId } : null),
             taskId,
+            chapter: chapterNo,
             groupSize,
             chunkIndex,
             shotStart,
             shotEnd,
             nodeId: id,
-            prompt: String((data as any)?.prompt || '').trim() || undefined,
-            shotPrompts: Array.isArray((data as any)?.storyboardShotPrompts)
-              ? ((data as any).storyboardShotPrompts as unknown[]).map((x) => String(x || '').trim()).filter(Boolean).slice(0, 128)
-              : undefined,
+            storyboardStructured: storyboardArtifact,
+            shotPrompts,
             frameUrls: shotItems.map((x) => String(x.url || '').trim()).filter(Boolean),
             tailFrameUrl,
           })
           setNodeStatus(id, 'success', {
             storyboardPrevTailImage: tailFrameUrl,
+            storyboardChunkId: persistedChunk.chunkId,
+            storyboardMetadataStatus: 'persisted',
+            storyboardMetadataError: undefined,
           })
           appendLog(id, `[${nowLabel()}] 已写入章节分镜本地元数据（chunk=${chunkIndex + 1}，tail frame 已保存）`)
-        } catch (metaErr: any) {
-          const metaMsg = metaErr?.message || 'unknown error'
-          appendLog(id, `[${nowLabel()}] 写入章节分镜元数据失败：${metaMsg}`)
-          throw new Error(`分镜图生成成功，但本地元数据写入失败：${metaMsg}`)
+        } catch (metaErr: unknown) {
+          const metaMsg = metaErr instanceof Error && metaErr.message ? metaErr.message : 'unknown error'
+          storyboardMetadataFailure = `分镜图已生成并保留，但章节分镜元数据写入失败：${metaMsg}`
+          setNodeStatus(id, 'success', {
+            progress: 100,
+            storyboardPrevTailImage: tailFrameUrl,
+            storyboardMetadataStatus: 'failed',
+            storyboardMetadataError: storyboardMetadataFailure,
+          })
+          toast(storyboardMetadataFailure, 'error')
+          appendLog(id, `[${nowLabel()}] partial-success: ${storyboardMetadataFailure}`)
         }
+      } else {
+        storyboardMetadataFailure = '分镜图已生成并保留，但结构化 plan 证据或 tail frame 不完整，章节元数据未写入'
+        setNodeStatus(id, 'success', {
+          progress: 100,
+          storyboardMetadataStatus: 'failed',
+          storyboardMetadataError: storyboardMetadataFailure,
+        })
+        toast(storyboardMetadataFailure, 'error')
+        appendLog(id, `[${nowLabel()}] partial-success: ${storyboardMetadataFailure}`)
       }
     }
 
     if (!isCanceled(id)) notifyAssetRefresh()
-    appendLog(id, `[${nowLabel()}] 分镜图完成：网格 1 张 + 镜头 ${shotItems.length} 张。`)
+    appendLog(
+      id,
+      storyboardMetadataFailure
+        ? `[${nowLabel()}] 分镜图部分成功：网格 1 张 + 镜头 ${shotItems.length} 张已保留；元数据未完成。`
+        : `[${nowLabel()}] 分镜图完成：网格 1 张 + 镜头 ${shotItems.length} 张。`,
+    )
   } catch (err: any) {
     const msg = err?.message || '分镜图生成失败'
     if (!isCanceled(id)) toast(msg, 'error')
@@ -4023,7 +4597,7 @@ type ImageFissionSettings = {
   resolvedImageSize: '2K' | '4K'
   imageSizeSetting?: string
   imageResolutionSetting?: string
-  systemPromptOpt?: string
+  imageQualitySetting?: string
 }
 
 const IMAGE_FISSION_TEMPLATES: Record<ImageFissionMode, string> = {
@@ -4048,7 +4622,10 @@ function resolveImageFissionSettings(ctx: RunnerContext): ImageFissionSettings {
   const selectedModel =
     typeof data.imageModel === 'string' && data.imageModel.trim()
       ? data.imageModel.trim()
-      : DEFAULT_IMAGE_EDIT_MODEL
+      : ''
+  if (!selectedModel) {
+    throw new Error('图片裂变未选择模型，请先从系统模型目录选择可用图片模型')
+  }
   const mode: ImageFissionMode = (cfg.mode ?? 'creative') as ImageFissionMode
   const resolvedAspect =
     cfg.aspectRatio === '4:3' || cfg.aspectRatio === '3:4'
@@ -4068,10 +4645,7 @@ function resolveImageFissionSettings(ctx: RunnerContext): ImageFissionSettings {
       : typeof (data as any)?.resolution === 'string' && (data as any).resolution.trim()
         ? (data as any).resolution.trim()
         : undefined
-  const systemPromptOpt =
-    (data as any)?.showSystemPrompt && typeof (data as any)?.systemPrompt === 'string'
-      ? (data as any).systemPrompt
-      : undefined
+  const imageQualitySetting = readTrimmedRunnerText((data as Record<string, unknown>).imageQuality) || undefined
   return {
     desiredGrids,
     selectedModel,
@@ -4081,7 +4655,7 @@ function resolveImageFissionSettings(ctx: RunnerContext): ImageFissionSettings {
     resolvedImageSize,
     imageSizeSetting,
     imageResolutionSetting,
-    systemPromptOpt,
+    imageQualitySetting,
   }
 }
 
@@ -4169,7 +4743,7 @@ function buildImageFissionPrompt(ctx: RunnerContext, settings: ImageFissionSetti
     .join(settings.resolvedImageSize)
   const userHint = ctx.prompt.trim()
   const gridPrompt = userHint ? `${compiled}\n\nAdditional constraints:\n${userHint}` : compiled
-  return settings.systemPromptOpt ? `${settings.systemPromptOpt}\n\n${gridPrompt}` : gridPrompt
+  return gridPrompt
 }
 
 function buildImageFissionBaseResults(data: any): any[] {
@@ -4190,7 +4764,7 @@ async function runSingleFissionGrid(input: {
   gridIdx: number
 }): Promise<{ items: { url: string; title?: string }[]; firstUrl: string; res: any }> {
   const { ctx, settings, referenceImages, assetInputs, promptForModel, gridIdx } = input
-  const { id, kind, desiredGrids, selectedModel, imageSizeSetting, imageResolutionSetting, vendor, systemPromptOpt } = {
+  const { id, kind, desiredGrids, selectedModel, imageSizeSetting, imageResolutionSetting, vendor } = {
     id: ctx.id,
     kind: ctx.kind,
     desiredGrids: settings.desiredGrids,
@@ -4198,7 +4772,6 @@ async function runSingleFissionGrid(input: {
     imageSizeSetting: settings.imageSizeSetting,
     imageResolutionSetting: settings.imageResolutionSetting,
     vendor: settings.vendor,
-    systemPromptOpt: settings.systemPromptOpt,
   }
   const progressBase = 5 + Math.floor((45 * gridIdx) / Math.max(1, desiredGrids))
   const sliceSpan = Math.max(5, Math.floor(45 / Math.max(1, desiredGrids)))
@@ -4206,6 +4779,13 @@ async function runSingleFissionGrid(input: {
   ctx.setNodeStatus(id, 'running', { progress: progressBase })
   ctx.appendLog(id, `[${nowLabel()}] 生成裂变网格（${gridIdx + 1}/${desiredGrids}）…`)
 
+  const imageBillingSpecKey = buildImageBillingSpecKey({
+    modelKey: selectedModel,
+    aspectRatio: settings.resolvedAspect,
+    imageSize: imageSizeSetting,
+    resolution: imageResolutionSetting,
+		quality: settings.imageQualitySetting,
+  })
   const request: TaskRequestDto = {
     kind: 'image_edit',
     prompt: promptForModel,
@@ -4214,15 +4794,16 @@ async function runSingleFissionGrid(input: {
       nodeId: id,
       modelKey: selectedModel,
       aspectRatio: settings.resolvedAspect,
+      ...(imageBillingSpecKey ? { specKey: imageBillingSpecKey, billingSpecKey: imageBillingSpecKey } : {}),
       ...(imageSizeSetting ? { imageSize: imageSizeSetting } : {}),
       ...(imageResolutionSetting ? { imageResolution: imageResolutionSetting, resolution: imageResolutionSetting } : {}),
       referenceImages,
       ...(Array.isArray(assetInputs) && assetInputs.length ? { assetInputs } : {}),
-      ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
       persistAssets: useUIStore.getState().assetPersistenceEnabled,
     },
   }
   const pendingTask = await runTaskByVendorWithPendingProgress(ctx, {
+    vendor,
     request,
     startProgress: progressBase,
     maxProgress: progressMax,
@@ -4243,14 +4824,14 @@ async function runSingleFissionGrid(input: {
     const taskId = typeof res.id === 'string' ? res.id.trim() : String(res.id || '').trim()
     if (!taskId) throw new Error('裂变任务创建失败：未返回任务 ID')
     ctx.appendLog(id, `[${nowLabel()}] 已创建裂变任务（ID: ${taskId}），开始轮询进度…`)
-    res = await pollTaskResultUntilDone(ctx, {
+    taskHubRuntime.registerTask({
       taskId,
-      taskKind: 'image_edit',
+      kind: 'image_edit',
       prompt: promptForModel,
-      progressRange: { min: progressBase, max: progressMax },
-      initialProgress: Math.max(progressBase, requestProgress),
-      statusPatch: { imageTaskId: taskId, imageTaskKind: 'image_edit' },
+      nodeId: id,
+      isCanceled: () => ctx.isCanceled(id),
     })
+    res = await taskHubRuntime.waitForTask(taskId)
   }
 
   const gridRawUrl = extractFirstImageAssetUrl(res)
@@ -4433,18 +5014,16 @@ async function runStoryboardEditorTask(ctx: RunnerContext) {
       ),
     ).slice(0, 3)
     const effectiveTaskKind: TaskKind = referenceImages.length > 0 ? 'image_edit' : 'text_to_image'
-    const systemPromptOpt =
-      (data as Record<string, unknown>)?.showSystemPrompt && typeof (data as Record<string, unknown>)?.systemPrompt === 'string'
-        ? String((data as Record<string, unknown>).systemPrompt)
-        : undefined
     const storedImageModel =
       typeof (data as Record<string, unknown>)?.imageModel === 'string' && String((data as Record<string, unknown>).imageModel).trim()
         ? String((data as Record<string, unknown>).imageModel).trim()
         : ''
     const selectedModel =
       (typeof ctx.modelKey === 'string' && ctx.modelKey.trim()) ||
-      storedImageModel ||
-      resolveDefaultImageModelForTask(effectiveTaskKind === 'image_edit' ? 'image_edit' : 'text_to_image')
+      storedImageModel
+    if (!selectedModel) {
+      throw new Error('图片节点未配置模型：请先从系统模型目录中选择一个可用图片模型。')
+    }
     const vendor = resolveImageTaskVendor(
       selectedModel,
       typeof (data as Record<string, unknown>)?.imageModelVendor === 'string'
@@ -4458,7 +5037,7 @@ async function runStoryboardEditorTask(ctx: RunnerContext) {
       referenceImages,
       limit: 8,
     })
-    if (referenceImages.length > 2) {
+    if (shouldAutoMergeReferenceSheet() && referenceImages.length > 2) {
       try {
         const mergedReferenceSheet = await uploadMergedReferenceSheet({
           id,
@@ -4517,11 +5096,8 @@ async function runStoryboardEditorTask(ctx: RunnerContext) {
       const progressStart = 5 + Math.round((index / executableCells.length) * 80)
       const progressEnd = 5 + Math.round(((index + 1) / executableCells.length) * 80)
       const cellAspect = resolveStoryboardEditorCellAspect(cell, patch.storyboardEditorAspect)
-      const promptForModel = systemPromptOpt
-        ? `${systemPromptOpt}\n\n${cell.executionPrompt}`
-        : cell.executionPrompt
       const effectiveCellPromptForModel = appendReferenceAliasSlotPrompt({
-        prompt: promptForModel,
+        prompt: cell.executionPrompt,
         assetInputs: runtimeReferenceAssetInputs,
         referenceImages,
         enabled: referenceImages.length > 0 && !referenceSheet,
@@ -4535,6 +5111,13 @@ async function runStoryboardEditorTask(ctx: RunnerContext) {
         `[${nowLabel()}] 生成 ${cell.executionLabel}（${index + 1}/${executableCells.length}，${cellAspect}）…`,
       )
 
+      const imageBillingSpecKey = buildImageBillingSpecKey({
+        modelKey: selectedModel,
+        aspectRatio: cellAspect,
+        imageSize: imageSizeSetting,
+        resolution: imageResolutionSetting,
+		quality: readTrimmedRunnerText((data as Record<string, unknown>)?.imageQuality),
+      })
       const request: TaskRequestDto = {
         kind: effectiveTaskKind,
         prompt: effectiveCellPromptForModel,
@@ -4543,16 +5126,17 @@ async function runStoryboardEditorTask(ctx: RunnerContext) {
           nodeId: id,
           modelKey: selectedModel,
           aspectRatio: cellAspect,
+          ...(imageBillingSpecKey ? { specKey: imageBillingSpecKey, billingSpecKey: imageBillingSpecKey } : {}),
           ...(imageSizeSetting ? { imageSize: imageSizeSetting } : {}),
           ...(imageResolutionSetting ? { imageResolution: imageResolutionSetting, resolution: imageResolutionSetting } : {}),
           ...(referenceImages.length ? { referenceImages } : {}),
           ...(runtimeReferenceAssetInputs.length ? { assetInputs: runtimeReferenceAssetInputs } : {}),
           ...(referenceSheet ? { referenceSheet: buildReferenceSheetLogMeta(referenceSheet) } : {}),
-          ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
           persistAssets,
         },
       }
       const pendingTask = await runTaskByVendorWithPendingProgress(ctx, {
+        vendor,
         request,
         startProgress: progressStart,
         maxProgress: Math.max(progressStart + 1, progressEnd - 3),
@@ -4583,20 +5167,14 @@ async function runStoryboardEditorTask(ctx: RunnerContext) {
         })
         appendLog(id, `[${nowLabel()}] 已创建 ${cell.executionLabel} 任务（ID: ${taskId}），开始轮询进度…`)
 
-        res = await pollTaskResultUntilDone(ctx, {
+        taskHubRuntime.registerTask({
           taskId,
-          taskKind: effectiveTaskKind,
+          kind: effectiveTaskKind,
           prompt: effectiveCellPromptForModel,
-          progressRange: {
-            min: progressStart,
-            max: Math.max(progressStart + 1, progressEnd - 3),
-          },
-          initialProgress: Math.max(progressStart, requestProgress),
-          statusPatch: {
-            imageTaskId: taskId,
-            imageTaskKind: effectiveTaskKind,
-          },
+          nodeId: id,
+          isCanceled: () => isCanceled(id),
         })
+        res = await taskHubRuntime.waitForTask(taskId)
       }
 
       const rawImageUrl = extractFirstImageAssetUrl(res)
@@ -4698,7 +5276,32 @@ async function runGenericTask(ctx: RunnerContext) {
     state,
   } = ctx
 
+  let imageOperationSpec: ImageOperationSpec | null = null
   try {
+    const nodeRecord = data as Record<string, unknown>
+    if (nodeRecord.imageOperationSpec != null) {
+      imageOperationSpec = parseImageOperationSpec(nodeRecord.imageOperationSpec)
+      setNodeStatus(id, 'running', {
+        imageOperationState: {
+          ...createImageOperationState(imageOperationSpec, 'running'),
+          attempt: Math.max(1, Number((nodeRecord.imageOperationState as Record<string, unknown> | undefined)?.attempt ?? 0) + 1),
+          progress: 5,
+          startedAt: new Date().toISOString(),
+        },
+      })
+      appendLog(id, `[${nowLabel()}] 图片操作合同：${imageOperationSpec.kind} · ${imageOperationSpec.operationId}`)
+    }
+    const isPortraitTextureOperation = imageOperationSpec?.kind === 'portrait_adjust'
+      || nodeRecord.libTvImageOperationKey === 'portrait-adjust'
+    if (isPortraitTextureOperation && nodeRecord.portraitTextureSelectionStatus !== 'confirmed') {
+      throw new Error('人像质感调节尚未选择人物，请返回原图完成人物识别或手动框选')
+    }
+    if (
+      isPortraitTextureOperation
+      && (typeof nodeRecord.maskUrl !== 'string' || !nodeRecord.maskUrl.trim())
+    ) {
+      throw new Error('人像质感调节缺少已上传的真实区域蒙版')
+    }
     const storedImageModel =
       typeof data.imageModel === 'string' && data.imageModel.trim()
         ? data.imageModel.trim()
@@ -4708,15 +5311,16 @@ async function runGenericTask(ctx: RunnerContext) {
         ? data.geminiModel.trim()
         : typeof data.model === 'string' && data.model.trim()
           ? data.model.trim()
-          : 'gemini-2.5-flash'
+          : ''
     const focusGuideUrl =
       typeof (data as any)?.poseMaskUrl === 'string' && (data as any)?.poseMaskUrl.trim()
         ? (data as any).poseMaskUrl.trim()
         : null
-    const systemPromptOpt =
-      (data as any)?.showSystemPrompt && typeof (data as any)?.systemPrompt === 'string'
-        ? (data as any).systemPrompt
-        : undefined
+    const visibleCompositeOnlyReference =
+      kind === 'imageEdit' &&
+      typeof (data as Record<string, unknown>)?.referenceImageStrategy === 'string' &&
+      String((data as Record<string, unknown>).referenceImageStrategy).trim() === 'visible_composite_only'
+    const upstreamReferenceImages = visibleCompositeOnlyReference ? [] : collectReferenceImages(state, id)
     const mentionRoleRefs = isImageTask
       ? await resolveRoleCardImagesByMentions({
           bookId: String((data as any)?.sourceBookId || '').trim(),
@@ -4730,8 +5334,8 @@ async function runGenericTask(ctx: RunnerContext) {
           nodes: Array.isArray((state as { nodes?: unknown }).nodes)
             ? ((state as { nodes?: unknown }).nodes as Node[])
             : [],
-        }).catch(() => ({ urls: [] as string[], matched: [] as string[], missing: [] as string[], ambiguous: [] as string[] }))
-      : { urls: [] as string[], matched: [] as string[], missing: [] as string[], ambiguous: [] as string[] }
+        }).catch(() => createEmptyPromptAssetMentionResult())
+      : createEmptyPromptAssetMentionResult()
     if (isImageTask && mentionRoleRefs.matched.length) {
       appendLog(id, `[${nowLabel()}] 检测到角色提及：${mentionRoleRefs.matched.join('、')}，已自动注入角色卡参考图`)
     }
@@ -4800,21 +5404,35 @@ async function runGenericTask(ctx: RunnerContext) {
               ...selfPoseRefs,
               ...(selfStickmanRef ? [selfStickmanRef] : []),
               ...collectNodeReferenceImageUrls(data, 8),
-              ...collectReferenceImages(state, id),
+              ...upstreamReferenceImages,
               ...mentionAssetRefs.urls,
             ]
           : [
               ...selfPoseRefs,
               ...(selfStickmanRef ? [selfStickmanRef] : []),
               ...collectNodeReferenceImageUrls(data, 3),
-              ...collectReferenceImages(state, id),
+              ...upstreamReferenceImages,
               ...mentionAssetRefs.urls,
               ...mentionRoleRefs.urls,
               ...roleCardRefImages,
             ]
       )
       : []
-    const deduped = Array.from(new Set(referenceImagesRaw.filter((u) => typeof u === 'string' && u.trim())))
+    const selfOwnedImageUrls = new Set<string>(
+      [
+        ...(Array.isArray((data as any)?.imageResults)
+          ? ((data as any).imageResults as any[]).map((r: any) => String(r?.url || '').trim()).filter(Boolean)
+          : []),
+        typeof (data as any)?.imageUrl === 'string' ? String((data as any).imageUrl).trim() : '',
+      ].filter(Boolean),
+    )
+    const deduped = Array.from(
+      new Set(
+        referenceImagesRaw.filter(
+          (u) => typeof u === 'string' && u.trim() && !selfOwnedImageUrls.has(u.trim()),
+        ),
+      ),
+    )
     if (
       isImageTask &&
       deduped.length === 0 &&
@@ -4841,9 +5459,89 @@ async function runGenericTask(ctx: RunnerContext) {
     let referenceImages = focusGuideUrl
       ? [...prioritized.slice(0, Math.max(0, hardLimit - 1)), focusGuideUrl]
       : prioritized.slice(0, hardLimit)
-    const dynamicReferenceEntries = collectDynamicUpstreamReferenceEntries(state, id)
+    // 全局画风参考（项目「风格」槽 styleImages）：空项目里随手「文生图」也跟随锁定的全局参考画风。
+    // 只对普通文生图注入，角色卡/故事板分镜/局部编辑/自带 style 资产的节点跳过（见 isEligibleForGlobalStyleReference）。
+    // 与视频路径的全局风格注入语义一致：画风锚定图固定放最后一张、去重、限 hardLimit，
+    // 并显式打 role=style 进 assetInputs，供 appendReferenceAliasSlotPrompt 确定性标注图像角色（禁猜）。
+    const globalStyleEligible = isEligibleForGlobalStyleReference({
+      isImageTask,
+      isRoleCardTask,
+      sourceTag,
+      visibleCompositeOnlyReference,
+      hasFocusGuide: !!focusGuideUrl,
+      hasExplicitStyleAssetInput:
+        Array.isArray((data as Record<string, unknown>)?.assetInputs)
+        && ((data as Record<string, unknown>).assetInputs as unknown[]).some(
+          (e) => e && typeof e === 'object' && (e as Record<string, unknown>).role === 'style',
+        ),
+    })
+    const mentionStyleAssetInputs = mentionAssetRefs.assetInputs.filter((input) => input.role === 'style')
+    const mentionStyleUrls = mentionStyleAssetInputs.map((input) => input.url)
+    let injectedStyleAssetInputs: Array<{ url: string; role: string; name: string; assetRefId: string }> = []
+    if (globalStyleEligible || mentionStyleUrls.length > 0) {
+      // 单轨：画风锚定的唯一真相源 = 项目「风格」槽（styleImages，节点风格 chip 可见、可手动移除）。
+      // 不再读 uiStore.activeStyleBible，chip 移除后此处即不再注入——所见即所得。
+      const pidForStyle = String((useUIStore.getState() as any)?.currentProject?.id || '').trim()
+      const merged = mergeGlobalStyleReferenceImages({
+        referenceImages,
+        globalStyleRefs: [
+          ...mentionStyleUrls,
+          ...(globalStyleEligible && pidForStyle ? getRuntimeProjectImageSettings(pidForStyle).styleImages : []),
+        ],
+        selfOwnedImageUrls,
+        hardLimit,
+      })
+      if (merged.injectedCount > 0) {
+        referenceImages = merged.referenceImages
+        injectedStyleAssetInputs = merged.styleUrls
+          .filter((url) => !mentionStyleUrls.includes(url))
+          .map((url, idx) => ({
+            url,
+            role: 'style',
+            name: globalStyleEligible
+              ? merged.styleUrls.length > 1 ? `全局画风锚定${idx + 1}` : '全局画风锚定'
+              : `提示词风格参考${idx + 1}`,
+            assetRefId: `style-ref-${idx + 1}`,
+          }))
+        if (mentionStyleUrls.length > 0) {
+          appendLog(
+            id,
+            `[${nowLabel()}] 已保留提示词中的显式风格引用 x${mentionStyleUrls.length}（固定为参考图末尾）${
+              globalStyleEligible ? '，并合并项目全局风格' : ''
+            }`,
+          )
+        } else {
+          appendLog(id, `[${nowLabel()}] 已注入全局画风参考 x${merged.injectedCount}（来自素材库风格参考，固定为最后 ${merged.injectedCount} 张）`)
+        }
+      }
+    }
+    // 全局锁定风格的「文字指令」（自定义文字风格 / 预设带文字）追加到图片 prompt，复用同款合格判断。
+    const lockedStylePromptText = (() => {
+      if (!isImageTask) return ''
+      const pid = String((useUIStore.getState() as any)?.currentProject?.id || '').trim()
+      if (!pid) return ''
+      return getRuntimeProjectImageSettings(pid).lockedStyle?.stylePrompt || ''
+    })()
+    const executionBasePrompt = isPortraitTextureOperation
+      ? buildPortraitTextureExecutionPrompt({
+          strength: nodeRecord.portraitTextureStrength,
+          supplementalPrompt: prompt,
+        })
+      : prompt
+    const promptWithGlobalStyle = mergeGlobalStylePrompt({
+      basePrompt: executionBasePrompt,
+      stylePrompt: lockedStylePromptText,
+      eligible: globalStyleEligible,
+    })
+    if (promptWithGlobalStyle !== prompt) {
+      appendLog(id, `[${nowLabel()}] 已注入全局风格文字指令（来自锁定风格）`)
+    }
+    const dynamicReferenceEntries = visibleCompositeOnlyReference ? [] : collectDynamicUpstreamReferenceEntries(state, id)
+    const explicitAssetInputs = Array.isArray((data as Record<string, unknown>)?.assetInputs)
+      ? ((data as Record<string, unknown>).assetInputs as unknown[])
+      : []
     let runtimeReferenceAssetInputs = mergeReferenceAssetInputs({
-      assetInputs: (data as Record<string, unknown>)?.assetInputs,
+      assetInputs: [...mentionAssetRefs.assetInputs, ...explicitAssetInputs, ...injectedStyleAssetInputs],
       dynamicEntries: dynamicReferenceEntries,
       referenceImages,
       limit: 8,
@@ -4855,10 +5553,21 @@ async function runGenericTask(ctx: RunnerContext) {
       appendLog(id, `[${nowLabel()}] 已注入局部编辑区域引导图，模型仅允许修改高亮区域`)
     }
     const wantsImageEdit = isImageTask && referenceImages.length > 0
-    const effectiveTaskKind: TaskKind = wantsImageEdit ? 'image_edit' : taskKind
-    const selectedModel = isImageTask
-      ? storedImageModel || resolveDefaultImageModelForTask(effectiveTaskKind === 'image_edit' ? 'image_edit' : 'text_to_image')
-      : storedTextModel
+    // 抠图节点用 data.forceTaskKind 强制走像素级分割任务（image_remove_bg），
+    // 绕过 Gemini 的生成式图像编辑；仅在图像任务上、且显式标记时生效。
+    const forcedImageTaskKind: TaskKind | null =
+      isImageTask && (data as any)?.forceTaskKind === 'image_remove_bg'
+        ? 'image_remove_bg'
+        : null
+    const effectiveTaskKind: TaskKind =
+      forcedImageTaskKind ?? (wantsImageEdit ? 'image_edit' : taskKind)
+    if (isImageTask && !storedImageModel) {
+      throw new Error('图片节点未配置模型：请先从系统模型目录中选择一个可用图片模型。')
+    }
+    if (!isImageTask && !storedTextModel) {
+      throw new Error('节点未配置文本模型：请先从系统模型目录中选择一个可用文本模型。')
+    }
+    const selectedModel = isImageTask ? storedImageModel : storedTextModel
     const modelLower = selectedModel.toLowerCase()
 
     const explicitVendor = isImageTask
@@ -4879,7 +5588,7 @@ async function runGenericTask(ctx: RunnerContext) {
               : 'gemini'
         )
     let referenceSheet: UploadedReferenceSheet | null = null
-    if (isImageTask && referenceImages.length > 2) {
+    if (shouldAutoMergeReferenceSheet() && isImageTask && referenceImages.length > 2) {
       try {
         const mergedReferenceSheet = await uploadMergedReferenceSheet({
           id,
@@ -4927,6 +5636,10 @@ async function runGenericTask(ctx: RunnerContext) {
         : typeof (data as any)?.resolution === 'string' && (data as any)?.resolution.trim()
           ? (data as any).resolution.trim()
           : undefined
+    const imageQualitySetting =
+      typeof (data as Record<string, unknown>)?.imageQuality === 'string' && String((data as Record<string, unknown>).imageQuality).trim()
+        ? String((data as Record<string, unknown>).imageQuality).trim()
+        : undefined
     const imageEditSizeSetting =
       effectiveTaskKind === 'image_edit' && typeof (data as any)?.imageEditSize === 'string' && (data as any).imageEditSize.trim()
         ? (data as any).imageEditSize.trim()
@@ -4939,19 +5652,30 @@ async function runGenericTask(ctx: RunnerContext) {
     const allTexts: string[] = []
     let lastRes: any = null
 
-    const promptForModel =
-      isImageTask && systemPromptOpt
-        ? `${systemPromptOpt}\n\n${prompt}`
-        : prompt
+    const promptForModel = promptWithGlobalStyle
+    const characterBibleHint = isImageTask ? buildCharacterBiblePromptHint(data) : ''
     const roleCardStyleLockHint =
       isRoleCardTask
         ? '角色卡强约束：必须严格沿用 referenceImages 的画风锚点（线条/材质/光影/色温），保持角色外观一致；不得擅自切换风格。'
         : ''
+    const isNewAssetGeneration =
+      isImageTask &&
+      wantsImageEdit &&
+      (data as any)?.productionLayer === 'anchors' &&
+      (data as any)?.creationStage === 'single_variable_expansion'
+    const styleOnlyHardConstraint = isNewAssetGeneration
+      ? '【风格参考硬约束】参考图仅作章节画风方向锚定（笔触/色调/质感），严禁将参考图主体画面内容融入新生成图像，必须完全按以下文字描述从零生成全新独立图像，不得套用参考图的构图或主体形象。'
+      : ''
+    // 真正「编辑现有图片」（修复/放大/局部改）才点名待编辑目标图：
+    // 角色卡生成 / 新资产单变量扩展 / 局部编辑引导图 这些流程里未命名图不是编辑目标，排除以免误标。
+    const markEditTarget =
+      wantsImageEdit && !referenceSheet && !isRoleCardTask && !isNewAssetGeneration && !focusGuideUrl
     const promptWithAliasSlotBinding = appendReferenceAliasSlotPrompt({
-      prompt: [promptForModel, roleCardStyleLockHint].filter(Boolean).join('\n\n'),
+      prompt: [promptForModel, styleOnlyHardConstraint, characterBibleHint, roleCardStyleLockHint].filter(Boolean).join('\n\n'),
       assetInputs: runtimeReferenceAssetInputs,
       referenceImages,
       enabled: wantsImageEdit && !referenceSheet,
+      markEditTarget,
     })
     const effectivePromptForModel = appendImageEditFocusGuidePrompt(
       promptWithAliasSlotBinding,
@@ -4979,16 +5703,27 @@ async function runGenericTask(ctx: RunnerContext) {
                 ? 'Veo'
                 : 'Gemini'
       const modelType =
-        effectiveTaskKind === 'image_edit'
-          ? '图像编辑'
-          : effectiveTaskKind === 'text_to_image'
-            ? '图像'
-            : '文案'
+        effectiveTaskKind === 'image_remove_bg'
+          ? '抠图'
+          : effectiveTaskKind === 'image_edit'
+            ? '图像编辑'
+            : effectiveTaskKind === 'text_to_image'
+              ? '图像'
+              : '文案'
       appendLog(
         id,
         `[${nowLabel()}] 调用${vendorName} ${modelType}模型 ${sampleCount > 1 ? `(${i + 1}/${sampleCount})` : ''}…`,
       )
 
+      const imageBillingSpecKey = isImageTask
+        ? buildImageBillingSpecKey({
+            modelKey: selectedModel,
+            aspectRatio,
+            imageSize: imageSizeSetting,
+            resolution: imageResolutionSetting || imageEditSizeSetting,
+            quality: imageQualitySetting,
+          })
+        : null
       const imageRequest: TaskRequestDto | null = isImageTask
         ? {
             kind: effectiveTaskKind,
@@ -4999,6 +5734,7 @@ async function runGenericTask(ctx: RunnerContext) {
               nodeId: id,
               modelKey: selectedModel,
               aspectRatio,
+              ...(imageBillingSpecKey ? { specKey: imageBillingSpecKey, billingSpecKey: imageBillingSpecKey } : {}),
               ...(imageEditSizeSetting
                 ? {
                     size: imageEditSizeSetting,
@@ -5008,10 +5744,30 @@ async function runGenericTask(ctx: RunnerContext) {
                 : {}),
               ...(imageSizeSetting ? { imageSize: imageSizeSetting } : {}),
               ...(imageResolutionSetting ? { imageResolution: imageResolutionSetting, resolution: imageResolutionSetting } : {}),
+              ...(imageQualitySetting ? { quality: imageQualitySetting } : {}),
               ...(wantsImageEdit ? { referenceImages } : {}),
+              ...(effectiveTaskKind === 'image_edit'
+                && (
+                  (typeof (data as Record<string, unknown>).maskUrl === 'string'
+                    && String((data as Record<string, unknown>).maskUrl).trim())
+                  || (imageOperationSpec ? imageOperationMaskUrl(imageOperationSpec) : null)
+                )
+                ? {
+                    maskUrl:
+                      (typeof (data as Record<string, unknown>).maskUrl === 'string'
+                        && String((data as Record<string, unknown>).maskUrl).trim())
+                      || imageOperationMaskUrl(imageOperationSpec!)!,
+                  }
+                : {}),
+              ...(imageOperationSpec
+                ? {
+                    imageOperationSpec,
+                    imageOperationId: imageOperationSpec.operationId,
+                    imageOperation: imageOperationSpec.kind,
+                  }
+                : {}),
               ...(runtimeReferenceAssetInputs.length ? { assetInputs: runtimeReferenceAssetInputs } : {}),
               ...(referenceSheet ? { referenceSheet: buildReferenceSheetLogMeta(referenceSheet) } : {}),
-              ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
             },
           }
         : null
@@ -5021,6 +5777,7 @@ async function runGenericTask(ctx: RunnerContext) {
       )
       const pendingTask = imageRequest
         ? await runTaskByVendorWithPendingProgress(ctx, {
+            vendor,
             request: imageRequest,
             startProgress: progressBase,
             maxProgress: requestProgressCap,
@@ -5029,10 +5786,9 @@ async function runGenericTask(ctx: RunnerContext) {
         : null
       let res = imageRequest
         ? pendingTask!.result
-        : await runAutoChat({
+        : await runChatByVendor(vendor, {
             prompt,
-            ...(systemPromptOpt ? { systemPrompt: systemPromptOpt } : {}),
-            ...(selectedModel ? { modelAlias: selectedModel } : {}),
+            ...(selectedModel ? { modelKey: selectedModel } : {}),
           })
       const requestProgress = imageRequest ? pendingTask!.requestProgress : progressBase
 
@@ -5270,6 +6026,23 @@ async function runGenericTask(ctx: RunnerContext) {
         preview,
       },
       ...patchExtra,
+      ...(imageOperationSpec
+        ? {
+            imageOperationState: {
+              ...createImageOperationState(imageOperationSpec, 'succeeded'),
+              attempt: Math.max(1, Number(((data as Record<string, unknown>).imageOperationState as Record<string, unknown> | undefined)?.attempt ?? 0) + 1),
+              progress: 100,
+              startedAt: imageOperationSpec.createdAt,
+              finishedAt: new Date().toISOString(),
+              resultAssets: allImageAssets.map((asset) => ({
+                role: 'result' as const,
+                url: asset.url,
+                assetId: asset.assetId,
+              })),
+            },
+            imageOperationRevision: imageOperationSpec.sourceRevision + 1,
+          }
+        : {}),
     })
     if (isImageTask && firstImage?.url) {
       const nextNodeData: Record<string, unknown> = {
@@ -5467,6 +6240,23 @@ async function runGenericTask(ctx: RunnerContext) {
       lastError: enhancedMsg,
       httpStatus: status,
       isQuotaExceeded: false,
+      ...(imageOperationSpec
+        ? {
+            imageOperationState: {
+              ...createImageOperationState(imageOperationSpec, 'failed'),
+              attempt: Math.max(1, Number((((data as Record<string, unknown>).imageOperationState as Record<string, unknown> | undefined)?.attempt) ?? 0) + 1),
+              progress: 0,
+              finishedAt: new Date().toISOString(),
+              error: {
+                code: typeof (err as Record<string, unknown>)?.code === 'string'
+                  ? String((err as Record<string, unknown>).code)
+                  : 'image_operation_failed',
+                message: enhancedMsg,
+                retryable: status !== 400 && status !== 401 && status !== 403,
+              },
+            },
+          }
+        : {}),
     })
     appendLog(id, `[${nowLabel()}] error: ${enhancedMsg}`)
   } finally {

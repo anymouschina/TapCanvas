@@ -192,4 +192,41 @@ describe("getNodeContextBundle", () => {
 		expect(result.diagnostics.executionTraces[0]?.id).toBe("trace-1");
 		expect(result.diagnostics.storyboardDiagnostics[0]?.message).toBe("render_job_created");
 	});
+
+	it("uses the supplied chapter canvas snapshot instead of looking up the project root flow", async () => {
+		const ownerId = "owner-chapter-context";
+		const projectId = "project-chapter-context";
+		const chapterId = "book-example-ch1341";
+		const nodeId = "chapter-node";
+		const chapterFlow = {
+			id: chapterId,
+			name: "chapter-canvas",
+			data: JSON.stringify({
+				nodes: [{ id: nodeId, type: "taskNode", data: { kind: "image", label: "角色卡" } }],
+				edges: [],
+			}),
+			owner_id: ownerId,
+			project_id: projectId,
+			created_at: "2026-07-25T00:00:00.000Z",
+			updated_at: "2026-07-25T00:00:00.000Z",
+		} satisfies FlowRow;
+
+		mockedListExecutionsForOwnerFlow.mockResolvedValueOnce([]);
+		mockedListUserExecutionTraces.mockResolvedValueOnce([]);
+		mockedListStoryboardDiagnosticLogs.mockResolvedValueOnce([]);
+		const rootFlowLookupCount = mockedGetFlowForOwner.mock.calls.length;
+
+		const result = await getNodeContextBundle({
+			c: { env: { DB: {} } } as AppContext,
+			ownerId,
+			projectId,
+			flowId: chapterId,
+			nodeId,
+			flowRow: chapterFlow,
+		});
+
+		expect(result.flowId).toBe(chapterId);
+		expect(result.node.nodeId).toBe(nodeId);
+		expect(mockedGetFlowForOwner.mock.calls).toHaveLength(rootFlowLookupCount);
+	});
 });

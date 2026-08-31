@@ -24,7 +24,6 @@ import {
   showError,
   showInfo,
   showSuccess,
-  loadChannelModels,
   copy,
   toBoolean,
 } from '../../helpers';
@@ -164,7 +163,6 @@ export const useChannelsData = () => {
         showError(reason);
       });
     fetchGroups().then();
-    loadChannelModels().then();
     fetchGlobalPassThroughEnabled().then();
   }, []);
 

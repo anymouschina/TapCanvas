@@ -78,14 +78,12 @@ const (
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	ChannelType int
-	accessKey   string
-	secretKey   string
-	baseURL     string
+	accessKey string
+	secretKey string
+	baseURL   string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
-	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 
 	// apiKey format: "access_key|secret_key"

@@ -1,7 +1,18 @@
 import { Hono } from "hono";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+	GetObjectCommand,
+	HeadObjectCommand,
+	PutObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import type {
+	AiCharacterLibraryCharacterDto,
+	CharacterBible,
+	AiCharacterLibrarySyncStateDto,
+	AiCharacterLibraryUpsertPayload,
+} from "../../../../packages/schemas/character-bible-protocol";
 import type { AppContext, AppEnv } from "../../types";
 import {
 	authMiddleware,
@@ -9,8 +20,8 @@ import {
 	tryGetUserDbAuthState,
 } from "../../middleware/auth";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
+import { extractPosterViaMediaWorker } from "../../platform/media-worker/client";
 import {
-	AppendProjectBookUploadChunkSchema,
 	CreateAssetSchema,
 	FinishProjectBookUploadSchema,
 	getUtf8TextByteLength,
@@ -27,26 +38,41 @@ import {
 import {
 	createAssetRow,
 	getAssetByIdForUser,
+	getGlobalAssetByName,
 	deleteAssetRow,
 	deleteBookPointerAssetsForUser,
 	listAssetsForUser,
 	listAssetsForUserByKind,
 	listPublicAssets,
 	renameAssetRow,
-	updateAssetDataRow,
-} from "./asset.repo";
+	updateAssetDataRow, listPublishRecordAssets, listProjectsTvInfo } from "./asset.repo";
+import { sanitizeHomepageDecoration } from "./homepage-decoration";
 import { getProjectForOwner } from "../project/project.repo";
+import { touchProjectActivity } from "../project/project-activity.repo";
+import { upsertChaptersFromBook } from "../chapter/chapter.repo";
 import { resolveLocalDevRole } from "../auth/local-admin";
 import { runAgentsBridgeChatTask } from "../task/task.agents-bridge";
 import { STORYBOARD_GOVERNANCE_MODEL_KEY } from "../agents/agents.model-keys";
 import { resolvePublicAssetBaseUrl } from "./asset.publicBase";
-import { createRustfsClient, resolveRustfsConfig } from "./rustfs.client";
+import { registerGeneratedMediaAsset } from "./asset.hosting";
+import { createObjectStorageClient, resolveObjectStorageConfig } from "./rustfs.client";
 import { persistStoryboardChunkMemory } from "../memory/memory.service";
-import { isStalledBookUploadJob } from "./book-upload-job-state";
-import { resolveBookMetadataAgentExecutionMode } from "./book-metadata-agent-mode";
 import {
-	deriveShotPromptsFromStructuredData,
-	normalizeStoryboardStructuredData,
+	LOCAL_ASSET_ROUTE_PREFIX,
+	LocalAssetRangeError,
+	readLocalAsset,
+	resolveLocalAssetStorageConfig,
+} from "./local-asset-storage";
+import { isStalledBookUploadJob } from "./book-upload-job-state";
+import {
+	resolveBookMetadataAgentExecutionMode,
+	resolveBookMetadataTargetChapterNumbers,
+} from "./book-metadata-agent-mode";
+import {
+	requireStoryboardV12ArtifactPayload,
+	type StoryboardPersistenceHandoffEvidence,
+} from "../storyboard/storyboard-persistence-contract";
+import {
 	type StoryboardStructuredData,
 } from "../storyboard/storyboard-structure";
 import {
@@ -55,22 +81,62 @@ import {
 } from "./book-text-sanitizer";
 import { resolveProjectDataRepoRoot } from "./project-data-root";
 import {
+	BookIndexStoreError,
+	readBookIndex,
+	replaceBookIndex,
+	updateBookIndex,
+	type BookIndexRecord,
+} from "./book-index-store";
+import { mergeDerivedBookIndex } from "./book-index-derived-merge";
+import { AppError } from "../../middleware/error";
+import {
 	normalizePublicFlowAnchorBindings,
 	type PublicFlowAnchorBinding,
 } from "../flow/flow.anchor-bindings";
+import {
+	BookStyleBibleNotReadyError,
+	confirmBookStyleBible,
+} from "./book-style-bible";
+import {
+	BookEvidenceError,
+	buildBookEvidenceIndex,
+	writeBookEvidenceIndex,
+} from "./book-evidence-index";
+import {
+	BookSourceParseError,
+	isSupportedBookSourceFileName,
+	parseBookSource,
+	requireBookSourceMetadataV1,
+	storedBookSourceFileName,
+	type BookSourceMetadataV1,
+} from "./book-source-parser";
+import {
+	BookUploadSessionLockError,
+	withBookUploadSessionLock,
+} from "./book-upload-session-lock";
+import { writeBookUploadMetadataAtomically } from "./book-upload-metadata-store";
+import {
+	calculateRanking,
+	filterHomepageModeratedAssets,
+	getHomepageVideoModerationConfig,
+	getHomepageVideoRankingConfig,
+} from "../ranking/ranking-control";
 
 export const assetRouter = new Hono<AppEnv>();
 
 const BOOK_UPLOAD_CHUNK_DIR = ".uploads";
+const BOOK_UPLOAD_CHUNK_MAX_BYTES = 2 * 1024 * 1024;
 
 type BookUploadSessionMeta = {
 	id: string;
 	userId: string;
 	projectId: string;
 	title: string;
+	sourceFileName: string;
 	tmpPath: string;
 	bytes: number;
-	contentBytes?: number;
+	contentBytes: number;
+	finalizedJobId?: string;
 	createdAt: string;
 	updatedAt: string;
 };
@@ -339,6 +405,14 @@ function detectUploadExtensionFromMeta(options: {
 		"video/mp4": "mp4",
 		"video/webm": "webm",
 		"video/quicktime": "mov",
+		"audio/mpeg": "mp3",
+		"audio/mp3": "mp3",
+		"audio/mp4": "m4a",
+		"audio/aac": "aac",
+		"audio/wav": "wav",
+		"audio/x-wav": "wav",
+		"audio/ogg": "ogg",
+		"audio/flac": "flac",
 	};
 	if (contentType && known[contentType]) return known[contentType];
 	if (name) {
@@ -347,6 +421,9 @@ function detectUploadExtensionFromMeta(options: {
 	}
 	if (contentType.startsWith("image/")) {
 		return contentType.slice("image/".length) || "png";
+	}
+	if (contentType.startsWith("audio/")) {
+		return contentType.slice("audio/".length) || "mp3";
 	}
 	return "bin";
 }
@@ -365,15 +442,17 @@ async function canViewAllTapShowAssets(c: AppContext): Promise<boolean> {
 function inferMediaKind(options: {
 	contentType: string;
 	fileName?: string;
-}): "image" | "video" | null {
+}): "image" | "video" | "audio" | null {
 	const contentType = normalizeContentType(options.contentType);
 	if (contentType.startsWith("image/")) return "image";
 	if (contentType.startsWith("video/")) return "video";
+	if (contentType.startsWith("audio/")) return "audio";
 	const name = options.fileName || "";
 	const ext = (name.split(".").pop() || "").toLowerCase();
 	if (!ext) return null;
 	if (["png", "jpg", "jpeg", "webp", "gif", "avif"].includes(ext)) return "image";
 	if (["mp4", "webm", "mov"].includes(ext)) return "video";
+	if (["mp3", "m4a", "aac", "wav", "ogg", "flac"].includes(ext)) return "audio";
 	return null;
 }
 
@@ -597,7 +676,6 @@ type BookStyleBible = {
 	negativeDirectives: string[];
 	consistencyRules: string[];
 	referenceImages?: string[];
-	characterPromptTemplate: string;
 };
 
 const STORYBOARD_REFERENCE_PROMPT_SCHEMA_VERSION = "storyboard_reference_v2";
@@ -610,6 +688,7 @@ type AssetConfirmationMode = "auto" | "manual";
 
 type BookRoleCardRecord = {
 	cardId: string;
+	characterBibleId?: string;
 	roleId?: string;
 	roleName: string;
 	referenceKind?: StoryboardReferenceCardKind;
@@ -639,6 +718,32 @@ type BookRoleCardRecord = {
 	createdBy: string;
 	updatedBy: string;
 };
+
+type BookCharacterBibleRecord = CharacterBible & {
+	roleCardId?: string;
+};
+
+function findCharacterBibleForRoleCard(input: {
+	characterBibles: BookCharacterBibleRecord[];
+	characterBibleId?: string | null;
+	roleName?: string | null;
+	roleId?: string | null;
+}): BookCharacterBibleRecord | null {
+	const requestedId = String(input.characterBibleId || "").trim();
+	if (requestedId) {
+		return input.characterBibles.find((item) => item.id === requestedId) || null;
+	}
+	const roleName = String(input.roleName || "").trim().toLowerCase();
+	const roleId = String(input.roleId || "").trim().toLowerCase();
+	if (!roleName && !roleId) return null;
+	const matches = input.characterBibles.filter((item) => {
+		const bibleName = String(item.name || "").trim().toLowerCase();
+		const sourceCharacterId = String(item.sourceCharacterId || "").trim().toLowerCase();
+		if (roleId && sourceCharacterId && roleId === sourceCharacterId) return true;
+		return !!roleName && !!bibleName && roleName === bibleName;
+	});
+	return matches.length === 1 ? matches[0]! : null;
+}
 type BookVisualRefRecord = {
 	refId: string;
 	category: "scene_prop" | "spell_fx";
@@ -722,7 +827,11 @@ type BookStoryboardPlanRecord = {
 	outputAssetId?: string;
 	runId?: string;
 	storyboardContent?: string;
-	storyboardStructured?: StoryboardStructuredData;
+	storyboardArtifact: Record<string, unknown>;
+	artifactSha256: string;
+	storyboardStructured: StoryboardStructuredData;
+	/** Opaque compatibility metadata from records written before the artifact-only cutover. */
+	semanticReview?: unknown;
 	shotPrompts: string[];
 	nextChunkIndexByGroup?: {
 		"1"?: number;
@@ -737,7 +846,8 @@ type BookStoryboardPlanRecord = {
 };
 type BookStoryboardChunkRecord = {
 	chunkId: string;
-	planId?: string;
+	planId: string;
+	previousChunkId?: string;
 	taskId: string;
 	chapter?: number;
 	groupSize: 1 | 4 | 9 | 25;
@@ -746,7 +856,12 @@ type BookStoryboardChunkRecord = {
 	shotEnd: number;
 	nodeId?: string;
 	prompt?: string;
-	storyboardStructured?: StoryboardStructuredData;
+	storyboardArtifact: Record<string, unknown>;
+	artifactSha256: string;
+	storyboardStructured: StoryboardStructuredData;
+	/** Opaque compatibility metadata from records written before the artifact-only cutover. */
+	semanticReview?: unknown;
+	handoffEvidence?: StoryboardPersistenceHandoffEvidence;
 	shotPrompts: string[];
 	frameUrls: string[];
 	tailFrameUrl: string;
@@ -760,6 +875,37 @@ type BookStoryboardChunkRecord = {
 	createdBy: string;
 	updatedBy: string;
 };
+
+function normalizeStoryboardHandoffEvidence(
+	value: unknown,
+): StoryboardPersistenceHandoffEvidence | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const record = value as Record<string, unknown>;
+	const previousExitState = String(record.previousExitState || "").trim();
+	const currentEntryState = String(record.currentEntryState || "").trim();
+	if (!previousExitState || !currentEntryState || previousExitState !== currentEntryState) return null;
+	const parsePoint = (point: unknown) => {
+		if (point === null) return null;
+		if (!point || typeof point !== "object" || Array.isArray(point)) return undefined;
+		const pointRecord = point as Record<string, unknown>;
+		const chapter = Number(pointRecord.chapter);
+		const sequence = Number(pointRecord.sequence);
+		if (!Number.isInteger(chapter) || chapter < 1 || !Number.isInteger(sequence) || sequence < 0) {
+			return undefined;
+		}
+		const label = typeof pointRecord.label === "string" ? pointRecord.label.trim() : "";
+		return { chapter, sequence, ...(label ? { label } : null) };
+	};
+	const previousEffectiveAt = parsePoint(record.previousEffectiveAt);
+	const currentEffectiveAt = parsePoint(record.currentEffectiveAt);
+	if (previousEffectiveAt === undefined || currentEffectiveAt === undefined) return null;
+	return {
+		previousExitState,
+		currentEntryState,
+		previousEffectiveAt,
+		currentEffectiveAt,
+	};
+}
 type BookDerivationMode = "standard" | "deep";
 type StoryboardGroupSize = 1 | 4 | 9 | 25;
 const STORYBOARD_NEXT_BATCH_SIZE = 25 as const;
@@ -792,8 +938,57 @@ function getStoryboardFallbackChapterShotCap(): number {
 	return readNodeEnvInt("STORYBOARD_FALLBACK_CHAPTER_SHOT_CAP", 200, { min: 25, max: 5000 });
 }
 
+// 行首允许 Markdown 风格装饰（如 "###第1章"、"## 第十章"）——网文导出件常带 # 前缀，
+// 不吃掉它会导致整本书探测 0 章、落进「全书一章」兜底。
 const CHAPTER_HEADING_LINE_RE =
-	/^\s*(?:正文\s*)?(?:(第\s*[0-9０-９一二三四五六七八九十百千零〇两IVXLCDMivxlcdm]+\s*(?:卷|部|篇|章|回|节)(?:\s*[-:：.、·\)]?\s*[^\r\n]{0,80})?)|((?:chapter|chap\.?)\s*[0-9ivxlcdm]+(?:\s*[-:：.、]\s*[^\r\n]{0,80})?)|((?:prologue|epilogue|序章|楔子|终章|尾声)\s*[^\r\n]{0,80}))\s*$/i;
+	/^\s*(?:[#＃]{1,6}\s*)?(?:正文\s*)?(?:(第\s*[0-9０-９一二三四五六七八九十百千零〇两IVXLCDMivxlcdm]+\s*(?:卷|部|篇|章|回|节|集|话|話|幕)(?:\s*[-:：.、·\)]?\s*[^\r\n]{0,80})?)|((?:chapter|chap\.?|episode|ep\.?)\s*[0-9ivxlcdm]+(?:\s*[-:：.、]\s*[^\r\n]{0,80})?)|((?:prologue|epilogue|序章|楔子|终章|尾声)\s*[^\r\n]{0,80}))\s*$/i;
+
+const CHINESE_NUM_MAP: Record<string, number> = {
+	零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5,
+	六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 百: 100, 千: 1000,
+};
+
+function parseChapterNumber(title: string): number | null {
+	// Arabic/full-width digits: 第30章, 第３０章
+	const arabicM = title.match(/第\s*([0-9０-９]+)\s*[卷部篇章回节集话話幕]/);
+	if (arabicM) {
+		const n = parseInt(arabicM[1].replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xff10)), 10);
+		if (Number.isFinite(n) && n > 0) return n;
+	}
+	// Roman numerals — \b prevents false matches on prose words like "civil", "dim"
+	const romanM = title.match(/(?:chapter|chap\.?)\s*([ivxlcdm]+)\b/i);
+	if (romanM) {
+		const roman = romanM[1].toUpperCase();
+		const vals: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+		let n = 0;
+		for (let i = 0; i < roman.length; i++) {
+			const cur = vals[roman[i]] ?? 0;
+			const nxt = vals[roman[i + 1]] ?? 0;
+			n += cur < nxt ? -cur : cur;
+		}
+		if (n > 0) return n;
+	}
+	// Chinese numerals: 第三十章, 第一百二十章
+	const cnM = title.match(/第\s*([零〇一二两三四五六七八九十百千]+)\s*[卷部篇章回节集话話幕]/);
+	if (cnM) {
+		const chars = cnM[1];
+		let result = 0;
+		let cur = 0;
+		for (const ch of chars) {
+			const v = CHINESE_NUM_MAP[ch] ?? -1;
+			if (v < 0) return null;
+			if (v >= 10) {
+				result += (cur || 1) * v;
+				cur = 0;
+			} else {
+				cur = v;
+			}
+		}
+		result += cur;
+		if (result > 0) return result;
+	}
+	return null;
+}
 
 function getAgentsBridgeTimeoutByMode(mode: BookDerivationMode): number {
 	// Strict multi-round derivation for long novels needs multi-minute budget.
@@ -847,14 +1042,31 @@ function normalizeChapterList(value: unknown): MaterialChapter[] {
 	return out;
 }
 
+// TOC entries are bare heading lines with no body — the text between consecutive heading
+// matches is just the heading itself (≤100 chars).  A cluster of ≥3 such entries at the
+// start of the detected list is almost certainly a table-of-contents section in the raw
+// file.  We strip that leading cluster so the real body chapters are used instead.
+const TOC_ENTRY_MAX_CHARS = 100;
+const MIN_TOC_CLUSTER_SIZE = 3;
+
+function stripLeadingTocCluster<T extends { contentLength: number }>(
+	items: T[],
+): T[] {
+	let end = 0;
+	while (end < items.length && items[end].contentLength <= TOC_ENTRY_MAX_CHARS) end++;
+	return end >= MIN_TOC_CLUSTER_SIZE ? items.slice(end) : items;
+}
+
 function splitByChapterHeadings(content: string): MaterialChapter[] {
 	const text = String(content || "");
 	if (!text.trim()) return [];
 	const lines = text.split(/\r?\n/);
+	const hasCRLF = text.includes("\r\n");
+	const sepLen = hasCRLF ? 2 : 1;
 	const lineOffsets: number[] = new Array(lines.length + 1);
 	let cursor = 0;
 	for (let i = 0; i < lines.length; i++) {
-		lineOffsets[i + 1] = cursor + lines[i].length + 1;
+		lineOffsets[i + 1] = cursor + lines[i].length + (i < lines.length - 1 ? sepLen : 0);
 		cursor = lineOffsets[i + 1];
 	}
 	const matches: Array<{ line: number; start: number; title: string }> = [];
@@ -873,20 +1085,23 @@ function splitByChapterHeadings(content: string): MaterialChapter[] {
 	}
 	if (!matches.length) return [];
 
-	const out: MaterialChapter[] = [];
+	const raw: Array<{ contentLength: number; title: string; body: string }> = [];
 	for (let i = 0; i < matches.length; i++) {
 		const cur = matches[i];
 		const next = matches[i + 1];
 		const end = next ? next.start : text.length;
 		const body = text.slice(cur.start, end).trim();
 		if (!body) continue;
-		out.push({
-			chapter: i + 1,
-			title: cur.title,
-			content: body,
-		});
+		raw.push({ contentLength: body.length, title: cur.title, body });
 	}
-	return out;
+
+	const seen = new Set<number>();
+	return stripLeadingTocCluster(raw).map((item, idx) => {
+		let ch = parseChapterNumber(item.title) ?? idx + 1;
+		if (seen.has(ch)) ch = idx + 1;
+		seen.add(ch);
+		return { chapter: ch, title: item.title, content: item.body };
+	});
 }
 
 function splitByFixedSize(content: string, chunkChars = 120_000): MaterialChapter[] {
@@ -916,10 +1131,12 @@ function toBookChapterMetaFromText(content: string): BookChapterMeta[] {
 	const text = String(content || "");
 	if (!text.trim()) return [];
 	const lines = text.split(/\r?\n/);
+	const hasCRLF = text.includes("\r\n");
+	const sepLen = hasCRLF ? 2 : 1;
 	const lineOffsets: number[] = new Array(lines.length + 1);
 	let cursor = 0;
 	for (let i = 0; i < lines.length; i++) {
-		lineOffsets[i + 1] = cursor + lines[i].length + 1;
+		lineOffsets[i + 1] = cursor + lines[i].length + (i < lines.length - 1 ? sepLen : 0);
 		cursor = lineOffsets[i + 1];
 	}
 	const headingLines: Array<{ line: number; title: string }> = [];
@@ -933,7 +1150,7 @@ function toBookChapterMetaFromText(content: string): BookChapterMeta[] {
 		headingLines.push({ line: i + 1, title });
 	}
 
-	const metas: BookChapterMeta[] = [];
+	const rawMetas: BookChapterMeta[] = [];
 	if (headingLines.length > 0) {
 		for (let i = 0; i < headingLines.length; i++) {
 			const cur = headingLines[i];
@@ -942,17 +1159,21 @@ function toBookChapterMetaFromText(content: string): BookChapterMeta[] {
 			const endLine = next ? Math.max(startLine, next.line - 1) : lines.length;
 			const startOffset = lineOffsets[startLine - 1] || 0;
 			const endOffset = endLine >= lines.length ? text.length : (lineOffsets[endLine] || text.length);
-			metas.push({
+			const length = Math.max(0, endOffset - startOffset);
+			rawMetas.push({
 				chapter: i + 1,
 				title: cur.title,
 				startLine,
 				endLine,
 				startOffset,
 				endOffset,
-				length: Math.max(0, endOffset - startOffset),
+				length,
 			});
 		}
-		return metas;
+		const kept = stripLeadingTocCluster(
+			rawMetas.map((m) => ({ ...m, contentLength: m.length })),
+		);
+		return kept.map((m, idx) => ({ ...m, chapter: idx + 1 }));
 	}
 
 	// 禁止兜底分段：没有可靠章节标题时直接返回空，交由上游 strict 模式失败。
@@ -1029,8 +1250,88 @@ function buildBookUploadMetaPath(projectId: string, userId: string, uploadId: st
 function buildBookUploadTmpPath(projectId: string, userId: string, uploadId: string): string {
 	return path.join(
 		buildBookUploadSessionDir(projectId, userId),
-		`${sanitizePathSegment(uploadId)}.part.md`,
+		`${sanitizePathSegment(uploadId)}.part.bin`,
 	);
+}
+
+function readUnknownErrorMessage(error: unknown): string {
+	if (error instanceof Error) return error.message.trim();
+	return typeof error === "string" ? error.trim() : String(error);
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readRequiredSessionString(
+	record: Readonly<Record<string, unknown>>,
+	key: string,
+): string {
+	const value = record[key];
+	return typeof value === "string" ? value.trim() : "";
+}
+
+function parseBookUploadSessionMeta(input: {
+	parsed: unknown;
+	projectId: string;
+	requestUserId: string;
+	uploadId: string;
+}): BookUploadSessionMeta {
+	if (!isUnknownRecord(input.parsed)) {
+		throw new BookSourceParseError(
+			"book_source_upload_read_failed",
+			"书籍上传会话元数据不是有效对象",
+			{ uploadId: input.uploadId },
+		);
+	}
+	const id = readRequiredSessionString(input.parsed, "id");
+	const sessionUserId = readRequiredSessionString(input.parsed, "userId");
+	const storedProjectId = readRequiredSessionString(input.parsed, "projectId");
+	const title = readRequiredSessionString(input.parsed, "title");
+	const sourceFileName = readRequiredSessionString(input.parsed, "sourceFileName");
+	const tmpPath = readRequiredSessionString(input.parsed, "tmpPath");
+	const createdAt = readRequiredSessionString(input.parsed, "createdAt");
+	const updatedAt = readRequiredSessionString(input.parsed, "updatedAt");
+	const finalizedJobId = readRequiredSessionString(input.parsed, "finalizedJobId");
+	const bytes = Number(input.parsed.bytes);
+	const contentBytes = Number(input.parsed.contentBytes);
+	const expectedTmpPath = buildBookUploadTmpPath(
+		input.projectId,
+		input.requestUserId,
+		input.uploadId,
+	);
+	const invalidReasons: string[] = [];
+	if (id !== input.uploadId) invalidReasons.push("upload_id_mismatch");
+	if (sessionUserId !== input.requestUserId) invalidReasons.push("user_id_mismatch");
+	if (storedProjectId !== input.projectId) invalidReasons.push("project_id_mismatch");
+	if (!title) invalidReasons.push("title_missing");
+	if (!sourceFileName) invalidReasons.push("source_file_name_missing");
+	if (tmpPath !== expectedTmpPath) invalidReasons.push("temporary_path_mismatch");
+	if (!Number.isInteger(bytes) || bytes < 0) invalidReasons.push("bytes_invalid");
+	if (!Number.isInteger(contentBytes) || contentBytes < 0) {
+		invalidReasons.push("content_bytes_invalid");
+	}
+	if (!createdAt || !updatedAt) invalidReasons.push("timestamps_missing");
+	if (invalidReasons.length > 0) {
+		throw new BookSourceParseError(
+			"book_source_upload_read_failed",
+			"书籍上传会话元数据不完整或与请求作用域不一致",
+			{ uploadId: input.uploadId, invalidReasons },
+		);
+	}
+	return {
+		id,
+		userId: sessionUserId,
+		projectId: storedProjectId,
+		title,
+		sourceFileName,
+		tmpPath: expectedTmpPath,
+		bytes,
+		contentBytes,
+		finalizedJobId: finalizedJobId || undefined,
+		createdAt,
+		updatedAt,
+	};
 }
 
 async function readBookUploadSession(
@@ -1039,43 +1340,75 @@ async function readBookUploadSession(
 	uploadId: string,
 ): Promise<BookUploadSessionMeta | null> {
 	const metaPath = buildBookUploadMetaPath(projectId, requestUserId, uploadId);
+	let raw: string;
 	try {
-		const raw = await fs.readFile(metaPath, "utf8");
-		const parsed = JSON.parse(raw);
-		if (!parsed || typeof parsed !== "object") return null;
-		const tmpPath = String((parsed as any).tmpPath || "").trim();
-		const id = String((parsed as any).id || uploadId).trim();
-		const sessionUserId = String((parsed as any).userId || "").trim();
-		const title = String((parsed as any).title || "").trim();
-		const createdAt = String((parsed as any).createdAt || "").trim();
-		const updatedAt = String((parsed as any).updatedAt || createdAt).trim();
-		const bytes = Number((parsed as any).bytes || 0);
-		const contentBytesRaw = Number((parsed as any).contentBytes || 0);
-		if (!id || !sessionUserId || !title || !tmpPath) return null;
-		if (sessionUserId !== requestUserId) return null;
-		return {
-			id,
-			userId: sessionUserId,
-			projectId,
-			title,
-			tmpPath,
-			bytes: Number.isFinite(bytes) && bytes >= 0 ? Math.trunc(bytes) : 0,
-			contentBytes:
-				Number.isFinite(contentBytesRaw) && contentBytesRaw > 0
-					? Math.trunc(contentBytesRaw)
-					: undefined,
-			createdAt: createdAt || new Date().toISOString(),
-			updatedAt: updatedAt || new Date().toISOString(),
-		};
-	} catch {
-		return null;
+		raw = await fs.readFile(metaPath, "utf8");
+	} catch (error) {
+		if (hasNodeErrorCode(error, "ENOENT")) return null;
+		throw new BookSourceParseError(
+			"book_source_upload_read_failed",
+			"读取书籍上传会话元数据失败",
+			{ uploadId, reason: readUnknownErrorMessage(error) },
+		);
 	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw) as unknown;
+	} catch (error) {
+		throw new BookSourceParseError(
+			"book_source_upload_read_failed",
+			"解析书籍上传会话元数据失败",
+			{ uploadId, reason: readUnknownErrorMessage(error) },
+		);
+	}
+	return parseBookUploadSessionMeta({ parsed, projectId, requestUserId, uploadId });
 }
 
 async function writeBookUploadSession(meta: BookUploadSessionMeta): Promise<void> {
 	const metaPath = buildBookUploadMetaPath(meta.projectId, meta.userId, meta.id);
-	await fs.mkdir(path.dirname(metaPath), { recursive: true });
-	await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf8");
+	await writeBookUploadMetadataAtomically({
+		targetPath: metaPath,
+		value: meta,
+	});
+}
+
+async function readBookUploadSourceSize(
+	session: Readonly<BookUploadSessionMeta>,
+): Promise<number> {
+	try {
+		const sourceStats = await fs.stat(session.tmpPath);
+		if (!sourceStats.isFile()) {
+			throw new BookSourceParseError(
+				"book_source_upload_read_failed",
+				"书籍上传临时源不是普通文件",
+				{ uploadId: session.id },
+			);
+		}
+		return sourceStats.size;
+	} catch (error) {
+		if (error instanceof BookSourceParseError) throw error;
+		throw new BookSourceParseError(
+			"book_source_upload_read_failed",
+			"读取书籍上传临时源失败",
+			{ uploadId: session.id, reason: readUnknownErrorMessage(error) },
+		);
+	}
+}
+
+function reportBookUploadSessionLockError(input: {
+	error: BookUploadSessionLockError;
+	projectId: string;
+	userId: string;
+	uploadId: string;
+}): void {
+	console.error("[book-upload.session-lock.failed]", {
+		projectId: input.projectId,
+		userId: input.userId,
+		uploadId: input.uploadId,
+		code: input.error.code,
+		message: input.error.message,
+		details: input.error.details,
+	});
 }
 
 function buildBookUploadJobPath(projectId: string, userId: string, jobId: string): string {
@@ -1149,8 +1482,10 @@ async function readBookUploadJob(
 
 async function writeBookUploadJob(meta: BookUploadJobMeta): Promise<void> {
 	const jobPath = buildBookUploadJobPath(meta.projectId, meta.userId, meta.id);
-	await fs.mkdir(path.dirname(jobPath), { recursive: true });
-	await fs.writeFile(jobPath, JSON.stringify(meta, null, 2), "utf8");
+	await writeBookUploadMetadataAtomically({
+		targetPath: jobPath,
+		value: meta,
+	});
 }
 
 async function readBookReconfirmJob(
@@ -1212,8 +1547,10 @@ async function readBookReconfirmJob(
 
 async function writeBookReconfirmJob(meta: BookReconfirmJobMeta): Promise<void> {
 	const jobPath = buildBookReconfirmJobPath(meta.projectId, meta.userId, meta.id);
-	await fs.mkdir(path.dirname(jobPath), { recursive: true });
-	await fs.writeFile(jobPath, JSON.stringify(meta, null, 2), "utf8");
+	await writeBookUploadMetadataAtomically({
+		targetPath: jobPath,
+		value: meta,
+	});
 }
 
 async function listBookUploadJobsForProject(
@@ -1294,18 +1631,93 @@ async function findActiveBookReconfirmJob(
 	);
 }
 
-async function readBookIndexSafe(indexPath: string): Promise<any | null> {
+function mapBookIndexStoreErrorForAsset(error: BookIndexStoreError): AppError {
+	return new AppError(error.message, {
+		status: error.code === "book_index_not_found" ? 404 : 500,
+		code: error.code,
+		details: error.details,
+	});
+}
+
+function hasNodeErrorCode(error: unknown, code: string): boolean {
+	return Boolean(
+		error &&
+			typeof error === "object" &&
+			!Array.isArray(error) &&
+			(error as { code?: unknown }).code === code,
+	);
+}
+
+async function readBookIndexSafe(indexPath: string): Promise<BookIndexRecord | null> {
 	try {
-		const raw = await fs.readFile(indexPath, "utf8");
-		return JSON.parse(raw);
-	} catch {
-		return null;
+		return await readBookIndex(indexPath);
+	} catch (error) {
+		if (error instanceof BookIndexStoreError && error.code === "book_index_not_found") return null;
+		if (error instanceof BookIndexStoreError) throw mapBookIndexStoreErrorForAsset(error);
+		throw error;
 	}
 }
 
-async function writeBookIndexSafe(indexPath: string, value: any): Promise<void> {
-	await fs.mkdir(path.dirname(indexPath), { recursive: true });
-	await fs.writeFile(indexPath, JSON.stringify(value, null, 2), "utf8");
+function cloneBookIndexAssets(index: Readonly<BookIndexRecord>): Record<string, unknown> {
+	return index.assets && typeof index.assets === "object" && !Array.isArray(index.assets)
+		? { ...(index.assets as Record<string, unknown>) }
+		: {};
+}
+
+async function updateBookIndexForAsset<T>(
+	indexPath: string,
+	updater: (current: Readonly<BookIndexRecord>) => { next: BookIndexRecord; result: T },
+): Promise<{ index: BookIndexRecord; result: T }> {
+	try {
+		return await updateBookIndex(indexPath, updater);
+	} catch (error) {
+		if (error instanceof BookIndexStoreError) throw mapBookIndexStoreErrorForAsset(error);
+		throw error;
+	}
+}
+
+async function commitDerivedBookIndex(input: {
+	indexPath: string;
+	base: BookIndexRecord;
+	derived: BookIndexRecord;
+}): Promise<BookIndexRecord> {
+	const updated = await updateBookIndexForAsset(input.indexPath, (current) => {
+		const next = mergeDerivedBookIndex(input.base, current, input.derived);
+		return { next, result: next };
+	});
+	return updated.index;
+}
+
+async function attachFreshBookEvidenceIndex(input: {
+	bookDirectory: string;
+	bookId: string;
+	projectId: string;
+	title: string;
+	rawText: string;
+	index: BookIndexRecord;
+	source: unknown;
+}): Promise<BookIndexRecord> {
+	const source = requireBookSourceMetadataV1(input.source);
+	const chapters = Array.isArray(input.index.chapters)
+		? (input.index.chapters as BookChapterMeta[])
+		: [];
+	const evidenceIndex = buildBookEvidenceIndex({
+		bookId: input.bookId,
+		projectId: input.projectId,
+		title: input.title,
+		rawText: input.rawText,
+		chapters,
+		source,
+	});
+	const evidenceIndexSummary = await writeBookEvidenceIndex({
+		bookDirectory: input.bookDirectory,
+		index: evidenceIndex,
+	});
+	return {
+		...input.index,
+		source,
+		evidenceIndex: evidenceIndexSummary,
+	};
 }
 
 async function readBookStoryboardProcessSafe(processDir: string): Promise<{
@@ -1604,7 +2016,12 @@ async function writeBookRawChunksAndAttachMetadata(input: {
 				hi = mid - 1;
 			}
 		}
-		const end = Math.max(offset + 1, best);
+		// Snap to the last paragraph boundary (newline) so chunks never cut mid-sentence.
+		let end = Math.max(offset + 1, best);
+		if (end < raw.length) {
+			const lastNl = raw.lastIndexOf("\n", end - 1);
+			if (lastNl > offset) end = lastNl + 1;
+		}
 		const text = raw.slice(offset, end);
 		const sizeBytes = Buffer.byteLength(text, "utf8");
 		const range = chapterRangeForOffsets(input.chapters, offset, end);
@@ -1934,7 +2351,7 @@ function buildBookMetadataTeamSystemPrompt(phase: "parser" | "checker"): string 
 			? "你负责章节元数据解析（parser）"
 			: "你负责章节元数据完整性审校（checker）";
 	return [
-		"你是 TapCanvas 小说元数据 Team Orchestrator。",
+		"你是 TapCanvas 小说元数据主代理。",
 		`必须先调用 Skill 工具加载 "${BOOK_METADATA_TEAM_SKILL}"，并在 team mode 中至少启动两个子代理：`,
 		"- parser: 逐章抽取 title/summary/keywords/coreConflict/characters/props/scenes/locations",
 		"- checker: 覆盖性检查 + 缺失补全 + 去重与格式修复",
@@ -1948,7 +2365,7 @@ function buildBookMetadataTeamSystemPrompt(phase: "parser" | "checker"): string 
 
 function buildBookGraphTeamSystemPrompt(): string {
 	return [
-		"你是 TapCanvas 小说角色关系网 Team Orchestrator。",
+		"你是 TapCanvas 小说角色关系网主代理。",
 		`必须先调用 Skill 工具加载 "${BOOK_METADATA_TEAM_SKILL}"，并在 team mode 中至少启动两个子代理：`,
 		"- parser: 从章节和角色档案抽取节点与关系候选",
 		"- checker: 校验去重、修复 ID、补齐章节提示与关系类型",
@@ -2108,148 +2525,6 @@ function mergeChapterMetaListByChapter(
 	});
 }
 
-function ensureWindowRoleCardsFromChapters(input: {
-	assets: Record<string, unknown>;
-	chapters: BookChapterMeta[];
-	windowStart: number;
-	windowEnd: number;
-	userId: string;
-	nowIso: string;
-}): { roleCards: BookRoleCardRecord[]; addedCount: number } {
-	const buildDraftRoleCardPrompt = (params: {
-		roleName: string;
-		roleDescription?: string;
-		chapterMeta: BookChapterMeta;
-	}): string => {
-		const roleName = String(params.roleName || "").trim();
-		const roleDescription = String(params.roleDescription || "").trim();
-		const summary = String(params.chapterMeta?.summary || "").trim();
-		const conflict = String(params.chapterMeta?.coreConflict || "").trim();
-		const keywords = normalizeKeywords(params.chapterMeta?.keywords).slice(0, 6);
-		const sceneHints = normalizeEntityItems(params.chapterMeta?.scenes, 6)
-			.map((x) => String(x?.name || "").trim())
-			.filter(Boolean)
-			.slice(0, 3);
-		const propHints = normalizePropItems(params.chapterMeta?.props, 6)
-			.map((x) => String(x?.name || "").trim())
-			.filter(Boolean)
-			.slice(0, 3);
-		return [
-			`角色卡，角色名：${roleName}`,
-			`章节：第${params.chapterMeta.chapter}章`,
-			roleDescription ? `角色设定：${roleDescription}` : "",
-			summary ? `章节摘要：${summary}` : "",
-			conflict ? `核心冲突：${conflict}` : "",
-			keywords.length ? `关键词：${keywords.join("、")}` : "",
-			sceneHints.length ? `场景线索：${sceneHints.join("、")}` : "",
-			propHints.length ? `道具线索：${propHints.join("、")}` : "",
-			"要求：单人定妆，突出年龄感/发型/服饰/神态，电影级写实，背景简洁，无文字水印，后续章节保持一致。",
-		]
-			.filter(Boolean)
-			.join("\n")
-			.trim();
-	};
-
-	const assets = input.assets;
-	const existingCards = normalizeBookRoleCards((assets as any)?.roleCards);
-	const graphNodes = Array.isArray((assets as any)?.characterGraph?.nodes)
-		? ((assets as any).characterGraph.nodes as any[])
-		: [];
-	const roleIdByName = new Map<string, string>();
-	for (const node of graphNodes) {
-		const n = String(node?.name || "").trim().toLowerCase();
-		const id = String(node?.id || "").trim();
-		if (!n || !id) continue;
-		if (!roleIdByName.has(n)) roleIdByName.set(n, id);
-	}
-
-	const seen = new Set<string>();
-	for (const card of existingCards) {
-		seen.add(buildRoleCardChapterKey(card));
-	}
-
-	const roleFirstChapter = new Map<
-		string,
-		{ roleName: string; roleId?: string; chapter: number; roleDescription?: string; chapterMeta: BookChapterMeta }
-	>();
-	for (const chapter of input.chapters) {
-		if (chapter.chapter < input.windowStart || chapter.chapter > input.windowEnd) continue;
-		const roleList = Array.isArray(chapter.characters) ? chapter.characters : [];
-		for (const role of roleList) {
-			const roleName = String(role?.name || "").trim();
-			if (!roleName) continue;
-			const roleDescription = String(role?.description || "").trim() || undefined;
-			const roleId = String(roleIdByName.get(roleName.toLowerCase()) || "").trim() || undefined;
-			const keyRole = String(roleId || roleName).trim().toLowerCase();
-			const prev = roleFirstChapter.get(keyRole);
-			if (!prev || chapter.chapter < prev.chapter) {
-				roleFirstChapter.set(keyRole, {
-					roleName,
-					...(roleId ? { roleId } : null),
-					chapter: chapter.chapter,
-					...(roleDescription ? { roleDescription } : null),
-					chapterMeta: chapter,
-				});
-			}
-		}
-	}
-
-	let addedCount = 0;
-	const appended: BookRoleCardRecord[] = [...existingCards];
-	for (const item of roleFirstChapter.values()) {
-		const key = buildRoleCardChapterKey({
-			cardId: "__draft__",
-			roleName: item.roleName,
-			status: "draft",
-			...(item.roleId ? { roleId: item.roleId } : null),
-			chapter: item.chapter,
-			createdAt: input.nowIso,
-			updatedAt: input.nowIso,
-			createdBy: input.userId,
-			updatedBy: input.userId,
-		});
-		if (seen.has(key)) continue;
-		seen.add(key);
-		addedCount += 1;
-		appended.push({
-			cardId: `card-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-			roleName: item.roleName,
-			stateDescription: [
-				`第${item.chapterMeta.chapter}章`,
-				String(item.chapterMeta.title || "").trim(),
-				item.roleDescription ? `角色状态：${item.roleDescription}` : "",
-				item.chapterMeta.summary ? `章节摘要：${item.chapterMeta.summary}` : "",
-				item.chapterMeta.coreConflict ? `核心冲突：${item.chapterMeta.coreConflict}` : "",
-			]
-				.filter(Boolean)
-				.join("｜"),
-			status: "draft",
-			...(item.roleId ? { roleId: item.roleId } : null),
-			chapter: item.chapter,
-			prompt: buildDraftRoleCardPrompt({
-				roleName: item.roleName,
-				roleDescription: item.roleDescription,
-				chapterMeta: item.chapterMeta,
-			}),
-			modelKey: "nano-banana-pro",
-			createdAt: input.nowIso,
-			updatedAt: input.nowIso,
-			createdBy: input.userId,
-			updatedBy: input.userId,
-		});
-	}
-	const deduped = new Map<string, BookRoleCardRecord>();
-	for (const card of appended) {
-		const key = buildRoleCardChapterKey(card);
-		if (!key || key === "#0") {
-			deduped.set(`__card__:${card.cardId}`, card);
-			continue;
-		}
-		deduped.set(key, card);
-	}
-	return { roleCards: Array.from(deduped.values()).slice(-500), addedCount };
-}
-
 function normalizeImportance(value: unknown): "main" | "supporting" | "minor" | undefined {
 	const raw = String(value || "").trim().toLowerCase();
 	if (raw === "main") return "main";
@@ -2355,6 +2630,7 @@ function normalizeBookRoleCards(value: unknown): BookRoleCardRecord[] {
 		const status: "draft" | "generated" =
 			statusRaw === "generated" ? "generated" : "draft";
 		if (!cardId || !roleName) continue;
+		const characterBibleId = String((item as { characterBibleId?: unknown })?.characterBibleId || "").trim();
 		const roleId = String((item as any)?.roleId || "").trim();
 		const referenceKindRaw = String((item as { referenceKind?: unknown })?.referenceKind || "").trim();
 		const referenceKind: StoryboardReferenceCardKind | undefined =
@@ -2415,6 +2691,7 @@ function normalizeBookRoleCards(value: unknown): BookRoleCardRecord[] {
 			cardId,
 			roleName,
 			status,
+			...(characterBibleId ? { characterBibleId } : null),
 			...(roleId ? { roleId } : null),
 			...(referenceKind ? { referenceKind } : null),
 			...(promptSchemaVersion ? { promptSchemaVersion } : null),
@@ -2441,6 +2718,74 @@ function normalizeBookRoleCards(value: unknown): BookRoleCardRecord[] {
 			updatedAt: updatedAt || createdAt || new Date().toISOString(),
 			createdBy: createdBy || updatedBy || "system",
 			updatedBy: updatedBy || createdBy || "system",
+		});
+		if (out.length >= 500) break;
+	}
+	return out;
+}
+
+function normalizeBookCharacterBibles(value: unknown): BookCharacterBibleRecord[] {
+	if (!Array.isArray(value)) return [];
+	const out: BookCharacterBibleRecord[] = [];
+	for (const item of value) {
+		if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+		const record = item as Record<string, unknown>;
+		const version = String(record.version || "").trim();
+		const id = String(record.id || "").trim();
+		const name = String(record.name || "").trim();
+		const sourceCharacterId = String(record.sourceCharacterId || "").trim();
+		if (!version || !id || !name || !sourceCharacterId) continue;
+		const sourceImagesRaw =
+			record.sourceImages && typeof record.sourceImages === "object" && !Array.isArray(record.sourceImages)
+				? (record.sourceImages as Record<string, unknown>)
+				: {};
+		const importedImagesRaw =
+			record.importedImages && typeof record.importedImages === "object" && !Array.isArray(record.importedImages)
+				? (record.importedImages as Record<string, unknown>)
+				: {};
+		out.push({
+			version: version as CharacterBible["version"],
+			id,
+			name,
+			projectId: String(record.projectId || "").trim() || null,
+			sourceCharacterId,
+			sourceGroupNumber: String(record.sourceGroupNumber || "").trim(),
+			identityHint: String(record.identityHint || "").trim(),
+			era: String(record.era || "").trim(),
+			culturalRegion: String(record.culturalRegion || "").trim(),
+			genre: String(record.genre || "").trim(),
+			timePeriod: String(record.timePeriod || "").trim(),
+			appearanceBackground: String(record.appearanceBackground || "").trim(),
+			scene: String(record.scene || "").trim(),
+			gender: String(record.gender || "").trim(),
+			ageGroup: String(record.ageGroup || "").trim(),
+			species: String(record.species || "").trim(),
+			physique: String(record.physique || "").trim(),
+			heightLevel: String(record.heightLevel || "").trim(),
+			skinColor: String(record.skinColor || "").trim(),
+			hairLength: String(record.hairLength || "").trim(),
+			hairColor: String(record.hairColor || "").trim(),
+			temperament: String(record.temperament || "").trim(),
+			outfit: String(record.outfit || "").trim(),
+			distinctiveFeatures: String(record.distinctiveFeatures || "").trim(),
+			filterWorldview: String(record.filterWorldview || "").trim(),
+			filterTheme: String(record.filterTheme || "").trim(),
+			filterScene: String(record.filterScene || "").trim(),
+			sourceImages: {
+				fullBody: String(sourceImagesRaw.fullBody || "").trim(),
+				threeView: String(sourceImagesRaw.threeView || "").trim(),
+				expression: String(sourceImagesRaw.expression || "").trim(),
+				closeup: String(sourceImagesRaw.closeup || "").trim(),
+			},
+			importedImages: {
+				fullBody: String(importedImagesRaw.fullBody || "").trim(),
+				threeView: String(importedImagesRaw.threeView || "").trim(),
+				expression: String(importedImagesRaw.expression || "").trim(),
+				closeup: String(importedImagesRaw.closeup || "").trim(),
+			},
+			importedAt: String(record.importedAt || "").trim(),
+			updatedAt: String(record.updatedAt || "").trim(),
+			...(String(record.roleCardId || "").trim() ? { roleCardId: String(record.roleCardId || "").trim() } : null),
 		});
 		if (out.length >= 500) break;
 	}
@@ -2811,38 +3156,61 @@ function normalizeBookStoryboardPlans(value: unknown): BookStoryboardPlanRecord[
 	if (!Array.isArray(value)) return [];
 	const out: BookStoryboardPlanRecord[] = [];
 	for (const item of value) {
-		const taskId =
-			String((item as any)?.taskId || "").trim() ||
-			`legacy-task-ch${Math.max(1, Math.trunc(Number((item as any)?.chapter || 1)))}`;
-		const planId = String((item as any)?.planId || "").trim() || `plan-${taskId}`;
-		const chapter =
-			normalizeOptionalPositiveChapter((item as any)?.chapter) ||
-			inferStoryboardChapterFromTaskId(taskId);
-		const taskTitle = String((item as any)?.taskTitle || "").trim();
-		const modeRaw = String((item as any)?.mode || "").trim().toLowerCase();
+		if (!item || typeof item !== "object" || Array.isArray(item)) {
+			throw new AppError("storyboard plan 持久化记录必须是对象", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const record = item as Record<string, unknown>;
+		const taskId = String(record.taskId || "").trim();
+		const planId = String(record.planId || "").trim();
+		const chapter = normalizeOptionalPositiveChapter(record.chapter);
+		if (!taskId || !planId || !chapter) {
+			throw new AppError("storyboard plan 缺少 planId、taskId 或 chapter", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const artifactRecord =
+			record.storyboardArtifact && typeof record.storyboardArtifact === "object" && !Array.isArray(record.storyboardArtifact)
+				? record.storyboardArtifact as Record<string, unknown>
+				: null;
+		const storyFactsContext =
+			artifactRecord?.storyFactsContext && typeof artifactRecord.storyFactsContext === "object" && !Array.isArray(artifactRecord.storyFactsContext)
+				? artifactRecord.storyFactsContext as Record<string, unknown>
+				: null;
+		const artifactBookId = String(storyFactsContext?.bookId || "").trim();
+		if (!artifactRecord || !artifactBookId) {
+			throw new AppError("storyboard plan 缺少 v1.2 artifact 或 bookId", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const persistencePayload = requireStoryboardV12ArtifactPayload({
+			storyboardStructured: artifactRecord,
+			shotPrompts: record.shotPrompts,
+			maxShotPrompts: 1_200,
+			contextLabel: "stored storyboard plan",
+		});
+		const taskTitle = String(record.taskTitle || "").trim();
+		const modeRaw = String(record.mode || "").trim().toLowerCase();
 		const mode: "single" | "full" = modeRaw === "full" ? "full" : "single";
-		const groupSize = normalizeStoryboardGroupSize((item as any)?.groupSize);
-		const storyboardStructured = normalizeStoryboardStructuredData((item as any)?.storyboardStructured);
-		const shotPromptsRaw = Array.isArray((item as any)?.shotPrompts) ? (item as any).shotPrompts : [];
-		const shotPromptsDirect = shotPromptsRaw
-			.map((x: any) => String(x || "").trim())
-			.filter(Boolean)
-			.slice(0, 1200);
-		const shotPrompts = (shotPromptsDirect.length ? shotPromptsDirect : deriveShotPromptsFromStructuredData(storyboardStructured)).slice(
-			0,
-			1200,
-		);
-		const createdAt = String((item as any)?.createdAt || "").trim();
-		const updatedAt = String((item as any)?.updatedAt || "").trim();
-		const createdBy = String((item as any)?.createdBy || "").trim();
-		const updatedBy = String((item as any)?.updatedBy || "").trim();
-		const outputAssetId = String((item as any)?.outputAssetId || "").trim();
-		const runId = String((item as any)?.runId || "").trim();
-		const storyboardContent = String((item as any)?.storyboardContent || "").trim();
-		const next1Raw = Number((item as any)?.nextChunkIndexByGroup?.["1"]);
-		const next4Raw = Number((item as any)?.nextChunkIndexByGroup?.["4"]);
-		const next9Raw = Number((item as any)?.nextChunkIndexByGroup?.["9"]);
-		const next25Raw = Number((item as any)?.nextChunkIndexByGroup?.["25"]);
+		const groupSize = normalizeStoryboardGroupSize(record.groupSize);
+		const createdAt = String(record.createdAt || "").trim();
+		const updatedAt = String(record.updatedAt || "").trim();
+		const createdBy = String(record.createdBy || "").trim();
+		const updatedBy = String(record.updatedBy || "").trim();
+		const outputAssetId = String(record.outputAssetId || "").trim();
+		const runId = String(record.runId || "").trim();
+		const nextChunkRecord =
+			record.nextChunkIndexByGroup && typeof record.nextChunkIndexByGroup === "object" && !Array.isArray(record.nextChunkIndexByGroup)
+				? record.nextChunkIndexByGroup as Record<string, unknown>
+				: {};
+		const next1Raw = Number(nextChunkRecord["1"]);
+		const next4Raw = Number(nextChunkRecord["4"]);
+		const next9Raw = Number(nextChunkRecord["9"]);
+		const next25Raw = Number(nextChunkRecord["25"]);
 		const nextChunkIndexByGroup = {
 			...(Number.isFinite(next1Raw) && next1Raw >= 0 ? { "1": Math.trunc(next1Raw) } : null),
 			...(Number.isFinite(next4Raw) && next4Raw >= 0 ? { "4": Math.trunc(next4Raw) } : null),
@@ -2858,9 +3226,12 @@ function normalizeBookStoryboardPlans(value: unknown): BookStoryboardPlanRecord[
 			groupSize,
 			...(outputAssetId ? { outputAssetId } : null),
 			...(runId ? { runId } : null),
-			...(storyboardContent ? { storyboardContent } : null),
-			...(storyboardStructured ? { storyboardStructured } : null),
-			shotPrompts,
+			storyboardContent: JSON.stringify(persistencePayload.artifact, null, 2),
+			storyboardArtifact: persistencePayload.artifact,
+			artifactSha256: persistencePayload.artifactSha256,
+			storyboardStructured: persistencePayload.structured,
+			...(record.semanticReview !== undefined ? { semanticReview: record.semanticReview } : null),
+			shotPrompts: persistencePayload.shotPrompts,
 			...(Object.keys(nextChunkIndexByGroup).length ? { nextChunkIndexByGroup } : null),
 			createdAt: createdAt || updatedAt || new Date().toISOString(),
 			updatedAt: updatedAt || createdAt || new Date().toISOString(),
@@ -2876,80 +3247,129 @@ function normalizeBookStoryboardChunks(value: unknown): BookStoryboardChunkRecor
 	if (!Array.isArray(value)) return [];
 	const out: BookStoryboardChunkRecord[] = [];
 	for (const item of value) {
-		const taskId =
-			String((item as any)?.taskId || "").trim() ||
-			`legacy-task-ch${Math.max(1, Math.trunc(Number((item as any)?.chapter || 1)))}`;
-		const chapter =
-			normalizeOptionalPositiveChapter((item as any)?.chapter) ||
-			inferStoryboardChapterFromTaskId(taskId);
-		const groupSize = normalizeStoryboardGroupSize((item as any)?.groupSize);
-		const chunkIndexRaw = Number((item as any)?.chunkIndex);
+		if (!item || typeof item !== "object" || Array.isArray(item)) {
+			throw new AppError("storyboard chunk 持久化记录必须是对象", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const record = item as Record<string, unknown>;
+		const taskId = String(record.taskId || "").trim();
+		const chapter = normalizeOptionalPositiveChapter(record.chapter);
+		if (!taskId || !chapter) {
+			throw new AppError("storyboard chunk 缺少 taskId 或 chapter", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const groupSize = normalizeStoryboardGroupSize(record.groupSize);
+		const chunkIndexRaw = Number(record.chunkIndex);
 		const chunkIndex =
 			Number.isFinite(chunkIndexRaw) && chunkIndexRaw >= 0
 				? Math.trunc(chunkIndexRaw)
 				: 0;
-		const shotStartRaw = Number((item as any)?.shotStart);
+		const shotStartRaw = Number(record.shotStart);
 		const shotStart =
 			Number.isFinite(shotStartRaw) && shotStartRaw > 0
 				? Math.trunc(shotStartRaw)
 				: chunkIndex * groupSize + 1;
-		const shotEndRaw = Number((item as any)?.shotEnd);
+		const shotEndRaw = Number(record.shotEnd);
 		const shotEnd =
 			Number.isFinite(shotEndRaw) && shotEndRaw >= shotStart
 				? Math.trunc(shotEndRaw)
 				: shotStart + groupSize - 1;
-		const planId = String((item as any)?.planId || "").trim();
+		const planId = String(record.planId || "").trim();
+		if (!planId) {
+			throw new AppError("storyboard chunk 缺少 planId", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
 		const chunkId =
-			String((item as any)?.chunkId || "").trim() ||
-			`task-${taskId}-g${groupSize}-i${chunkIndex}`;
-		const nodeId = String((item as any)?.nodeId || "").trim();
-		const prompt = String((item as any)?.prompt || "").trim();
-		const frameUrls = Array.isArray((item as any)?.frameUrls)
-			? (item as any).frameUrls
-					.map((x: any) => String(x || "").trim())
+			String(record.chunkId || "").trim() ||
+			`plan-${planId}-g${groupSize}-i${chunkIndex}`;
+		const previousChunkId = String(record.previousChunkId || "").trim();
+		if (chunkIndex > 0 && !previousChunkId) {
+			throw new AppError("storyboard chunk 缺少 previousChunkId", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const nodeId = String(record.nodeId || "").trim();
+		const prompt = String(record.prompt || "").trim();
+		const frameUrls = Array.isArray(record.frameUrls)
+			? record.frameUrls
+					.map((value) => String(value || "").trim())
 					.filter(Boolean)
 					.slice(0, 64)
 			: [];
-		const storyboardStructured = normalizeStoryboardStructuredData((item as any)?.storyboardStructured);
-		const shotPromptsDirect = Array.isArray((item as any)?.shotPrompts)
-			? (item as any).shotPrompts
-					.map((x: any) => String(x || "").trim())
-					.filter(Boolean)
-					.slice(0, 128)
-			: [];
-		const shotPrompts = (shotPromptsDirect.length ? shotPromptsDirect : deriveShotPromptsFromStructuredData(storyboardStructured)).slice(
-			0,
-			128,
-		);
-		const tailFrameUrl = String((item as any)?.tailFrameUrl || frameUrls[frameUrls.length - 1] || "").trim();
-		if (!tailFrameUrl) continue;
-		const roleCardRefIds = Array.isArray((item as any)?.roleCardRefIds)
-			? (item as any).roleCardRefIds
-					.map((x: any) => String(x || "").trim())
+		const artifactRecord =
+			record.storyboardArtifact && typeof record.storyboardArtifact === "object" && !Array.isArray(record.storyboardArtifact)
+				? record.storyboardArtifact as Record<string, unknown>
+				: null;
+		const storyFactsContext =
+			artifactRecord?.storyFactsContext && typeof artifactRecord.storyFactsContext === "object" && !Array.isArray(artifactRecord.storyFactsContext)
+				? artifactRecord.storyFactsContext as Record<string, unknown>
+				: null;
+		const artifactBookId = String(storyFactsContext?.bookId || "").trim();
+		if (!artifactRecord || !artifactBookId) {
+			throw new AppError("storyboard chunk 缺少 v1.2 artifact 或 bookId", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const persistencePayload = requireStoryboardV12ArtifactPayload({
+			storyboardStructured: artifactRecord,
+			shotPrompts: record.shotPrompts,
+			maxShotPrompts: 128,
+			contextLabel: "stored storyboard chunk",
+		});
+		const handoffEvidence = normalizeStoryboardHandoffEvidence(record.handoffEvidence);
+		if (chunkIndex > 0 && !handoffEvidence) {
+			throw new AppError("storyboard chunk 缺少有效的跨分组 handoffEvidence", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const tailFrameUrl = String(record.tailFrameUrl || "").trim();
+		if (!tailFrameUrl) {
+			throw new AppError("storyboard chunk 缺少显式 tailFrameUrl", {
+				status: 409,
+				code: "storyboard_persistence_record_invalid",
+			});
+		}
+		const roleCardRefIds = Array.isArray(record.roleCardRefIds)
+			? record.roleCardRefIds
+					.map((value) => String(value || "").trim())
 					.filter(Boolean)
 					.slice(0, 24)
 			: [];
-		const scenePropRefId = String((item as any)?.scenePropRefId || "").trim();
-		const scenePropRefLabel = String((item as any)?.scenePropRefLabel || "").trim();
-		const spellFxRefId = String((item as any)?.spellFxRefId || "").trim();
-		const spellFxRefLabel = String((item as any)?.spellFxRefLabel || "").trim();
-		const createdAt = String((item as any)?.createdAt || "").trim();
-		const updatedAt = String((item as any)?.updatedAt || "").trim();
-		const createdBy = String((item as any)?.createdBy || "").trim();
-		const updatedBy = String((item as any)?.updatedBy || "").trim();
+		const scenePropRefId = String(record.scenePropRefId || "").trim();
+		const scenePropRefLabel = String(record.scenePropRefLabel || "").trim();
+		const spellFxRefId = String(record.spellFxRefId || "").trim();
+		const spellFxRefLabel = String(record.spellFxRefLabel || "").trim();
+		const createdAt = String(record.createdAt || "").trim();
+		const updatedAt = String(record.updatedAt || "").trim();
+		const createdBy = String(record.createdBy || "").trim();
+		const updatedBy = String(record.updatedBy || "").trim();
 		out.push({
 			chunkId,
+			planId,
+			...(previousChunkId ? { previousChunkId } : null),
 			taskId,
 			...(chapter ? { chapter } : null),
 			groupSize,
 			chunkIndex,
 			shotStart,
 			shotEnd,
-			...(planId ? { planId } : null),
 			...(nodeId ? { nodeId } : null),
 			...(prompt ? { prompt } : null),
-			...(storyboardStructured ? { storyboardStructured } : null),
-			shotPrompts,
+			storyboardArtifact: persistencePayload.artifact,
+			artifactSha256: persistencePayload.artifactSha256,
+			storyboardStructured: persistencePayload.structured,
+			...(record.semanticReview !== undefined ? { semanticReview: record.semanticReview } : null),
+			...(handoffEvidence ? { handoffEvidence } : null),
+			shotPrompts: persistencePayload.shotPrompts,
 			frameUrls,
 			tailFrameUrl,
 			...(roleCardRefIds.length ? { roleCardRefIds } : null),
@@ -3035,7 +3455,6 @@ function buildBookStyleBible(input: {
 	visualDirectives?: string[];
 	negativeDirectives?: string[];
 	consistencyRules?: string[];
-	characterPromptTemplate?: string;
 }): BookStyleBible {
 	const styleName = String(input.styleName || "").trim();
 	if (!styleName) {
@@ -3056,7 +3475,6 @@ function buildBookStyleBible(input: {
 	const consistencyRules = Array.isArray(input.consistencyRules)
 		? input.consistencyRules.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 12)
 		: [];
-	const characterPromptTemplate = String(input.characterPromptTemplate || "").trim();
 	const visualWithCast = visualDirectives.length
 		? [...visualDirectives, ...(visualDirectives.includes(castHint) ? [] : [castHint])]
 		: [
@@ -3089,9 +3507,6 @@ function buildBookStyleBible(input: {
 					"新角色必须写入全书关系网后才能加入章节生产",
 					"章节镜头应复用 style bible 的光影与色调规则",
 				],
-		characterPromptTemplate:
-			characterPromptTemplate ||
-			"[角色名]，[身份/性格]，[外观与服装]，[阶段形态]，遵循 style bible，电影级写实，高清细节，角色一致性优先",
 	};
 }
 
@@ -3109,7 +3524,6 @@ async function inferBookStyleBibleWithAgents(
 	visualDirectives: string[];
 	negativeDirectives: string[];
 	consistencyRules: string[];
-	characterPromptTemplate: string;
 }> {
 	const prevStyle =
 		input.prevIndex && typeof input.prevIndex?.assets?.styleBible === "object"
@@ -3128,7 +3542,6 @@ async function inferBookStyleBibleWithAgents(
 			consistencyRules: Array.isArray(prevStyle?.consistencyRules)
 				? prevStyle.consistencyRules.map((x: any) => String(x || "").trim()).filter(Boolean).slice(0, 12)
 				: [],
-			characterPromptTemplate: String(prevStyle?.characterPromptTemplate || "").trim(),
 		};
 	}
 
@@ -3142,13 +3555,12 @@ async function inferBookStyleBibleWithAgents(
 	const prompt = [
 		"你是 TapCanvas 全书风格总监。请基于小说内容进行语义理解，输出全书统一视觉风格方案。",
 		"禁止使用正则/关键词匹配思路，必须基于语义与叙事气质判断。",
-		'严格输出 JSON：{"styleName":"...","visualDirectives":["..."],"negativeDirectives":["..."],"consistencyRules":["..."],"characterPromptTemplate":"..."}',
+		'严格输出 JSON：{"styleName":"...","visualDirectives":["..."],"negativeDirectives":["..."],"consistencyRules":["..."]}',
 		"要求：",
 		"- styleName 必须是可执行的中文风格名",
 		"- visualDirectives 4-10 条，描述镜头语言、光影、时代质感与色彩倾向",
 		"- negativeDirectives 3-8 条，明确禁止项",
 		"- consistencyRules 3-8 条，强调跨章节一致性",
-		"- characterPromptTemplate 必须可直接用于角色图像提示词",
 		"- 不要输出 markdown，不要解释文字",
 		JSON.stringify({
 			title: input.title,
@@ -3179,8 +3591,7 @@ async function inferBookStyleBibleWithAgents(
 	const consistencyRules = Array.isArray(parsed?.consistencyRules)
 		? parsed.consistencyRules.map((x: any) => String(x || "").trim()).filter(Boolean).slice(0, 12)
 		: [];
-	const characterPromptTemplate = String(parsed?.characterPromptTemplate || "").trim();
-	if (!visualDirectives.length || !negativeDirectives.length || !consistencyRules.length || !characterPromptTemplate) {
+	if (!visualDirectives.length || !negativeDirectives.length || !consistencyRules.length) {
 		throw new Error("agents-cli style bible fields incomplete");
 	}
 	return {
@@ -3188,7 +3599,6 @@ async function inferBookStyleBibleWithAgents(
 		visualDirectives,
 		negativeDirectives,
 		consistencyRules,
-		characterPromptTemplate,
 	};
 }
 
@@ -3648,11 +4058,6 @@ function mergeStyleBibleWithPrevious(
 		referenceImages: Array.isArray(prevStyle.referenceImages)
 			? prevStyle.referenceImages
 			: next.referenceImages,
-		characterPromptTemplate:
-			typeof prevStyle.characterPromptTemplate === "string" &&
-			prevStyle.characterPromptTemplate.trim()
-				? prevStyle.characterPromptTemplate
-				: next.characterPromptTemplate,
 	};
 }
 
@@ -3673,11 +4078,7 @@ function readStyleBibleFromPrevIndex(prev: unknown): BookStyleBible | null {
 		typeof (style as { styleName?: unknown }).styleName === "string"
 			? ((style as { styleName?: string }).styleName ?? "").trim()
 			: "";
-	const characterPromptTemplate =
-		typeof (style as { characterPromptTemplate?: unknown }).characterPromptTemplate === "string"
-			? ((style as { characterPromptTemplate?: string }).characterPromptTemplate ?? "").trim()
-			: "";
-	if (!styleId || !styleName || !characterPromptTemplate) return null;
+	if (!styleId || !styleName) return null;
 	const normalizeTextList = (value: unknown): string[] =>
 		Array.isArray(value)
 			? value
@@ -3709,7 +4110,6 @@ function readStyleBibleFromPrevIndex(prev: unknown): BookStyleBible | null {
 		negativeDirectives: normalizeTextList((style as { negativeDirectives?: unknown }).negativeDirectives),
 		consistencyRules: normalizeTextList((style as { consistencyRules?: unknown }).consistencyRules),
 		referenceImages: normalizeTextList((style as { referenceImages?: unknown }).referenceImages),
-		characterPromptTemplate,
 	};
 }
 
@@ -4110,7 +4510,6 @@ async function buildBookIndexFromContentFullReconfirm(
 			visualDirectives: styleSemantic.visualDirectives,
 			negativeDirectives: styleSemantic.negativeDirectives,
 			consistencyRules: styleSemantic.consistencyRules,
-			characterPromptTemplate: styleSemantic.characterPromptTemplate,
 		}),
 		input.prevIndex,
 	);
@@ -4160,9 +4559,40 @@ async function buildBookIndexFromContentFullReconfirm(
 
 function mapBookAgentsDeriveError(err: unknown): {
 	status: number;
-	payload: { error: string; code: string; details?: { reason: string } };
+	payload: { error: string; code: string; details?: Record<string, unknown> };
 } {
-	const message = String((err as any)?.message || "").trim();
+	if (err instanceof BookSourceParseError) {
+		const status =
+			err.code === "book_source_size_mismatch"
+				? 409
+				: err.code === "book_source_upload_read_failed" ||
+					  err.code === "book_source_metadata_invalid"
+					? 500
+					: err.code === "book_source_unsupported_type" ||
+						  err.code === "book_source_invalid_utf8" ||
+						  err.code === "book_source_empty"
+						? 400
+						: 422;
+		return {
+			status,
+			payload: {
+				error: err.message,
+				code: err.code.toUpperCase(),
+				details: { reason: err.message, ...err.details },
+			},
+		};
+	}
+	if (err instanceof BookEvidenceError) {
+		return {
+			status: 500,
+			payload: {
+				error: err.message,
+				code: err.code.toUpperCase(),
+				details: { reason: err.message, ...err.details },
+			},
+		};
+	}
+	const message = readUnknownErrorMessage(err);
 	const messageLower = message.toLowerCase();
 	if (messageLower.includes("agents-cli chapters metadata incomplete")) {
 		return {
@@ -4506,7 +4936,6 @@ async function processBookUploadJob(options: {
 	const job = await readBookUploadJob(options.projectId, options.userId, options.jobId);
 	if (!job) return;
 	if (job.status === "succeeded" || job.status === "failed") return;
-	const session = await readBookUploadSession(options.projectId, options.userId, job.uploadId);
 	const now = new Date().toISOString();
 	job.status = "running";
 	job.startedAt = now;
@@ -4519,13 +4948,48 @@ async function processBookUploadJob(options: {
 	};
 	await writeBookUploadJob(job);
 	try {
+		const session = await readBookUploadSession(
+			options.projectId,
+			options.userId,
+			job.uploadId,
+		);
 		if (!session || session.userId !== job.userId) {
 			throw new Error("upload session not found");
 		}
-		const content = await fs.readFile(session.tmpPath, "utf8").catch(() => "");
-		if (!content.trim()) {
-			throw new Error("uploaded content is empty");
+		let sourceBytes: Uint8Array;
+		try {
+			sourceBytes = await fs.readFile(session.tmpPath);
+		} catch (error) {
+			throw new BookSourceParseError(
+				"book_source_upload_read_failed",
+				"读取已上传书籍源文件失败",
+				{ uploadId: session.id, reason: readUnknownErrorMessage(error) },
+			);
 		}
+		if (sourceBytes.byteLength === 0) {
+			throw new BookSourceParseError("book_source_empty", "上传的书籍源文件为空");
+		}
+		if (sourceBytes.byteLength !== session.contentBytes) {
+			throw new BookSourceParseError(
+				"book_source_size_mismatch",
+				"上传的书籍源文件字节数与会话声明不一致",
+				{
+					expectedBytes: session.contentBytes,
+					actualBytes: sourceBytes.byteLength,
+				},
+			);
+		}
+		const parsedSource = parseBookSource({
+			fileName: session.sourceFileName,
+			bytes: sourceBytes,
+		});
+		job.progress = {
+			phase: "source_parsed",
+			percent: 5,
+			message: `已解析 ${parsedSource.metadata.format} 源文件，准备建立章节索引`,
+		};
+		job.updatedAt = new Date().toISOString();
+		await writeBookUploadJob(job);
 		const asyncContext = buildAsyncTaskContext({
 			env: options.env,
 			requestUrl: options.requestUrl,
@@ -4536,7 +5000,9 @@ async function processBookUploadJob(options: {
 			ingestBookFromContent(asyncContext, job.userId, {
 				projectId: job.projectId,
 				title: job.title,
-				content,
+				content: parsedSource.text,
+				sourceBytes,
+				source: parsedSource.metadata,
 				strictAgents: job.strictAgents,
 				onProgress: async (progress) => {
 					const fresh = await readBookUploadJob(job.projectId, job.userId, job.id);
@@ -4601,15 +5067,32 @@ async function processBookUploadJob(options: {
 		job.updatedAt = job.finishedAt;
 		await writeBookUploadJob(job);
 	} finally {
-		const sessionNow = await readBookUploadSession(
-			options.projectId,
-			options.userId,
-			job.uploadId,
-		);
-		if (sessionNow) {
-			const metaPath = buildBookUploadMetaPath(options.projectId, options.userId, job.uploadId);
-			await fs.rm(sessionNow.tmpPath, { force: true }).catch(() => {});
-			await fs.rm(metaPath, { force: true }).catch(() => {});
+		try {
+			const sessionNow = await readBookUploadSession(
+				options.projectId,
+				options.userId,
+				job.uploadId,
+			);
+			if (sessionNow) {
+				try {
+					await fs.rm(sessionNow.tmpPath, { force: true });
+				} catch (error) {
+					console.warn("[book-upload.cleanup.failed]", {
+						projectId: options.projectId,
+						userId: options.userId,
+						uploadId: job.uploadId,
+						kind: "source",
+						reason: readUnknownErrorMessage(error),
+					});
+				}
+			}
+		} catch (error) {
+			console.warn("[book-upload.cleanup.session-read-failed]", {
+				projectId: options.projectId,
+				userId: options.userId,
+				uploadId: job.uploadId,
+				reason: readUnknownErrorMessage(error),
+			});
 		}
 	}
 }
@@ -4703,7 +5186,20 @@ async function processBookReconfirmJob(options: {
 			chapters: Array.isArray(nextIndex?.chapters) ? (nextIndex.chapters as BookChapterMeta[]) : [],
 			index: nextIndex,
 		});
-		await writeBookIndexSafe(indexPath, nextIndex);
+		nextIndex = await attachFreshBookEvidenceIndex({
+			bookDirectory: bookDir,
+			bookId: job.bookId,
+			projectId: job.projectId,
+			title: String(nextIndex?.title || prevIndex.title || job.bookId),
+			rawText: rawContent,
+			index: nextIndex as BookIndexRecord,
+			source: prevIndex.source,
+		});
+		nextIndex = await commitDerivedBookIndex({
+			indexPath,
+			base: prevIndex,
+			derived: nextIndex as BookIndexRecord,
+		});
 		job.status = "succeeded";
 		job.progress = {
 			phase: "done",
@@ -5268,6 +5764,27 @@ function getPublicBase(c: Pick<AppContext, "env" | "req">): string {
 	return resolvePublicAssetBaseUrl(c).trim().replace(/\/+$/, "");
 }
 
+/**
+ * 上传视频的服务端 poster（best-effort）：对象此刻已在 TOS，让 media-worker 按 key 抽首帧。
+ * 失败/未启用返回 null，asset 行照常落库——画布壳层仍有客户端抓帧兜底，但那会让每个新访客
+ * 首开画布批量拉 mp4 range（存量已由 scripts/backfill-video-posters.ts 回填，这里堵新增源头）。
+ */
+async function captureUploadedVideoPoster(
+	userId: string,
+	key: string,
+): Promise<string | null> {
+	try {
+		const viaWorker = await extractPosterViaMediaWorker({
+			videoR2Key: key,
+			userId,
+			timeoutMs: 30_000,
+		});
+		return viaWorker?.posterUrl ?? null;
+	} catch {
+		return null;
+	}
+}
+
 function detectUploadExtension(file: File): string {
 	const name = (file as any).name as string | undefined;
 	const rawType = file.type || "";
@@ -5378,6 +5895,13 @@ assetRouter.get("/", authMiddleware, async (c) => {
 			: undefined;
 	const cursor = c.req.query("cursor") || null;
 	const projectId = c.req.query("projectId") || null;
+	const projectIds = Array.from(
+		new Set(
+			(c.req.queries("projectId") || [])
+				.map((value) => String(value).trim())
+				.filter(Boolean),
+		),
+	).slice(0, 100);
 	const kind = c.req.query("kind") || null;
 	const fullData = String(c.req.query("fullData") || "").trim() === "1";
 
@@ -5385,6 +5909,7 @@ assetRouter.get("/", authMiddleware, async (c) => {
 		limit,
 		cursor,
 		projectId,
+		projectIds,
 		kind,
 	});
 	const payload = rows.map((row) =>
@@ -5454,6 +5979,8 @@ async function ingestBookFromContent(
 		projectId: string;
 		title: string;
 		content: string;
+		sourceBytes: Uint8Array;
+		source: BookSourceMetadataV1;
 		strictAgents?: boolean;
 		onProgress?: (progress: {
 			phase: string;
@@ -5482,6 +6009,17 @@ async function ingestBookFromContent(
 	const bookDir = path.join(projectBooksRoot, bookId);
 	await fs.mkdir(bookDir, { recursive: true });
 
+	const sourceDirectory = path.join(bookDir, "source");
+	const storedSourcePath = path.join(
+		sourceDirectory,
+		storedBookSourceFileName(input.source.format),
+	);
+	await fs.mkdir(sourceDirectory, { recursive: true });
+	await fs.writeFile(storedSourcePath, input.sourceBytes);
+	const source: BookSourceMetadataV1 = {
+		...input.source,
+		storedPath: path.relative(process.cwd(), storedSourcePath),
+	};
 	const rawPath = path.join(bookDir, "raw.md");
 	await fs.writeFile(rawPath, input.content, "utf8");
 
@@ -5501,8 +6039,19 @@ async function ingestBookFromContent(
 		chapters: Array.isArray(index?.chapters) ? (index.chapters as BookChapterMeta[]) : [],
 		index,
 	});
+	const persistedIndex = await attachFreshBookEvidenceIndex({
+		bookDirectory: bookDir,
+		bookId,
+		projectId: input.projectId,
+		title: input.title,
+		rawText: input.content,
+		index: indexWithChunks as BookIndexRecord,
+		source,
+	});
 	const indexPath = path.join(bookDir, "index.json");
-	await fs.writeFile(indexPath, JSON.stringify(indexWithChunks, null, 2), "utf8");
+	await replaceBookIndex(indexPath, persistedIndex);
+
+	const nowIso = new Date().toISOString();
 
 	await createAssetRow(
 		c.env.DB,
@@ -5514,22 +6063,46 @@ async function ingestBookFromContent(
 				kind: "novelBook",
 				bookId,
 				title: input.title,
-				chapterCount: Number(indexWithChunks.chapterCount || 0) || 0,
+				chapterCount: Number(persistedIndex.chapterCount || 0) || 0,
 				indexPath: path.relative(process.cwd(), indexPath),
 				rawPath: path.relative(process.cwd(), rawPath),
-				updatedAt: indexWithChunks.updatedAt,
+				source,
+				evidenceIndex: persistedIndex.evidenceIndex,
+				updatedAt: persistedIndex.updatedAt,
 			},
 		},
-		new Date().toISOString(),
+		nowIso,
 	);
+
+	// Sync every chapter into the DB immediately so data is never lost if the
+	// local file system is wiped. Local raw.md / chunks remain for agents-cli
+	// only. ON CONFLICT preserves user-managed fields (status, continuity_context,
+	// style_profile_override) while updating title, summary, and book links.
+	const bookChapters = Array.isArray(persistedIndex?.chapters)
+		? (persistedIndex.chapters as BookChapterMeta[])
+		: [];
+	if (bookChapters.length > 0) {
+		await upsertChaptersFromBook({
+			db: c.env.DB,
+			ownerId: userId,
+			projectId: input.projectId,
+			bookId,
+			chapters: bookChapters.map((ch) => ({
+				chapter: ch.chapter,
+				title: ch.title,
+				summary: typeof ch.summary === "string" ? ch.summary : null,
+			})),
+			nowIso,
+		});
+	}
 
 	return {
 		ok: true,
 		bookId,
 		title: input.title,
-		chapterCount: Number(indexWithChunks.chapterCount || 0) || 0,
-		processedBy: String(indexWithChunks.processedBy || ""),
-		warnings: Array.isArray(indexWithChunks.derivationWarnings) ? indexWithChunks.derivationWarnings : [],
+		chapterCount: Number(persistedIndex.chapterCount || 0) || 0,
+		processedBy: String(persistedIndex.processedBy || ""),
+		warnings: Array.isArray(persistedIndex.derivationWarnings) ? persistedIndex.derivationWarnings : [],
 	};
 }
 
@@ -5560,11 +6133,18 @@ assetRouter.post("/books/ingest", authMiddleware, async (c) => {
 		);
 	}
 	try {
+		const sourceBytes = new TextEncoder().encode(parsed.data.content);
+		const parsedSource = parseBookSource({
+			fileName: `${parsed.data.title}.txt`,
+			bytes: sourceBytes,
+		});
 		const result = await runBookDerivationQueued(() =>
 			ingestBookFromContent(c as any, userId, {
 				projectId: parsed.data.projectId,
 				title: parsed.data.title,
-				content: parsed.data.content,
+				content: parsedSource.text,
+				sourceBytes,
+				source: parsedSource.metadata,
 				strictAgents: true,
 			}),
 		);
@@ -5591,7 +6171,23 @@ assetRouter.post("/books/upload/start", authMiddleware, async (c) => {
 	}
 	const projectId = parsed.data.projectId;
 	const title = parsed.data.title.trim();
+	const sourceFileName = sanitizeUploadName(parsed.data.sourceFileName);
 	const contentBytes = Math.max(0, Math.trunc(parsed.data.contentBytes));
+	if (!sourceFileName || !isSupportedBookSourceFileName(sourceFileName)) {
+		return c.json(
+			{
+				error: "仅支持 .txt、.text、.md、.markdown、.docx、.epub 书籍源文件",
+				code: "BOOK_SOURCE_UNSUPPORTED_TYPE",
+			},
+			400,
+		);
+	}
+	if (contentBytes === 0) {
+		return c.json(
+			{ error: "书籍源文件为空", code: "BOOK_SOURCE_EMPTY" },
+			400,
+		);
+	}
 	if (contentBytes > TEXT_UPLOAD_MAX_BYTES) {
 		return c.json(buildTextUploadTooLargePayload(contentBytes), 413);
 	}
@@ -5612,19 +6208,20 @@ assetRouter.post("/books/upload/start", authMiddleware, async (c) => {
 	const nowIso = new Date().toISOString();
 	const tmpPath = buildBookUploadTmpPath(projectId, userId, uploadId);
 	await fs.mkdir(path.dirname(tmpPath), { recursive: true });
-	await fs.writeFile(tmpPath, "", "utf8");
+	await fs.writeFile(tmpPath, new Uint8Array());
 	await writeBookUploadSession({
 		id: uploadId,
 		userId,
 		projectId,
 		title,
+		sourceFileName,
 		tmpPath,
 		bytes: 0,
 		contentBytes,
 		createdAt: nowIso,
 		updatedAt: nowIso,
 	});
-	return c.json({ ok: true, uploadId, projectId, title });
+	return c.json({ ok: true, uploadId, projectId, title, sourceFileName });
 });
 
 assetRouter.post("/books/upload/:uploadId/append", authMiddleware, async (c) => {
@@ -5637,25 +6234,153 @@ assetRouter.post("/books/upload/:uploadId/append", authMiddleware, async (c) => 
 	const projectId = String(c.req.query("projectId") || "").trim();
 	if (!uploadId) return c.json({ error: "uploadId is required" }, 400);
 	if (!projectId) return c.json({ error: "projectId is required" }, 400);
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const parsed = AppendProjectBookUploadChunkSchema.safeParse(body);
-	if (!parsed.success) {
-		return c.json({ error: "Invalid request body", issues: parsed.error.issues }, 400);
+	const contentType = normalizeContentType(c.req.header("content-type"));
+	if (contentType !== "application/octet-stream") {
+		return c.json(
+			{
+				error: "book upload chunk Content-Type must be application/octet-stream",
+				code: "BOOK_UPLOAD_CONTENT_TYPE_INVALID",
+			},
+			415,
+		);
 	}
-	const session = await readBookUploadSession(projectId, userId, uploadId);
-	if (!session) return c.json({ error: "upload session not found" }, 404);
-	if (session.userId !== userId) return c.json({ error: "Forbidden" }, 403);
-	const chunkBytes = getUtf8TextByteLength(parsed.data.chunk);
-	const nextBytes = session.bytes + chunkBytes;
-	if (nextBytes > TEXT_UPLOAD_MAX_BYTES) {
-		return c.json(buildTextUploadTooLargePayload(nextBytes), 413);
+	const offset = Number(c.req.query("offset"));
+	if (!Number.isInteger(offset) || offset < 0) {
+		return c.json(
+			{ error: "offset must be a non-negative integer", code: "BOOK_UPLOAD_OFFSET_INVALID" },
+			400,
+		);
 	}
-	await fs.mkdir(path.dirname(session.tmpPath), { recursive: true });
-	await fs.appendFile(session.tmpPath, parsed.data.chunk, "utf8");
-	session.bytes = nextBytes;
-	session.updatedAt = new Date().toISOString();
-	await writeBookUploadSession(session);
-	return c.json({ ok: true, uploadId, bytes: session.bytes });
+	let chunk: Uint8Array;
+	try {
+		chunk = new Uint8Array(await c.req.arrayBuffer());
+	} catch (error) {
+		return c.json(
+			{
+				error: "读取书籍上传分块失败",
+				code: "BOOK_UPLOAD_CHUNK_READ_FAILED",
+				details: { reason: readUnknownErrorMessage(error) },
+			},
+			400,
+		);
+	}
+	if (chunk.byteLength === 0) {
+		return c.json(
+			{ error: "book upload chunk is empty", code: "BOOK_UPLOAD_CHUNK_EMPTY" },
+			400,
+		);
+	}
+	if (chunk.byteLength > BOOK_UPLOAD_CHUNK_MAX_BYTES) {
+		return c.json(
+			{
+				error: `book upload chunk exceeds ${BOOK_UPLOAD_CHUNK_MAX_BYTES} bytes`,
+				code: "BOOK_UPLOAD_CHUNK_TOO_LARGE",
+				maxBytes: BOOK_UPLOAD_CHUNK_MAX_BYTES,
+			},
+			413,
+		);
+	}
+	try {
+		const locked = await withBookUploadSessionLock({
+			sessionMetaPath: buildBookUploadMetaPath(projectId, userId, uploadId),
+			operation: async () => {
+				const session = await readBookUploadSession(projectId, userId, uploadId);
+				if (!session) return c.json({ error: "upload session not found" }, 404);
+				if (session.finalizedJobId) {
+					return c.json(
+						{
+							error: "book upload session is already finalized",
+							code: "BOOK_UPLOAD_SESSION_FINALIZED",
+							jobId: session.finalizedJobId,
+						},
+						409,
+					);
+				}
+				if (offset !== session.bytes) {
+					return c.json(
+						{
+							error: "book upload offset does not match persisted bytes",
+							code: "BOOK_UPLOAD_OFFSET_MISMATCH",
+							expectedOffset: session.bytes,
+							receivedOffset: offset,
+						},
+						409,
+					);
+				}
+				const storedBytesBeforeAppend = await readBookUploadSourceSize(session);
+				if (storedBytesBeforeAppend !== session.bytes) {
+					throw new BookSourceParseError(
+						"book_source_size_mismatch",
+						"书籍上传临时源与会话已记录字节数不一致",
+						{
+							uploadId,
+							sessionBytes: session.bytes,
+							storedBytes: storedBytesBeforeAppend,
+						},
+					);
+				}
+				const nextBytes = session.bytes + chunk.byteLength;
+				if (nextBytes > TEXT_UPLOAD_MAX_BYTES) {
+					return c.json(buildTextUploadTooLargePayload(nextBytes), 413);
+				}
+				if (nextBytes > session.contentBytes) {
+					return c.json(
+						{
+							error: "book upload bytes exceed the declared source file size",
+							code: "BOOK_UPLOAD_SIZE_MISMATCH",
+							expectedBytes: session.contentBytes,
+							nextBytes,
+						},
+						409,
+					);
+				}
+				await fs.appendFile(session.tmpPath, chunk);
+				const storedBytesAfterAppend = await readBookUploadSourceSize(session);
+				if (storedBytesAfterAppend !== nextBytes) {
+					throw new BookSourceParseError(
+						"book_source_size_mismatch",
+						"书籍上传分块写入后的文件字节数不一致",
+						{
+							uploadId,
+							expectedBytes: nextBytes,
+							storedBytes: storedBytesAfterAppend,
+						},
+					);
+				}
+				session.bytes = nextBytes;
+				session.updatedAt = new Date().toISOString();
+				await writeBookUploadSession(session);
+				return c.json({ ok: true, uploadId, bytes: session.bytes });
+			},
+		});
+		if (locked.status === "busy") {
+			return c.json(
+				{
+					error: "book upload session is busy; retry the same offset",
+					code: "BOOK_UPLOAD_SESSION_BUSY",
+					receivedOffset: offset,
+				},
+				409,
+			);
+		}
+		return locked.value;
+	} catch (error) {
+		if (error instanceof BookUploadSessionLockError) {
+			reportBookUploadSessionLockError({ error, projectId, userId, uploadId });
+			return c.json(
+				{ error: error.message, code: error.code },
+				500,
+			);
+		}
+		if (error instanceof BookSourceParseError) {
+			const mapped = mapBookAgentsDeriveError(error);
+			return c.json(
+				mapped.payload,
+				mapped.status as 400 | 409 | 422 | 500,
+			);
+		}
+		throw error;
+	}
 });
 
 assetRouter.post("/books/upload/:uploadId/finish", authMiddleware, async (c) => {
@@ -5673,65 +6398,162 @@ assetRouter.post("/books/upload/:uploadId/finish", authMiddleware, async (c) => 
 	if (!parsed.success) {
 		return c.json({ error: "Invalid request body", issues: parsed.error.issues }, 400);
 	}
-	const session = await readBookUploadSession(projectId, userId, uploadId);
-	if (!session) return c.json({ error: "upload session not found" }, 404);
-	if (session.userId !== userId) return c.json({ error: "Forbidden" }, 403);
-	const activeJob = await findActiveBookUploadJob(projectId, userId);
-	if (activeJob) {
-		return c.json(
-			{
-				error: "当前项目有小说上传任务进行中，请等待完成后再上传",
-				code: "BOOK_UPLOAD_JOB_ACTIVE",
-				job: toBookUploadJobPublic(activeJob),
-			},
-			409,
-		);
-	}
 	try {
-		const hasContent = await fs
-			.readFile(session.tmpPath, "utf8")
-			.then((text) => Boolean(String(text || "").trim()))
-			.catch(() => false);
-		if (!hasContent) {
-			return c.json({ error: "uploaded content is empty" }, 400);
-		}
-		const now = new Date().toISOString();
-		const jobId = crypto.randomUUID();
-		const job: BookUploadJobMeta = {
-			id: jobId,
-			uploadId: session.id,
-			userId,
-			projectId: session.projectId,
-			title: session.title,
-			strictAgents: parsed.data.strictAgents !== false,
-			status: "queued",
-			progress: {
-				phase: "queued",
-				percent: 0,
-				message: "任务已入队，等待执行",
+		const locked = await withBookUploadSessionLock({
+			sessionMetaPath: buildBookUploadMetaPath(projectId, userId, uploadId),
+			operation: async () => {
+				const session = await readBookUploadSession(projectId, userId, uploadId);
+				if (!session) return c.json({ error: "upload session not found" }, 404);
+				if (session.finalizedJobId) {
+					const finalizedJob = await readBookUploadJob(
+						projectId,
+						userId,
+						session.finalizedJobId,
+					);
+					if (!finalizedJob) {
+						return c.json(
+							{
+								error: "finalized book upload job metadata is missing",
+								code: "BOOK_UPLOAD_FINALIZED_JOB_MISSING",
+								jobId: session.finalizedJobId,
+							},
+							409,
+						);
+					}
+					if (finalizedJob.status === "failed") {
+						return c.json(
+							{
+								error: "finalized book upload job failed",
+								code: "BOOK_UPLOAD_FINALIZED_JOB_FAILED",
+								job: toBookUploadJobPublic(finalizedJob),
+							},
+							409,
+						);
+					}
+					return c.json(
+						{
+							ok: true,
+							reused: true,
+							job: toBookUploadJobPublic(finalizedJob),
+						},
+						finalizedJob.status === "succeeded" ? 200 : 202,
+					);
+				}
+				const activeJob = await findActiveBookUploadJob(projectId, userId);
+				if (activeJob) {
+					return c.json(
+						{
+							error: "当前项目有小说上传任务进行中，请等待完成后再上传",
+							code: "BOOK_UPLOAD_JOB_ACTIVE",
+							job: toBookUploadJobPublic(activeJob),
+						},
+						409,
+					);
+				}
+				const storedBytes = await readBookUploadSourceSize(session);
+				if (storedBytes === 0) {
+					return c.json(
+						{ error: "uploaded source file is empty", code: "BOOK_SOURCE_EMPTY" },
+						400,
+					);
+				}
+				if (
+					session.bytes !== session.contentBytes ||
+					storedBytes !== session.contentBytes
+				) {
+					return c.json(
+						{
+							error: "uploaded source file is incomplete",
+							code: "BOOK_UPLOAD_SIZE_MISMATCH",
+							expectedBytes: session.contentBytes,
+							sessionBytes: session.bytes,
+							storedBytes,
+						},
+						409,
+					);
+				}
+				const now = new Date().toISOString();
+				const job: BookUploadJobMeta = {
+					id: crypto.randomUUID(),
+					uploadId: session.id,
+					userId,
+					projectId: session.projectId,
+					title: session.title,
+					strictAgents: parsed.data.strictAgents !== false,
+					status: "queued",
+					progress: {
+						phase: "queued",
+						percent: 0,
+						message: "任务已入队，等待执行",
+					},
+					error: null,
+					createdAt: now,
+					updatedAt: now,
+				};
+				await writeBookUploadJob(job);
+				session.finalizedJobId = job.id;
+				session.updatedAt = now;
+				try {
+					await writeBookUploadSession(session);
+				} catch (error) {
+					const finalizationError = new BookSourceParseError(
+						"book_source_upload_read_failed",
+						"写入书籍上传会话完成状态失败",
+						{
+							uploadId,
+							jobId: job.id,
+							reason: readUnknownErrorMessage(error),
+						},
+					);
+					job.status = "failed";
+					job.progress = {
+						phase: "failed",
+						percent: 100,
+						message: "任务入队失败",
+					};
+					job.error = {
+						code: finalizationError.code.toUpperCase(),
+						message: finalizationError.message,
+						details: finalizationError.details,
+					};
+					job.finishedAt = new Date().toISOString();
+					job.updatedAt = job.finishedAt;
+					await writeBookUploadJob(job);
+					throw finalizationError;
+				}
+				enqueueBookUploadJob({
+					jobId: job.id,
+					userId,
+					projectId: job.projectId,
+					env: c.env,
+					requestUrl: c.req.url,
+					authorization: (c.req.header("authorization") || "").trim() || undefined,
+					apiKey: (c.req.header("x-api-key") || "").trim() || undefined,
+				});
+				void drainBookUploadJobs();
+				return c.json({ ok: true, reused: false, job: toBookUploadJobPublic(job) }, 202);
 			},
-			error: null,
-			createdAt: now,
-			updatedAt: now,
-		};
-		await writeBookUploadJob(job);
-		enqueueBookUploadJob({
-			jobId: job.id,
-			userId,
-			projectId: job.projectId,
-			env: c.env,
-			requestUrl: c.req.url,
-			authorization: (c.req.header("authorization") || "").trim() || undefined,
-			apiKey: (c.req.header("x-api-key") || "").trim() || undefined,
 		});
-		void drainBookUploadJobs();
-		return c.json({ ok: true, job: toBookUploadJobPublic(job) }, 202);
-	} catch (err: any) {
-		if (String(err?.message || "").includes("project not found")) {
-			return c.json({ error: "project not found" }, 404);
+		if (locked.status === "busy") {
+			return c.json(
+				{
+					error: "book upload session is busy; retry finish",
+					code: "BOOK_UPLOAD_SESSION_BUSY",
+				},
+				409,
+			);
 		}
-		const mapped = mapBookAgentsDeriveError(err);
-		return c.json(mapped.payload, mapped.status as 400 | 401 | 403 | 404 | 500);
+		return locked.value;
+	} catch (error) {
+		if (error instanceof BookUploadSessionLockError) {
+			reportBookUploadSessionLockError({ error, projectId, userId, uploadId });
+			return c.json({ error: error.message, code: error.code }, 500);
+		}
+		const mapped = mapBookAgentsDeriveError(error);
+		return c.json(
+			mapped.payload,
+			mapped.status as 400 | 401 | 403 | 404 | 409 | 422 | 500,
+		);
 	}
 });
 
@@ -5842,7 +6664,17 @@ assetRouter.post("/books/:bookId/update", authMiddleware, async (c) => {
 		chapters: Array.isArray(nextIndex?.chapters) ? (nextIndex.chapters as BookChapterMeta[]) : [],
 		index: nextIndex,
 	});
-	await writeBookIndexSafe(indexPath, nextIndex);
+	nextIndex = await commitDerivedBookIndex({
+		indexPath,
+		base: prevIndex,
+		derived: nextIndex as BookIndexRecord,
+	});
+	await touchProjectActivity({
+		db: c.env.DB,
+		projectId,
+		ownerId: userId,
+		nowIso: new Date().toISOString(),
+	});
 	if (String(nextIndex?.processedBy || "") === "agents-cli-on-demand") {
 		await scheduleBookReconfirmJobIfIdle({
 			env: c.env,
@@ -5969,7 +6801,28 @@ assetRouter.post("/books/:bookId/reconfirm", authMiddleware, async (c) => {
 		chapters: Array.isArray(nextIndex?.chapters) ? (nextIndex.chapters as BookChapterMeta[]) : [],
 		index: nextIndex,
 	});
-	await writeBookIndexSafe(indexPath, nextIndex);
+	try {
+		nextIndex = await attachFreshBookEvidenceIndex({
+			bookDirectory: bookDir,
+			bookId,
+			projectId,
+			title: String(nextIndex?.title || prevIndex.title || bookId),
+			rawText: rawContent,
+			index: nextIndex as BookIndexRecord,
+			source: prevIndex.source,
+		});
+		nextIndex = await commitDerivedBookIndex({
+			indexPath,
+			base: prevIndex,
+			derived: nextIndex as BookIndexRecord,
+		});
+	} catch (error) {
+		const mapped = mapBookAgentsDeriveError(error);
+		return c.json(
+			mapped.payload,
+			mapped.status as 400 | 401 | 403 | 404 | 409 | 422 | 500,
+		);
+	}
 	return c.json({
 		ok: true,
 		async: false,
@@ -6011,8 +6864,9 @@ assetRouter.get("/books", authMiddleware, async (c) => {
 		}
 		items.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 		return c.json(items);
-	} catch {
-		return c.json([]);
+	} catch (error) {
+		if (hasNodeErrorCode(error, "ENOENT")) return c.json([]);
+		throw error;
 	}
 });
 
@@ -6254,33 +7108,25 @@ assetRouter.delete("/books/:bookId/storyboard/history/:shotNo", authMiddleware, 
 			return item;
 		})
 		.filter((x): x is NonNullable<typeof x> => !!x);
-	let nextIndex = idx;
-	if (idx && typeof idx === "object") {
-		const assets = (idx.assets && typeof idx.assets === "object") ? idx.assets : {};
-		const chunks = Array.isArray((assets as any).storyboardChunks)
-			? (assets as any).storyboardChunks
-			: [];
-		const keptChunks = chunks.filter((item: any) => {
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const assets = cloneBookIndexAssets(current);
+		const chunks = normalizeBookStoryboardChunks(assets.storyboardChunks);
+		const keptChunks = chunks.filter((item) => {
 			const chunkTaskId =
-				String(item?.taskId || "").trim() ||
-				`legacy-task-ch${Math.max(1, Math.trunc(Number(item?.chapter || 1)))}`;
+				String(item.taskId || "").trim() ||
+				`legacy-task-ch${Math.max(1, Math.trunc(Number(item.chapter || 1)))}`;
 			if (chunkTaskId !== taskId) return true;
-			const end = Math.trunc(Number(item?.shotEnd || 0));
+			const end = Math.trunc(Number(item.shotEnd || 0));
 			return Number.isFinite(end) && end > 0 ? end < shotNo : true;
 		});
-		nextIndex = {
-			...idx,
-			assets: {
-				...assets,
-				storyboardChunks: keptChunks,
-			},
-			updatedAt: new Date().toISOString(),
-		};
-		await writeBookIndexSafe(indexPath, nextIndex);
-	}
-	const progress = nextIndex
-		? computeBookStoryboardProgressFromIndex({ index: nextIndex, processItems: normalizedItems })
-		: null;
+		assets.storyboardChunks = keptChunks;
+		const next = { ...current, assets, updatedAt: new Date().toISOString() };
+		return { next, result: next };
+	});
+	const progress = computeBookStoryboardProgressFromIndex({
+		index: updated.index,
+		processItems: normalizedItems,
+	});
 	if (progress) {
 		const progressPayload = {
 			version: 1,
@@ -6332,6 +7178,7 @@ assetRouter.post("/books/:bookId/metadata/ensure-window", authMiddleware, async 
 	const chapter = Number.isFinite(chapterRaw) && chapterRaw > 0 ? Math.trunc(chapterRaw) : 0;
 	if (!chapter) return c.json({ error: "chapter is required" }, 400);
 	const mode: BookDerivationMode = body?.mode === "deep" ? "deep" : "standard";
+	const forceRefreshChapter = body?.forceRefreshChapter === true;
 	const windowSizeRaw = Number(body?.windowSize);
 	const defaultWindowSize = readBookMetadataStageWindowChapters(mode);
 	const windowSize =
@@ -6427,6 +7274,12 @@ assetRouter.post("/books/:bookId/metadata/ensure-window", authMiddleware, async 
 	const missingBefore = windowChapters
 		.filter((item) => !isChapterMetadataComplete(item))
 		.map((item) => item.chapter);
+	const targetChapterNumbers = resolveBookMetadataTargetChapterNumbers({
+		windowChapterNumbers: windowChapters.map((item) => item.chapter),
+		missingChapterNumbers: missingBefore,
+		safeChapter,
+		forceRefreshChapter,
+	});
 	let metadataUpdated = false;
 	let metadataElapsedMs = 0;
 	let metadataTargetChapters = 0;
@@ -6437,10 +7290,10 @@ assetRouter.post("/books/:bookId/metadata/ensure-window", authMiddleware, async 
 	let metadataSnippetMaxChars = 0;
 	let characterProfilesElapsedMs = 0;
 	let characterGraphElapsedMs = 0;
-	if (missingBefore.length > 0) {
-		const missingChapterSet = new Set<number>(missingBefore);
+	if (targetChapterNumbers.length > 0) {
+		const targetChapterSet = new Set<number>(targetChapterNumbers);
 		const targetWindowChapters = windowChapters.filter((item) =>
-			missingChapterSet.has(item.chapter),
+			targetChapterSet.has(item.chapter),
 		);
 		const progressStart = bookMetadataEnsureWindowProgress.get(ensureLockKey);
 		if (progressStart) {
@@ -6506,7 +7359,11 @@ assetRouter.post("/books/:bookId/metadata/ensure-window", authMiddleware, async 
 													: {},
 											updatedAt: new Date().toISOString(),
 										};
-										await writeBookIndexSafe(indexPath, checkpointIndex);
+										await commitDerivedBookIndex({
+											indexPath,
+											base: prevIndex,
+											derived: checkpointIndex as BookIndexRecord,
+										});
 									});
 									await checkpointWriteChain;
 								},
@@ -6568,17 +7425,7 @@ assetRouter.post("/books/:bookId/metadata/ensure-window", authMiddleware, async 
 	// Intentional: metadata ensure-window no longer auto-derives character profiles/graph.
 	// Character relation curation is handled by dedicated pre-storyboard steps.
 	const mergedProfiles = normalizeCharacterProfiles((assets as any)?.characterProfiles);
-	const ensuredRoleCards = ensureWindowRoleCardsFromChapters({
-		assets,
-		chapters,
-		windowStart,
-		windowEnd,
-		userId,
-		nowIso,
-	});
-	(assets as any).roleCards = ensuredRoleCards.roleCards;
-
-	const nextIndex = {
+	let nextIndex = {
 		...(prevIndex as any),
 		bookId: String((prevIndex as any)?.bookId || bookId),
 		projectId,
@@ -6588,7 +7435,11 @@ assetRouter.post("/books/:bookId/metadata/ensure-window", authMiddleware, async 
 		assets,
 		updatedAt: nowIso,
 	};
-	await writeBookIndexSafe(indexPath, nextIndex);
+	nextIndex = await commitDerivedBookIndex({
+		indexPath,
+		base: prevIndex,
+		derived: nextIndex as BookIndexRecord,
+	});
 
 	const missingAfter = chapters
 		.filter((item) => item.chapter >= windowStart && item.chapter <= windowEnd)
@@ -6634,7 +7485,6 @@ assetRouter.post("/books/:bookId/metadata/ensure-window", authMiddleware, async 
 		characterGraphElapsedMs,
 		characterGraphAutoSkipped: true,
 		totalElapsedMs,
-		roleCardsAdded: ensuredRoleCards.addedCount,
 		characterProfilesCount: mergedProfiles.length,
 		characterGraphNodesCount: Array.isArray((assets as any)?.characterGraph?.nodes)
 			? ((assets as any).characterGraph.nodes as any[]).length
@@ -6678,121 +7528,43 @@ assetRouter.post("/books/:bookId/style/confirm", authMiddleware, async (c) => {
 	if (!project) return c.json({ error: "project not found" }, 404);
 	if (!isNodeRuntime()) return c.json({ error: "node runtime required" }, 400);
 
-	const body = (await c.req.json().catch(() => ({}))) ?? {};
-	const hasConfirmedFlag = typeof body?.confirmed === "boolean";
-	const confirmed = hasConfirmedFlag ? body.confirmed !== false : true;
-	const confirmMainCharacterCards = body?.confirmMainCharacterCards === true;
-	const normalizeDirectiveList = (value: unknown): string[] => {
-		if (!Array.isArray(value)) return [];
-		const out: string[] = [];
-		const seen = new Set<string>();
-		for (const item of value) {
-			const text = String(item || "").trim();
-			if (!text) continue;
-			if (seen.has(text)) continue;
-			seen.add(text);
-			out.push(text);
-			if (out.length >= 12) break;
-		}
-		return out;
-	};
-	const styleNameInput = String(body?.styleName || "").trim();
-	const hasStyleLockedFlag = typeof body?.styleLocked === "boolean";
-	const hasVisualDirectives = Array.isArray(body?.visualDirectives);
-	const hasNegativeDirectives = Array.isArray(body?.negativeDirectives);
-	const hasConsistencyRules = Array.isArray(body?.consistencyRules);
-	const hasReferenceImages = Array.isArray(body?.referenceImages);
-	const visualDirectivesInput = normalizeDirectiveList(body?.visualDirectives);
-	const negativeDirectivesInput = normalizeDirectiveList(body?.negativeDirectives);
-	const consistencyRulesInput = normalizeDirectiveList(body?.consistencyRules);
-	const normalizeReferenceImages = (value: unknown): string[] => {
-		if (!Array.isArray(value)) return [];
-		const out: string[] = [];
-		const seen = new Set<string>();
-		for (const item of value) {
-			const text = String(item || "").trim();
-			if (!text) continue;
-			if (seen.has(text)) continue;
-			seen.add(text);
-			out.push(text);
-			if (out.length >= 12) break;
-		}
-		return out;
-	};
-	const referenceImagesInput = normalizeReferenceImages(body?.referenceImages);
-	const indexPath = buildBookIndexPath(projectId, userId, bookId);
-	const idx = await readBookIndexSafe(indexPath);
-	if (!idx) return c.json({ error: "book not found" }, 404);
-	const nowIso = new Date().toISOString();
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
-	const prevStyle =
-		assets && typeof assets.styleBible === "object" && assets.styleBible
-			? assets.styleBible
+	const parsedBody = await c.req.json().catch(() => ({}));
+	const body =
+		parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)
+			? (parsedBody as Record<string, unknown>)
 			: {};
-	const prevStyleName = String((prevStyle as any)?.styleName || "").trim();
-	const nextStyleName = styleNameInput || prevStyleName;
-	if (!nextStyleName) {
+	const indexPath = buildBookIndexPath(projectId, userId, bookId);
+	const nowIso = new Date().toISOString();
+	let updated: { index: BookIndexRecord; result: unknown };
+	try {
+		updated = await updateBookIndexForAsset(indexPath, (current) => {
+			const assets = cloneBookIndexAssets(current);
+			const prevStyle =
+				assets.styleBible && typeof assets.styleBible === "object" && !Array.isArray(assets.styleBible)
+					? assets.styleBible
+					: {};
+			assets.styleBible = confirmBookStyleBible({
+				previous: prevStyle,
+				request: body,
+				userId,
+				nowIso,
+			});
+			return {
+				next: { ...current, assets, updatedAt: nowIso },
+				result: assets.styleBible,
+			};
+		});
+	} catch (error) {
+		if (error instanceof BookStyleBibleNotReadyError) {
+			return c.json({ error: error.message, code: error.code }, 409);
+		}
+		if (error instanceof AppError) throw error;
 		return c.json(
-			{
-				error: "style bible is not generated yet; run metadata/style derivation first",
-				code: "BOOK_STYLE_BIBLE_NOT_READY",
-			},
-			409,
+			{ error: error instanceof Error ? error.message : String(error), code: "BOOK_STYLE_BIBLE_INVALID" },
+			400,
 		);
 	}
-	assets.styleBible = {
-		...prevStyle,
-		styleId:
-			typeof prevStyle.styleId === "string" && prevStyle.styleId.trim()
-				? prevStyle.styleId
-				: `style-${Date.now()}`,
-		styleName: nextStyleName,
-		styleLocked: hasStyleLockedFlag ? body.styleLocked === true : true,
-		confirmedAt: hasConfirmedFlag
-			? (confirmed ? nowIso : null)
-			: typeof prevStyle.confirmedAt === "string"
-				? prevStyle.confirmedAt
-				: null,
-		confirmedBy: hasConfirmedFlag
-			? (confirmed ? userId : null)
-			: typeof prevStyle.confirmedBy === "string"
-				? prevStyle.confirmedBy
-				: null,
-		mainCharacterCardsConfirmedAt: confirmMainCharacterCards
-			? nowIso
-			: typeof prevStyle.mainCharacterCardsConfirmedAt === "string"
-				? prevStyle.mainCharacterCardsConfirmedAt
-				: null,
-		mainCharacterCardsConfirmedBy: confirmMainCharacterCards
-			? userId
-			: typeof prevStyle.mainCharacterCardsConfirmedBy === "string"
-				? prevStyle.mainCharacterCardsConfirmedBy
-				: null,
-		visualDirectives: hasVisualDirectives
-			? visualDirectivesInput
-			: (Array.isArray(prevStyle.visualDirectives) ? prevStyle.visualDirectives : []),
-		negativeDirectives: hasNegativeDirectives
-			? negativeDirectivesInput
-			: (Array.isArray(prevStyle.negativeDirectives) ? prevStyle.negativeDirectives : []),
-		consistencyRules: hasConsistencyRules
-			? consistencyRulesInput
-			: (Array.isArray(prevStyle.consistencyRules) ? prevStyle.consistencyRules : []),
-		referenceImages: hasReferenceImages
-			? referenceImagesInput
-			: (Array.isArray(prevStyle.referenceImages) ? prevStyle.referenceImages : []),
-		characterPromptTemplate:
-			typeof prevStyle.characterPromptTemplate === "string"
-				? prevStyle.characterPromptTemplate
-				: "[角色名]，[身份/性格]，[外观与服装]，[阶段形态]，遵循 style bible，电影级写实，高清细节，角色一致性优先",
-	};
-
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
-	return c.json(next);
+	return c.json(updated.index);
 });
 
 assetRouter.post("/books/:bookId/role-cards/upsert", authMiddleware, async (c) => {
@@ -6819,6 +7591,11 @@ assetRouter.post("/books/:bookId/role-cards/upsert", authMiddleware, async (c) =
 	const modelKey = String(body?.modelKey || "").trim();
 	const imageUrl = String(body?.imageUrl || "").trim();
 	const threeViewImageUrl = String(body?.threeViewImageUrl || "").trim();
+	const rawCharacterBible =
+		body?.characterBible && typeof body.characterBible === "object" && !Array.isArray(body.characterBible)
+			? (body.characterBible as Record<string, unknown>)
+			: null;
+	const requestedCharacterBibleId = String(body?.characterBibleId || "").trim();
 	const stateDescription = String(body?.stateDescription || "").trim();
 	const stateKey = normalizeSemanticStateKey(body?.stateKey || stateDescription);
 	const ageDescription = String(body?.ageDescription || "").trim();
@@ -6842,7 +7619,7 @@ assetRouter.post("/books/:bookId/role-cards/upsert", authMiddleware, async (c) =
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
 	const idx = await readBookIndexSafe(indexPath);
 	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
+	const assets = cloneBookIndexAssets(idx);
 	const graphNodes = Array.isArray((assets as any)?.characterGraph?.nodes)
 		? ((assets as any).characterGraph.nodes as any[])
 		: [];
@@ -6882,6 +7659,33 @@ assetRouter.post("/books/:bookId/role-cards/upsert", authMiddleware, async (c) =
 				: chapterStart;
 	const normalizedChapterSpan = chapterSpanInput.length > 0 ? chapterSpanInput : [];
 	const cards = normalizeBookRoleCards((assets as any)?.roleCards);
+	const characterBibles = normalizeBookCharacterBibles((assets as Record<string, unknown>)?.characterBibles);
+	const normalizedInputCharacterBible = rawCharacterBible
+		? normalizeBookCharacterBibles([rawCharacterBible])[0] || null
+		: null;
+	const resolvedCharacterBible =
+		normalizedInputCharacterBible ||
+		findCharacterBibleForRoleCard({
+			characterBibles,
+			characterBibleId: requestedCharacterBibleId,
+			roleName,
+			roleId,
+		});
+	if (requestedCharacterBibleId && !resolvedCharacterBible) {
+		return c.json({ error: "characterBibleId not found" }, 400);
+	}
+	if (
+		normalizedInputCharacterBible &&
+		requestedCharacterBibleId &&
+		normalizedInputCharacterBible.id !== requestedCharacterBibleId
+	) {
+		return c.json({ error: "characterBibleId does not match characterBible.id" }, 400);
+	}
+	const resolvedCharacterBibleId = String(
+		normalizedInputCharacterBible?.id ||
+		resolvedCharacterBible?.id ||
+		requestedCharacterBibleId,
+	).trim();
 	const normalizedRoleKey = String(roleId || roleName).trim().toLowerCase();
 	const cardIdRaw = String(body?.cardId || "").trim();
 	const cardId =
@@ -6928,6 +7732,7 @@ assetRouter.post("/books/:bookId/role-cards/upsert", authMiddleware, async (c) =
 			...prev,
 			roleName,
 			status,
+			...(resolvedCharacterBibleId ? { characterBibleId: resolvedCharacterBibleId } : null),
 			...(roleId ? { roleId } : null),
 			referenceKind,
 			promptSchemaVersion,
@@ -6966,6 +7771,7 @@ assetRouter.post("/books/:bookId/role-cards/upsert", authMiddleware, async (c) =
 			cardId,
 			roleName,
 			status,
+			...(resolvedCharacterBibleId ? { characterBibleId: resolvedCharacterBibleId } : null),
 			...(roleId ? { roleId } : null),
 			referenceKind,
 			promptSchemaVersion,
@@ -7013,16 +7819,58 @@ assetRouter.post("/books/:bookId/role-cards/upsert", authMiddleware, async (c) =
 		}) ||
 		null;
 	assets.roleCards = nextCards.slice(-500);
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	let characterBibleToPersist: BookCharacterBibleRecord | null = null;
+	if (normalizedInputCharacterBible) {
+		const normalizedCharacterBible = normalizeBookCharacterBibles([
+			{
+				...normalizedInputCharacterBible,
+				...(String(savedCard?.cardId || cardId).trim()
+					? { roleCardId: String(savedCard?.cardId || cardId).trim() }
+					: null),
+			},
+		])[0];
+		if (normalizedCharacterBible) {
+			characterBibleToPersist = normalizedCharacterBible;
+			const nextCharacterBibles = [
+				...characterBibles.filter((item) => item.id !== normalizedCharacterBible.id),
+				normalizedCharacterBible,
+			];
+			(assets as Record<string, unknown>).characterBibles = nextCharacterBibles.slice(-500);
+		}
+	}
+	if (!savedCard) {
+		throw new AppError("role card upsert produced no record", {
+			status: 500,
+			code: "book_role_card_upsert_failed",
+		});
+	}
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const latestAssets = cloneBookIndexAssets(current);
+		const latestCards = normalizeBookRoleCards(latestAssets.roleCards).filter(
+			(item) => item.cardId !== savedCard.cardId && buildRoleCardChapterKey(item) !== targetChapterScopeKey,
+		);
+		latestCards.push(savedCard);
+		latestAssets.roleCards = latestCards.slice(-500);
+		if (characterBibleToPersist) {
+			const latestBibles = normalizeBookCharacterBibles(latestAssets.characterBibles).filter(
+				(item) => item.id !== characterBibleToPersist.id,
+			);
+			latestBibles.push(characterBibleToPersist);
+			latestAssets.characterBibles = latestBibles.slice(-500);
+		}
+		return {
+			next: { ...current, assets: latestAssets, updatedAt: nowIso },
+			result: {
+				roleCards: latestAssets.roleCards,
+				characterBibles: normalizeBookCharacterBibles(latestAssets.characterBibles),
+			},
+		};
+	});
 	return c.json({
 		ok: true,
-		cardId: String(savedCard?.cardId || cardId),
-		roleCards: assets.roleCards,
+		cardId: savedCard.cardId,
+		roleCards: updated.result.roleCards,
+		characterBibles: updated.result.characterBibles,
 	});
 });
 
@@ -7087,7 +7935,7 @@ assetRouter.post("/books/:bookId/visual-refs/upsert", authMiddleware, async (c) 
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
 	const idx = await readBookIndexSafe(indexPath);
 	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
+	const assets = cloneBookIndexAssets(idx);
 	const refs = normalizeBookVisualRefs((assets as any)?.visualRefs);
 	const refIdRaw = String(body?.refId || "").trim();
 	const refId =
@@ -7203,16 +8051,28 @@ assetRouter.post("/books/:bookId/visual-refs/upsert", authMiddleware, async (c) 
 		}) ||
 		null;
 	assets.visualRefs = nextRefs.slice(-800);
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	if (!savedRef) {
+		throw new AppError("visual ref upsert produced no record", {
+			status: 500,
+			code: "book_visual_ref_upsert_failed",
+		});
+	}
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const latestAssets = cloneBookIndexAssets(current);
+		const latestRefs = normalizeBookVisualRefs(latestAssets.visualRefs).filter(
+			(item) => item.refId !== savedRef.refId && buildVisualRefChapterKey(item) !== targetScopeKey,
+		);
+		latestRefs.push(savedRef);
+		latestAssets.visualRefs = latestRefs.slice(-800);
+		return {
+			next: { ...current, assets: latestAssets, updatedAt: nowIso },
+			result: latestAssets.visualRefs,
+		};
+	});
 	return c.json({
 		ok: true,
-		refId: String(savedRef?.refId || refId),
-		visualRefs: assets.visualRefs,
+		refId: savedRef.refId,
+		visualRefs: updated.result,
 	});
 });
 
@@ -7282,7 +8142,7 @@ assetRouter.post("/books/:bookId/semantic-assets/upsert", authMiddleware, async 
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
 	const idx = await readBookIndexSafe(indexPath);
 	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
+	const assets = cloneBookIndexAssets(idx);
 	const semanticAssets = normalizeBookSemanticAssets((assets as any)?.semanticAssets);
 	const targetScopeKey = buildSemanticAssetScopeKey({
 		semanticId,
@@ -7403,16 +8263,35 @@ assetRouter.post("/books/:bookId/semantic-assets/upsert", authMiddleware, async 
 		deduped.set(buildSemanticAssetScopeKey(item), item);
 	}
 	assets.semanticAssets = Array.from(deduped.values()).slice(-2000);
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	const semanticAssetToPersist = normalizeBookSemanticAssets(assets.semanticAssets).find(
+		(item) => item.semanticId === semanticId || buildSemanticAssetScopeKey(item) === targetScopeKey,
+	);
+	if (!semanticAssetToPersist) {
+		throw new AppError("semantic asset upsert produced no record", {
+			status: 500,
+			code: "book_semantic_asset_upsert_failed",
+		});
+	}
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const latestAssets = cloneBookIndexAssets(current);
+		const latestSemanticAssets = normalizeBookSemanticAssets(latestAssets.semanticAssets).filter(
+			(item) =>
+				item.semanticId !== semanticAssetToPersist.semanticId &&
+				buildSemanticAssetScopeKey(item) !== targetScopeKey,
+		);
+		latestSemanticAssets.push(semanticAssetToPersist);
+		const latestDeduped = new Map<string, BookSemanticAssetRecord>();
+		for (const item of latestSemanticAssets) latestDeduped.set(buildSemanticAssetScopeKey(item), item);
+		latestAssets.semanticAssets = Array.from(latestDeduped.values()).slice(-2000);
+		return {
+			next: { ...current, assets: latestAssets, updatedAt: nowIso },
+			result: latestAssets.semanticAssets,
+		};
+	});
 	return c.json({
 		ok: true,
 		semanticId,
-		semanticAssets: assets.semanticAssets,
+		semanticAssets: updated.result,
 	});
 });
 
@@ -7434,32 +8313,32 @@ assetRouter.post("/books/:bookId/role-cards/:cardId/confirm", authMiddleware, as
 	const confirmed = hasConfirmedFlag ? body.confirmed !== false : true;
 	const nowIso = new Date().toISOString();
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
-	const idx = await readBookIndexSafe(indexPath);
-	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
-	const cards = normalizeBookRoleCards((assets as any)?.roleCards);
-	const targetIndex = cards.findIndex((x) => x.cardId === cardId);
-	if (targetIndex < 0) return c.json({ error: "role card not found" }, 404);
-	const prev = cards[targetIndex]!;
-	cards[targetIndex] = {
-		...prev,
-		confirmationMode: confirmed ? "manual" : null,
-		confirmedAt: confirmed ? nowIso : null,
-		confirmedBy: confirmed ? userId : null,
-		updatedAt: nowIso,
-		updatedBy: userId,
-	};
-	assets.roleCards = cards.slice(-500);
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const assets = cloneBookIndexAssets(current);
+		const cards = normalizeBookRoleCards(assets.roleCards);
+		const targetIndex = cards.findIndex((item) => item.cardId === cardId);
+		if (targetIndex < 0) {
+			throw new AppError("role card not found", { status: 404, code: "book_role_card_not_found" });
+		}
+		const previous = cards[targetIndex]!;
+		cards[targetIndex] = {
+			...previous,
+			confirmationMode: confirmed ? "manual" : null,
+			confirmedAt: confirmed ? nowIso : null,
+			confirmedBy: confirmed ? userId : null,
+			updatedAt: nowIso,
+			updatedBy: userId,
+		};
+		assets.roleCards = cards.slice(-500);
+		return {
+			next: { ...current, assets, updatedAt: nowIso },
+			result: assets.roleCards,
+		};
+	});
 	return c.json({
 		ok: true,
 		cardId,
-		roleCards: assets.roleCards,
+		roleCards: updated.result,
 	});
 });
 
@@ -7481,32 +8360,32 @@ assetRouter.post("/books/:bookId/visual-refs/:refId/confirm", authMiddleware, as
 	const confirmed = hasConfirmedFlag ? body.confirmed !== false : true;
 	const nowIso = new Date().toISOString();
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
-	const idx = await readBookIndexSafe(indexPath);
-	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
-	const refs = normalizeBookVisualRefs((assets as any)?.visualRefs);
-	const targetIndex = refs.findIndex((x) => x.refId === refId);
-	if (targetIndex < 0) return c.json({ error: "visual ref not found" }, 404);
-	const prev = refs[targetIndex]!;
-	refs[targetIndex] = {
-		...prev,
-		confirmationMode: confirmed ? "manual" : null,
-		confirmedAt: confirmed ? nowIso : null,
-		confirmedBy: confirmed ? userId : null,
-		updatedAt: nowIso,
-		updatedBy: userId,
-	};
-	assets.visualRefs = refs.slice(-800);
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const assets = cloneBookIndexAssets(current);
+		const refs = normalizeBookVisualRefs(assets.visualRefs);
+		const targetIndex = refs.findIndex((item) => item.refId === refId);
+		if (targetIndex < 0) {
+			throw new AppError("visual ref not found", { status: 404, code: "book_visual_ref_not_found" });
+		}
+		const previous = refs[targetIndex]!;
+		refs[targetIndex] = {
+			...previous,
+			confirmationMode: confirmed ? "manual" : null,
+			confirmedAt: confirmed ? nowIso : null,
+			confirmedBy: confirmed ? userId : null,
+			updatedAt: nowIso,
+			updatedBy: userId,
+		};
+		assets.visualRefs = refs.slice(-800);
+		return {
+			next: { ...current, assets, updatedAt: nowIso },
+			result: assets.visualRefs,
+		};
+	});
 	return c.json({
 		ok: true,
 		refId,
-		visualRefs: assets.visualRefs,
+		visualRefs: updated.result,
 	});
 });
 
@@ -7526,6 +8405,7 @@ assetRouter.post("/books/:bookId/storyboard-plans/upsert", authMiddleware, async
 	if (!taskId) return c.json({ error: "taskId is required" }, 400);
 	const taskTitle = String(body?.taskTitle || "").trim();
 	const chapter = normalizeOptionalPositiveChapter(body?.chapter);
+	if (!chapter) return c.json({ error: "chapter is required" }, 400);
 	const modeRaw = String(body?.mode || "").trim().toLowerCase();
 	const mode: "single" | "full" = modeRaw === "full" ? "full" : "single";
 	const overwriteModeRaw = String(body?.overwriteMode || "merge").trim().toLowerCase();
@@ -7533,19 +8413,19 @@ assetRouter.post("/books/:bookId/storyboard-plans/upsert", authMiddleware, async
 		overwriteModeRaw === "replace" ? "replace" : "merge";
 	const resetChapterChunks = body?.resetChapterChunks === true;
 	const groupSize = normalizeStoryboardGroupSize(body?.groupSize);
-	const shotPromptsRaw = Array.isArray(body?.shotPrompts) ? body.shotPrompts : [];
-	const storyboardStructured = normalizeStoryboardStructuredData(body?.storyboardStructured);
-	const shotPromptsDirect = shotPromptsRaw
-		.map((x: any) => String(x || "").trim())
-		.filter(Boolean)
-		.slice(0, 1200);
-	const shotPrompts = (shotPromptsDirect.length ? shotPromptsDirect : deriveShotPromptsFromStructuredData(storyboardStructured)).slice(
-		0,
-		1200,
-	);
+	const persistencePayload = requireStoryboardV12ArtifactPayload({
+		storyboardStructured: body?.storyboardStructured,
+		shotPrompts: body?.shotPrompts,
+		maxShotPrompts: 1_200,
+		contextLabel: "storyboard plan upsert",
+	});
+	const storyboardArtifact = persistencePayload.artifact;
+	const artifactSha256 = persistencePayload.artifactSha256;
+	const storyboardStructured = persistencePayload.structured;
+	const shotPrompts = persistencePayload.shotPrompts;
 	const outputAssetId = String(body?.outputAssetId || "").trim();
 	const runId = String(body?.runId || "").trim();
-	const storyboardContent = String(body?.storyboardContent || "").trim();
+	const storyboardContent = JSON.stringify(storyboardArtifact, null, 2);
 	const next1Raw = Number(body?.nextChunkIndexByGroup?.["1"]);
 	const next4Raw = Number(body?.nextChunkIndexByGroup?.["4"]);
 	const next9Raw = Number(body?.nextChunkIndexByGroup?.["9"]);
@@ -7561,13 +8441,20 @@ assetRouter.post("/books/:bookId/storyboard-plans/upsert", authMiddleware, async
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
 	const idx = await readBookIndexSafe(indexPath);
 	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
+	const assets = cloneBookIndexAssets(idx);
 	const plans = normalizeBookStoryboardPlans((assets as any)?.storyboardPlans);
 	const planIdInput = String(body?.planId || "").trim();
+	const newestTaskPlan = plans
+		.filter((plan) => plan.taskId === taskId)
+		.sort((left, right) => {
+			const updatedSort = String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
+			if (updatedSort !== 0) return updatedSort;
+			return String(right.planId || "").localeCompare(String(left.planId || ""));
+		})[0];
 	const planId =
 		planIdInput ||
-		(plans.find((x) => x.taskId === taskId)?.planId || `plan-${taskId}-${Date.now().toString(36)}`);
-	const existingIndex = plans.findIndex((x) => x.planId === planId || x.taskId === taskId);
+		(newestTaskPlan?.planId || `plan-${taskId}-${Date.now().toString(36)}`);
+	const existingIndex = plans.findIndex((plan) => plan.planId === planId);
 	const existing = existingIndex >= 0 ? plans[existingIndex] : null;
 	const nextPlan: BookStoryboardPlanRecord =
 		overwriteMode === "replace"
@@ -7581,7 +8468,9 @@ assetRouter.post("/books/:bookId/storyboard-plans/upsert", authMiddleware, async
 					...(outputAssetId ? { outputAssetId } : null),
 					...(runId ? { runId } : null),
 					...(storyboardContent ? { storyboardContent } : null),
-					...(storyboardStructured ? { storyboardStructured } : null),
+					storyboardArtifact,
+					artifactSha256,
+					storyboardStructured,
 					shotPrompts,
 					...(Object.keys(nextChunkIndexByGroup).length ? { nextChunkIndexByGroup } : null),
 					createdAt: existing?.createdAt || nowIso,
@@ -7599,8 +8488,10 @@ assetRouter.post("/books/:bookId/storyboard-plans/upsert", authMiddleware, async
 					outputAssetId: outputAssetId || existing?.outputAssetId,
 					runId: runId || existing?.runId,
 					storyboardContent: storyboardContent || existing?.storyboardContent,
-					storyboardStructured: storyboardStructured || existing?.storyboardStructured,
-					shotPrompts: shotPrompts.length ? shotPrompts : existing?.shotPrompts || [],
+					storyboardArtifact,
+					artifactSha256,
+					storyboardStructured,
+					shotPrompts,
 					nextChunkIndexByGroup: Object.keys(nextChunkIndexByGroup).length
 						? nextChunkIndexByGroup
 						: existing?.nextChunkIndexByGroup,
@@ -7611,7 +8502,7 @@ assetRouter.post("/books/:bookId/storyboard-plans/upsert", authMiddleware, async
 				};
 	const mergedPlans =
 		overwriteMode === "replace"
-			? plans.filter((x) => x.taskId !== taskId && x.planId !== planId)
+			? plans.filter((plan) => plan.planId !== planId)
 			: [...plans];
 	if (overwriteMode === "merge" && existingIndex >= 0) mergedPlans[existingIndex] = nextPlan;
 	else mergedPlans.push(nextPlan);
@@ -7619,27 +8510,53 @@ assetRouter.post("/books/:bookId/storyboard-plans/upsert", authMiddleware, async
 	assets.storyboardPlans = mergedPlans
 		.sort((a, b) => String(a.taskId || "").localeCompare(String(b.taskId || "")))
 		.slice(-200);
-	let removedChunkCount = 0;
-	if (overwriteMode === "replace" && resetChapterChunks) {
-		const chunks = normalizeBookStoryboardChunks((assets as any)?.storyboardChunks);
-		const kept = chunks.filter((x) => x.taskId !== taskId);
-		removedChunkCount = chunks.length - kept.length;
-		assets.storyboardChunks = kept;
-	}
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const latestAssets = cloneBookIndexAssets(current);
+		const latestPersistencePayload = requireStoryboardV12ArtifactPayload({
+			storyboardStructured: body?.storyboardStructured,
+			shotPrompts: body?.shotPrompts,
+			maxShotPrompts: 1_200,
+			contextLabel: "storyboard plan upsert",
+		});
+		const persistedPlan: BookStoryboardPlanRecord = {
+			...nextPlan,
+			storyboardContent: JSON.stringify(latestPersistencePayload.artifact, null, 2),
+			storyboardArtifact: latestPersistencePayload.artifact,
+			artifactSha256: latestPersistencePayload.artifactSha256,
+			storyboardStructured: latestPersistencePayload.structured,
+			shotPrompts: latestPersistencePayload.shotPrompts,
+		};
+		const latestPlans = normalizeBookStoryboardPlans(latestAssets.storyboardPlans).filter(
+			(item) => item.planId !== planId,
+		);
+		latestPlans.push(persistedPlan);
+		latestAssets.storyboardPlans = latestPlans
+			.sort((a, b) => String(a.taskId || "").localeCompare(String(b.taskId || "")))
+			.slice(-200);
+		let removedChunkCount = 0;
+		if (overwriteMode === "replace" && resetChapterChunks) {
+			const latestChunks = normalizeBookStoryboardChunks(latestAssets.storyboardChunks);
+			const keptChunks = latestChunks.filter((item) => item.taskId !== taskId);
+			removedChunkCount = latestChunks.length - keptChunks.length;
+			latestAssets.storyboardChunks = keptChunks;
+		}
+		return {
+			next: { ...current, assets: latestAssets, updatedAt: nowIso },
+			result: {
+				storyboardPlans: latestAssets.storyboardPlans,
+				updatedPlan: persistedPlan,
+				removedChunkCount,
+			},
+		};
+	});
 	return c.json({
 		ok: true,
 		planId,
 		overwriteMode,
 		resetChapterChunks,
-		removedChunkCount,
-		updatedPlan: nextPlan,
-		storyboardPlans: assets.storyboardPlans,
+		removedChunkCount: updated.result.removedChunkCount,
+		updatedPlan: updated.result.updatedPlan,
+		storyboardPlans: updated.result.storyboardPlans,
 	});
 });
 
@@ -7657,9 +8574,8 @@ assetRouter.post("/books/:bookId/storyboard-chunks/upsert", authMiddleware, asyn
 	const body = (await c.req.json().catch(() => ({}))) ?? {};
 	const taskId = String(body?.taskId || "").trim();
 	if (!taskId) return c.json({ error: "taskId is required" }, 400);
-	const chapter =
-		normalizeOptionalPositiveChapter(body?.chapter) ||
-		inferStoryboardChapterFromTaskId(taskId);
+	const chapter = normalizeOptionalPositiveChapter(body?.chapter);
+	if (!chapter) return c.json({ error: "chapter is required" }, 400);
 	const groupSize = normalizeStoryboardGroupSize(body?.groupSize);
 	const chunkIndexRaw = Number(body?.chunkIndex);
 	const chunkIndex = Number.isFinite(chunkIndexRaw) && chunkIndexRaw >= 0 ? Math.trunc(chunkIndexRaw) : 0;
@@ -7668,12 +8584,12 @@ assetRouter.post("/books/:bookId/storyboard-chunks/upsert", authMiddleware, asyn
 	const shotEndRaw = Number(body?.shotEnd);
 	const shotEnd = Number.isFinite(shotEndRaw) && shotEndRaw >= shotStart ? Math.trunc(shotEndRaw) : shotStart + groupSize - 1;
 	const planId = String(body?.planId || "").trim();
+	if (!planId) return c.json({ error: "planId is required" }, 400);
+	const previousChunkId = String(body?.previousChunkId || "").trim();
+	if (chunkIndex > 0 && !previousChunkId) {
+		return c.json({ error: "previousChunkId is required when chunkIndex > 0" }, 400);
+	}
 	const nodeId = String(body?.nodeId || "").trim();
-	const prompt = String(body?.prompt || "").trim();
-	const storyboardStructured = normalizeStoryboardStructuredData(body?.storyboardStructured);
-	const shotPrompts = Array.isArray(body?.shotPrompts)
-		? body.shotPrompts.map((x: any) => String(x || "").trim()).filter(Boolean).slice(0, 128)
-		: deriveShotPromptsFromStructuredData(storyboardStructured).slice(0, 128);
 	const frameUrls = Array.isArray(body?.frameUrls)
 		? body.frameUrls.map((x: any) => String(x || "").trim()).filter(Boolean).slice(0, 64)
 		: [];
@@ -7684,25 +8600,72 @@ assetRouter.post("/books/:bookId/storyboard-chunks/upsert", authMiddleware, asyn
 	const scenePropRefLabel = String(body?.scenePropRefLabel || "").trim();
 	const spellFxRefId = String(body?.spellFxRefId || "").trim();
 	const spellFxRefLabel = String(body?.spellFxRefLabel || "").trim();
-	const tailFrameUrl = String(body?.tailFrameUrl || frameUrls[frameUrls.length - 1] || "").trim();
+	const tailFrameUrl = String(body?.tailFrameUrl || "").trim();
 	if (!tailFrameUrl) return c.json({ error: "tailFrameUrl is required" }, 400);
 	const chunkIdInput = String(body?.chunkId || "").trim();
-	const chunkId = chunkIdInput || `task-${taskId}-g${groupSize}-i${chunkIndex}`;
+	const chunkId = chunkIdInput || `plan-${planId}-g${groupSize}-i${chunkIndex}`;
 
 	const nowIso = new Date().toISOString();
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
 	const idx = await readBookIndexSafe(indexPath);
 	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
+	const assets = cloneBookIndexAssets(idx);
 	const chunks = normalizeBookStoryboardChunks((assets as any)?.storyboardChunks);
-	if (chunkIndex > 0) {
-		const prevChunk = chunks.find(
-			(item) =>
-				item.taskId === taskId &&
-				item.groupSize === groupSize &&
-				item.chunkIndex === chunkIndex - 1,
+	const plans = normalizeBookStoryboardPlans((assets as any)?.storyboardPlans);
+	const exactPlan = plans.find((plan) => plan.planId === planId) || null;
+	if (!exactPlan || exactPlan.taskId !== taskId || Number(exactPlan.chapter || 0) !== chapter) {
+		return c.json(
+			{
+				error: "未找到与 taskId/chapter 精确匹配的 storyboard plan",
+				code: "storyboard_plan_scope_mismatch",
+			},
+			409,
 		);
-		const prevTailFrameUrl = String(prevChunk?.tailFrameUrl || "").trim();
+	}
+	const previousChunk =
+		chunkIndex > 0
+			? chunks.find((item) => item.chunkId === previousChunkId)
+			: undefined;
+	if (
+		chunkIndex > 0 &&
+		(!previousChunk ||
+			previousChunk.taskId !== taskId ||
+			Number(previousChunk.chapter || 0) !== chapter ||
+			previousChunk.groupSize !== groupSize ||
+			previousChunk.chunkIndex !== chunkIndex - 1)
+	) {
+		return c.json(
+			{
+				error: "previousChunkId 与当前 task/chapter/group/chunkIndex 不构成直接前驱关系",
+				code: "storyboard_previous_chunk_scope_mismatch",
+			},
+			409,
+		);
+	}
+	const persistencePayload = requireStoryboardV12ArtifactPayload({
+		storyboardStructured: body?.storyboardStructured,
+		previousStoryboardArtifact: previousChunk?.storyboardArtifact,
+		requirePreviousHandoff: chunkIndex > 0,
+		shotPrompts: body?.shotPrompts,
+		maxShotPrompts: 128,
+		contextLabel: "storyboard chunk upsert",
+	});
+	const storyboardArtifact = persistencePayload.artifact;
+	const artifactSha256 = persistencePayload.artifactSha256;
+	const storyboardStructured = persistencePayload.structured;
+	const shotPrompts = persistencePayload.shotPrompts;
+	if (exactPlan.artifactSha256 !== artifactSha256) {
+		return c.json(
+			{
+				error: "chunk artifact 与精确 storyboard plan 不一致",
+				code: "storyboard_chunk_plan_artifact_mismatch",
+			},
+			409,
+		);
+	}
+	const prompt = shotPrompts.join("\n\n");
+	if (chunkIndex > 0) {
+		const prevTailFrameUrl = String(previousChunk?.tailFrameUrl || "").trim();
 		if (!prevTailFrameUrl) {
 			return c.json(
 				{
@@ -7712,7 +8675,7 @@ assetRouter.post("/books/:bookId/storyboard-chunks/upsert", authMiddleware, asyn
 				400,
 			);
 		}
-		const expectedShotStart = Number(prevChunk?.shotEnd || 0) + 1;
+		const expectedShotStart = Number(previousChunk?.shotEnd || 0) + 1;
 		if (expectedShotStart > 1 && shotStart !== expectedShotStart) {
 			return c.json(
 				{
@@ -7726,21 +8689,27 @@ assetRouter.post("/books/:bookId/storyboard-chunks/upsert", authMiddleware, asyn
 	const existingIndex = chunks.findIndex(
 		(x) =>
 			x.chunkId === chunkId ||
-			(x.taskId === taskId && x.groupSize === groupSize && x.chunkIndex === chunkIndex),
+			(x.planId === planId && x.groupSize === groupSize && x.chunkIndex === chunkIndex),
 	);
 	const existing = existingIndex >= 0 ? chunks[existingIndex] : null;
 	const nextChunk: BookStoryboardChunkRecord = {
 		chunkId,
+		planId,
+		...(previousChunkId ? { previousChunkId } : null),
 		taskId,
 		...(chapter ? { chapter } : existing?.chapter ? { chapter: existing.chapter } : null),
 		groupSize,
 		chunkIndex,
 		shotStart,
 		shotEnd,
-		...(planId ? { planId } : existing?.planId ? { planId: existing.planId } : null),
 		...(nodeId ? { nodeId } : existing?.nodeId ? { nodeId: existing.nodeId } : null),
-		...(prompt ? { prompt } : existing?.prompt ? { prompt: existing.prompt } : null),
-		...(storyboardStructured ? { storyboardStructured } : existing?.storyboardStructured ? { storyboardStructured: existing.storyboardStructured } : null),
+		prompt,
+		storyboardArtifact,
+		artifactSha256,
+		storyboardStructured,
+		...(persistencePayload.handoffEvidence
+			? { handoffEvidence: persistencePayload.handoffEvidence }
+			: null),
 		shotPrompts: shotPrompts.length ? shotPrompts : existing?.shotPrompts || [],
 		frameUrls: frameUrls.length ? frameUrls : existing?.frameUrls || [],
 		tailFrameUrl,
@@ -7757,19 +8726,101 @@ assetRouter.post("/books/:bookId/storyboard-chunks/upsert", authMiddleware, asyn
 	if (existingIndex >= 0) chunks[existingIndex] = nextChunk;
 	else chunks.push(nextChunk);
 
-	assets.storyboardChunks = chunks
-		.sort((a, b) => {
-			const taskSort = String(a.taskId || "").localeCompare(String(b.taskId || ""));
-			if (taskSort !== 0) return taskSort;
-			return a.chunkIndex - b.chunkIndex;
-		})
-		.slice(-2000);
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const latestAssets = cloneBookIndexAssets(current);
+		const latestChunks = normalizeBookStoryboardChunks(latestAssets.storyboardChunks);
+		const latestPlans = normalizeBookStoryboardPlans(latestAssets.storyboardPlans);
+		const latestExactPlan = latestPlans.find((plan) => plan.planId === planId) || null;
+		if (!latestExactPlan || latestExactPlan.taskId !== taskId || Number(latestExactPlan.chapter || 0) !== chapter) {
+			throw new AppError("未找到与 taskId/chapter 精确匹配的 storyboard plan", {
+				status: 409,
+				code: "storyboard_plan_scope_mismatch",
+			});
+		}
+		if (chunkIndex > 0) {
+			const previousChunk = latestChunks.find((item) => item.chunkId === previousChunkId);
+			if (
+				!previousChunk ||
+				previousChunk.taskId !== taskId ||
+				Number(previousChunk.chapter || 0) !== chapter ||
+				previousChunk.groupSize !== groupSize ||
+				previousChunk.chunkIndex !== chunkIndex - 1
+			) {
+				throw new AppError(
+					"previousChunkId 与当前 task/chapter/group/chunkIndex 不构成直接前驱关系",
+					{ status: 409, code: "storyboard_previous_chunk_scope_mismatch" },
+				);
+			}
+			const previousTailFrameUrl = String(previousChunk?.tailFrameUrl || "").trim();
+			if (!previousTailFrameUrl) {
+				throw new AppError("未找到上一分组 tailFrameUrl，无法保证分镜连续性，请先生成上一组", {
+					status: 400,
+					code: "storyboard_prev_tail_missing",
+				});
+			}
+			const expectedShotStart = Number(previousChunk?.shotEnd || 0) + 1;
+			if (expectedShotStart > 1 && shotStart !== expectedShotStart) {
+				throw new AppError(
+					`shotStart must equal previous shotEnd + 1 (expected ${expectedShotStart}, got ${shotStart})`,
+					{ status: 400, code: "storyboard_shot_range_invalid" },
+				);
+			}
+		}
+		const latestPreviousChunk =
+			chunkIndex > 0
+				? latestChunks.find((item) => item.chunkId === previousChunkId)
+				: undefined;
+		const latestPersistencePayload = requireStoryboardV12ArtifactPayload({
+			storyboardStructured: body?.storyboardStructured,
+			previousStoryboardArtifact: latestPreviousChunk?.storyboardArtifact,
+			requirePreviousHandoff: chunkIndex > 0,
+			shotPrompts: body?.shotPrompts,
+			maxShotPrompts: 128,
+			contextLabel: "storyboard chunk upsert",
+		});
+		if (latestExactPlan.artifactSha256 !== latestPersistencePayload.artifactSha256) {
+			throw new AppError("chunk artifact 与精确 storyboard plan 不一致", {
+				status: 409,
+				code: "storyboard_chunk_plan_artifact_mismatch",
+			});
+		}
+		const latestExistingIndex = latestChunks.findIndex(
+			(item) =>
+				item.chunkId === chunkId ||
+				(item.planId === planId && item.groupSize === groupSize && item.chunkIndex === chunkIndex),
+		);
+		const latestExisting = latestExistingIndex >= 0 ? latestChunks[latestExistingIndex] : null;
+		const persistedChunk: BookStoryboardChunkRecord = {
+			...nextChunk,
+			prompt: latestPersistencePayload.shotPrompts.join("\n\n"),
+			storyboardArtifact: latestPersistencePayload.artifact,
+			artifactSha256: latestPersistencePayload.artifactSha256,
+			storyboardStructured: latestPersistencePayload.structured,
+			shotPrompts: latestPersistencePayload.shotPrompts,
+			...(latestPersistencePayload.handoffEvidence
+				? { handoffEvidence: latestPersistencePayload.handoffEvidence }
+				: null),
+			createdAt: latestExisting?.createdAt || nextChunk.createdAt,
+			createdBy: latestExisting?.createdBy || nextChunk.createdBy,
+			updatedAt: nowIso,
+			updatedBy: userId,
+		};
+		if (latestExistingIndex >= 0) latestChunks[latestExistingIndex] = persistedChunk;
+		else latestChunks.push(persistedChunk);
+		latestAssets.storyboardChunks = latestChunks
+			.sort((a, b) => {
+				const taskSort = String(a.taskId || "").localeCompare(String(b.taskId || ""));
+				return taskSort !== 0 ? taskSort : a.chunkIndex - b.chunkIndex;
+			})
+			.slice(-2000);
+		return {
+			next: { ...current, assets: latestAssets, updatedAt: nowIso },
+			result: {
+				chunk: persistedChunk,
+				storyboardChunks: latestAssets.storyboardChunks,
+			},
+		};
+	});
 	await persistStoryboardChunkMemory(c, {
 		userId,
 		projectId,
@@ -7781,17 +8832,17 @@ assetRouter.post("/books/:bookId/storyboard-chunks/upsert", authMiddleware, asyn
 		shotStart,
 		shotEnd,
 		tailFrameUrl,
-		frameUrls: nextChunk.frameUrls,
-		roleCardRefIds: nextChunk.roleCardRefIds,
-		scenePropRefId: nextChunk.scenePropRefId,
-		scenePropRefLabel: nextChunk.scenePropRefLabel,
-		spellFxRefId: nextChunk.spellFxRefId,
-		spellFxRefLabel: nextChunk.spellFxRefLabel,
+		frameUrls: updated.result.chunk.frameUrls,
+		roleCardRefIds: updated.result.chunk.roleCardRefIds,
+		scenePropRefId: updated.result.chunk.scenePropRefId,
+		scenePropRefLabel: updated.result.chunk.scenePropRefLabel,
+		spellFxRefId: updated.result.chunk.spellFxRefId,
+		spellFxRefLabel: updated.result.chunk.spellFxRefLabel,
 	});
 	return c.json({
 		ok: true,
 		chunkId,
-		storyboardChunks: assets.storyboardChunks,
+		storyboardChunks: updated.result.storyboardChunks,
 	});
 });
 
@@ -7809,26 +8860,24 @@ assetRouter.delete("/books/:bookId/role-cards/:cardId", authMiddleware, async (c
 	if (!isNodeRuntime()) return c.json({ error: "node runtime required" }, 400);
 
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
-	const idx = await readBookIndexSafe(indexPath);
-	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
-	const cards = normalizeBookRoleCards((assets as any)?.roleCards);
-	const nextCards = cards.filter((x) => x.cardId !== cardId);
-	if (nextCards.length === cards.length) {
-		return c.json({ error: "role card not found" }, 404);
-	}
-	assets.roleCards = nextCards;
 	const nowIso = new Date().toISOString();
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const assets = cloneBookIndexAssets(current);
+		const cards = normalizeBookRoleCards(assets.roleCards);
+		const nextCards = cards.filter((item) => item.cardId !== cardId);
+		if (nextCards.length === cards.length) {
+			throw new AppError("role card not found", { status: 404, code: "book_role_card_not_found" });
+		}
+		assets.roleCards = nextCards;
+		return {
+			next: { ...current, assets, updatedAt: nowIso },
+			result: nextCards,
+		};
+	});
 	return c.json({
 		ok: true,
 		cardId,
-		roleCards: assets.roleCards,
+		roleCards: updated.result,
 	});
 });
 
@@ -7846,26 +8895,24 @@ assetRouter.delete("/books/:bookId/visual-refs/:refId", authMiddleware, async (c
 	if (!isNodeRuntime()) return c.json({ error: "node runtime required" }, 400);
 
 	const indexPath = buildBookIndexPath(projectId, userId, bookId);
-	const idx = await readBookIndexSafe(indexPath);
-	if (!idx) return c.json({ error: "book not found" }, 404);
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
-	const refs = normalizeBookVisualRefs((assets as any)?.visualRefs);
-	const nextRefs = refs.filter((x) => x.refId !== refId);
-	if (nextRefs.length === refs.length) {
-		return c.json({ error: "visual ref not found" }, 404);
-	}
-	assets.visualRefs = nextRefs;
 	const nowIso = new Date().toISOString();
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const assets = cloneBookIndexAssets(current);
+		const refs = normalizeBookVisualRefs(assets.visualRefs);
+		const nextRefs = refs.filter((item) => item.refId !== refId);
+		if (nextRefs.length === refs.length) {
+			throw new AppError("visual ref not found", { status: 404, code: "book_visual_ref_not_found" });
+		}
+		assets.visualRefs = nextRefs;
+		return {
+			next: { ...current, assets, updatedAt: nowIso },
+			result: nextRefs,
+		};
+	});
 	return c.json({
 		ok: true,
 		refId,
-		visualRefs: assets.visualRefs,
+		visualRefs: updated.result,
 	});
 });
 
@@ -7892,18 +8939,13 @@ assetRouter.post("/books/:bookId/graph/update", authMiddleware, async (c) => {
 	const edges = normalizeGraphEdges(body?.edges, nodeIds);
 
 	const nowIso = new Date().toISOString();
-	const assets = (idx && typeof idx.assets === "object" && idx.assets) || {};
-	assets.characterGraph = {
-		nodes,
-		edges,
-	};
-	const next = {
-		...idx,
-		assets,
-		updatedAt: nowIso,
-	};
-	await writeBookIndexSafe(indexPath, next);
-	return c.json(next);
+	const updated = await updateBookIndexForAsset(indexPath, (current) => {
+		const assets = cloneBookIndexAssets(current);
+		assets.characterGraph = { nodes, edges };
+		const next = { ...current, assets, updatedAt: nowIso };
+		return { next, result: next };
+	});
+	return c.json(updated.index);
 });
 
 assetRouter.get("/books/:bookId/chapter", authMiddleware, async (c) => {
@@ -8191,15 +9233,71 @@ assetRouter.delete("/:id", authMiddleware, async (c) => {
 	return c.body(null, 204);
 });
 
+// Public backend proxy for the Node-local asset backend. Generated keys are UUID-based,
+// immutable paths under assets/public; callers never receive filesystem paths.
+assetRouter.get("/local/*", async (c) => {
+	const localStorage = resolveLocalAssetStorageConfig();
+	if (!localStorage) {
+		return c.json({ error: "Local asset storage is unavailable" }, 503);
+	}
+	const pathname = new URL(c.req.url).pathname;
+	const encodedKey = pathname.startsWith(`${LOCAL_ASSET_ROUTE_PREFIX}/`)
+		? pathname.slice(LOCAL_ASSET_ROUTE_PREFIX.length + 1)
+		: "";
+	if (!encodedKey) return c.json({ error: "key is required" }, 400);
+
+	let key: string;
+	try {
+		key = decodeURIComponent(encodedKey);
+	} catch {
+		return c.json({ error: "key is invalid" }, 400);
+	}
+
+	try {
+		const asset = await readLocalAsset({
+			config: localStorage,
+			key,
+			rangeHeader: c.req.header("range") || c.req.header("Range"),
+		});
+		const headers = new Headers({
+			"Accept-Ranges": "bytes",
+			"Access-Control-Allow-Origin": "*",
+			"Access-Control-Expose-Headers":
+				"Content-Length,Content-Range,Accept-Ranges",
+			"Cache-Control": "public, max-age=31536000, immutable",
+			"Content-Length": String(asset.contentLength),
+			"Content-Type": asset.contentType,
+		});
+		if (asset.range) {
+			headers.set(
+				"Content-Range",
+				`bytes ${asset.range.start}-${asset.range.end}/${asset.totalSize}`,
+			);
+		}
+		return new Response(asset.stream, {
+			status: asset.range ? 206 : 200,
+			headers,
+		});
+	} catch (error: unknown) {
+		if (error instanceof LocalAssetRangeError) {
+			return new Response(null, {
+				status: 416,
+				headers: { "Content-Range": `bytes */${error.totalSize}` },
+			});
+		}
+		return c.json({ error: "not found" }, 404);
+	}
+});
+
 // Public asset proxy: serves objects from configured object storage by key.
-assetRouter.get("/r2/*", async (c) => {
-	const rustfs = resolveRustfsConfig(c.env);
-	if (!rustfs) {
+assetRouter.get("/storage/*", async (c) => {
+	const storage = resolveObjectStorageConfig(c.env);
+	if (!storage) {
 		return c.json({ error: "Object storage is not configured" }, 500);
 	}
 
 	const pathname = new URL(c.req.url).pathname;
-	const prefix = "/assets/r2/"; // keep legacy route path for backward compatibility
+	const prefix = "/assets/storage/";
 	const key = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
 	if (!key) {
 		return c.json({ error: "key is required" }, 400);
@@ -8210,10 +9308,10 @@ assetRouter.get("/r2/*", async (c) => {
 	const rangeValue = toHttpRangeHeader(range);
 
 	try {
-		const client = createRustfsClient(c.env);
+		const client = createObjectStorageClient(c.env);
 		const res = await client.send(
 			new GetObjectCommand({
-				Bucket: rustfs.bucket,
+				Bucket: storage.bucket,
 				Key: key,
 				Range: rangeValue || undefined,
 			}),
@@ -8252,13 +9350,82 @@ assetRouter.get("/r2/*", async (c) => {
 	}
 });
 
+// Given a full first-party object URL, stream it through the authenticated
+// S3 data plane. Only the configured public origin is accepted.
+assetRouter.get("/storage-stream", async (c) => {
+	const storage = resolveObjectStorageConfig(c.env);
+	if (!storage) {
+		return c.json({ error: "Object storage is not configured" }, 500);
+	}
+
+	const raw = (c.req.query("url") || "").trim();
+	if (!raw) {
+		return c.json({ error: "url is required" }, 400);
+	}
+	let target = raw;
+	try {
+		target = decodeURIComponent(raw);
+	} catch {
+		// ignore — use raw
+	}
+
+	const publicBase = getPublicBase(c).replace(/\/+$/, "");
+	if (!publicBase || !target.startsWith(`${publicBase}/`)) {
+		return c.json({ error: "url is not an active object storage asset" }, 400);
+	}
+	const key = target.slice(publicBase.length + 1).split(/[?#]/)[0];
+	if (!key) {
+		return c.json({ error: "key is required" }, 400);
+	}
+
+	const rangeHeader = c.req.header("range") || c.req.header("Range") || "";
+	const range = rangeHeader ? parseHttpByteRangeHeader(rangeHeader) : null;
+	const rangeValue = toHttpRangeHeader(range);
+
+	try {
+		const client = createObjectStorageClient(c.env);
+		const res = await client.send(
+			new GetObjectCommand({
+				Bucket: storage.bucket,
+				Key: key,
+				Range: rangeValue || undefined,
+			}),
+		);
+		if (!res.Body) return c.json({ error: "not found" }, 404);
+		const headers = new Headers();
+		headers.set(
+			"Content-Type",
+			typeof res.ContentType === "string" ? res.ContentType : "video/mp4",
+		);
+		headers.set("Cache-Control", "private, max-age=300");
+		headers.set("Access-Control-Allow-Origin", c.req.header("origin") || "*");
+		headers.set(
+			"Access-Control-Expose-Headers",
+			"Content-Length,Content-Range,Accept-Ranges,ETag",
+		);
+		headers.set("Accept-Ranges", "bytes");
+		headers.set("Vary", "Origin");
+		if (typeof res.ETag === "string") headers.set("ETag", res.ETag);
+		if (typeof res.ContentRange === "string") {
+			headers.set("Content-Range", res.ContentRange);
+		}
+		if (typeof res.ContentLength === "number") {
+			headers.set("Content-Length", String(res.ContentLength));
+		}
+		const status = range ? 206 : 200;
+		return new Response(res.Body as ReadableStream, { status, headers });
+	} catch {
+		return c.json({ error: "not found" }, 404);
+	}
+});
+
 // Upload a user asset file to configured object storage and persist it as an asset row.
 assetRouter.post("/upload", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 
-	const rustfsConfig = resolveRustfsConfig(c.env);
-	if (!rustfsConfig) {
+	const storageConfig = resolveObjectStorageConfig(c.env);
+	if (!storageConfig) {
 		return c.json({ error: "Object storage is not configured" }, 500);
 	}
 
@@ -8267,7 +9434,7 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 	const contentTypeHeader = normalizeContentType(c.req.header("content-type"));
 	const isMultipart = contentTypeHeader.includes("multipart/form-data");
 
-	let kind: "image" | "video" | null = null;
+	let kind: "image" | "video" | "audio" | null = null;
 	let contentType = contentTypeHeader;
 	let originalName: string | null = null;
 	let size: number | null = null;
@@ -8291,7 +9458,7 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 		contentType = normalizeContentType(file.type);
 		kind = inferMediaKind({ contentType, fileName: originalName });
 		if (!kind) {
-			return c.json({ error: "only image/video files are allowed" }, 400);
+			return c.json({ error: "only image/video/audio files are allowed" }, 400);
 		}
 
 		if (typeof file.size === "number") {
@@ -8306,7 +9473,7 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 			typeof nameValue === "string" && nameValue.trim()
 				? nameValue.trim()
 				: originalName || "";
-		name = sanitizeUploadName(rawName) || (kind === "video" ? "Video" : "Image");
+		name = sanitizeUploadName(rawName) || (kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Image");
 
 		prompt = normalizeOptionalText(form.get("prompt"), 8000);
 		vendor = normalizeOptionalText(form.get("vendor"), 64);
@@ -8320,7 +9487,7 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 		contentType = contentTypeHeader;
 		kind = inferMediaKind({ contentType, fileName: originalName || undefined });
 		if (!kind) {
-			return c.json({ error: "only image/video files are allowed" }, 400);
+			return c.json({ error: "only image/video/audio files are allowed" }, 400);
 		}
 
 		const contentLengthHeader = c.req.header("content-length");
@@ -8344,7 +9511,7 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 			return c.json({ error: "file is too large (max 30MB)" }, 413);
 		}
 
-		name = sanitizeUploadName(c.req.query("name") || "") || (kind === "video" ? "Video" : "Image");
+		name = sanitizeUploadName(c.req.query("name") || "") || (kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Image");
 		prompt =
 			normalizeOptionalText(
 				c.req.header("x-asset-prompt") ||
@@ -8433,34 +9600,34 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 		return c.json({ error: "request body is required" }, 400);
 	}
 	try {
-		const client = createRustfsClient(c.env);
-		let rustfsBody: any = uploadValue;
-		let rustfsContentLength: number | undefined =
+		const client = createObjectStorageClient(c.env);
+		let tosBody: any = uploadValue;
+		let tosContentLength: number | undefined =
 			typeof size === "number" && Number.isFinite(size) ? size : undefined;
 
 		if (isNode) {
 			if (uploadValue instanceof Uint8Array) {
-				rustfsBody = uploadValue;
-				rustfsContentLength = uploadValue.byteLength;
+				tosBody = uploadValue;
+				tosContentLength = uploadValue.byteLength;
 			} else if (uploadValue instanceof ArrayBuffer) {
 				const bytes = new Uint8Array(uploadValue);
-				rustfsBody = bytes;
-				rustfsContentLength = bytes.byteLength;
+				tosBody = bytes;
+				tosContentLength = bytes.byteLength;
 			} else if (uploadValue instanceof Blob) {
 				const bytes = new Uint8Array(await uploadValue.arrayBuffer());
-				rustfsBody = bytes;
-				rustfsContentLength = bytes.byteLength;
+				tosBody = bytes;
+				tosContentLength = bytes.byteLength;
 			}
 		}
 
 		const putPromise = client.send(
 			new PutObjectCommand({
-				Bucket: rustfsConfig.bucket,
+				Bucket: storageConfig.bucket,
 				Key: key,
-				Body: rustfsBody,
+				Body: tosBody,
 				ContentType: contentType,
 				CacheControl: "public, max-age=31536000, immutable",
-				ContentLength: rustfsContentLength,
+				ContentLength: tosContentLength,
 			}),
 		);
 		if (uploadPump) {
@@ -8478,6 +9645,8 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 
 	const publicBase = getPublicBase(c);
 	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
+	const thumbnailUrl =
+		kind === "video" ? await captureUploadedVideoPoster(userId, key) : null;
 
 	const nowIso = new Date().toISOString();
 	const row = await createAssetRow(
@@ -8489,7 +9658,232 @@ assetRouter.post("/upload", authMiddleware, async (c) => {
 				kind: "upload",
 				type: kind,
 				url,
+				...(thumbnailUrl ? { thumbnailUrl } : {}),
 				contentType,
+				size,
+				originalName: originalName || null,
+				key,
+				prompt,
+				vendor,
+				modelKey,
+				taskKind,
+			},
+			projectId,
+		},
+		nowIso,
+	);
+	const payload = ServerAssetSchema.parse({
+		id: row.id,
+		name: row.name,
+		data: row.data ? JSON.parse(row.data) : null,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+		userId: row.owner_id,
+		projectId: row.project_id,
+	});
+	return c.json(payload);
+});
+
+// ── Direct-to-OSS upload (presigned URL) ────────────────────────────────────
+// Browser PUTs the file straight to TOS, bypassing this API's bandwidth and the
+// 30MB raw-upload cap. Two short JSON exchanges:
+//   1) POST /assets/upload/presign  → uploadUrl + key
+//   2) (browser) PUT uploadUrl with file bytes
+//   3) POST /assets/upload/commit   → persists asset row, returns DTO
+const DIRECT_UPLOAD_MAX_BYTES_VIDEO = 5 * 1024 * 1024 * 1024; // 5GB single-PUT product limit
+const DIRECT_UPLOAD_MAX_BYTES_AUDIO = 1024 * 1024 * 1024; // 1GB
+const DIRECT_UPLOAD_MAX_BYTES_IMAGE = 100 * 1024 * 1024; // 100MB
+const DIRECT_UPLOAD_PRESIGN_TTL_SECONDS = 15 * 60;
+
+assetRouter.post("/upload/presign", authMiddleware, async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+	const storageConfig = resolveObjectStorageConfig(c.env);
+	if (!storageConfig) {
+		return c.json({ error: "Object storage is not configured" }, 500);
+	}
+
+	const body = (await c.req.json().catch(() => ({}))) as {
+		contentType?: string;
+		size?: number;
+		fileName?: string;
+		kind?: string;
+	};
+	const contentType = normalizeContentType(body.contentType);
+	const fileName = sanitizeUploadName(body.fileName || "");
+	const declaredKind =
+		typeof body.kind === "string" && body.kind.trim()
+			? body.kind.trim().toLowerCase()
+			: null;
+	const inferredKind = inferMediaKind({ contentType, fileName: fileName || undefined });
+	const kind: "image" | "video" | "audio" | null =
+		declaredKind === "image" || declaredKind === "video" || declaredKind === "audio"
+			? declaredKind
+			: inferredKind;
+	if (!kind) {
+		return c.json({ error: "only image/video/audio files are allowed" }, 400);
+	}
+
+	const size =
+		typeof body.size === "number" && Number.isFinite(body.size) ? body.size : null;
+	if (size == null || size <= 0) {
+		return c.json({ error: "size is required" }, 400);
+	}
+	const cap = kind === "video"
+		? DIRECT_UPLOAD_MAX_BYTES_VIDEO
+		: kind === "audio"
+			? DIRECT_UPLOAD_MAX_BYTES_AUDIO
+			: DIRECT_UPLOAD_MAX_BYTES_IMAGE;
+	if (size > cap) {
+		return c.json(
+			{ error: `file is too large (max ${Math.floor(cap / (1024 * 1024))}MB)` },
+			413,
+		);
+	}
+
+	const ext = detectUploadExtensionFromMeta({
+		contentType,
+		fileName: fileName || undefined,
+	});
+	const key = buildUserUploadKey(userId, ext);
+
+	const client = createObjectStorageClient(c.env);
+	const uploadUrl = await getSignedUrl(
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		client as any,
+		new PutObjectCommand({
+			Bucket: storageConfig.bucket,
+			Key: key,
+			ContentType: contentType,
+			CacheControl: "public, max-age=31536000, immutable",
+		}),
+		{ expiresIn: DIRECT_UPLOAD_PRESIGN_TTL_SECONDS },
+	);
+
+	const publicBase = getPublicBase(c);
+	const publicUrl = publicBase ? `${publicBase}/${key}` : `/${key}`;
+
+	return c.json({
+		uploadUrl,
+		key,
+		method: "PUT" as const,
+		// Headers the browser MUST send on the PUT — they were part of the signature.
+		requiredHeaders: {
+			"content-type": contentType,
+			"cache-control": "public, max-age=31536000, immutable",
+		},
+		publicUrl,
+		expiresIn: DIRECT_UPLOAD_PRESIGN_TTL_SECONDS,
+		kind,
+	});
+});
+
+assetRouter.post("/upload/commit", authMiddleware, async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+	const storageConfig = resolveObjectStorageConfig(c.env);
+	if (!storageConfig) {
+		return c.json({ error: "Object storage is not configured" }, 500);
+	}
+
+	const body = (await c.req.json().catch(() => ({}))) as {
+		key?: string;
+		name?: string;
+		contentType?: string;
+		size?: number;
+		kind?: string;
+		originalName?: string;
+		projectId?: string;
+		prompt?: string;
+		vendor?: string;
+		modelKey?: string;
+		taskKind?: string;
+	};
+	const key = typeof body.key === "string" ? body.key.trim() : "";
+	if (!key) return c.json({ error: "key is required" }, 400);
+
+	// Sanity-check the key was minted by /upload/presign for this user — prevents
+	// callers from committing arbitrary objects in the bucket as their own.
+	const safeUser = (userId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
+	if (!key.startsWith(`uploads/user/${safeUser}/`)) {
+		return c.json({ error: "key does not belong to caller" }, 403);
+	}
+
+	const client = createObjectStorageClient(c.env);
+	let headSize: number | null = null;
+	let headContentType = normalizeContentType(body.contentType);
+	try {
+		const head = await client.send(
+			new HeadObjectCommand({ Bucket: storageConfig.bucket, Key: key }),
+		);
+		if (typeof head.ContentLength === "number") headSize = head.ContentLength;
+		if (typeof head.ContentType === "string" && head.ContentType.trim()) {
+			headContentType = normalizeContentType(head.ContentType);
+		}
+	} catch {
+		return c.json({ error: "object not found in storage; upload first" }, 404);
+	}
+
+	const originalName = sanitizeUploadName(body.originalName || "");
+	const declaredKind =
+		typeof body.kind === "string" && body.kind.trim()
+			? body.kind.trim().toLowerCase()
+			: null;
+	const inferred = inferMediaKind({
+		contentType: headContentType,
+		fileName: originalName || undefined,
+	});
+	const kind: "image" | "video" | "audio" | null =
+		declaredKind === "image" || declaredKind === "video" || declaredKind === "audio"
+			? declaredKind
+			: inferred;
+	if (!kind) {
+		return c.json({ error: "uploaded object is not image/video/audio" }, 400);
+	}
+
+	const declaredSize = typeof body.size === "number" && Number.isFinite(body.size) ? body.size : null;
+	const size = headSize ?? declaredSize ?? null;
+	const cap = kind === "video"
+		? DIRECT_UPLOAD_MAX_BYTES_VIDEO
+		: kind === "audio"
+			? DIRECT_UPLOAD_MAX_BYTES_AUDIO
+			: DIRECT_UPLOAD_MAX_BYTES_IMAGE;
+	if (size != null && size > cap) {
+		return c.json(
+			{ error: `file is too large (max ${Math.floor(cap / (1024 * 1024))}MB)` },
+			413,
+		);
+	}
+
+	const name =
+		sanitizeUploadName(body.name || "") ||
+		originalName ||
+		(kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Image");
+	const projectId = normalizeOptionalText(body.projectId, 128);
+	const prompt = normalizeOptionalText(body.prompt, 8000);
+	const vendor = normalizeOptionalText(body.vendor, 64);
+	const modelKey = normalizeOptionalText(body.modelKey, 128);
+	const taskKind = normalizeOptionalText(body.taskKind, 64);
+
+	const publicBase = getPublicBase(c);
+	const url = publicBase ? `${publicBase}/${key}` : `/${key}`;
+	const thumbnailUrl =
+		kind === "video" ? await captureUploadedVideoPoster(userId, key) : null;
+
+	const nowIso = new Date().toISOString();
+	const row = await createAssetRow(
+		c.env.DB,
+		userId,
+		{
+			name,
+			data: {
+				kind: "upload",
+				type: kind,
+				url,
+				...(thumbnailUrl ? { thumbnailUrl } : {}),
+				contentType: headContentType,
 				size,
 				originalName: originalName || null,
 				key,
@@ -8587,6 +9981,7 @@ assetRouter.get("/public", async (c) => {
 				createdAt: row.created_at,
 				ownerLogin: row.owner_login,
 				ownerName: row.owner_name,
+				ownerAvatarUrl: row.owner_avatar_url,
 				projectName: row.project_name,
 			});
 		})
@@ -8596,6 +9991,201 @@ assetRouter.get("/public", async (c) => {
 		);
 
 	return c.json(items);
+});
+
+// Published videos for Tv show: only assets created via the publish flow (kind=publishRecord)
+// from public projects, with a non-empty videoUrl.
+assetRouter.get("/published", async (c) => {
+	const viewerId = (await resolveAuth(c).catch(() => null))?.payload.sub;
+	const requestedSurface = c.req.query("surface");
+	if (requestedSurface && requestedSurface !== "homepage") {
+		return c.json({ error: `Unsupported published asset surface: ${requestedSurface}` }, 400);
+	}
+	const homepageSurface = requestedSurface === "homepage";
+	const limitParam = c.req.query("limit");
+	const limit =
+		typeof limitParam === "string" && limitParam
+			? Number(limitParam)
+			: undefined;
+	// Fetch a larger pool to account for JS-side filtering
+	const fetchLimit =
+		typeof limit === "number" && !Number.isNaN(limit)
+			? Math.min(limit * 4, 96)
+			: 96;
+
+	// 发布=公开快照：只认 publishRecord 行本身，原项目状态/存亡不影响展示
+	const rows = await listPublishRecordAssets({ limit: fetchLimit });
+
+	const items = rows
+		.map((row) => {
+			let parsed: unknown = null;
+			try {
+				parsed = row.data ? JSON.parse(row.data) : null;
+			} catch {
+				parsed = null;
+			}
+			const data = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+				? parsed as Record<string, unknown>
+				: {};
+
+			if (data.kind !== "publishRecord") return null;
+			if (data.publicationStatus === "unpublished") return null;
+
+			const videoUrl =
+				typeof data.videoUrl === "string" ? data.videoUrl.trim() : "";
+			if (!videoUrl) return null;
+
+			const thumbnailUrl =
+				typeof data.coverImageUrl === "string" && data.coverImageUrl.trim()
+					? data.coverImageUrl.trim()
+					: null;
+
+			const sourceProjectId =
+				typeof data.sourceProjectId === "string" && data.sourceProjectId.trim()
+					? data.sourceProjectId.trim()
+					: (row.project_id ?? null);
+			const sourceProjectName =
+				typeof data.sourceProjectName === "string" && data.sourceProjectName.trim()
+					? data.sourceProjectName.trim()
+					: row.project_name;
+			const sourceOwnerType =
+				data.ownerType === "project" || data.ownerType === "chapter" || data.ownerType === "shortFilm"
+					? data.ownerType
+					: null;
+			const sourceOwnerId =
+				typeof data.ownerId === "string" && data.ownerId.trim()
+					? data.ownerId.trim()
+					: null;
+			const sourceChapterTitle =
+				sourceOwnerType === "chapter" && typeof data.sourceChapterTitle === "string" && data.sourceChapterTitle.trim()
+					? data.sourceChapterTitle.trim()
+					: null;
+
+			return {
+				...PublicAssetSchema.parse({
+					id: row.id,
+					name: typeof data.title === "string" && data.title.trim()
+						? data.title.trim()
+						: row.name,
+					type: "video" as const,
+					url: videoUrl,
+					thumbnailUrl,
+					duration: null,
+					prompt:
+						typeof data.description === "string" ? data.description : null,
+					vendor: null,
+					modelKey: null,
+					createdAt: row.created_at,
+					ownerLogin: row.owner_login,
+					ownerName: row.owner_name,
+					ownerAvatarUrl: row.owner_avatar_url,
+					projectName: sourceProjectName,
+					projectId: row.project_id,
+					sourceProjectId,
+					sourceOwnerType,
+					sourceOwnerId,
+					sourceChapterTitle,
+				}),
+				pinWeight: 0,
+			};
+		})
+		.filter((v): v is NonNullable<typeof v> => !!v);
+
+	// 互动数据：短片卡的点赞数取自公开的源项目（社区计数）
+	const sourceIds = Array.from(
+		new Set(
+			items
+				.map((i) => i.sourceProjectId)
+				.filter((v): v is string => typeof v === "string" && !!v),
+		),
+	);
+	const projectRows = await listProjectsTvInfo(sourceIds, viewerId);
+	const projectMap = new Map(projectRows.map((row) => [row.id, row]));
+	const enriched = items.map((i) => {
+		const info = i.sourceProjectId ? projectMap.get(i.sourceProjectId) : undefined;
+		return {
+			...i,
+			likeCount: info ? info.like_count : null,
+			favoriteCount: info ? info.favorite_count : null,
+			favorited: info?.favorited ?? false,
+			canvasPublic: info ? info.is_public === 1 : false,
+		};
+	});
+
+	const [rankingConfig, moderationConfig] = await Promise.all([
+		getHomepageVideoRankingConfig(),
+		getHomepageVideoModerationConfig(),
+	]);
+	const blockedAssetIds = new Set(moderationConfig.config.blockedAssetIds);
+	const rankingCandidates = filterHomepageModeratedAssets(enriched, blockedAssetIds, homepageSurface);
+	const ranking = calculateRanking(
+		rankingCandidates.map((item) => ({
+			id: item.id,
+			metric: Math.max(0, item.likeCount ?? 0) + Math.max(0, item.favoriteCount ?? 0) * 2,
+			createdAt: item.createdAt,
+		})),
+		{
+			metricWeight: rankingConfig.config.engagementWeight,
+			freshnessWeight: rankingConfig.config.freshnessWeight,
+			freshnessHalfLifeDays: rankingConfig.config.freshnessHalfLifeDays,
+			items: rankingConfig.config.items,
+		},
+	);
+	const rankingById = new Map(ranking.map((item) => [item.id, item]));
+	const ranked = rankingCandidates
+		.map((item) => {
+			const score = rankingById.get(item.id);
+			if (!score) throw new Error(`homepage video ranking missing: ${item.id}`);
+			return {
+				...item,
+				pinWeight: score.pinned ? 100 : score.recommended ? 10 : 0,
+				algorithmScore: score.algorithmScore,
+				manualBoost: score.manualBoost,
+				effectiveScore: score.effectiveScore,
+				recommended: score.recommended,
+				pinned: score.pinned,
+				displayOrder: score.displayOrder,
+				rank: score.rank,
+			};
+		})
+		.sort((left, right) => left.rank - right.rank)
+		.slice(0, typeof limit === "number" && !Number.isNaN(limit) ? limit : 48);
+
+	return c.json(ranked);
+});
+
+// Homepage carousel: publicly readable, admin-configured slides
+assetRouter.get("/homepage-carousel", async (c) => {
+	const carouselRow = await getGlobalAssetByName("homepageCarousel");
+	if (!carouselRow) return c.json({ slides: [] });
+	let parsed: any = null;
+	try {
+		parsed = JSON.parse(carouselRow.data || "{}");
+	} catch {
+		parsed = {};
+	}
+	const slides = Array.isArray(parsed?.slides) ? parsed.slides : [];
+	return c.json({
+		slides: slides
+			.filter((s: any) => typeof s?.imageUrl === "string" && s.imageUrl.trim())
+			.map((s: any) => ({
+				imageUrl: s.imageUrl.trim(),
+				title: typeof s.title === "string" ? s.title.trim() : null,
+				linkUrl: typeof s.linkUrl === "string" ? s.linkUrl.trim() : null,
+			})),
+	});
+});
+
+// Homepage decoration: publicly readable（登录页视频必须匿名可读）
+assetRouter.get("/homepage-decoration", async (c) => {
+	const row = await getGlobalAssetByName("homepageDecoration");
+	let parsed: unknown = null;
+	try {
+		parsed = row?.data ? JSON.parse(row.data) : null;
+	} catch {
+		parsed = null;
+	}
+	return c.json(sanitizeHomepageDecoration(parsed));
 });
 
 function isBlockedProxyImageHost(hostname: string): boolean {
@@ -9055,12 +10645,12 @@ assetRouter.get("/character-library/characters", authMiddleware, async (c) => {
 		.map((row) => {
 			const parsed = parseImportedCharacterAsset(parseAssetJson(row.data));
 			if (!parsed) return null;
-			return {
+			return buildImportedCharacterResponse({
 				id: row.id,
 				name: row.name,
 				projectId: row.project_id,
-				...toImportedCharacterResponse(parsed),
-			};
+				record: parsed,
+			});
 		})
 		.filter((item): item is ImportedCharacterLibraryListItem => item !== null)
 		.filter((item) => matchesImportedCharacterQuery(item, query))
@@ -9102,13 +10692,7 @@ assetRouter.get("/character-library/characters", authMiddleware, async (c) => {
 		total: items.length,
 		page: page > 0 ? page : undefined,
 		pageSize: effectiveLimit,
-		syncState: syncState
-			? {
-					totalCharacters: syncState.totalCharacters,
-					importedCharacters: syncState.importedCharacters,
-					lastSyncedAt: syncState.lastSyncedAt,
-				}
-			: null,
+		syncState: toImportedCharacterSyncStateDto(syncState),
 	});
 });
 
@@ -9141,12 +10725,12 @@ assetRouter.post("/character-library/characters", authMiddleware, async (c) => {
 			nowIso,
 		});
 		return c.json({
-			character: {
+			character: buildImportedCharacterResponse({
 				id: created.id,
 				name: created.name,
 				projectId: created.project_id,
-				...toImportedCharacterResponse(normalized.record),
-			},
+				record: normalized.record,
+			}),
 		});
 	} catch (err) {
 		return c.json(
@@ -9191,12 +10775,12 @@ assetRouter.put("/character-library/characters/:id", authMiddleware, async (c) =
 			nowIso,
 		});
 		return c.json({
-			character: {
+			character: buildImportedCharacterResponse({
 				id,
 				name: normalizeTapNowText(payload.name) || row.name,
 				projectId,
-				...toImportedCharacterResponse(normalized.record),
-			},
+				record: normalized.record,
+			}),
 		});
 	} catch (err) {
 		return c.json(
@@ -9376,37 +10960,7 @@ type ImportedCharacterLibrarySyncState = {
 	lastSyncedAt: string;
 };
 
-type ImportedCharacterLibraryUpsertInput = {
-	name?: unknown;
-	projectId?: unknown;
-	sourceCharacterUid?: unknown;
-	character_id?: unknown;
-	group_number?: unknown;
-	era?: unknown;
-	cultural_region?: unknown;
-	genre?: unknown;
-	time_period?: unknown;
-	appearance_background?: unknown;
-	scene?: unknown;
-	gender?: unknown;
-	age_group?: unknown;
-	species?: unknown;
-	physique?: unknown;
-	height_level?: unknown;
-	skin_color?: unknown;
-	hair_length?: unknown;
-	hair_color?: unknown;
-	temperament?: unknown;
-	outfit?: unknown;
-	distinctive_features?: unknown;
-	identity_hint?: unknown;
-	filter_worldview?: unknown;
-	filter_theme?: unknown;
-	filter_scene?: unknown;
-	full_body_image_url?: unknown;
-	three_view_image_url?: unknown;
-	expression_image_url?: unknown;
-	closeup_image_url?: unknown;
+type ImportedCharacterLibraryUpsertInput = AiCharacterLibraryUpsertPayload & {
 	source_full_body_image_url?: unknown;
 	source_three_view_image_url?: unknown;
 	source_expression_image_url?: unknown;
@@ -9445,40 +10999,7 @@ type TapNowCharacterRecord = {
 	filter_scene?: string;
 };
 
-type ImportedCharacterLibraryListItem = {
-	id: string;
-	name: string;
-	projectId: string | null;
-	character_id: string;
-	group_number: string;
-	era: string;
-	cultural_region: string;
-	genre: string;
-	time_period: string;
-	appearance_background: string;
-	scene: string;
-	gender: string;
-	age_group: string;
-	species: string;
-	physique: string;
-	height_level: string;
-	skin_color: string;
-	hair_length: string;
-	hair_color: string;
-	temperament: string;
-	outfit: string;
-	distinctive_features: string;
-	identity_hint: string;
-	full_body_image_url: string;
-	three_view_image_url: string;
-	expression_image_url: string;
-	closeup_image_url: string;
-	filter_worldview: string;
-	filter_theme: string;
-	filter_scene: string;
-	imported_at: string;
-	updated_at: string;
-};
+type ImportedCharacterLibraryListItem = AiCharacterLibraryCharacterDto;
 
 function normalizeTapNowText(value: unknown): string {
 	return String(value || "").trim();
@@ -9720,7 +11241,7 @@ function parseImportedCharacterSyncState(
 
 function toImportedCharacterResponse(
 	record: ImportedCharacterLibraryRecord,
-): Omit<ImportedCharacterLibraryListItem, "id" | "name" | "projectId"> {
+): Omit<AiCharacterLibraryCharacterDto, "id" | "name" | "projectId"> {
 	return {
 		character_id: record.sourceCharacterId,
 		group_number: record.sourceGroupNumber,
@@ -9751,6 +11272,31 @@ function toImportedCharacterResponse(
 		filter_scene: record.filterScene,
 		imported_at: record.importedAt,
 		updated_at: record.updatedAt,
+	};
+}
+
+function buildImportedCharacterResponse(input: {
+	id: string;
+	name: string;
+	projectId: string | null;
+	record: ImportedCharacterLibraryRecord;
+}): ImportedCharacterLibraryListItem {
+	return {
+		id: input.id,
+		name: input.name,
+		projectId: input.projectId,
+		...toImportedCharacterResponse(input.record),
+	};
+}
+
+function toImportedCharacterSyncStateDto(
+	state: ImportedCharacterLibrarySyncState | null,
+): AiCharacterLibrarySyncStateDto | null {
+	if (!state) return null;
+	return {
+		totalCharacters: state.totalCharacters,
+		importedCharacters: state.importedCharacters,
+		lastSyncedAt: state.lastSyncedAt,
 	};
 }
 
@@ -9993,8 +11539,8 @@ async function uploadImportedCharacterImage(input: {
 }): Promise<string> {
 	const targetUrl = normalizeTapNowText(input.sourceUrl);
 	if (!targetUrl) return "";
-	const rustfsConfig = resolveRustfsConfig(input.c.env);
-	if (!rustfsConfig) {
+	const storageConfig = resolveObjectStorageConfig(input.c.env);
+	if (!storageConfig) {
 		throw new Error("Object storage is not configured");
 	}
 	const response = await fetchWithHttpDebugLog(
@@ -10025,10 +11571,10 @@ async function uploadImportedCharacterImage(input: {
 		fileName: targetUrl.split("/").pop() || undefined,
 	});
 	const key = buildUserUploadKey(input.userId, ext);
-	const client = createRustfsClient(input.c.env);
+	const client = createObjectStorageClient(input.c.env);
 	await client.send(
 		new PutObjectCommand({
-			Bucket: rustfsConfig.bucket,
+			Bucket: storageConfig.bucket,
 			Key: key,
 			Body: bytes,
 			ContentType: contentType || "image/jpeg",

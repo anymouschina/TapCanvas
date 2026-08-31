@@ -1,6 +1,5 @@
 import { create } from 'zustand'
-
-let hoveredEdgeClearTimer: ReturnType<typeof setTimeout> | null = null
+import type { ChapterCreativeOverride } from '../api/server'
 
 const PUBLIC_API_KEY_STORAGE_KEY = 'tapcanvas_public_api_key'
 const PUBLIC_VENDOR_CANDIDATES_STORAGE_KEY = 'tapcanvas_public_vendor_candidates'
@@ -154,14 +153,6 @@ function writeStoredAiChatWatchAssets(next: boolean) {
   }
 }
 
-export type WebCutVideoEditPayload = {
-  nodeId: string
-  videoUrl: string
-  videoTitle?: string | null
-  onApply: (result: { url: string; thumbnailUrl?: string | null; assetId: string }) => void | Promise<void>
-  onClose?: () => void
-}
-
 export type CreationSessionStatus = 'idle' | 'running' | 'paused' | 'completed' | 'failed'
 export type CreationUnitType = 'scene' | 'storyboard_chunk' | 'shot' | 'clip'
 
@@ -202,9 +193,27 @@ export type PersistedCreationSession = {
   updatedAt: number
 }
 
-export type AssetPanelTab = 'generated' | 'workflow' | 'materials'
+export type AssetPanelTab = 'generated' | 'materials'
 
-export type AssetPanelMaterialCategory = 'roleCards' | 'docs' | 'all'
+export type ActivePanel =
+  | 'add'
+  | 'template'
+  | 'style-library'
+  | 'character-library'
+  | 'assets'
+  | 'assets-library'
+  | 'tapshow'
+  | 'project'
+  | 'models'
+  | 'history'
+  | 'generation-history'
+  | 'task-inbox'
+  | 'runs'
+  | 'feishu'
+  | 'project-materials'
+  | null
+
+export type AssetPanelMaterialCategory = 'docs' | 'texts' | 'all'
 
 export type AssetPanelFocusRequest = {
   requestKey: string
@@ -229,24 +238,11 @@ export type CanvasReferencePickerState = {
   blockedSourceNodeIds: string[]
 }
 
-export type NanoComicStoryboardRunState = {
-  bookId: string
-  chapter: number
-  mode: 'single' | 'full'
-  groupSize?: 1 | 4 | 9 | 25
-  status: 'running' | 'success' | 'error'
-  progressText: string
-  groupNodeId?: string
-  completedGroups?: number
-  totalGroups?: number
-  successfulGroups?: number
-  failedGroups?: number
-  currentChunkIndex?: number
-  nextChunkIndex?: number
-  currentShotStart?: number
-  currentShotEnd?: number
-  updatedAt: number
+export type CapabilityBayOpenRequest = {
+  requestKey: string
+  flowId: string
 }
+
 
 type CreationSessionCheckpoint = {
   id: string
@@ -275,9 +271,6 @@ type CommitCreationSessionUnitInput = {
 type UIState = {
   viewOnly: boolean
   setViewOnly: (v: boolean) => void
-  hoveredEdgeId: string | null
-  hoverEdge: (id: string | null) => void
-  unhoverEdgeSoon: () => void
   subflowNodeId: string | null
   openSubflow: (nodeId: string) => void
   closeSubflow: () => void
@@ -290,8 +283,25 @@ type UIState = {
   setAddPanelOpen: (v: boolean) => void
   templatePanelOpen: boolean
   setTemplatePanelOpen: (v: boolean) => void
-  activePanel: 'add' | 'template' | 'assets' | 'tapshow' | 'account' | 'project' | 'models' | 'history' | 'runs' | 'nanoComic' | null
-  setActivePanel: (p: 'add' | 'template' | 'assets' | 'tapshow' | 'account' | 'project' | 'models' | 'history' | 'runs' | 'nanoComic' | null) => void
+  capabilityBayOpenRequest: CapabilityBayOpenRequest | null
+  requestCapabilityBayForFlow: (flowId: string) => void
+  clearCapabilityBayOpenRequest: () => void
+  activePanel: ActivePanel
+  setActivePanel: (p: ActivePanel) => void
+  // AI 对话开合状态（由 AiChatDialog 同步，供底部工具栏入口高亮 + toggle）。
+  aiChatOpen: boolean
+  setAiChatOpen: (v: boolean) => void
+  // 导演台内会话作用域：打开导演台时由 Modal 写入其 nodeId，AiChatDialog 据此切到 director lane
+  // （会话与项目主对话隔离，按节点独立线程）；关闭导演台清空 → 回到 general。
+  directorChatScopeNodeId: string | null
+  setDirectorChatScopeNodeId: (id: string | null) => void
+  // 左下「资产管理」抽屉：画布元素列表 + 资产库，两 tab。由左下角入口按钮唤起，可收起。
+  assetManagerOpen: boolean
+  assetManagerTab: 'canvas' | 'assets' | 'catalog'
+  toggleAssetManager: () => void
+  openAssetManager: (tab?: 'canvas' | 'assets' | 'catalog') => void
+  closeAssetManager: () => void
+  setAssetManagerTab: (tab: 'canvas' | 'assets' | 'catalog') => void
   assetPanelTab: AssetPanelTab
   setAssetPanelTab: (tab: AssetPanelTab) => void
   assetPanelMaterialCategory: AssetPanelMaterialCategory
@@ -305,36 +315,37 @@ type UIState = {
   canvasReferencePicker: CanvasReferencePickerState | null
   openCanvasReferencePicker: (payload: { targetNodeId: string; blockedSourceNodeIds?: string[] }) => void
   closeCanvasReferencePicker: () => void
-  nanoComicStoryboardRunState: NanoComicStoryboardRunState | null
-  setNanoComicStoryboardRunState: (state: NanoComicStoryboardRunState | null) => void
   panelAnchorY: number | null
   setPanelAnchorY: (y: number | null) => void
+  // 底部居中工具栏（FloatingNav 横向化）上方弹出面板时，记录触发项的水平中心，面板据此居中。
+  panelAnchorX: number | null
+  setPanelAnchorX: (x: number | null) => void
   paramNodeId: string | null
   openParamFor: (id: string) => void
   closeParam: () => void
   preview: { url: string; kind: 'image'|'video'|'audio'; name?: string } | null
   openPreview: (m: { url: string; kind: 'image'|'video'|'audio'; name?: string }) => void
   closePreview: () => void
-  focusedNodeId: string | null
-  focusNodeSubgraph: (id: string) => void
-  clearFocusedSubgraph: () => void
   edgeRoute: 'smooth' | 'orth'
   toggleEdgeRoute: () => void
   currentFlow: { id?: string|null; name: string; source: 'local'|'server'; ownerType?: 'project'|'chapter'|'shot'|null; ownerId?: string|null }
   setCurrentFlow: (patch: Partial<{ id?: string|null; name: string; source: 'local'|'server'; ownerType?: 'project'|'chapter'|'shot'|null; ownerId?: string|null }>) => void
+  // 当前章节画布的权威上下文（由 ChapterCanvasPage 设置）。非章节画布为 null。
+  // 聊天会话 key 用它做章节级隔离，避免取滞后的 currentProject/currentFlow 造成跨项目/章节串台。
+  currentChapter: { projectId: string; bookId: string | null; chapterId: string; chapterTitle?: string } | null
+  setCurrentChapter: (v: { projectId: string; bookId: string | null; chapterId: string; chapterTitle?: string } | null) => void
+  currentChapterCreativeOverride: ChapterCreativeOverride | null
+  setCurrentChapterCreativeOverride: (value: ChapterCreativeOverride | null) => void
   canvasViewport: { x: number; y: number; zoom: number } | null
   setCanvasViewport: (v: { x: number; y: number; zoom: number } | null) => void
   restoreViewport: { x: number; y: number; zoom: number } | null
   setRestoreViewport: (v: { x: number; y: number; zoom: number } | null) => void
   isDirty: boolean
   setDirty: (v: boolean) => void
-  currentProject: { id?: string | null; name: string; owner?: string | null; ownerId?: string | null; ownerName?: string | null } | null
-  setCurrentProject: (p: { id?: string | null; name: string; owner?: string | null; ownerId?: string | null; ownerName?: string | null } | null) => void
-  promptSuggestMode: 'off' | 'history' | 'semantic'
-  setPromptSuggestMode: (m: 'off' | 'history' | 'semantic') => void
-  webcutVideoEditModal: { open: boolean; payload?: WebCutVideoEditPayload | null }
-  openWebCutVideoEditModal: (payload: WebCutVideoEditPayload) => void
-  closeWebCutVideoEditModal: () => void
+  currentProject: { id?: string | null; name: string; owner?: string | null; ownerId?: string | null; ownerName?: string | null; isPublic?: boolean | null; teamId?: string | null; projectKind?: 'creative' | 'ai_workflow' } | null
+  setCurrentProject: (p: { id?: string | null; name: string; owner?: string | null; ownerId?: string | null; ownerName?: string | null; isPublic?: boolean | null; teamId?: string | null; projectKind?: 'creative' | 'ai_workflow' } | null) => void
+  activeWorkflow: string | null
+  setActiveWorkflow: (workflow: string | null) => void
   assetPersistenceEnabled: boolean
   setAssetPersistenceEnabled: (v: boolean) => void
   publicApiKey: string
@@ -358,6 +369,16 @@ type UIState = {
   completeCreationSession: (summary?: string) => void
   failCreationSession: (message: string) => void
   clearCreationSession: () => void
+  activeStyleBibleReferenceImages: string[]
+  setActiveStyleBibleReferenceImages: (images: string[]) => void
+  activeStyleBible: { styleName: string; referenceImages: string[] } | null
+  setActiveStyleBible: (bible: { styleName?: string; referenceImages?: string[] } | null) => void
+  // 全局「选择风格素材」请求：任意入口（角色卡/故事板）缺画风参考时唤起统一弹窗，
+  // 用户选/传完素材后回调 onResolved（携带最新参考图 URL）以自动继续原操作。token 仅用于触发刷新。
+  styleReferenceRequest: { reason: string; onResolved?: (refs: string[]) => void; token: number } | null
+  requestStyleReference: (req: { reason: string; onResolved?: (refs: string[]) => void }) => void
+  resolveStyleReferenceRequest: (refs: string[]) => void
+  cancelStyleReferenceRequest: () => void
 }
 
 function normalizePersistedCreationSession(value: unknown): PersistedCreationSession | null {
@@ -449,21 +470,6 @@ export function serializeCreationSessionForPersistence(session: CreationSession 
 export const useUIStore = create<UIState>((set, get) => ({
   viewOnly: false,
   setViewOnly: (v) => set({ viewOnly: v }),
-  hoveredEdgeId: null,
-  hoverEdge: (id) => {
-    if (hoveredEdgeClearTimer) {
-      clearTimeout(hoveredEdgeClearTimer)
-      hoveredEdgeClearTimer = null
-    }
-    set({ hoveredEdgeId: id })
-  },
-  unhoverEdgeSoon: () => {
-    if (hoveredEdgeClearTimer) clearTimeout(hoveredEdgeClearTimer)
-    hoveredEdgeClearTimer = setTimeout(() => {
-      hoveredEdgeClearTimer = null
-      set({ hoveredEdgeId: null })
-    }, 180)
-  },
   subflowNodeId: null,
   openSubflow: (nodeId) => set({ subflowNodeId: nodeId }),
   closeSubflow: () => set({ subflowNodeId: null }),
@@ -476,11 +482,33 @@ export const useUIStore = create<UIState>((set, get) => ({
   setAddPanelOpen: (v) => set({ addPanelOpen: v }),
   templatePanelOpen: false,
   setTemplatePanelOpen: (v) => set({ templatePanelOpen: v }),
+  capabilityBayOpenRequest: null,
+  requestCapabilityBayForFlow: (flowId) => {
+    const normalizedFlowId = String(flowId || '').trim()
+    if (!normalizedFlowId) return
+    set({
+      capabilityBayOpenRequest: {
+        requestKey: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        flowId: normalizedFlowId,
+      },
+    })
+  },
+  clearCapabilityBayOpenRequest: () => set({ capabilityBayOpenRequest: null }),
   activePanel: null,
   setActivePanel: (p) => set((state) => (state.activePanel === p ? state : { activePanel: p })),
+  aiChatOpen: false,
+  setAiChatOpen: (v) => set((s) => (s.aiChatOpen === v ? s : { aiChatOpen: v })),
+  directorChatScopeNodeId: null,
+  setDirectorChatScopeNodeId: (id) => set((s) => (s.directorChatScopeNodeId === id ? s : { directorChatScopeNodeId: id })),
+  assetManagerOpen: false,
+  assetManagerTab: 'canvas',
+  toggleAssetManager: () => set((s) => ({ assetManagerOpen: !s.assetManagerOpen })),
+  openAssetManager: (tab) => set((s) => ({ assetManagerOpen: true, assetManagerTab: tab ?? s.assetManagerTab })),
+  closeAssetManager: () => set({ assetManagerOpen: false }),
+  setAssetManagerTab: (tab) => set((s) => (s.assetManagerTab === tab ? s : { assetManagerTab: tab })),
   assetPanelTab: 'materials',
   setAssetPanelTab: (tab) => set({ assetPanelTab: tab }),
-  assetPanelMaterialCategory: 'roleCards',
+  assetPanelMaterialCategory: 'docs',
   setAssetPanelMaterialCategory: (category) => set({ assetPanelMaterialCategory: category }),
   assetPanelFocusRequest: null,
   requestAssetPanelFocus: (request) =>
@@ -519,12 +547,15 @@ export const useUIStore = create<UIState>((set, get) => ({
     })
   },
   closeCanvasReferencePicker: () => set({ canvasReferencePicker: null }),
-  nanoComicStoryboardRunState: null,
-  setNanoComicStoryboardRunState: (state) => set({ nanoComicStoryboardRunState: state }),
   panelAnchorY: null,
   setPanelAnchorY: (y) => set((state) => {
     const next = typeof y === 'number' && Number.isFinite(y) ? y : null
     return state.panelAnchorY === next ? state : { panelAnchorY: next }
+  }),
+  panelAnchorX: null,
+  setPanelAnchorX: (x) => set((state) => {
+    const next = typeof x === 'number' && Number.isFinite(x) ? x : null
+    return state.panelAnchorX === next ? state : { panelAnchorX: next }
   }),
   paramNodeId: null,
   openParamFor: (id) => set({ paramNodeId: id }),
@@ -532,13 +563,14 @@ export const useUIStore = create<UIState>((set, get) => ({
   preview: null,
   openPreview: (m) => set({ preview: m }),
   closePreview: () => set({ preview: null }),
-  focusedNodeId: null,
-  focusNodeSubgraph: (id) => set({ focusedNodeId: id }),
-  clearFocusedSubgraph: () => set({ focusedNodeId: null }),
   edgeRoute: 'smooth',
   toggleEdgeRoute: () => set((s) => ({ edgeRoute: s.edgeRoute === 'smooth' ? 'orth' : 'smooth' })),
   currentFlow: { id: null, name: '未命名', source: 'local', ownerType: 'project', ownerId: null },
   setCurrentFlow: (patch) => set((s) => ({ currentFlow: { ...s.currentFlow, ...(patch||{}) } })),
+  currentChapter: null,
+  setCurrentChapter: (v) => set({ currentChapter: v }),
+  currentChapterCreativeOverride: null,
+  setCurrentChapterCreativeOverride: (value) => set({ currentChapterCreativeOverride: value }),
   canvasViewport: null,
   setCanvasViewport: (v) => set({ canvasViewport: v }),
   restoreViewport: null,
@@ -547,11 +579,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   setDirty: (v) => set((state) => (state.isDirty === v ? state : { isDirty: v })),
   currentProject: null,
   setCurrentProject: (p) => set({ currentProject: p }),
-  promptSuggestMode: 'off',
-  setPromptSuggestMode: (m) => set({ promptSuggestMode: m }),
-  webcutVideoEditModal: { open: false, payload: null },
-  openWebCutVideoEditModal: (payload) => set({ webcutVideoEditModal: { open: true, payload } }),
-  closeWebCutVideoEditModal: () => set({ webcutVideoEditModal: { open: false, payload: null } }),
+  activeWorkflow: null,
+  setActiveWorkflow: (workflow) => set({ activeWorkflow: workflow }),
   assetPersistenceEnabled: getInitialAssetPersistence(),
   setAssetPersistenceEnabled: (v) => {
     set({ assetPersistenceEnabled: v })
@@ -754,4 +783,49 @@ export const useUIStore = create<UIState>((set, get) => ({
   clearCreationSession: () => set({
     creationSession: null,
   }),
+  activeStyleBibleReferenceImages: [],
+  setActiveStyleBibleReferenceImages: (images) => {
+    const next = (Array.isArray(images) ? images : [])
+      .map((u) => (typeof u === 'string' ? u.trim() : ''))
+      .filter(Boolean)
+    set((state) => {
+      if (
+        state.activeStyleBibleReferenceImages.length === next.length &&
+        state.activeStyleBibleReferenceImages.every((u, i) => u === next[i])
+      ) return state
+      return { activeStyleBibleReferenceImages: next }
+    })
+  },
+  // 风格参考图不再持久化到浏览器 localStorage：activeStyleBible 仅存内存，
+  // 由当前所选书的服务端 styleBible 派生，避免跨项目串味（新建项目自然为空）。
+  activeStyleBible: null,
+  setActiveStyleBible: (bible) => {
+    if (!bible) {
+      set({ activeStyleBible: null })
+      return
+    }
+    const refs = (Array.isArray(bible.referenceImages) ? bible.referenceImages : [])
+      .map((u) => (typeof u === 'string' ? u.trim() : ''))
+      .filter(Boolean)
+    if (refs.length === 0) {
+      set({ activeStyleBible: null })
+      return
+    }
+    const styleName = typeof bible.styleName === 'string' && bible.styleName.trim()
+      ? bible.styleName.trim()
+      : ''
+    const next = { styleName, referenceImages: refs }
+    set({ activeStyleBible: next })
+  },
+  styleReferenceRequest: null,
+  requestStyleReference: (req) => {
+    const token = get().styleReferenceRequest ? get().styleReferenceRequest!.token + 1 : 1
+    set({ styleReferenceRequest: { reason: req.reason, onResolved: req.onResolved, token } })
+  },
+  resolveStyleReferenceRequest: (refs) => {
+    const cur = get().styleReferenceRequest
+    set({ styleReferenceRequest: null })
+    if (cur?.onResolved) cur.onResolved(Array.isArray(refs) ? refs : [])
+  },
+  cancelStyleReferenceRequest: () => set({ styleReferenceRequest: null }),
 }))

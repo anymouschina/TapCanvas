@@ -64,6 +64,7 @@ describe("getStoryboardSourceBundle", () => {
 			JSON.stringify(
 				{
 					bookId,
+					projectId,
 					title: "凡人修仙传",
 					chapters: [
 						{
@@ -193,6 +194,7 @@ describe("getStoryboardSourceBundle", () => {
 			JSON.stringify(
 				{
 					bookId,
+					projectId,
 					title: "凡人修仙传",
 					chapters: [
 						{

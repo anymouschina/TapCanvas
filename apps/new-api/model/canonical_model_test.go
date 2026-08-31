@@ -16,6 +16,7 @@ func TestCanonicalModelKey(t *testing.T) {
 		{input: "gpt-image-2-suchuang", want: "gpt-image-2"},
 		{input: "gpt-image-2-all", want: "gpt-image-2"},
 		{input: "gemini-2.5-pro-apimart", want: "gemini-2.5-pro"},
+		{input: "kling-v3-funai", want: "kling-v3-funai"},
 		{input: "nano-banana-pro-suchuang", want: "nano-banana-pro"},
 		{input: "veo_3_1-fast", want: "veo-3.1"},
 		{input: "veo_3_1", want: "veo-3.1"},
@@ -25,6 +26,8 @@ func TestCanonicalModelKey(t *testing.T) {
 		{input: "sora-2-8s", want: "sora2"},
 		{input: "sora-2-12s", want: "sora2"},
 		{input: "sora-2-oai", want: "sora2"},
+		{input: "doubao-seedance-2-5", want: "doubao-seedance-2.5"},
+		{input: "doubao-seedance-2-5-260628", want: "doubao-seedance-2.5"},
 	}
 
 	for _, tt := range tests {
@@ -162,6 +165,28 @@ func TestBuildImplicitModelMappingSkipsCanonicalWhenChannelAlreadyHasIt(t *testi
 	}
 	if got := mapping["gpt-image-2-apimart"]; got != "gpt-image-2" {
 		t.Fatalf("mapping[gpt-image-2-apimart] = %q", got)
+	}
+}
+
+func TestBuildImplicitModelMappingDoesNotReverseExplicitSeedanceUpstreamMapping(t *testing.T) {
+	t.Parallel()
+
+	explicit := `{"doubao-seedance-2.5":"doubao-seedance-2-5-260628"}`
+	channel := &Channel{
+		Models:       "doubao-seedance-2.5",
+		ModelMapping: &explicit,
+	}
+	raw := BuildImplicitModelMapping(channel)
+
+	var mapping map[string]string
+	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+		t.Fatalf("unmarshal mapping failed: %v", err)
+	}
+	if got := mapping["doubao-seedance-2.5"]; got != "doubao-seedance-2-5-260628" {
+		t.Fatalf("explicit Seedance mapping = %q", got)
+	}
+	if got, exists := mapping["doubao-seedance-2-5-260628"]; exists {
+		t.Fatalf("unexpected reverse Seedance mapping: %q", got)
 	}
 }
 

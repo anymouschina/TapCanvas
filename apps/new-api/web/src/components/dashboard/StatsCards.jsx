@@ -90,7 +90,7 @@ const StatsCards = ({
                         navigate('/console/topup');
                       }}
                     >
-                      {t('充值')}
+                      {t('兑换额度')}
                     </Tag>
                   ) : (
                     (loading ||

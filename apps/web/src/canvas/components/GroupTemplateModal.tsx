@@ -192,8 +192,8 @@ export function GroupTemplateModal({
                             onClick={() => onSelectedTemplateProjectIdChange(project.id)}
                             style={{
                               cursor: 'pointer',
-                              background: active ? 'rgba(157, 209, 255, 0.14)' : 'rgba(255,255,255,0.04)',
-                              border: active ? '1px solid rgba(157, 209, 255, 0.55)' : '1px solid rgba(255,255,255,0.06)',
+                              background: active ? 'rgba(200, 204, 212, 0.14)' : 'rgba(255,255,255,0.04)',
+                              border: active ? '1px solid rgba(200, 204, 212, 0.55)' : '1px solid rgba(255,255,255,0.06)',
                             }}
                           >
                             <Stack className="group-template-modal__history-card-stack" gap={4}>
@@ -267,9 +267,9 @@ export function GroupTemplateModal({
                       }}
                       styles={{
                         root: {
-                          background: 'rgba(164, 214, 255, 0.18)',
+                          background: 'rgba(204, 208, 215, 0.18)',
                           color: '#f4fbff',
-                          border: '1px solid rgba(164, 214, 255, 0.34)',
+                          border: '1px solid rgba(204, 208, 215, 0.34)',
                           backdropFilter: 'blur(10px)',
                         },
                       }}

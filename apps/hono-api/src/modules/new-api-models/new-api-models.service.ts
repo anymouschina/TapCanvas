@@ -3,37 +3,52 @@ import type { WorkerEnv } from "../../types";
 import { AppError } from "../../middleware/error";
 import { normalizeBillingModelKey } from "../billing/billing.models";
 import {
-	listModelCreditCosts as listBillingModelCreditCosts,
-	type ModelCreditCostRow,
-} from "../billing/billing.repo";
-import { getNewApiPricingSnapshot } from "../billing/new-api-pricing";
+	getNewApiPricingSnapshot,
+	type NewApiPricingSnapshot,
+} from "../billing/new-api-pricing";
+import {
+	resolveVideoAnalysisUpfrontPricing,
+	VIDEO_ANALYSIS_CAPABILITY_TAG,
+	type VideoAnalysisUpfrontPricing,
+} from "../billing/video-analysis-upfront-pricing";
 import {
 	ModelCatalogVideoOptionsSchema,
 	ModelCatalogImageOptionsSchema,
+	ModelParamSpecSchema,
 	type ModelParamSpec,
 	type ModelCatalogVideoOptions,
 	type ModelCatalogImageOptions,
 } from "../model-catalog/model-catalog.schemas";
 
-export type NewApiModelKind = "text" | "image" | "video";
+export {
+	matchesNewApiRuntimeModelIdentity,
+} from "./new-api-model-identity";
+export type {
+	NewApiRuntimeModelIdentity,
+} from "./new-api-model-identity";
+
+export type NewApiModelKind = "text" | "image" | "video" | "audio";
 
 type UnknownRecord = Record<string, unknown>;
 
 type NewApiModelMeta = UnknownRecord & {
 	videoOptions?: UnknownRecord;
 	imageOptions?: UnknownRecord;
+	runtimeParameters?: ModelParamSpec[];
 };
 
 export type NewApiModelDto = {
 	id: number;
 	modelName: string;
 	requestModelKey: string;
+	routingAliases: string[];
 	displayLabel: string;
 	description: string | null;
 	icon: string | null;
 	tags: string[];
 	vendorId: number | null;
 	endpoints: string[];
+	runtimeEndpoints: string[];
 	kind: NewApiModelKind;
 	enabled: boolean;
 	syncOfficial: boolean;
@@ -50,7 +65,202 @@ export type NewApiModelDto = {
 			enabled: boolean;
 		}>;
 	};
+	videoAnalysisPricing?: VideoAnalysisUpfrontPricing;
 };
+
+export type NewApiGatewayReadinessDto = {
+	ready: boolean;
+	enabledModelCount: number;
+	configuredChannelCount: number;
+	executableModelCount: number;
+	reasons: Array<
+		| "no_enabled_models"
+		| "no_configured_channels"
+		| "no_executable_models"
+	>;
+	setupUrl: string;
+	recommendedProvider: {
+		name: string;
+		baseUrl: string;
+		registerUrl: string;
+		topupUrl: string;
+		tokenUrl: string;
+	};
+};
+
+type NewApiGatewayReadinessResponse = {
+	success?: unknown;
+	data?: unknown;
+};
+
+type NewApiGatewayReadinessData = {
+	ready?: unknown;
+	enabled_model_count?: unknown;
+	configured_channel_count?: unknown;
+	executable_model_count?: unknown;
+	reasons?: unknown;
+};
+
+const NEW_API_GATEWAY_READINESS_REASONS = new Set([
+	"no_enabled_models",
+	"no_configured_channels",
+	"no_executable_models",
+]);
+
+function readNonNegativeInteger(value: unknown): number | null {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function readGatewaySetupUrl(env: WorkerEnv): string {
+	const processEnv = globalThis.process?.env;
+	const raw = String(
+		env.NEW_API_PUBLIC_BASE_URL ?? processEnv?.NEW_API_PUBLIC_BASE_URL ?? "",
+	).trim();
+	if (!raw) {
+		throw new AppError("NEW_API_PUBLIC_BASE_URL 未配置", {
+			status: 500,
+			code: "new_api_public_base_url_missing",
+		});
+	}
+
+	let baseUrl: URL;
+	try {
+		baseUrl = new URL(raw);
+	} catch (error) {
+		throw new AppError("NEW_API_PUBLIC_BASE_URL 不是合法 URL", {
+			status: 500,
+			code: "new_api_public_base_url_invalid",
+			details: { message: error instanceof Error ? error.message : String(error) },
+		});
+	}
+	if (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:") {
+		throw new AppError("NEW_API_PUBLIC_BASE_URL 仅支持 http/https", {
+			status: 500,
+			code: "new_api_public_base_url_invalid",
+			details: { protocol: baseUrl.protocol },
+		});
+	}
+	return new URL("/console/channel", baseUrl).toString();
+}
+
+function readRecommendedProvider(env: WorkerEnv): NewApiGatewayReadinessDto["recommendedProvider"] {
+	const processEnv = globalThis.process?.env;
+	const raw = String(
+		env.NEW_API_RECOMMENDED_PROVIDER_BASE_URL
+			?? processEnv?.NEW_API_RECOMMENDED_PROVIDER_BASE_URL
+			?? "https://tt-api.lluban.com",
+	).trim();
+	let baseUrl: URL;
+	try {
+		baseUrl = new URL(raw);
+	} catch (error) {
+		throw new AppError("NEW_API_RECOMMENDED_PROVIDER_BASE_URL 不是合法 URL", {
+			status: 500,
+			code: "new_api_recommended_provider_url_invalid",
+			details: { message: error instanceof Error ? error.message : String(error) },
+		});
+	}
+	if (baseUrl.protocol !== "https:") {
+		throw new AppError("推荐渠道站点必须使用 HTTPS", {
+			status: 500,
+			code: "new_api_recommended_provider_url_invalid",
+			details: { protocol: baseUrl.protocol },
+		});
+	}
+	return {
+		name: "鲁班 API",
+		baseUrl: baseUrl.toString(),
+		registerUrl: new URL("/register", baseUrl).toString(),
+		topupUrl: new URL("/console/topup", baseUrl).toString(),
+		tokenUrl: new URL("/console/token", baseUrl).toString(),
+	};
+}
+
+export async function getNewApiGatewayReadiness(
+	env: WorkerEnv,
+): Promise<NewApiGatewayReadinessDto> {
+	const config = requireRelayConfig(env);
+	const url = `${config.baseUrl}/api/internal/readiness`;
+	let response: Response;
+	try {
+		response = await fetchWithHttpDebugLog(
+			{ env } as never,
+			url,
+			{
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${config.token}`,
+					Accept: "application/json",
+				},
+			},
+			{ tag: "new-api-gateway-readiness" },
+		);
+	} catch (error) {
+		throw new AppError("new-api 就绪状态网络请求失败", {
+			status: 502,
+			code: "new_api_readiness_request_failed",
+			details: { message: error instanceof Error ? error.message : String(error) },
+		});
+	}
+
+	if (!response.ok) {
+		const upstreamBody = await response.text().catch(() => "");
+		throw new AppError("new-api 就绪状态请求失败", {
+			status: 502,
+			code: "new_api_readiness_request_failed",
+			details: {
+				upstreamStatus: response.status,
+				upstreamBody: upstreamBody.slice(0, 2_000),
+			},
+		});
+	}
+
+	let payload: NewApiGatewayReadinessResponse;
+	try {
+		payload = await response.json() as NewApiGatewayReadinessResponse;
+	} catch (error) {
+		throw new AppError("new-api 就绪状态响应不是合法 JSON", {
+			status: 502,
+			code: "new_api_readiness_invalid",
+			details: { message: error instanceof Error ? error.message : String(error) },
+		});
+	}
+
+	const data = payload.data as NewApiGatewayReadinessData | null | undefined;
+	const enabledModelCount = readNonNegativeInteger(data?.enabled_model_count);
+	const configuredChannelCount = readNonNegativeInteger(data?.configured_channel_count);
+	const executableModelCount = readNonNegativeInteger(data?.executable_model_count);
+	const rawReasons = Array.isArray(data?.reasons) ? data.reasons : null;
+	const reasons = rawReasons?.filter(
+		(reason): reason is NewApiGatewayReadinessDto["reasons"][number] =>
+			typeof reason === "string" && NEW_API_GATEWAY_READINESS_REASONS.has(reason),
+	) ?? null;
+	if (
+		payload.success !== true ||
+		typeof data?.ready !== "boolean" ||
+		enabledModelCount === null ||
+		configuredChannelCount === null ||
+		executableModelCount === null ||
+		!rawReasons ||
+		!reasons ||
+		reasons.length !== rawReasons.length
+	) {
+		throw new AppError("new-api 就绪状态响应结构无效", {
+			status: 502,
+			code: "new_api_readiness_invalid",
+		});
+	}
+
+	return {
+		ready: data.ready,
+		enabledModelCount,
+		configuredChannelCount,
+		executableModelCount,
+		reasons,
+		setupUrl: readGatewaySetupUrl(env),
+		recommendedProvider: readRecommendedProvider(env),
+	};
+}
 
 // Shape of a model entry returned by new-api GET /api/models/list.
 // Optional fields use undefined (Go omitempty) rather than null.
@@ -70,6 +280,7 @@ type NewApiModelListItem = {
 	kind?: string;
 	capabilities?: string;
 	params_def?: string;
+	routing_aliases?: string[];
 };
 
 function readRelayConfig(env: WorkerEnv): { baseUrl: string; token: string } | null {
@@ -103,38 +314,99 @@ type CachedModelList = {
 };
 
 let cachedModelList: CachedModelList | null = null;
-let modelListRefreshing = false;
+let modelListRefreshPromise: Promise<NewApiModelListItem[]> | null = null;
 const MODEL_LIST_CACHE_TTL_MS = 5 * 60_000;
 
 async function doFetchNewApiModelList(env: WorkerEnv): Promise<NewApiModelListItem[]> {
-	const config = readRelayConfig(env);
-	if (!config) return [];
+	const config = requireRelayConfig(env);
+	const url = `${config.baseUrl}/api/models/list?enabled=true&require_video_spec=true`;
 
-	const response = await fetchWithHttpDebugLog(
-		{ env } as never,
-		// require_video_spec drops video models whose params_def lacks a
-		// `resolution` enum — without it the consumer cannot surface per-spec
-		// pricing and the model degrades to a flat fallback (e.g. 14 credits
-		// regardless of duration), which is misleading to end users.
-		`${config.baseUrl}/api/models/list?enabled=true&require_video_spec=true`,
-		{
-			method: "GET",
-			headers: {
-				Authorization: `Bearer ${config.token}`,
-				Accept: "application/json",
+	let response: Response;
+	try {
+		response = await fetchWithHttpDebugLog(
+			{ env } as never,
+			// require_video_spec drops video models whose params_def lacks a
+			// `resolution` enum — without it the consumer cannot surface per-spec
+			// pricing and the model degrades to a flat fallback (e.g. 14 credits
+			// regardless of duration), which is misleading to end users.
+			url,
+			{
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${config.token}`,
+					Accept: "application/json",
+				},
 			},
-		},
-		{ tag: "new-api-model-list" },
-	);
+			{ tag: "new-api-model-list" },
+		);
+	} catch (error) {
+		throw new AppError("new-api 模型目录网络请求失败", {
+			status: 502,
+			code: "new_api_model_list_request_failed",
+			details: {
+				reason: "network_error",
+				url,
+				message: error instanceof Error ? error.message : String(error),
+			},
+		});
+	}
 
-	if (!response.ok) return [];
+	if (!response.ok) {
+		const upstreamBody = await response.text().catch(() => "");
+		throw new AppError("new-api 模型目录请求失败", {
+			status: 502,
+			code: "new_api_model_list_request_failed",
+			details: {
+				upstreamStatus: response.status,
+				upstreamBody: upstreamBody.slice(0, 2_000),
+			},
+		});
+	}
 
-	const json: unknown = await response.json().catch(() => null);
-	if (typeof json !== "object" || json === null || Array.isArray(json)) return [];
+	let json: unknown;
+	try {
+		json = await response.json();
+	} catch (error) {
+		throw new AppError("new-api 模型目录响应不是合法 JSON", {
+			status: 502,
+			code: "new_api_model_list_invalid",
+			details: {
+				reason: "invalid_json",
+				message: error instanceof Error ? error.message : String(error),
+			},
+		});
+	}
+	if (typeof json !== "object" || json === null || Array.isArray(json)) {
+		throw new AppError("new-api 模型目录响应结构无效", {
+			status: 502,
+			code: "new_api_model_list_invalid",
+			details: { reason: "response_not_object" },
+		});
+	}
 
 	const data = (json as { data?: unknown }).data;
-	if (!Array.isArray(data)) return [];
+	if (!Array.isArray(data)) {
+		throw new AppError("new-api 模型目录响应缺少 data 数组", {
+			status: 502,
+			code: "new_api_model_list_invalid",
+			details: { reason: "data_not_array" },
+		});
+	}
 	return data as NewApiModelListItem[];
+}
+
+async function refreshNewApiModelList(env: WorkerEnv): Promise<NewApiModelListItem[]> {
+	if (modelListRefreshPromise) return modelListRefreshPromise;
+
+	modelListRefreshPromise = doFetchNewApiModelList(env)
+		.then((rows) => {
+			cachedModelList = { expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS, rows };
+			return rows;
+		})
+		.finally(() => {
+			modelListRefreshPromise = null;
+		});
+	return modelListRefreshPromise;
 }
 
 async function fetchNewApiModelList(
@@ -151,29 +423,33 @@ async function fetchNewApiModelList(
 	if (cachedModelList && now < cachedModelList.expiresAt) {
 		return cachedModelList.rows;
 	}
-	// Stale-while-revalidate: return existing stale data and refresh in background.
-	if (cachedModelList && !modelListRefreshing) {
-		modelListRefreshing = true;
-		doFetchNewApiModelList(env)
-			.then((rows) => {
-				cachedModelList = { expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS, rows };
-			})
-			.catch(() => {})
-			.finally(() => {
-				modelListRefreshing = false;
-			});
-		return cachedModelList.rows;
-	}
-	// Cold start or concurrent refresh already in flight — wait for fresh data.
-	const rows = await doFetchNewApiModelList(env);
-	cachedModelList = { expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS, rows };
-	return rows;
+	// Cold or expired cache must wait for a successful refresh. A failed refresh
+	// remains an explicit failure and never turns stale rows into apparent success.
+	return refreshNewApiModelList(env);
 }
 
-function paramsToVideoOptions(params: ModelParamSpec[]): ModelCatalogVideoOptions {
+function readPositiveParamMaximum(
+	params: ModelParamSpec[],
+	key: string,
+): number | undefined {
+	const maximum = params.find((param) => param.key === key)?.max;
+	return typeof maximum === "number" && Number.isFinite(maximum) && maximum > 0
+		? maximum
+		: undefined;
+}
+
+function paramsToVideoOptions(
+	params: ModelParamSpec[],
+	capabilities: string[],
+): ModelCatalogVideoOptions {
 	const duration = params.find((p) => p.key === "duration");
 	const size = params.find((p) => p.key === "size");
 	const resolution = params.find((p) => p.key === "resolution");
+	const capabilitySet = new Set(
+		capabilities.map((capability) => capability.trim().toLowerCase()).filter(Boolean),
+	);
+	const supports = (capability: string): true | undefined =>
+		capabilitySet.has(capability) ? true : undefined;
 
 	const raw = {
 		defaultDurationSeconds:
@@ -185,10 +461,50 @@ function paramsToVideoOptions(params: ModelParamSpec[]): ModelCatalogVideoOption
 		sizeOptions: size?.options ?? [],
 		resolutionOptions: resolution?.options ?? [],
 		orientationOptions: [],
+		maxReferenceImages: readPositiveParamMaximum(params, "reference_images"),
+		maxReferenceVideos: readPositiveParamMaximum(params, "reference_videos"),
+		maxReferenceAudios: readPositiveParamMaximum(params, "reference_audios"),
+		maxReferenceMedia: readPositiveParamMaximum(params, "reference_media"),
+		maxReferenceVideoDurationSeconds: readPositiveParamMaximum(
+			params,
+			"reference_video_duration_seconds",
+		),
+		maxReferenceAudioDurationSeconds: readPositiveParamMaximum(
+			params,
+			"reference_audio_duration_seconds",
+		),
+		maxReferenceAudioTotalDurationSeconds: readPositiveParamMaximum(
+			params,
+			"reference_audio_total_duration_seconds",
+		),
+		maxVideoExtensionDurationSeconds: readPositiveParamMaximum(
+			params,
+			"video_extension_duration_seconds",
+		),
+		maxNestedVideoDurationSeconds: readPositiveParamMaximum(
+			params,
+			"nested_video_duration_seconds",
+		),
+		maxUltraLongDurationSeconds: readPositiveParamMaximum(
+			params,
+			"ultra_long_duration_seconds",
+		),
+		supportsMultimodalReferences: supports("multimodal_reference"),
+		supportsReferenceImages: supports("reference_images"),
+		supportsReferenceVideos: supports("reference_videos"),
+		supportsReferenceAudios: supports("reference_audios"),
+		supportsAudioOnlyReference: supports("audio_only_reference"),
+		supportsFirstLastFrame: supports("first_last_frame"),
+		supportsVideoEditing: supports("video_editing"),
+		supportsVideoSubjectRemoval: supports("video_subject_removal"),
+		supportsVideoSubtitleRemoval: supports("video_subtitle_removal"),
+		supportsVideoExtension: supports("video_extension"),
+		supportsUltraLongVideo: supports("ultra_long_video"),
+		supportsTimestampPrompt: supports("timestamp_prompt"),
+		supportsNativeAudio: supports("native_audio"),
 	};
 
-	const parsed = ModelCatalogVideoOptionsSchema.safeParse(raw);
-	return parsed.success ? parsed.data : ModelCatalogVideoOptionsSchema.parse({});
+	return ModelCatalogVideoOptionsSchema.parse(raw);
 }
 
 // Maps params_def keys to imageOptions control descriptors consumed by the frontend.
@@ -250,16 +566,44 @@ function paramsToUseCases(params: ModelParamSpec[]): string[] {
 	return cases;
 }
 
+function normalizeRuntimeParameter(rawParam: unknown): ModelParamSpec | null {
+	if (!rawParam || typeof rawParam !== "object" || Array.isArray(rawParam)) return null;
+	const record = rawParam as UnknownRecord;
+	const explicitType = typeof record.type === "string" ? record.type.trim() : "";
+	const inferredType = explicitType || (Array.isArray(record.options) ? "enum" : "");
+	if (!inferredType) return null;
+	const parsed = ModelParamSpecSchema.safeParse({
+		...record,
+		type: inferredType,
+	});
+	return parsed.success ? parsed.data : null;
+}
+
 
 function buildMetaFromListItem(item: NewApiModelListItem): NewApiModelMeta | null {
 	const kind = (item.kind ?? "").trim().toLowerCase();
 	if (!kind || !item.params_def) return null;
 	try {
-		const params: ModelParamSpec[] = JSON.parse(item.params_def);
-		if (!Array.isArray(params) || params.length === 0) return null;
-		const meta: NewApiModelMeta = {};
+		const rawParams: unknown = JSON.parse(item.params_def);
+		if (!Array.isArray(rawParams) || rawParams.length === 0) return null;
+		const params = rawParams.flatMap((rawParam, index) => {
+			const normalized = normalizeRuntimeParameter(rawParam);
+			if (!normalized) {
+				console.warn("[new-api-models] runtime parameter excluded because its structure is invalid", {
+					modelName: item.model_name,
+					kind,
+					parameterIndex: index,
+				});
+			}
+			return normalized ? [normalized] : [];
+		});
+		if (params.length === 0) return null;
+		const meta: NewApiModelMeta = { runtimeParameters: params };
 		if (kind === "video") {
-			meta.videoOptions = paramsToVideoOptions(params);
+			meta.videoOptions = paramsToVideoOptions(
+				params,
+				parseStringList(item.capabilities),
+			);
 		} else if (kind === "image") {
 			meta.imageOptions = paramsToImageOptions(params);
 			meta.useCases = paramsToUseCases(params);
@@ -268,71 +612,6 @@ function buildMetaFromListItem(item: NewApiModelListItem): NewApiModelMeta | nul
 	} catch {
 		return null;
 	}
-}
-
-function buildSpecCostsByModelKey(
-	costRows: ModelCreditCostRow[],
-): Map<
-	string,
-	Array<{
-		specKey: string;
-		cost: number;
-		enabled: boolean;
-	}>
-> {
-	const out = new Map<
-		string,
-		Array<{
-			specKey: string;
-			cost: number;
-			enabled: boolean;
-		}>
-	>();
-	for (const row of costRows) {
-		const modelKey = normalizeBillingModelKey(String(row.model_key || ""));
-		const specKey = String(row.spec_key || "").trim();
-		if (!modelKey || !specKey) continue;
-		const list = out.get(modelKey) || [];
-		list.push({
-			specKey,
-			cost: Math.max(0, Math.floor(Number(row.cost ?? 0) || 0)),
-			enabled: Number(row.enabled ?? 1) !== 0,
-		});
-		out.set(modelKey, list);
-	}
-	for (const [modelKey, rows] of out.entries()) {
-		rows.sort((a, b) => a.specKey.localeCompare(b.specKey));
-		out.set(modelKey, rows);
-	}
-	return out;
-}
-
-function buildBaseCostsByModelKey(
-	costRows: ModelCreditCostRow[],
-): Map<
-	string,
-	{
-		cost: number;
-		enabled: boolean;
-	}
-> {
-	const out = new Map<
-		string,
-		{
-			cost: number;
-			enabled: boolean;
-		}
-	>();
-	for (const row of costRows) {
-		const modelKey = normalizeBillingModelKey(String(row.model_key || ""));
-		const specKey = String(row.spec_key || "").trim();
-		if (!modelKey || specKey) continue;
-		out.set(modelKey, {
-			cost: Math.max(0, Math.floor(Number(row.cost ?? 0) || 0)),
-			enabled: Number(row.enabled ?? 1) !== 0,
-		});
-	}
-	return out;
 }
 
 function parseStringList(raw: string | null | undefined): string[] {
@@ -360,6 +639,7 @@ function normalizeKindFromTags(tags: string[]): NewApiModelKind | null {
 		if (normalized === "tapcanvas:kind=image") return "image";
 		if (normalized === "tapcanvas:kind=video") return "video";
 		if (normalized === "tapcanvas:kind=text") return "text";
+		if (normalized === "tapcanvas:kind=audio") return "audio";
 	}
 	return null;
 }
@@ -385,6 +665,7 @@ function normalizeKindFromApiField(kind: string | undefined): NewApiModelKind | 
 		case "image": return "image";
 		case "chat":
 		case "text": return "text";
+		case "audio": return "audio";
 		default: return null;
 	}
 }
@@ -423,12 +704,21 @@ function buildSyntheticVideoSpecCosts(input: {
 	pricingEnabled: boolean;
 	specCreditsBySpecKey?: Map<string, number>;
 }): Array<{ specKey: string; cost: number; enabled: boolean }> {
-	const hasSpecCredits = input.specCreditsBySpecKey && input.specCreditsBySpecKey.size > 0;
+	if (input.specCreditsBySpecKey && input.specCreditsBySpecKey.size > 0) {
+		return Array.from(input.specCreditsBySpecKey.entries())
+			.filter(([, cost]) => Number.isFinite(cost) && cost > 0)
+			.map(([specKey, cost]) => ({
+				specKey,
+				cost: Math.ceil(cost),
+				enabled: input.pricingEnabled,
+			}))
+			.sort((a, b) => a.specKey.localeCompare(b.specKey));
+	}
 	const hasUnitCost =
 		typeof input.unitCost === "number" &&
 		Number.isFinite(input.unitCost) &&
 		input.unitCost > 0;
-	if (!hasSpecCredits && !hasUnitCost) return [];
+	if (!hasUnitCost) return [];
 
 	const rawVideoOptions = input.meta?.videoOptions;
 	const parsed = ModelCatalogVideoOptionsSchema.safeParse(rawVideoOptions);
@@ -457,11 +747,7 @@ function buildSyntheticVideoSpecCosts(input: {
 			);
 			if (!specKey || seen.has(specKey)) continue;
 			seen.add(specKey);
-			const specCredits = input.specCreditsBySpecKey?.get(specKey);
-			const cost =
-				typeof specCredits === "number" && Number.isFinite(specCredits) && specCredits > 0
-					? specCredits
-					: Math.max(0, Math.floor(input.unitCost ?? 0));
+			const cost = Math.max(0, Math.floor(input.unitCost ?? 0));
 			if (cost <= 0) continue;
 			out.push({ specKey, cost, enabled: input.pricingEnabled });
 		}
@@ -471,7 +757,6 @@ function buildSyntheticVideoSpecCosts(input: {
 
 function buildSyntheticImageSpecCosts(input: {
 	meta: NewApiModelMeta | null;
-	existingSpecCosts: Array<{ specKey: string; cost: number; enabled: boolean }>;
 	unitCost: number | null;
 	pricingEnabled: boolean;
 	specCreditsBySpecKey?: Map<string, number>;
@@ -486,7 +771,6 @@ function buildSyntheticImageSpecCosts(input: {
 			}))
 			.sort((a, b) => a.specKey.localeCompare(b.specKey));
 	}
-	if (input.existingSpecCosts.length > 0) return input.existingSpecCosts;
 	const hasUnitCost =
 		typeof input.unitCost === "number" &&
 		Number.isFinite(input.unitCost) &&
@@ -514,23 +798,14 @@ function buildSyntheticImageSpecCosts(input: {
 		const specKey = normalizeSpecKey(`image:${normalizedResolution}`);
 		if (!specKey || seen.has(specKey)) continue;
 		seen.add(specKey);
-		const specCredits = input.specCreditsBySpecKey?.get(specKey);
-		const cost =
-			typeof specCredits === "number" && Number.isFinite(specCredits) && specCredits > 0
-				? specCredits
-				: Math.max(
-						0,
-						Math.ceil(
-							(input.unitCost ?? 0) * (normalizedResolution === "4k" ? 2 : 1),
-						),
-					);
+		const cost = Math.max(0, Math.ceil(input.unitCost ?? 0));
 		if (cost <= 0) continue;
 		out.push({ specKey, cost, enabled: input.pricingEnabled });
 	}
 	return out;
 }
 
-function extractRequestModelKey(modelName: string, description: string | null | undefined, tags: string[]): string {
+function extractRequestModelKey(modelName: string, tags: string[]): string {
 	for (const tag of tags) {
 		const normalized = tag.trim();
 		if (normalized.startsWith("tapcanvas:request-model=")) {
@@ -538,21 +813,18 @@ function extractRequestModelKey(modelName: string, description: string | null | 
 			if (value) return value;
 		}
 	}
-	const descriptionText = typeof description === "string" ? description.trim() : "";
-	const descriptionMatch = descriptionText.match(/\bupstream\s+([A-Za-z0-9._:-]+)\b/i);
-	if (descriptionMatch?.[1]) return descriptionMatch[1].trim();
 	return modelName;
 }
 
 function mapListItem(
 	item: NewApiModelListItem,
 	input?: {
+		creditsPerCny?: number;
 		metaByModelKey?: Map<string, NewApiModelMeta>;
 		creditsByModelKey?: Map<string, number>;
 		directCreditsByModelKey?: Map<string, number>;
+		supportedEndpointTypesByModelKey?: Map<string, string[]>;
 		specCreditsByModelSpecKey?: Map<string, number>;
-		baseCostsByModelKey?: Map<string, { cost: number; enabled: boolean }>;
-		localSpecCostsByModelKey?: Map<string, Array<{ specKey: string; cost: number; enabled: boolean }>>;
 	},
 ): NewApiModelDto {
 	const modelName = String(item.model_name || "").trim();
@@ -564,7 +836,14 @@ function mapListItem(
 		normalizeKindFromTags(tags) ||
 		normalizeKindFromDescription(description) ||
 		normalizeKindFromEndpoints(endpoints);
-	const requestModelKey = extractRequestModelKey(modelName, description, tags);
+	const requestModelKey = extractRequestModelKey(modelName, tags);
+	const routingAliases = Array.from(
+		new Set(
+			(Array.isArray(item.routing_aliases) ? item.routing_aliases : [])
+				.map((alias) => String(alias ?? "").trim())
+				.filter(Boolean),
+		),
+	);
 	const displayLabel =
 		modelName && requestModelKey && modelName !== requestModelKey
 			? `${modelName} (${requestModelKey})`
@@ -575,16 +854,26 @@ function mapListItem(
 		new Set<string>([
 			...expandChannelAliasModelKeys(normalizedRequestModelKey),
 			...expandChannelAliasModelKeys(normalizedModelName),
+			...routingAliases.flatMap((alias) =>
+				expandChannelAliasModelKeys(normalizeBillingModelKey(alias)),
+			),
 		]),
 	);
 	const meta =
 		input?.metaByModelKey && metaLookupKeys.length > 0
 			? resolveMetaByModelKeys(input.metaByModelKey, metaLookupKeys)
 			: null;
-	const basePricing =
-		input?.baseCostsByModelKey?.get(normalizedModelName) ??
-		input?.baseCostsByModelKey?.get(normalizedRequestModelKey) ??
-		null;
+	const runtimeEndpoints = (() => {
+		const runtimeEndpointMap = input?.supportedEndpointTypesByModelKey;
+		if (!runtimeEndpointMap || metaLookupKeys.length === 0) return [];
+		const endpoints = new Set<string>();
+		for (const lookupKey of metaLookupKeys) {
+			for (const endpoint of runtimeEndpointMap.get(lookupKey) ?? []) {
+				if (endpoint) endpoints.add(endpoint);
+			}
+		}
+		return Array.from(endpoints);
+	})();
 	const snapshotCost =
 		input?.creditsByModelKey?.get(normalizedModelName) ??
 		input?.creditsByModelKey?.get(normalizedRequestModelKey);
@@ -592,11 +881,17 @@ function mapListItem(
 		input?.directCreditsByModelKey?.get(normalizedModelName) ??
 		input?.directCreditsByModelKey?.get(normalizedRequestModelKey) ??
 		null;
-	const resolvedCost =
-		typeof snapshotCost === "number" && Number.isFinite(snapshotCost)
-			? snapshotCost
-			: (basePricing?.cost ?? null);
-	const pricingEnabled = item.status === 1 && (basePricing?.enabled ?? true);
+	const pricingEnabled = item.status === 1;
+	const declaresVideoAnalysis = tags.some(
+		(tag) => tag.trim().toLowerCase() === VIDEO_ANALYSIS_CAPABILITY_TAG,
+	);
+	const videoAnalysisPricing = declaresVideoAnalysis
+		&& typeof input?.creditsPerCny === "number"
+		? resolveVideoAnalysisUpfrontPricing({
+				modelKey: requestModelKey,
+				creditsPerCny: input.creditsPerCny,
+			})
+		: null;
 	const snapshotSpecCreditsForModel = (() => {
 		const specMap = input?.specCreditsByModelSpecKey;
 		if (!specMap || specMap.size === 0) return undefined;
@@ -618,27 +913,35 @@ function mapListItem(
 					unitCost:
 						typeof directSnapshotCost === "number" && Number.isFinite(directSnapshotCost)
 							? directSnapshotCost
-							: resolvedCost,
+							: null,
 					pricingEnabled,
 					specCreditsBySpecKey: snapshotSpecCreditsForModel,
 				})
 			: kind === "image"
 				? buildSyntheticImageSpecCosts({
 						meta,
-						existingSpecCosts:
-							input?.localSpecCostsByModelKey?.get(normalizedModelName) ??
-							input?.localSpecCostsByModelKey?.get(normalizedRequestModelKey) ??
-							[],
-						unitCost: resolvedCost,
+						unitCost:
+							typeof directSnapshotCost === "number" && Number.isFinite(directSnapshotCost)
+								? directSnapshotCost
+								: null,
 						pricingEnabled,
 						specCreditsBySpecKey: snapshotSpecCreditsForModel,
 					})
 				: [];
+	const minimumSpecCost = specCosts.reduce<number | null>(
+		(current, row) => current === null || row.cost < current ? row.cost : current,
+		null,
+	);
+	const resolvedCost =
+		typeof snapshotCost === "number" && Number.isFinite(snapshotCost)
+			? snapshotCost
+			: minimumSpecCost;
 
 	return {
 		id: Math.trunc(item.id),
 		modelName,
 		requestModelKey,
+		routingAliases,
 		displayLabel,
 		description,
 		icon: typeof item.icon === "string" ? item.icon.trim() || null : null,
@@ -648,6 +951,7 @@ function mapListItem(
 				? Math.trunc(item.vendor_id)
 				: null,
 		endpoints,
+		runtimeEndpoints,
 		kind,
 		enabled: item.status === 1,
 		syncOfficial: item.sync_official === 1,
@@ -655,6 +959,7 @@ function mapListItem(
 		createdTime: Math.trunc(item.created_time ?? 0),
 		updatedTime: Math.trunc(item.updated_time ?? 0),
 		meta,
+		...(videoAnalysisPricing ? { videoAnalysisPricing } : {}),
 		...(typeof resolvedCost === "number" && Number.isFinite(resolvedCost)
 			? {
 					pricing: {
@@ -669,12 +974,17 @@ function mapListItem(
 
 export async function listNewApiModels(
 	env: WorkerEnv,
-	options?: { enabled?: boolean; kind?: NewApiModelKind; fresh?: boolean },
+	options?: {
+		enabled?: boolean;
+		kind?: NewApiModelKind;
+		fresh?: boolean;
+		pricingSnapshot?: NewApiPricingSnapshot;
+	},
 ): Promise<NewApiModelDto[]> {
-	const [modelRows, pricingSnapshot, costRows] = await Promise.all([
+	const [modelRows, pricingSnapshot] = await Promise.all([
 		fetchNewApiModelList(env, { fresh: options?.fresh === true }),
-		getNewApiPricingSnapshot(env),
-		listBillingModelCreditCosts(env.DB),
+		options?.pricingSnapshot ??
+			getNewApiPricingSnapshot(env, { fresh: options?.fresh === true }),
 	]);
 
 	const metaByModelKey = new Map<string, NewApiModelMeta>();
@@ -685,17 +995,15 @@ export async function listNewApiModels(
 		}
 	}
 
-	const baseCostsByModelKey = buildBaseCostsByModelKey(costRows);
-	const localSpecCostsByModelKey = buildSpecCostsByModelKey(costRows);
-
 	let mapped = modelRows.map((row) =>
 		mapListItem(row, {
+			creditsPerCny: pricingSnapshot.creditsPerCny,
 			metaByModelKey,
 			creditsByModelKey: pricingSnapshot.creditsByModelKey,
 			directCreditsByModelKey: pricingSnapshot.directCreditsByModelKey,
+			supportedEndpointTypesByModelKey:
+				pricingSnapshot.supportedEndpointTypesByModelKey,
 			specCreditsByModelSpecKey: pricingSnapshot.specCreditsByModelSpecKey,
-			baseCostsByModelKey,
-			localSpecCostsByModelKey,
 		}),
 	);
 
@@ -710,6 +1018,28 @@ export async function listNewApiModels(
 	// in the model list confuses users who cannot distinguish them from real models.
 	mapped = mapped.filter((item) => !isVendorRoutingAlias(item.modelName));
 	return mapped;
+}
+
+// A user-selectable model must be enabled in metadata, have at least one
+// endpoint published by an enabled channel with a valid explicit protocol, and
+// have a positive current runtime price. Management views still use
+// listNewApiModels directly so administrators can see and repair invalid rows.
+export function isSelectableNewApiModel(
+	item: Pick<NewApiModelDto, "enabled" | "pricing" | "runtimeEndpoints">,
+): boolean {
+	if (
+		!item.enabled ||
+		item.runtimeEndpoints.length === 0 ||
+		!item.pricing ||
+		item.pricing.enabled === false
+	) {
+		return false;
+	}
+	return (
+		typeof item.pricing.cost === "number" &&
+		Number.isFinite(item.pricing.cost) &&
+		item.pricing.cost > 0
+	);
 }
 
 // Known vendor-routing suffix patterns — mirror of canonicalModelAliasSuffixes in
@@ -729,6 +1059,29 @@ const VENDOR_ROUTING_SUFFIXES = [
 function isVendorRoutingAlias(modelName: string): boolean {
 	const lower = modelName.toLowerCase();
 	return VENDOR_ROUTING_SUFFIXES.some((s) => lower.endsWith(s));
+}
+
+// Video-kind models that live in the catalog for billing/relay purposes but are
+// NOT user-selectable *generation* models — each backs a specific node action
+// (e.g. volc-enhance-video → 画质增强 / video_enhance) invoked by a hardcoded
+// modelKey, never chosen from the model dropdown.
+//
+// IMPORTANT: This exclusion must be applied ONLY in the public catalog HTTP route
+// (the dropdown + recharge pricing drawer), NEVER inside listNewApiModels itself:
+//   - task.service.ts uses listNewApiModels as an "is this model enabled?" guard;
+//     dropping the row there would reject the enhance task (new_api_model_disabled).
+//   - billing.service.ts uses it for requestKey↔modelName price translation.
+const NON_SELECTABLE_CATALOG_MODEL_NAMES = new Set<string>([
+	"volc-enhance-video",
+	"volc-erase-video-subtitle",
+	"volc-erase-video-subtitle-pro",
+	"volc-matte-greenscreen-video",
+]);
+
+export function isNonSelectableCatalogModel(modelName: string): boolean {
+	return NON_SELECTABLE_CATALOG_MODEL_NAMES.has(
+		String(modelName || "").trim().toLowerCase(),
+	);
 }
 
 export async function updateNewApiModelStatus(
@@ -791,17 +1144,15 @@ export async function updateNewApiModelStatus(
 	const metaByModelKey = new Map<string, NewApiModelMeta>();
 	if (meta) metaByModelKey.set(normalizeBillingModelKey(updated.model_name), meta);
 
-	const [pricingSnapshot, costRows] = await Promise.all([
-		getNewApiPricingSnapshot(env),
-		listBillingModelCreditCosts(env.DB),
-	]);
-	const baseCostsByModelKey = buildBaseCostsByModelKey(costRows);
+	const pricingSnapshot = await getNewApiPricingSnapshot(env);
 
 	return mapListItem(updated, {
+		creditsPerCny: pricingSnapshot.creditsPerCny,
 		metaByModelKey,
 		creditsByModelKey: pricingSnapshot.creditsByModelKey,
 		directCreditsByModelKey: pricingSnapshot.directCreditsByModelKey,
+		supportedEndpointTypesByModelKey:
+			pricingSnapshot.supportedEndpointTypesByModelKey,
 		specCreditsByModelSpecKey: pricingSnapshot.specCreditsByModelSpecKey,
-		baseCostsByModelKey,
 	});
 }

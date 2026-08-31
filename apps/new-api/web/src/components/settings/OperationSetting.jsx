@@ -39,12 +39,9 @@ const OperationSetting = () => {
     'quota_setting.enable_free_model_pre_consume': true,
 
     /* 通用设置 */
-    TopUpLink: '',
-    'general_setting.docs_link': '',
     QuotaPerUnit: 0,
-    USDExchangeRate: 0,
     RetryTimes: 3,
-    'general_setting.quota_display_type': 'USD',
+    'general_setting.quota_display_type': 'CNY',
     DisplayTokenStatEnabled: false,
     DefaultCollapseSidebar: false,
     DemoSiteEnabled: false,

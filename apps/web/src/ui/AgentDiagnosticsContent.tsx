@@ -1,13 +1,19 @@
 import React from 'react'
 import { Badge, Button, Collapse, Group, Loader, Modal, ScrollArea, Select, Stack, Text, TextInput } from '@mantine/core'
+import type { AgentSpanKind, AgentSpanStatus } from '@tapcanvas/agent-observability'
 import { toast } from './toast'
 import {
   fetchAdminAgentDiagnostics,
+  listAgentPipelineRuns,
   type AgentDiagnosticsPublicChatRunDto,
   type AgentDiagnosticsResponseDto,
   type AgentDiagnosticsTraceDto,
+  type AgentPipelineRunDto,
 } from '../api/server'
-import { useLiveChatRunStore } from './chat/liveChatRunStore'
+import { useLiveChatRunStore, type LiveChatRunRecord } from './chat/liveChatRunStore'
+import AgentExecutionGraph from './agent-diagnostics/AgentExecutionGraph'
+import AgentApiExecutionChain, { isAgentApiVideoRun } from './agent-diagnostics/AgentApiExecutionChain'
+import AgentObservabilitySummary from './agent-diagnostics/AgentObservabilitySummary'
 
 const LABEL_OPTIONS = [
   { value: '', label: '全部标签' },
@@ -29,6 +35,51 @@ const PUBLIC_CHAT_OUTCOME_OPTIONS = [
   { value: 'discard', label: 'discard' },
 ] as const
 
+const TRACE_TIME_RANGE_OPTIONS = [
+  { value: '1h', label: '最近 1 小时', milliseconds: 60 * 60 * 1_000 },
+  { value: '24h', label: '最近 24 小时', milliseconds: 24 * 60 * 60 * 1_000 },
+  { value: '7d', label: '最近 7 天', milliseconds: 7 * 24 * 60 * 60 * 1_000 },
+  { value: 'all', label: '全部时间', milliseconds: null },
+] as const
+
+const TRACE_STATUS_OPTIONS: Array<{ value: '' | AgentSpanStatus; label: string }> = [
+  { value: '', label: '全部 span 状态' },
+  { value: 'succeeded', label: 'succeeded' },
+  { value: 'failed', label: 'failed' },
+  { value: 'accepted_async', label: 'accepted_async' },
+  { value: 'needs_input', label: 'needs_input' },
+  { value: 'blocked', label: 'blocked' },
+  { value: 'denied', label: 'denied' },
+  { value: 'running', label: 'running' },
+]
+
+const TRACE_KIND_OPTIONS: Array<{ value: '' | AgentSpanKind; label: string }> = [
+  { value: '', label: '全部 span 类型' },
+  { value: 'agent', label: 'agent' },
+  { value: 'llm', label: 'llm' },
+  { value: 'tool', label: 'tool' },
+  { value: 'skill', label: 'skill' },
+  { value: 'subagent', label: 'subagent' },
+  { value: 'delivery_verification', label: 'delivery verification' },
+  { value: 'async_task', label: 'async task' },
+  { value: 'asset_materialization', label: 'asset materialization' },
+  { value: 'evaluation', label: 'evaluation' },
+]
+
+type TraceTimeRange = (typeof TRACE_TIME_RANGE_OPTIONS)[number]['value']
+
+function isTraceTimeRange(value: string | null): value is TraceTimeRange {
+  return TRACE_TIME_RANGE_OPTIONS.some((item) => item.value === value)
+}
+
+function isAgentSpanStatus(value: string | null): value is AgentSpanStatus {
+  return TRACE_STATUS_OPTIONS.some((item) => item.value !== '' && item.value === value)
+}
+
+function isAgentSpanKind(value: string | null): value is AgentSpanKind {
+  return TRACE_KIND_OPTIONS.some((item) => item.value !== '' && item.value === value)
+}
+
 const INLINE_IMAGE_DATA_URL_PATTERN = /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi
 
 export type AgentTraceContextSelection = {
@@ -42,6 +93,8 @@ type AgentDiagnosticsContentProps = {
   className?: string
   opened: boolean
   projectId?: string | null
+  // 章节工作台：锁定到当前章节。设置后章节 ID 预填且只读。
+  scopedChapterId?: string | null
   onInspectTrace?: (selection: AgentTraceContextSelection) => void
 }
 
@@ -136,10 +189,13 @@ function TraceImagePreview(props: { raw: string }): JSX.Element | null {
   )
 }
 
-function liveRunStatusColor(status: 'running' | 'succeeded' | 'failed'): string {
-  if (status === 'running') return 'orange'
-  if (status === 'succeeded') return 'green'
-  return 'red'
+function liveRunStatusColor(status: LiveChatRunRecord['status']): string {
+	if (status === 'active') return 'orange'
+	if (status === 'succeeded') return 'green'
+	if (status === 'waiting_input') return 'blue'
+	if (status === 'waiting_external') return 'blue'
+	if (status === 'cancelled') return 'gray'
+	return 'red'
 }
 
 function formatLiveRunTime(input: number | null): string {
@@ -157,31 +213,78 @@ function formatLiveRunTime(input: number | null): string {
 }
 
 export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentProps): JSX.Element {
-  const { className, opened, projectId, onInspectTrace } = props
+  const { className, opened, projectId, scopedChapterId, onInspectTrace } = props
+  const [traceId, setTraceId] = React.useState('')
   const [bookId, setBookId] = React.useState('')
-  const [chapterId, setChapterId] = React.useState('')
+  const [chapterId, setChapterId] = React.useState(scopedChapterId || '')
+  const [flowId, setFlowId] = React.useState('')
+  const [nodeId, setNodeId] = React.useState('')
   const [label, setLabel] = React.useState('')
   const [workflowKey, setWorkflowKey] = React.useState('')
+  const [modelKey, setModelKey] = React.useState('')
+  const [traceTimeRange, setTraceTimeRange] = React.useState<TraceTimeRange>('24h')
+  const [spanStatus, setSpanStatus] = React.useState<AgentSpanStatus | ''>('')
+  const [spanKind, setSpanKind] = React.useState<AgentSpanKind | ''>('')
   const [publicChatVerdict, setPublicChatVerdict] = React.useState('')
   const [publicChatOutcome, setPublicChatOutcome] = React.useState('')
   const [loading, setLoading] = React.useState(false)
+  const [agentApiJobs, setAgentApiJobs] = React.useState<AgentPipelineRunDto[]>([])
+  const [agentApiJobsLoading, setAgentApiJobsLoading] = React.useState(false)
+  const [agentApiJobsError, setAgentApiJobsError] = React.useState('')
   const [expandedTraceId, setExpandedTraceId] = React.useState<string | null>(null)
   const [expandedPublicChatRunId, setExpandedPublicChatRunId] = React.useState<string | null>(null)
   const [executionLogTraceId, setExecutionLogTraceId] = React.useState<string | null>(null)
+  const [rawRecordsOpened, setRawRecordsOpened] = React.useState(false)
   const [data, setData] = React.useState<AgentDiagnosticsResponseDto | null>(null)
+  const loadSequenceRef = React.useRef(0)
   const activeLiveRun = useLiveChatRunStore((state) => state.activeRun)
   const clearLiveRun = useLiveChatRunStore((state) => state.clearRun)
 
-  const load = React.useCallback(async () => {
+  const loadAgentApiJobs = React.useCallback(async () => {
     if (!opened) return
+    setAgentApiJobsLoading(true)
+    setAgentApiJobsError('')
+    try {
+      const runs = await listAgentPipelineRuns({
+        ...(projectId ? { projectId } : {}),
+        limit: 100,
+      })
+      const jobs = runs
+        .filter(isAgentApiVideoRun)
+        .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      setAgentApiJobs(jobs)
+      setTraceId((current) => current.trim() || jobs[0]?.id || '')
+    } catch (error: unknown) {
+      setAgentApiJobsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setAgentApiJobsLoading(false)
+    }
+  }, [opened, projectId])
+
+  const load = React.useCallback(async (cursor?: string) => {
+    if (!opened) return
+    const loadSequence = loadSequenceRef.current + 1
+    loadSequenceRef.current = loadSequence
     setLoading(true)
     try {
+      const range = TRACE_TIME_RANGE_OPTIONS.find((item) => item.value === traceTimeRange)
+      const from = typeof range?.milliseconds === 'number'
+        ? new Date(Date.now() - range.milliseconds).toISOString()
+        : undefined
       const result = await fetchAdminAgentDiagnostics({
+        ...(traceId.trim() ? { traceId: traceId.trim() } : {}),
         ...(projectId ? { projectId } : {}),
         ...(bookId.trim() ? { bookId: bookId.trim() } : {}),
         ...(chapterId.trim() ? { chapterId: chapterId.trim() } : {}),
+        ...(flowId.trim() ? { flowId: flowId.trim() } : {}),
+        ...(nodeId.trim() ? { nodeId: nodeId.trim() } : {}),
         ...(label.trim() ? { label: label.trim() } : {}),
         ...(workflowKey.trim() ? { workflowKey: workflowKey.trim() } : {}),
+        ...(modelKey.trim() ? { modelKey: modelKey.trim() } : {}),
+        ...(spanStatus ? { status: spanStatus } : {}),
+        ...(spanKind ? { kind: spanKind } : {}),
+        ...(from ? { from } : {}),
+        ...(cursor ? { cursor } : {}),
         ...(publicChatVerdict
           ? { turnVerdict: publicChatVerdict as 'satisfied' | 'partial' | 'failed' }
           : {}),
@@ -190,21 +293,66 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
           : {}),
         limit: 50,
       })
-      setData(result)
+      if (loadSequence !== loadSequenceRef.current) return
+      setData((current) => {
+        if (!cursor || !current) return result
+        const spanIds = new Set(current.spans.map((span) => span.id))
+        const evaluationIds = new Set(current.evaluations.map((evaluation) => evaluation.id))
+        const feedbackIds = new Set(current.humanFeedback.map((feedback) => feedback.id))
+        const annotationIds = new Set(current.annotationQueue.map((item) => item.id))
+        return {
+          ...result,
+          spans: [...current.spans, ...result.spans.filter((span) => !spanIds.has(span.id))],
+          evaluations: [
+            ...current.evaluations,
+            ...result.evaluations.filter((evaluation) => !evaluationIds.has(evaluation.id)),
+          ],
+          humanFeedback: [
+            ...current.humanFeedback,
+            ...result.humanFeedback.filter((feedback) => !feedbackIds.has(feedback.id)),
+          ],
+          annotationQueue: [
+            ...current.annotationQueue,
+            ...result.annotationQueue.filter((item) => !annotationIds.has(item.id)),
+          ],
+        }
+      })
     } catch (error) {
-      toast(error instanceof Error ? error.message : '加载 AI 诊断失败', 'error')
+      if (loadSequence === loadSequenceRef.current) {
+        toast(error instanceof Error ? error.message : '加载 AI 诊断失败', 'error')
+      }
     } finally {
-      setLoading(false)
+      if (loadSequence === loadSequenceRef.current) setLoading(false)
     }
-  }, [opened, projectId, bookId, chapterId, label, workflowKey, publicChatVerdict, publicChatOutcome])
+  }, [opened, traceId, projectId, bookId, chapterId, flowId, nodeId, label, workflowKey, modelKey, traceTimeRange, spanStatus, spanKind, publicChatVerdict, publicChatOutcome])
 
   React.useEffect(() => {
-    void load()
+    if (!opened) {
+      loadSequenceRef.current += 1
+      setLoading(false)
+      return undefined
+    }
+    const timeout = window.setTimeout(() => void load(), 200)
+    return () => window.clearTimeout(timeout)
   }, [load])
+
+  React.useEffect(() => {
+    if (!opened) return
+    void loadAgentApiJobs()
+  }, [loadAgentApiJobs, opened])
+
+  // 章节工作台：当前章节变化时同步锁定的章节 ID
+  React.useEffect(() => {
+    if (scopedChapterId) setChapterId(scopedChapterId)
+  }, [scopedChapterId])
 
   const publicChatSummary = React.useMemo(
     () => summarizePublicChatRuns(Array.isArray(data?.publicChatRuns) ? data.publicChatRuns : []),
     [data?.publicChatRuns],
+  )
+  const selectedAgentApiJob = React.useMemo(
+    () => agentApiJobs.find((job) => job.id === traceId.trim()) ?? null,
+    [agentApiJobs, traceId],
   )
   const handleCopyTraceId = React.useCallback(async (traceId: string) => {
     const ok = await copyText(traceId)
@@ -218,10 +366,18 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
           <Group className="agent-diagnostics-panel-live-run-header" justify="space-between" align="flex-start" wrap="wrap">
             <Group className="agent-diagnostics-panel-live-run-header-main" gap="xs" wrap="wrap">
               <Badge className="agent-diagnostics-panel-live-run-badge" variant="light" color={liveRunStatusColor(activeLiveRun.status)}>
-                {activeLiveRun.status === 'running' ? 'live running' : activeLiveRun.status === 'succeeded' ? 'live completed' : 'live failed'}
+                {activeLiveRun.status === 'active'
+                  ? 'live running'
+                  : activeLiveRun.status === 'succeeded'
+                    ? 'live completed'
+                    : activeLiveRun.status === 'waiting_input'
+                      ? 'live needs input'
+                      : activeLiveRun.status === 'waiting_external'
+                        ? 'live suspended'
+                      : 'live failed'}
               </Badge>
               {activeLiveRun.skillName ? (
-                <Badge className="agent-diagnostics-panel-live-run-skill" variant="outline" color="violet">
+                <Badge className="agent-diagnostics-panel-live-run-skill" variant="outline" color="gray">
                   {activeLiveRun.skillName}
                 </Badge>
               ) : null}
@@ -300,6 +456,11 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
                     <Group className="agent-diagnostics-panel-live-run-log-header" gap="xs" wrap="wrap">
                       <Badge className="agent-diagnostics-panel-live-run-log-event" size="xs" variant="outline">{entry.event}</Badge>
                       <Text className="agent-diagnostics-panel-live-run-log-title" size="xs" fw={600}>{entry.title}</Text>
+                      {entry.reason ? (
+                        <Badge className="agent-diagnostics-panel-live-run-log-reason" size="xs" variant="light" color={entry.tone === 'error' ? 'red' : 'yellow'} style={{ maxWidth: 420, textTransform: 'none' }}>
+                          {entry.reason}
+                        </Badge>
+                      ) : null}
                       <Text className="agent-diagnostics-panel-live-run-log-time" size="xs" c="dimmed">{formatLiveRunTime(entry.at)}</Text>
                     </Group>
                     {entry.detail ? (
@@ -315,7 +476,26 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
         </Stack>
       ) : null}
 
+      <AgentApiExecutionChain
+        jobs={agentApiJobs}
+        jobsLoading={agentApiJobsLoading}
+        jobsError={agentApiJobsError}
+        selectedJobId={selectedAgentApiJob?.id ?? ''}
+        traces={Array.isArray(data?.traces) ? data.traces : []}
+        diagnosticsLoading={loading}
+        onSelectJob={(jobId) => setTraceId(jobId)}
+        onRefreshJobs={() => void loadAgentApiJobs()}
+      />
+
       <Group className="agent-diagnostics-panel-filters" gap="sm" align="flex-end" wrap="wrap">
+        <TextInput
+          className="agent-diagnostics-panel-trace-input"
+          label="Agent API Job / Trace ID"
+          placeholder="精确查询，可选"
+          value={traceId}
+          onChange={(event) => setTraceId(event.currentTarget.value)}
+          w={280}
+        />
         <TextInput
           className="agent-diagnostics-panel-project-input"
           label="项目 ID"
@@ -333,11 +513,28 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
         />
         <TextInput
           className="agent-diagnostics-panel-chapter-input"
-          label="章节 ID"
+          label={scopedChapterId ? '章节 ID（当前章节）' : '章节 ID'}
           placeholder="可选"
           value={chapterId}
           onChange={(event) => setChapterId(event.currentTarget.value)}
-          w={140}
+          readOnly={Boolean(scopedChapterId)}
+          w={scopedChapterId ? 220 : 140}
+        />
+        <TextInput
+          className="agent-diagnostics-panel-flow-input"
+          label="Flow ID"
+          placeholder="可选"
+          value={flowId}
+          onChange={(event) => setFlowId(event.currentTarget.value)}
+          w={180}
+        />
+        <TextInput
+          className="agent-diagnostics-panel-node-input"
+          label="Node ID"
+          placeholder="可选"
+          value={nodeId}
+          onChange={(event) => setNodeId(event.currentTarget.value)}
+          w={180}
         />
         <Select
           className="agent-diagnostics-panel-label-select"
@@ -354,6 +551,40 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
           value={workflowKey}
           onChange={(event) => setWorkflowKey(event.currentTarget.value)}
           w={220}
+        />
+        <TextInput
+          className="agent-diagnostics-panel-model-input"
+          label="模型"
+          placeholder="model key"
+          value={modelKey}
+          onChange={(event) => setModelKey(event.currentTarget.value)}
+          w={180}
+        />
+        <Select
+          className="agent-diagnostics-panel-time-range-select"
+          label="时间范围"
+          data={TRACE_TIME_RANGE_OPTIONS.map((item) => ({ value: item.value, label: item.label }))}
+          value={traceTimeRange}
+          onChange={(value) => {
+            if (isTraceTimeRange(value)) setTraceTimeRange(value)
+          }}
+          w={150}
+        />
+        <Select
+          className="agent-diagnostics-panel-span-status-select"
+          label="Trace 状态"
+          data={TRACE_STATUS_OPTIONS}
+          value={spanStatus}
+          onChange={(value) => setSpanStatus(isAgentSpanStatus(value) ? value : '')}
+          w={160}
+        />
+        <Select
+          className="agent-diagnostics-panel-span-kind-select"
+          label="Span 类型"
+          data={TRACE_KIND_OPTIONS}
+          value={spanKind}
+          onChange={(value) => setSpanKind(isAgentSpanKind(value) ? value : '')}
+          w={180}
         />
         <Select
           className="agent-diagnostics-panel-public-chat-verdict-select"
@@ -377,16 +608,61 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
       </Group>
 
       <Group className="agent-diagnostics-panel-summary" gap="xs" wrap="wrap">
-        <Badge className="agent-diagnostics-panel-trace-count" variant="light" color="blue">
+        <Badge
+          className="agent-diagnostics-panel-execution-health"
+          variant="light"
+          color={data?.executionHealth.status === 'degraded' ? 'red' : 'green'}
+        >
+          {data ? `execution ${data.executionHealth.status}` : 'execution 未加载'}
+        </Badge>
+        <Badge className="agent-diagnostics-panel-running-count" variant="outline" color="orange">
+          {`运行中 ${data?.executionHealth.runningTraceCount ?? 0}`}
+        </Badge>
+        <Badge
+          className="agent-diagnostics-panel-stale-count"
+          variant="outline"
+          color={(data?.executionHealth.staleRunningTraceCount ?? 0) > 0 ? 'red' : 'gray'}
+        >
+          {`疑似卡住 ${data?.executionHealth.staleRunningTraceCount ?? 0}`}
+        </Badge>
+        <Badge
+          className="agent-diagnostics-panel-integrity-count"
+          variant="outline"
+          color={(data?.executionHealth.terminalIntegrityIssueCount ?? 0) > 0 ? 'red' : 'gray'}
+        >
+          {`终态矛盾 ${data?.executionHealth.terminalIntegrityIssueCount ?? 0}`}
+        </Badge>
+        <Badge
+          className="agent-diagnostics-panel-sequence-count"
+          variant="outline"
+          color={(data?.executionHealth.sequenceMismatchCount ?? 0) > 0 ? 'red' : 'gray'}
+        >
+          {`日志缺口 ${data?.executionHealth.sequenceMismatchCount ?? 0}`}
+        </Badge>
+        <Badge className="agent-diagnostics-panel-trace-count" variant="light" color="gray">
           traces {Array.isArray(data?.traces) ? data?.traces.length : 0}
         </Badge>
         <Badge className="agent-diagnostics-panel-public-chat-count" variant="light" color="teal">
           public chat runs {Array.isArray(data?.publicChatRuns) ? data?.publicChatRuns.length : 0}
         </Badge>
-        <Badge className="agent-diagnostics-panel-storyboard-count" variant="light" color="grape">
+        <Badge className="agent-diagnostics-panel-storyboard-count" variant="light" color="gray">
           storyboard logs {Array.isArray(data?.storyboardDiagnostics) ? data?.storyboardDiagnostics.length : 0}
         </Badge>
       </Group>
+
+      <AgentObservabilitySummary
+        spans={data?.spans ?? []}
+        metrics={data?.metrics ?? null}
+        evaluations={data?.evaluations ?? []}
+        humanFeedback={data?.humanFeedback ?? []}
+        annotationQueue={data?.annotationQueue ?? []}
+        nextCursor={data?.nextCursor ?? null}
+        loading={loading}
+        onLoadMore={() => {
+          if (data?.nextCursor) void load(data.nextCursor)
+        }}
+        onChanged={() => void load()}
+      />
 
       {publicChatSummary.total > 0 ? (
         <Stack className="agent-diagnostics-panel-public-chat-summary-block" gap="xs">
@@ -412,7 +688,7 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
               <Group className="agent-diagnostics-panel-public-chat-summary-card-badges" gap="xs" mt={6} wrap="wrap">
                 <Badge className="agent-diagnostics-panel-public-chat-summary-total" variant="outline">{`runs ${publicChatSummary.total}`}</Badge>
                 <Badge className="agent-diagnostics-panel-public-chat-summary-canvas" variant="light" color="green">{`canvas ${publicChatSummary.canvasWriteCount}`}</Badge>
-                <Badge className="agent-diagnostics-panel-public-chat-summary-assets" variant="light" color="blue">{`assets ${publicChatSummary.assetRunCount}`}</Badge>
+                <Badge className="agent-diagnostics-panel-public-chat-summary-assets" variant="light" color="gray">{`assets ${publicChatSummary.assetRunCount}`}</Badge>
               </Group>
             </div>
           </Group>
@@ -436,10 +712,32 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
         </Stack>
       ) : null}
 
+      {selectedAgentApiJob ? null : (
+        <AgentExecutionGraph
+          className="agent-diagnostics-panel-execution-graph"
+          traces={Array.isArray(data?.traces) ? data.traces : []}
+          liveRun={activeLiveRun}
+        />
+      )}
+
+      <Group className="agent-diagnostics-panel-raw-records-header" justify="space-between" align="center">
+        <Text className="agent-diagnostics-panel-raw-records-title" size="sm" fw={600}>原始诊断记录</Text>
+        <Button
+          className="agent-diagnostics-panel-raw-records-toggle"
+          size="compact-xs"
+          variant="subtle"
+          aria-expanded={rawRecordsOpened}
+          onClick={() => setRawRecordsOpened((openedValue) => !openedValue)}
+        >
+          {rawRecordsOpened ? '收起' : '展开'}
+        </Button>
+      </Group>
+
+      <Collapse className="agent-diagnostics-panel-raw-records-collapse" in={rawRecordsOpened}>
       <ScrollArea className="agent-diagnostics-panel-scroll" h={520} offsetScrollbars>
         <Stack className="agent-diagnostics-panel-content" gap="sm">
           {loading ? <Loader className="agent-diagnostics-panel-loader" size="sm" /> : null}
-          {!loading && (!data || (data.traces.length === 0 && data.publicChatRuns.length === 0 && data.storyboardDiagnostics.length === 0)) ? (
+          {!loading && (!data || (data.traces.length === 0 && data.publicChatRuns.length === 0 && data.storyboardDiagnostics.length === 0 && data.spans.length === 0)) ? (
             <Text className="agent-diagnostics-panel-empty" c="dimmed" size="sm">暂无诊断数据</Text>
           ) : null}
           {Array.isArray(data?.traces) ? data.traces.map((item) => {
@@ -475,10 +773,10 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
                   </Badge>
                   <Badge className="agent-diagnostics-panel-trace-kind" variant="light">{item.requestKind}</Badge>
                   <Badge className="agent-diagnostics-panel-trace-scope" variant="outline">{item.scopeType}:{item.scopeId}</Badge>
-                  {metaLabel ? <Badge className="agent-diagnostics-panel-trace-label" variant="light" color="grape">{metaLabel}</Badge> : null}
-                  {metaPagePath ? <Badge className="agent-diagnostics-panel-trace-page" variant="outline" color="blue">{metaPagePath}</Badge> : null}
+                  {metaLabel ? <Badge className="agent-diagnostics-panel-trace-label" variant="light" color="gray">{metaLabel}</Badge> : null}
+                  {metaPagePath ? <Badge className="agent-diagnostics-panel-trace-page" variant="outline" color="gray">{metaPagePath}</Badge> : null}
                   {Array.isArray(item.toolCalls) ? <Badge className="agent-diagnostics-panel-trace-tools-count" variant="outline" color="gray">tools {item.toolCalls.length}</Badge> : null}
-                  {outputMode ? <Badge className="agent-diagnostics-panel-trace-output-mode" variant="light" color="cyan">{outputMode}</Badge> : null}
+                  {outputMode ? <Badge className="agent-diagnostics-panel-trace-output-mode" variant="light" color="gray">{outputMode}</Badge> : null}
                   {turnVerdictStatus ? <Badge className="agent-diagnostics-panel-trace-turn-verdict" variant="light" color={turnVerdictColor(turnVerdictStatus)}>{`verdict ${turnVerdictStatus}`}</Badge> : null}
                   {canvasPlanParsed ? <Badge className="agent-diagnostics-panel-trace-canvas-plan" variant="light" color="green">plan {canvasPlanNodeCount ?? 0}</Badge> : null}
                   {toolFailedCount && toolFailedCount > 0 ? <Badge className="agent-diagnostics-panel-trace-tool-failed" variant="light" color="red">failed {toolFailedCount}</Badge> : null}
@@ -682,6 +980,11 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
                               <Group className="agent-diagnostics-panel-trace-tool-header" gap="xs" wrap="wrap">
                                 <Text className="agent-diagnostics-panel-trace-tool-name" size="xs" fw={600}>{toolName}</Text>
                                 {status ? <Badge className="agent-diagnostics-panel-trace-tool-status" size="xs" variant="light" color={toolStatusColor(status)}>{status}</Badge> : null}
+                                {(status === 'blocked' || status === 'failed' || status === 'denied') && (errorMessage || output) ? (
+                                  <Badge className="agent-diagnostics-panel-trace-tool-reason" size="xs" variant="light" color={status === 'blocked' ? 'yellow' : 'red'} style={{ maxWidth: 420, textTransform: 'none' }}>
+                                    {(errorMessage || output).split('\n').map((s) => s.trim()).find(Boolean)?.slice(0, 160) || ''}
+                                  </Badge>
+                                ) : null}
                                 {atMs !== null ? <Badge className="agent-diagnostics-panel-trace-tool-at" size="xs" variant="outline">+{atMs}ms</Badge> : null}
                                 {durationMs !== null ? <Badge className="agent-diagnostics-panel-trace-tool-duration" size="xs" variant="outline">{durationMs}ms</Badge> : null}
                                 {outputChars !== null ? <Badge className="agent-diagnostics-panel-trace-tool-chars" size="xs" variant="outline">{outputChars} chars</Badge> : null}
@@ -707,8 +1010,8 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
               <Stack className="agent-diagnostics-panel-public-chat-card" key={`public_chat_run_${item.id}`} gap={4} p="sm" style={{ border: '1px solid var(--mantine-color-dark-4)', borderRadius: 10 }}>
                 <Group className="agent-diagnostics-panel-public-chat-header" gap="xs" wrap="wrap">
                   <Badge className="agent-diagnostics-panel-public-chat-workflow" variant="light" color="teal">{item.workflowKey}</Badge>
-                  {item.label ? <Badge className="agent-diagnostics-panel-public-chat-label" variant="light" color="grape">{item.label}</Badge> : null}
-                  <Badge className="agent-diagnostics-panel-public-chat-output-mode" variant="outline" color="cyan">{item.outputMode}</Badge>
+                  {item.label ? <Badge className="agent-diagnostics-panel-public-chat-label" variant="light" color="gray">{item.label}</Badge> : null}
+                  <Badge className="agent-diagnostics-panel-public-chat-output-mode" variant="outline" color="gray">{item.outputMode}</Badge>
                   <Badge className="agent-diagnostics-panel-public-chat-verdict" variant="light" color={turnVerdictColor(item.turnVerdict)}>{`verdict ${item.turnVerdict}`}</Badge>
                   <Badge className="agent-diagnostics-panel-public-chat-outcome" variant="light" color={runOutcomeColor(item.runOutcome)}>{`outcome ${item.runOutcome}`}</Badge>
                   {item.assetCount > 0 ? <Badge className="agent-diagnostics-panel-public-chat-assets" variant="outline">{`assets ${item.assetCount}`}</Badge> : null}
@@ -805,7 +1108,7 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
             return (
               <Stack className="agent-diagnostics-panel-storyboard-card" key={`storyboard_${index}_${createdAt}`} gap={4} p="sm" style={{ border: '1px solid var(--mantine-color-dark-4)', borderRadius: 10 }}>
                 <Group className="agent-diagnostics-panel-storyboard-header" gap="xs" wrap="wrap">
-                  <Badge className="agent-diagnostics-panel-storyboard-stage" variant="light" color="grape">{stage}</Badge>
+                  <Badge className="agent-diagnostics-panel-storyboard-stage" variant="light" color="gray">{stage}</Badge>
                   <Text className="agent-diagnostics-panel-storyboard-time" size="xs" c="dimmed">{createdAt}</Text>
                 </Group>
                 <Text className="agent-diagnostics-panel-storyboard-message" size="sm">{message}</Text>
@@ -814,6 +1117,7 @@ export default function AgentDiagnosticsContent(props: AgentDiagnosticsContentPr
           }) : null}
         </Stack>
       </ScrollArea>
+      </Collapse>
       <AgentTraceExecutionLogModal
         opened={Boolean(executionLogTraceId)}
         trace={Array.isArray(data?.traces) ? data.traces.find((item) => item.id === executionLogTraceId) ?? null : null}
@@ -1002,9 +1306,11 @@ function buildTraceTimelineItems(input: {
     })
   }
   for (const call of input.toolCalls) {
+    const toolName = readToolCallName(call)
+    const isCreativeLearning = toolName === 'creative_learning_record' || toolName === 'creative_learning_query' || toolName === 'creative_learning_review'
     items.push({
-      kind: 'tool',
-      title: readToolCallName(call),
+      kind: isCreativeLearning ? 'learning' : 'tool',
+      title: toolName,
       detail: [
         readToolCallPathHint(call) ? `path=${readToolCallPathHint(call)}` : '',
         readToolCallInputPreview(call),

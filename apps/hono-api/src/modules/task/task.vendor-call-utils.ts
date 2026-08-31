@@ -10,10 +10,69 @@ import {
 	upsertVendorCallLogStarted,
 } from "./vendor-call-logs.repo";
 import { extractBillingSpecKeyFromTaskRaw } from "./task.billing";
-import { extractChannelVendor, normalizeVendorKey } from "./task.vendor-utils";
+import { normalizeVendorKey } from "./task.vendor-utils";
 import { TaskResultSchema } from "./task.schemas";
 
 type TaskResult = ReturnType<typeof TaskResultSchema.parse>;
+
+function normalizeOptionalString(value: unknown): string | null {
+	return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: null;
+}
+
+function readResultBillingIdentity(input: {
+	result: TaskResult;
+	modelKey?: string | null;
+	specKey?: string | null;
+}): { modelKey: string | null; specKey: string | null } {
+	const raw = readRecord(input.result.raw);
+	const response = readRecord(raw?.response);
+	const details = readRecord(raw?.details);
+	const error = readRecord(raw?.error);
+	const errorDetails = readRecord(error?.details);
+	const modelKey =
+		normalizeOptionalString(input.modelKey) ??
+		normalizeOptionalString(raw?.model) ??
+		normalizeOptionalString(raw?.modelKey) ??
+		normalizeOptionalString(raw?.model_key) ??
+		normalizeOptionalString(response?.model) ??
+		normalizeOptionalString(response?.modelKey) ??
+		normalizeOptionalString(response?.model_key) ??
+		normalizeOptionalString(details?.modelKey) ??
+		normalizeOptionalString(details?.model_key) ??
+		normalizeOptionalString(errorDetails?.modelKey) ??
+		normalizeOptionalString(errorDetails?.model_key);
+	const specKey =
+		normalizeOptionalString(input.specKey) ??
+		extractBillingSpecKeyFromTaskRaw(input.result.raw) ??
+		normalizeOptionalString(details?.specKey) ??
+		normalizeOptionalString(errorDetails?.specKey);
+	return { modelKey, specKey };
+}
+
+function reportCreditFinalizationFailure(input: {
+	taskId: string;
+	taskKind: string;
+	status: "succeeded" | "failed";
+	modelKey: string | null;
+	specKey: string | null;
+	error: unknown;
+}): void {
+	console.error(JSON.stringify({
+		event: "vendor_call_credit_finalization_failed",
+		taskId: input.taskId,
+		taskKind: input.taskKind,
+		status: input.status,
+		modelKey: input.modelKey,
+		specKey: input.specKey,
+		error: String(input.error instanceof Error ? input.error.message : input.error).slice(0, 600),
+	}));
+}
 
 async function recordVendorCallStarted(
 	c: AppContext,
@@ -113,15 +172,17 @@ export async function recordVendorCallFromTaskResult(
 		userId: string;
 		vendor: string;
 		taskKind?: string | null;
+		modelKey?: string | null;
+		specKey?: string | null;
 		result: TaskResult;
 		durationMs?: number | null;
+		finalizeCredits?: boolean;
 	},
 ): Promise<void> {
 	const taskId =
 		typeof input.result?.id === "string" ? input.result.id.trim() : "";
 	if (!taskId) return;
 	const vendorKey = normalizeVendorKey(input.vendor);
-	const channelVendor = extractChannelVendor(vendorKey);
 	if (input.result.status === "queued" || input.result.status === "running") {
 		await recordVendorCallStarted(c, {
 			userId: input.userId,
@@ -129,14 +190,6 @@ export async function recordVendorCallFromTaskResult(
 			taskId,
 			taskKind: input.taskKind ?? null,
 		});
-		if (channelVendor && channelVendor !== vendorKey) {
-			await recordVendorCallStarted(c, {
-				userId: input.userId,
-				vendor: channelVendor,
-				taskId,
-				taskKind: input.taskKind ?? null,
-			});
-		}
 		return;
 	}
 	if (input.result.status !== "succeeded" && input.result.status !== "failed") {
@@ -174,17 +227,7 @@ export async function recordVendorCallFromTaskResult(
 		errorMessage,
 		durationMs: input.durationMs ?? null,
 	});
-	if (channelVendor && channelVendor !== vendorKey) {
-		await recordVendorCallFinal(c, {
-			userId: input.userId,
-			vendor: channelVendor,
-			taskId,
-			taskKind: input.taskKind ?? null,
-			status: input.result.status,
-			errorMessage,
-			durationMs: input.durationMs ?? null,
-		});
-	}
+	if (input.finalizeCredits === false) return;
 
 	const resolvedTaskKind =
 		typeof input.taskKind === "string" && input.taskKind.trim()
@@ -195,47 +238,72 @@ export async function recordVendorCallFromTaskResult(
 				: "";
 	if (!resolvedTaskKind) return;
 
-	const resolvedModelKey = (() => {
-		const raw: any = input.result?.raw as any;
-		const candidates = [
-			raw?.model,
-			raw?.modelKey,
-			raw?.model_key,
-			raw?.response?.model,
-			raw?.response?.modelKey,
-			raw?.response?.model_key,
-		];
-		for (const v of candidates) {
-			if (typeof v === "string" && v.trim()) return v.trim();
-		}
-		return null;
-	})();
-	const amount = await resolveTeamCreditsCostForTask(c, {
-		taskKind: resolvedTaskKind,
-		modelKey: resolvedModelKey || undefined,
-		specKey: extractBillingSpecKeyFromTaskRaw(input.result?.raw),
-	});
-	const resolvedSpecKey = extractBillingSpecKeyFromTaskRaw(input.result?.raw);
+	const billingIdentity = readResultBillingIdentity(input);
+	const resolvedModelKey = billingIdentity.modelKey;
+	const resolvedSpecKey = billingIdentity.specKey;
 
 	// Team credits: reserved at submit time; settle/release when task ends.
 	if (input.result.status === "succeeded") {
-		await settleTeamCreditsOnSuccess(c, input.userId, {
+		try {
+			const amount = await resolveTeamCreditsCostForTask(c, {
+				taskKind: resolvedTaskKind,
+				modelKey: resolvedModelKey,
+				specKey: resolvedSpecKey,
+			});
+			await settleTeamCreditsOnSuccess(c, input.userId, {
+				taskId,
+				taskKind: resolvedTaskKind,
+				amount,
+				vendor: vendorKey,
+				modelKey: resolvedModelKey,
+				specKey: resolvedSpecKey,
+			});
+		} catch (error) {
+			reportCreditFinalizationFailure({
+				taskId,
+				taskKind: resolvedTaskKind,
+				status: input.result.status,
+				modelKey: resolvedModelKey,
+				specKey: resolvedSpecKey,
+				error,
+			});
+		}
+		return;
+	}
+
+	try {
+		await releaseTeamCreditsOnFailure(c, input.userId, {
 			taskId,
 			taskKind: resolvedTaskKind,
-			amount,
 			vendor: vendorKey,
 			modelKey: resolvedModelKey,
 			specKey: resolvedSpecKey,
 		});
-		return;
+	} catch (error) {
+		reportCreditFinalizationFailure({
+			taskId,
+			taskKind: resolvedTaskKind,
+			status: input.result.status,
+			modelKey: resolvedModelKey,
+			specKey: resolvedSpecKey,
+			error,
+		});
 	}
+}
 
-	await releaseTeamCreditsOnFailure(c, input.userId, {
-		taskId,
-		taskKind: resolvedTaskKind,
-		vendor: vendorKey,
-		modelKey: resolvedModelKey,
-		specKey: resolvedSpecKey,
+export async function recordVendorCallLogFromTaskResult(
+	c: AppContext,
+	input: {
+		userId: string;
+		vendor: string;
+		taskKind?: string | null;
+		result: TaskResult;
+		durationMs?: number | null;
+	},
+): Promise<void> {
+	await recordVendorCallFromTaskResult(c, {
+		...input,
+		finalizeCredits: false,
 	});
 }
 
@@ -244,6 +312,8 @@ export async function recordVendorCallsForTaskResult(
 	input: {
 		userId: string;
 		taskKind?: string | null;
+		modelKey?: string | null;
+		specKey?: string | null;
 		result: TaskResult;
 		vendors: Array<string | null | undefined>;
 		durationMs?: number | null;
@@ -257,6 +327,8 @@ export async function recordVendorCallsForTaskResult(
 			userId: input.userId,
 			vendor,
 			taskKind: input.taskKind ?? null,
+			modelKey: input.modelKey ?? null,
+			specKey: input.specKey ?? null,
 			result: input.result,
 			durationMs: input.durationMs ?? null,
 		});
@@ -269,6 +341,8 @@ export async function recordVendorCallForTaskResult(
 		userId: string;
 		vendor: string;
 		taskKind?: string | null;
+		modelKey?: string | null;
+		specKey?: string | null;
 		result: TaskResult;
 		durationMs?: number | null;
 	},
@@ -277,6 +351,8 @@ export async function recordVendorCallForTaskResult(
 		userId: input.userId,
 		vendor: input.vendor,
 		taskKind: input.taskKind ?? null,
+		modelKey: input.modelKey ?? null,
+		specKey: input.specKey ?? null,
 		result: input.result,
 		durationMs: input.durationMs ?? null,
 	});

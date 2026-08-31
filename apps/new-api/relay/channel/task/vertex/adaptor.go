@@ -63,13 +63,11 @@ type operationResponse struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	ChannelType int
-	apiKey      string
-	baseURL     string
+	apiKey  string
+	baseURL string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
-	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
 }
@@ -115,16 +113,16 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if _, err := vertexcore.ApplyDedicatedEgress(info); err != nil {
+		return err
+	}
 
 	adc := &vertexcore.Credentials{}
 	if err := common.Unmarshal([]byte(a.apiKey), adc); err != nil {
 		return fmt.Errorf("failed to decode credentials: %w", err)
 	}
 
-	proxy := ""
-	if info != nil {
-		proxy = info.ChannelSetting.Proxy
-	}
+	proxy := info.ChannelSetting.Proxy
 	token, err := vertexcore.AcquireAccessToken(*adc, proxy)
 	if err != nil {
 		return fmt.Errorf("failed to acquire access token: %w", err)

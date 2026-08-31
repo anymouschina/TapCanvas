@@ -2,9 +2,11 @@ package relay
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +22,42 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// shouldForceResponsesUpstreamStream decides whether a client's NON-stream
+// Responses request should be served by forcing the upstream to stream and
+// aggregating it back to JSON. This works around reasoning models (gpt-5.x)
+// returning an empty `output` array in non-stream bodies through some relays.
+// Disable with RESPONSES_FORCE_UPSTREAM_STREAM=false.
+func shouldForceResponsesUpstreamStream(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if info == nil || info.IsStream {
+		return false // only client non-stream requests need the workaround
+	}
+	if os.Getenv("RESPONSES_FORCE_UPSTREAM_STREAM") == "false" {
+		return false
+	}
+	switch info.ApiType {
+	case appconstant.APITypeOpenAI, appconstant.APITypeCodex:
+		return true
+	default:
+		return false
+	}
+}
+
+// injectResponsesStreamTrue rewrites a raw Responses request body so the upstream
+// is asked to stream, while preserving every other field byte-for-byte. Returns
+// (original, false) if the body is not a JSON object we can safely rewrite.
+func injectResponsesStreamTrue(body []byte) ([]byte, bool) {
+	var raw map[string]json.RawMessage
+	if err := common.Unmarshal(body, &raw); err != nil {
+		return body, false
+	}
+	raw["stream"] = json.RawMessage("true")
+	merged, err := common.Marshal(raw)
+	if err != nil {
+		return body, false
+	}
+	return merged, true
+}
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
@@ -89,10 +127,31 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
 		if bodyBytes, readErr := storage.Bytes(); readErr == nil {
+			// Even on the pass-through path, force the upstream to stream for
+			// non-stream client requests (reasoning models drop the message in
+			// non-stream bodies). Only the `stream` field is rewritten; every
+			// other field is preserved byte-for-byte.
+			if shouldForceResponsesUpstreamStream(c, info) {
+				if forced, ok := injectResponsesStreamTrue(bodyBytes); ok {
+					bodyBytes = forced
+					c.Set("responses_force_stream_aggregate", true)
+				}
+			}
 			upstreamRequestBody = string(bodyBytes)
+			requestBody = bytes.NewReader(bodyBytes)
+		} else {
+			requestBody = common.ReaderOnly(storage)
 		}
-		requestBody = common.ReaderOnly(storage)
 	} else {
+		// Reasoning models (gpt-5.x) drop the final assistant message from the
+		// NON-stream Responses body through some upstream relays (reasoning tokens
+		// billed, output:[] empty). When the client requested a non-stream response,
+		// force the upstream to stream and aggregate it back to JSON downstream.
+		if shouldForceResponsesUpstreamStream(c, info) {
+			streamTrue := true
+			request.Stream = &streamTrue
+			c.Set("responses_force_stream_aggregate", true)
+		}
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
 			upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
@@ -159,15 +218,16 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *
 	if resp != nil {
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
-		if !info.IsStream {
-			httpResp, responseRecorder = attachResponseTraceRecorder(httpResp)
-		}
+		// Record a bounded copy for both JSON and SSE responses. Streaming traces
+		// are essential when an upstream returns HTTP 200 but terminates with a
+		// response.failed/incomplete event or closes without response.completed.
+		httpResp, responseRecorder = attachResponseTraceRecorder(httpResp)
 
 		if httpResp.StatusCode != http.StatusOK {
 			NewAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			responseBody := ""
 			if responseRecorder != nil {
-				responseBody = string(responseRecorder.data)
+				responseBody = responseRecorder.body()
 			}
 			upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
 				UpstreamURL:          upstreamURL,
@@ -185,7 +245,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *
 	if NewAPIError != nil {
 		responseBody := ""
 		if responseRecorder != nil {
-			responseBody = string(responseRecorder.data)
+			responseBody = responseRecorder.body()
 		}
 		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
 			UpstreamURL:          upstreamURL,
@@ -201,7 +261,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *
 		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
 			UpstreamURL:          upstreamURL,
 			UpstreamRequestBody:  upstreamRequestBody,
-			UpstreamResponseBody: string(responseRecorder.data),
+			UpstreamResponseBody: responseRecorder.body(),
 		})
 	}
 

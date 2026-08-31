@@ -229,6 +229,21 @@ function collectAssetInputAliasByUrl(assetInputs: unknown): Map<string, string> 
   return aliasByUrl
 }
 
+function collectAssetInputRoleByUrl(assetInputs: unknown): Map<string, string> {
+  const roleByUrl = new Map<string, string>()
+  if (!Array.isArray(assetInputs)) return roleByUrl
+  for (const item of assetInputs) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const record = item as Record<string, unknown>
+    const url = typeof record.url === 'string' ? record.url.trim() : ''
+    if (!url || roleByUrl.has(url)) continue
+    const role = typeof record.role === 'string' ? record.role.trim().toLowerCase() : ''
+    if (!role) continue
+    roleByUrl.set(url, role)
+  }
+  return roleByUrl
+}
+
 function normalizeRuntimeReferenceAssetInputs(value: unknown, limit: number): RuntimeReferenceAssetInput[] {
   if (!Array.isArray(value)) return []
   const out: RuntimeReferenceAssetInput[] = []
@@ -274,27 +289,21 @@ export function mergeReferenceAssetInputs(input: {
   const explicitByUrl = new Map(
     normalizeRuntimeReferenceAssetInputs(input.assetInputs, limit).map((item) => [item.url, item] as const),
   )
-  const dynamicByUrl = new Map(
-    (Array.isArray(input.dynamicEntries) ? input.dynamicEntries : [])
-      .map((item) => {
-        const url = readRemoteUrl(item.url)
-        if (!url) return null
-        const label = String(item.label || '').trim()
-        const name = String(item.name || '').trim()
-        return [
-          url,
-          {
-            url,
-            assetId: String(item.assetId || '').trim() || null,
-            assetRefId: label || null,
-            role: 'reference',
-            note: String(item.note || '').trim() || null,
-            name: name || label || null,
-          } satisfies RuntimeReferenceAssetInput,
-        ] as const
-      })
-      .filter((entry): entry is readonly [string, RuntimeReferenceAssetInput] => entry !== null),
-  )
+  const dynamicByUrl = new Map<string, RuntimeReferenceAssetInput>()
+  for (const item of input.dynamicEntries ?? []) {
+    const url = readRemoteUrl(item.url)
+    if (!url) continue
+    const label = String(item.label || '').trim()
+    const name = String(item.name || '').trim()
+    dynamicByUrl.set(url, {
+      url,
+      assetId: String(item.assetId || '').trim() || null,
+      assetRefId: label || null,
+      role: 'reference',
+      note: String(item.note || '').trim() || null,
+      name: name || label || null,
+    })
+  }
 
   const out: RuntimeReferenceAssetInput[] = []
   for (const url of orderedUrls) {
@@ -339,11 +348,22 @@ export function buildReferenceAliasSlotBindings(input: {
   return out
 }
 
+const REFERENCE_ANCHOR_SUFFIX = '（仅作角色/风格参考锚点，禁止直接编辑或原样返回）'
+const EDIT_TARGET_SUFFIX = '（待编辑目标图：在其基础上按指令修改，输出仍是这张图）'
+
+const EDIT_TARGET_ROLES = new Set(['edit_target', 'edit', 'target'])
+
 export function appendReferenceAliasSlotPrompt(input: {
   prompt: string
   assetInputs?: unknown
   referenceImages: string[]
   enabled: boolean
+  /**
+   * 当本次确实是「编辑现有图片」（修复/放大/局部改）而非纯生成时置 true。
+   * 此时会显式点名待编辑目标图，防止模型把编辑指令误施加到风格参考图上
+   * （见 assetReference.test.ts 复现用例）。
+   */
+  markEditTarget?: boolean
 }): string {
   const basePrompt = String(input.prompt || '').trim()
   if (!input.enabled) return basePrompt
@@ -352,12 +372,75 @@ export function appendReferenceAliasSlotPrompt(input: {
     referenceImages: input.referenceImages,
   })
   if (bindings.length === 0) return basePrompt
-  const mappingHint = [
+
+  // 图像角色按确定性规则分类（禁猜）：
+  // 1. role=style（全局画风锚定按约定固定排在最后的图位）→ 永远是画风锚点，绝不当编辑目标；
+  // 2. role=edit_target/edit/target → 显式待编辑目标；
+  // 3. 无别名的裸图 → 待编辑目标（编辑流程里的兜底约定）；
+  // 4. 带别名的非 style 图默认是角色/资产锚点；但编辑流程下若完全没有裸图目标、
+  //    且非 style 候选恰好只有一张，则该图就是待编辑目标（修复「编辑目标本身是注册资产时被误标为
+  //    禁编辑锚点、用户指令被系统注入约束压死」的问题）。
+  const roleByUrl = collectAssetInputRoleByUrl(input.assetInputs)
+  const aliasSlots = new Set(bindings.map((item) => item.slot))
+  const slotUrls: Array<{ slot: string; url: string }> = []
+  for (let index = 0; index < input.referenceImages.length; index += 1) {
+    const url = String(input.referenceImages[index] || '').trim()
+    if (!url) continue
+    slotUrls.push({ slot: `图${index + 1}`, url })
+  }
+  const styleSlots = new Set(
+    slotUrls.filter((item) => roleByUrl.get(item.url) === 'style').map((item) => item.slot),
+  )
+  const explicitTargetSlots = slotUrls
+    .filter((item) => EDIT_TARGET_ROLES.has(roleByUrl.get(item.url) || ''))
+    .map((item) => item.slot)
+  const bareTargetSlots = slotUrls
+    .filter((item) => !aliasSlots.has(item.slot) && !styleSlots.has(item.slot))
+    .map((item) => item.slot)
+  let targetSlots = Array.from(new Set([...explicitTargetSlots, ...bareTargetSlots]))
+  if (Boolean(input.markEditTarget) && targetSlots.length === 0) {
+    const nonStyleAliased = slotUrls.filter(
+      (item) => aliasSlots.has(item.slot) && !styleSlots.has(item.slot),
+    )
+    if (nonStyleAliased.length === 1) targetSlots = [nonStyleAliased[0].slot]
+  }
+  const targetSlotSet = new Set(targetSlots)
+  const anchorBindings = bindings.filter((item) => !targetSlotSet.has(item.slot))
+  // 只有真正存在参考锚点（画风锚定/角色/资产锚点）时才值得拼接映射块；
+  // 纯编辑场景（所有图都是待编辑目标、无任何锚点）不注入任何系统文案，保持用户指令干净。
+  if (anchorBindings.length === 0 && styleSlots.size === 0) return basePrompt
+  const showRoleBlock = Boolean(input.markEditTarget) && targetSlots.length > 0
+
+  const lines = [
     '非拼图参考图别名映射（图位与别名必须一一对应）：',
-    ...bindings.map((item) => `- ${item.slot} -> @${item.alias}`),
+    ...bindings.map(
+      (item) =>
+        `- ${item.slot} -> @${item.alias}${
+          showRoleBlock && targetSlotSet.has(item.slot) ? EDIT_TARGET_SUFFIX : REFERENCE_ANCHOR_SUFFIX
+        }`,
+    ),
+  ]
+  if (showRoleBlock) {
+    lines.push(
+      '图像角色说明：',
+      `- 待编辑目标图：${targetSlots.join('、')}（在其基础上修改/修复/放大，输出仍是这张图，禁止改成参考锚点图的主体）`,
+    )
+    if (anchorBindings.length > 0) {
+      lines.push(`- 参考锚点图：${anchorBindings.map((item) => item.slot).join('、')}`)
+    }
+    if (styleSlots.size > 0) {
+      lines.push(
+        `- 画风锚定图：${Array.from(styleSlots).join('、')}（仅锁定整体画风/色调/质感，禁止编辑、原样返回或把其主体带入画面）`,
+      )
+    }
+  }
+  lines.push(
     '约束：',
     '- 在最终执行提示词中使用 @别名 时，必须与上述图位映射保持一致，禁止互换。',
     '- 未出现在上述映射里的图位，禁止臆造新的 @别名。',
-  ].join('\n')
-  return [basePrompt, mappingHint].filter(Boolean).join('\n\n')
+  )
+  if (showRoleBlock) {
+    lines.push('- 编辑/修复/放大只作用于「待编辑目标图」，参考锚点图仅用于风格与角色一致性，禁止直接编辑或原样输出参考锚点图。')
+  }
+  return [basePrompt, lines.join('\n')].filter(Boolean).join('\n\n')
 }

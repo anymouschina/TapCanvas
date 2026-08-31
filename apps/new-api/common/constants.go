@@ -15,7 +15,6 @@ var Version = "v0.0.0"            // this hard coding will be replaced automatic
 var SystemName = "neoSparkMart"
 var Footer = ""
 var Logo = ""
-var TopUpLink = ""
 
 // var ChatLink = ""
 // var ChatLink2 = ""
@@ -85,12 +84,6 @@ var SMTPAccount = ""
 var SMTPFrom = ""
 var SMTPToken = ""
 
-var AliyunSMSAccessKeyId = ""
-var AliyunSMSAccessKeySecret = ""
-var AliyunSMSSignName = ""
-var AliyunSMSTemplateCode = ""
-var AliyunSMSEnabled = false
-
 var GitHubClientId = ""
 var GitHubClientSecret = ""
 var LinuxDOClientId = ""
@@ -107,12 +100,12 @@ var TurnstileSecretKey = ""
 var TelegramBotToken = ""
 var TelegramBotName = ""
 
-var QuotaForNewUser = int(20 * QuotaPerUnit) // $20 gift for every new account
+var QuotaForNewUser = 0 // New accounts receive no automatic bonus quota.
 var QuotaForInviter = 0
 var QuotaForInvitee = 0
 var ChannelDisableThreshold = 5.0
-var AutomaticDisableChannelEnabled = false
-var AutomaticEnableChannelEnabled = false
+var AutomaticDisableChannelEnabled = true
+var AutomaticEnableChannelEnabled = true
 var QuotaRemindThreshold = 1000
 var PreConsumedQuota = 500
 
@@ -218,11 +211,4 @@ const (
 	ChannelStatusEnabled          = 1 // don't use 0, 0 is the default value!
 	ChannelStatusManuallyDisabled = 2 // also don't use 0
 	ChannelStatusAutoDisabled     = 3
-)
-
-const (
-	TopUpStatusPending = "pending"
-	TopUpStatusSuccess = "success"
-	TopUpStatusFailed  = "failed"
-	TopUpStatusExpired = "expired"
 )

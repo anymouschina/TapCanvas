@@ -39,6 +39,12 @@ export type ResourceRuntimeState = {
   viewportMoving: boolean
   nodeDragging: boolean
   backgroundPaused: boolean
+  /** Latest ReactFlow viewport zoom. Updated by Canvas on move-end. */
+  viewportZoom: number
+  /** Monotonic counter — incremented on every viewport change (pan / zoom).
+   * Subscribers use it as a trigger to recompute screen-space measurements
+   * like a node's distance to the viewport center. */
+  viewportEpoch: number
   diagnostics: ResourceRuntimeDiagnostics
 }
 
@@ -151,6 +157,8 @@ export const useResourceRuntimeStore = create<ResourceRuntimeState>(() => ({
   viewportMoving: false,
   nodeDragging: false,
   backgroundPaused: false,
+  viewportZoom: 1,
+  viewportEpoch: 0,
   diagnostics: {
     readyObjectUrlCount: 0,
     readyBitmapCount: 0,

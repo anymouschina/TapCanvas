@@ -17,10 +17,14 @@ import type {
   ResourceVariantKey,
 } from '../model/resourceTypes'
 import { DEFAULT_REQUESTED_SIZE } from '../model/resourceTypes'
-import { rebuildResourceRuntimeDiagnostics, estimateImageResourceBytes } from './resourceCache'
+import {
+  estimateDecodedImageBytes,
+  estimateImageResourceBytes,
+  rebuildResourceRuntimeDiagnostics,
+} from './resourceCache'
 import { buildBudgetTrimPlan, buildTrimPlanForReason } from './resourceReaper'
+import { buildImageDeliveryUrl } from './imageUrlTransform'
 import { useResourceRuntimeStore, type ResourceRuntimeState } from '../store/resourceRuntimeStore'
-import { imageTransportClient } from './imageTransportClient'
 
 const PRIORITY_ORDER: Record<ResourcePriority, number> = {
   critical: 0,
@@ -41,10 +45,26 @@ type DownloadPayload = {
   estimatedBytes: number | null
 }
 
-type QueueMode = 'download' | 'decode'
-
 const activeControllers = new Map<ImageResourceId, ActiveRequestController>()
-const pendingDecodePayloads = new Map<ImageResourceId, DownloadPayload>()
+const pendingReleases = new Map<ImageResourceId, ReturnType<typeof setTimeout>>()
+const RELEASE_GRACE_MS = 15_000
+
+// Native <img> decode completion reports natural dimensions and a conservative
+// RGBA byte estimate. Coalesce a burst of those reports into one budget-trim
+// pass so hundreds of images decoding at once cannot OOM-crash the tab.
+// The reaper only evicts refCount<=0 entries, so live/visible images are safe.
+const BUDGET_TRIM_DEBOUNCE_MS = 300
+let budgetTrimTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleBudgetTrim(): void {
+  if (budgetTrimTimer !== null) return
+  budgetTrimTimer = setTimeout(() => {
+    budgetTrimTimer = null
+    const state = useResourceRuntimeStore.getState()
+    if (state.diagnostics.totalEstimatedBytes > state.maxEstimatedBytes) {
+      resourceManager.trimToBudget('budget-exceeded')
+    }
+  }, BUDGET_TRIM_DEBOUNCE_MS)
+}
 
 export type ResourceWorkPauseState = Pick<ResourceRuntimeState, 'backgroundPaused' | 'viewportMoving' | 'nodeDragging'>
 
@@ -92,7 +112,6 @@ function normalizeVariantKey(kind: ResourceKind, variantKey?: ResourceVariantKey
   if (variantKey) return variantKey
   if (kind === 'thumbnail') return 'thumbnail'
   if (kind === 'preview') return 'preview'
-  if (kind === 'mosaicSource') return 'mosaic-source'
   if (kind === 'videoFrame') return 'video-frame'
   return 'original'
 }
@@ -126,19 +145,47 @@ function canonicalizeRemoteUrl(url: string): string {
   }
 }
 
+function hashStringForResourceKey(value: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(36)
+}
+
 function buildCanonicalUrl(url: string): string {
   const normalized = normalizeString(url)
   if (!normalized) return ''
   if (normalized.startsWith('blob:')) return `blob:${normalized}`
   if (normalized.startsWith('data:')) {
     const prefix = normalized.slice(0, Math.min(normalized.indexOf(',') > 0 ? normalized.indexOf(',') : 48, 48))
-    return `data:${prefix}`
+    return `${prefix}:len-${normalized.length}:hash-${hashStringForResourceKey(normalized)}`
   }
   return canonicalizeRemoteUrl(normalized)
 }
 
-function buildImageResourceId(kind: ResourceKind, canonicalUrl: string, variantKey: ResourceVariantKey): ImageResourceId {
-  return `${kind}:${variantKey}:${canonicalUrl}`
+// Quantize the requested CSS-pixel width (already multiplied by dpr by caller)
+// into a small set of buckets. Each bucket maps to a distinct CDN URL and
+// resource entry — variant swapping is just a different bucket.
+// Buckets are powers-of-two-ish to maximize CDN/SW cache reuse across nodes.
+function quantizeWidthBucket(width: number | null | undefined): string {
+  if (!width || !Number.isFinite(width) || width <= 0) return ''
+  if (width <= 256) return 'w256'
+  if (width <= 512) return 'w512'
+  if (width <= 1024) return 'w1024'
+  if (width <= 2048) return 'w2048'
+  return 'w-orig'
+}
+
+function buildImageResourceId(
+  kind: ResourceKind,
+  canonicalUrl: string,
+  variantKey: ResourceVariantKey,
+  widthBucket: string,
+): ImageResourceId {
+  const bucketSuffix = widthBucket ? `:${widthBucket}` : ''
+  return `${kind}:${variantKey}${bucketSuffix}:${canonicalUrl}`
 }
 
 function withDiagnostics(nextState: ResourceRuntimeState): ResourceRuntimeState {
@@ -179,10 +226,6 @@ function recordFailure(entry: ResourceHandle, phase: ResourceFailurePhase, messa
     lastAccessAt: failure.at,
     decoded: null,
   }
-}
-
-function isImmediateUrl(url: string): boolean {
-  return url.startsWith('blob:') || url.startsWith('data:')
 }
 
 function revokeDecoded(decoded: DecodedImageResource | null, reason: ObjectUrlRevokeReason): number {
@@ -245,11 +288,6 @@ function removeEntries(ids: ImageResourceId[], reason: ObjectUrlRevokeReason, tr
       const entry = nextEntries[id]
       if (!entry) continue
       revokeDecoded(entry.decoded, reason)
-      const pendingPayload = pendingDecodePayloads.get(id)
-      if (pendingPayload?.objectUrl) {
-        URL.revokeObjectURL(pendingPayload.objectUrl)
-      }
-      pendingDecodePayloads.delete(id)
       activeControllers.get(id)?.abort()
       activeControllers.delete(id)
       removed.add(id)
@@ -283,99 +321,40 @@ function setDownloadSlots(activeDownloads: number) {
   }))
 }
 
-function setDecodeSlots(activeDecodes: number) {
-  useResourceRuntimeStore.setState((state) => ({
-    ...state,
-    activeDecodes,
-  }))
-}
-
-function queueResource(id: ImageResourceId, mode: QueueMode) {
+function queueResource(id: ImageResourceId) {
   useResourceRuntimeStore.setState((state) => {
-    if (mode === 'download') {
-      if (state.queuedImageIds.includes(id)) return state
-      const entry = state.imageEntries[id]
-      if (!entry) return state
-      return withDiagnostics({
-        ...state,
-        queuedImageIds: sortQueue([...state.queuedImageIds, id], state.imageEntries),
-        imageEntries: {
-          ...state.imageEntries,
-          [id]: {
-            ...entry,
-            state: 'queued',
-          },
-        },
-      })
-    }
-    if (state.queuedDecodeIds.includes(id)) return state
-    return {
+    if (state.queuedImageIds.includes(id)) return state
+    const entry = state.imageEntries[id]
+    if (!entry) return state
+    return withDiagnostics({
       ...state,
-      queuedDecodeIds: sortQueue([...state.queuedDecodeIds, id], state.imageEntries),
-    }
+      queuedImageIds: sortQueue([...state.queuedImageIds, id], state.imageEntries),
+      imageEntries: {
+        ...state.imageEntries,
+        [id]: {
+          ...entry,
+          state: 'queued',
+        },
+      },
+    })
   })
 }
 
 async function loadTransport(url: string): Promise<DownloadPayload> {
-  if (isImmediateUrl(url)) {
-    return {
-      blob: null,
-      objectUrl: null,
-      renderUrl: url,
-      transport: 'direct-url',
-      estimatedBytes: null,
-    }
-  }
-  const { blob } = await imageTransportClient.load(url).promise
-  const objectUrl = URL.createObjectURL(blob)
+  // All URLs (data:, blob:, http(s):) are now passed through directly to the
+  // <img> element. The browser handles fetching, caching (HTTP / SW), and
+  // decoding natively — this restores native pixel-retention on src swap,
+  // enables HTTP/SW cache hits, and lets width-based variant switching work
+  // (different ?width=N URLs are distinct browser cache keys).
+  // Previously HTTPS URLs were downloaded into a Blob via the worker transport
+  // and exposed as object-URLs, which broke variant swapping and forced manual
+  // lifecycle management with subtle revoke-timing bugs.
   return {
-    blob,
-    objectUrl,
-    renderUrl: objectUrl,
-    transport: 'worker-object-url',
-    estimatedBytes: estimateImageResourceBytes(blob.size),
-  }
-}
-
-function attachDecodedFromImageElement(renderUrl: string): Promise<{ element: HTMLImageElement; width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const image = new Image()
-    image.crossOrigin = 'anonymous'
-    image.decoding = 'async'
-    image.onload = () => {
-      resolve({
-        element: image,
-        width: image.naturalWidth || image.width,
-        height: image.naturalHeight || image.height,
-      })
-    }
-    image.onerror = () => reject(new Error('image attach failed'))
-    image.src = renderUrl
-  })
-}
-
-async function decodePayload(payload: DownloadPayload): Promise<DecodedImageResource> {
-  const attached = await attachDecodedFromImageElement(payload.renderUrl)
-  let imageBitmap: ImageBitmap | null = null
-  if (typeof createImageBitmap === 'function') {
-    try {
-      if (payload.blob) {
-        imageBitmap = await createImageBitmap(payload.blob)
-      } else {
-        imageBitmap = await createImageBitmap(attached.element)
-      }
-    } catch {
-      imageBitmap = null
-    }
-  }
-  return {
-    blob: payload.blob,
-    objectUrl: payload.objectUrl,
-    imageBitmap,
-    width: attached.width,
-    height: attached.height,
-    renderUrl: payload.renderUrl,
-    transport: payload.transport,
+    blob: null,
+    objectUrl: null,
+    renderUrl: url,
+    transport: 'direct-url',
+    estimatedBytes: null,
   }
 }
 
@@ -402,25 +381,6 @@ async function processDownloadQueue(): Promise<void> {
   void startDownload(nextId)
 }
 
-async function processDecodeQueue(): Promise<void> {
-  const state = useResourceRuntimeStore.getState()
-  if (state.activeDecodes >= state.maxConcurrentDecodes) return
-  const nextIndex = state.queuedDecodeIds.findIndex((id) => {
-    const entry = state.imageEntries[id]
-    if (!entry) return false
-    return !shouldPauseBackground(entry, state)
-  })
-  if (nextIndex < 0) return
-  const nextId = state.queuedDecodeIds[nextIndex]
-  if (!nextId) return
-  useResourceRuntimeStore.setState((current) => ({
-    ...current,
-    queuedDecodeIds: current.queuedDecodeIds.filter((id) => id !== nextId),
-    activeDecodes: current.activeDecodes + 1,
-  }))
-  void startDecode(nextId)
-}
-
 async function startDownload(id: ImageResourceId): Promise<void> {
   const entry = useResourceRuntimeStore.getState().imageEntries[id]
   if (!entry || entry.refCount <= 0) {
@@ -433,30 +393,42 @@ async function startDownload(id: ImageResourceId): Promise<void> {
     lastAccessAt: now(),
   }))
   try {
-    const payload = isImmediateUrl(entry.descriptor.url)
-      ? await loadTransport(entry.descriptor.url)
-      : await (() => {
-          const transportRequest = imageTransportClient.load(entry.descriptor.url)
-          activeControllers.set(id, { abort: transportRequest.abort })
-          return transportRequest.promise.then((result) => {
-            const objectUrl = URL.createObjectURL(result.blob)
-            return {
-              blob: result.blob,
-              objectUrl,
-              renderUrl: objectUrl,
-              transport: 'worker-object-url' as const,
-              estimatedBytes: estimateImageResourceBytes(result.blob.size),
-            }
-          })
-        })()
+    // Focused editors omit requestedSize and keep the persisted original.
+    // Lightweight canvas shells request verified TOS width variants.
+    const fetchUrl = buildImageDeliveryUrl(entry.descriptor.url, {
+      width: entry.descriptor.requestedSize?.width ?? null,
+    })
+    // Pass-through transport for every URL — see loadTransport for rationale.
+    const payload = await loadTransport(fetchUrl)
     const latest = useResourceRuntimeStore.getState().imageEntries[id]
     if (!latest || latest.refCount <= 0) {
       if (payload.objectUrl) URL.revokeObjectURL(payload.objectUrl)
       return
     }
-    pendingDecodePayloads.set(id, payload)
-    queueResource(id, 'decode')
-    void processDecodeQueue()
+    // Mark entry as ready immediately. We used to spin up a second <img> to
+    // run image.decode() and read naturalWidth/Height, but that's a duplicate
+    // decode of the same URL that the visible <img> in ManagedImage is already
+    // doing — pure CPU waste. width/height are populated lazily by the visible
+    // <img>'s onLoad through resourceManager.recordDecodedSize.
+    updateEntry(id, (current) => ({
+      ...current,
+      state: 'ready',
+      decoded: {
+        blob: payload.blob,
+        objectUrl: payload.objectUrl,
+        imageBitmap: null,
+        width: current.decoded?.width ?? 0,
+        height: current.decoded?.height ?? 0,
+        renderUrl: payload.renderUrl,
+        transport: payload.transport,
+      },
+      estimatedBytes: payload.estimatedBytes,
+      failureReason: null,
+      lastFailure: null,
+      lastAccessAt: now(),
+    }))
+    // Direct-url entries get their byte estimate after the visible <img>
+    // reports its decoded natural size.
   } catch (error) {
     const message = error instanceof Error ? error.message : 'resource fetch failed'
     updateEntry(id, (current) => recordFailure(current, 'fetch', message))
@@ -467,47 +439,15 @@ async function startDownload(id: ImageResourceId): Promise<void> {
   }
 }
 
-async function startDecode(id: ImageResourceId): Promise<void> {
-  const payload = pendingDecodePayloads.get(id)
-  const entry = useResourceRuntimeStore.getState().imageEntries[id]
-  if (!payload || !entry || entry.refCount <= 0) {
-    pendingDecodePayloads.delete(id)
-    setDecodeSlots(Math.max(0, useResourceRuntimeStore.getState().activeDecodes - 1))
-    return
-  }
-  try {
-    const decoded = await decodePayload(payload)
-    updateEntry(id, (current) => ({
-      ...current,
-      state: 'ready',
-      decoded,
-      estimatedBytes: payload.estimatedBytes,
-      failureReason: null,
-      lastFailure: null,
-      lastAccessAt: now(),
-    }))
-    const latest = useResourceRuntimeStore.getState()
-    if (latest.diagnostics.totalEstimatedBytes > latest.maxEstimatedBytes) {
-      resourceManager.trimToBudget('budget-exceeded')
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'image decode failed'
-    if (payload.objectUrl) URL.revokeObjectURL(payload.objectUrl)
-    updateEntry(id, (current) => recordFailure(current, 'decode', message))
-  } finally {
-    pendingDecodePayloads.delete(id)
-    setDecodeSlots(Math.max(0, useResourceRuntimeStore.getState().activeDecodes - 1))
-    void processDecodeQueue()
-  }
-}
-
 function buildEntry(input: AcquireImageResourceInput): ImageResourceEntry | null {
   const url = normalizeString(input.url)
   if (!url) return null
   const kind = normalizeKind(input.kind)
   const canonicalUrl = buildCanonicalUrl(url)
   const variantKey = normalizeVariantKey(kind, input.variantKey)
-  const descriptorId = buildImageResourceId(kind, canonicalUrl, variantKey)
+  const requestedSize = normalizeRequestedSize(input.requestedSize)
+  const widthBucket = quantizeWidthBucket(requestedSize.width)
+  const descriptorId = buildImageResourceId(kind, canonicalUrl, variantKey, widthBucket)
   const createdAt = now()
   const owner = normalizeOwner(input.owner)
   return {
@@ -519,7 +459,7 @@ function buildEntry(input: AcquireImageResourceInput): ImageResourceEntry | null
       canonicalUrl,
       variantKey,
       priority: input.priority ?? 'visible',
-      requestedSize: normalizeRequestedSize(input.requestedSize),
+      requestedSize,
       cachePolicy: normalizeCachePolicy(input.cachePolicy),
     },
     state: 'idle',
@@ -552,21 +492,19 @@ function rebuildQueue(id: ImageResourceId) {
       queuedImageIds: sortQueue(current.queuedImageIds, current.imageEntries),
     }))
   }
-  if (state.queuedDecodeIds.includes(id)) {
-    useResourceRuntimeStore.setState((current) => ({
-      ...current,
-      queuedDecodeIds: sortQueue(current.queuedDecodeIds, current.imageEntries),
-    }))
-  }
 }
 
 export const resourceManager = {
-  buildResourceId(input: Pick<AcquireImageResourceInput, 'url' | 'kind' | 'variantKey'>): ImageResourceId | null {
+  buildResourceId(
+    input: Pick<AcquireImageResourceInput, 'url' | 'kind' | 'variantKey' | 'requestedSize'>,
+  ): ImageResourceId | null {
     const url = normalizeString(input.url)
     if (!url) return null
     const kind = normalizeKind(input.kind)
     const canonicalUrl = buildCanonicalUrl(url)
-    return buildImageResourceId(kind, canonicalUrl, normalizeVariantKey(kind, input.variantKey))
+    const requestedSize = normalizeRequestedSize(input.requestedSize)
+    const widthBucket = quantizeWidthBucket(requestedSize.width)
+    return buildImageResourceId(kind, canonicalUrl, normalizeVariantKey(kind, input.variantKey), widthBucket)
   },
 
   acquireImage(input: AcquireImageResourceInput): ImageResourceId | null {
@@ -590,9 +528,13 @@ export const resourceManager = {
         lastAccessAt: now(),
         state: current.state === 'released' ? 'idle' : current.state,
       }))
+      if (pendingReleases.has(nextEntry.id)) {
+        clearTimeout(pendingReleases.get(nextEntry.id)!)
+        pendingReleases.delete(nextEntry.id)
+      }
       const refreshed = useResourceRuntimeStore.getState().imageEntries[nextEntry.id]
       if (refreshed && (refreshed.state === 'idle' || refreshed.state === 'failed')) {
-        queueResource(nextEntry.id, 'download')
+        queueResource(nextEntry.id)
         void processDownloadQueue()
       } else {
         rebuildQueue(nextEntry.id)
@@ -600,7 +542,7 @@ export const resourceManager = {
       return nextEntry.id
     }
     upsertEntry(nextEntry)
-    queueResource(nextEntry.id, 'download')
+    queueResource(nextEntry.id)
     void processDownloadQueue()
     return nextEntry.id
   },
@@ -642,7 +584,21 @@ export const resourceManager = {
       }))
       return
     }
-    removeEntries([id], revokeReason, null)
+    updateEntry(id, (current) => ({
+      ...current,
+      refCount: 0,
+      owners: ownerRequestKey ? nextOwners : current.owners,
+      state: 'released',
+      lastAccessAt: now(),
+    }))
+    if (pendingReleases.has(id)) clearTimeout(pendingReleases.get(id)!)
+    pendingReleases.set(id, setTimeout(() => {
+      pendingReleases.delete(id)
+      const current = useResourceRuntimeStore.getState().imageEntries[id]
+      if (current && current.refCount <= 0) {
+        removeEntries([id], revokeReason, null)
+      }
+    }, RELEASE_GRACE_MS))
   },
 
   releaseNodeResources(nodeId: string) {
@@ -666,7 +622,7 @@ export const resourceManager = {
       estimatedBytes: null,
       lastAccessAt: now(),
     }))
-    queueResource(id, 'download')
+    queueResource(id)
     void processDownloadQueue()
   },
 
@@ -697,7 +653,45 @@ export const resourceManager = {
       backgroundPaused: false,
     }))
     void processDownloadQueue()
-    void processDecodeQueue()
+  },
+
+  /**
+   * Called by ManagedImage's visible <img onLoad> to populate width/height
+   * lazily — replaces the second-decode pass that startDecode used to do.
+   */
+  recordDecodedSize(id: ImageResourceId | null, width: number, height: number): void {
+    if (!id || !Number.isFinite(width) || !Number.isFinite(height)) return
+    updateEntry(id, (current) => {
+      if (!current.decoded) return current
+      const estimatedBytes = estimateDecodedImageBytes(width, height)
+      if (
+        current.decoded.width === width
+        && current.decoded.height === height
+        && current.estimatedBytes === estimatedBytes
+      ) return current
+      return {
+        ...current,
+        decoded: { ...current.decoded, width, height },
+        estimatedBytes,
+        lastAccessAt: now(),
+      }
+    })
+    scheduleBudgetTrim()
+  },
+
+  /**
+   * Called by the browser-backed <img> renderer when the attached URL cannot
+   * produce image pixels. Direct-url transport only schedules the browser
+   * load, so a successful transport hand-off is not proof that the response
+   * is a decodable image. Persist the attach failure to stop the renderer from
+   * immediately mounting the same broken URL again.
+   */
+  reportImageElementFailure(id: ImageResourceId | null, failedRenderUrl: string): void {
+    if (!id || !failedRenderUrl) return
+    updateEntry(id, (current) => {
+      if (current.decoded?.renderUrl !== failedRenderUrl) return current
+      return recordFailure(current, 'attach', `Image element failed to load: ${failedRenderUrl}`)
+    })
   },
 
   setViewportMoving(nextViewportMoving: boolean) {
@@ -710,6 +704,18 @@ export const resourceManager = {
       return
     }
     this.resumeBackgroundLoading()
+  },
+
+  setViewportZoom(nextZoom: number) {
+    const z = Number.isFinite(nextZoom) && nextZoom > 0 ? nextZoom : 1
+    // Always bump viewportEpoch even if zoom is unchanged — pan-only viewport
+    // changes still move nodes relative to the screen center, so subscribers
+    // (ManagedImage focus-based bucketing) need to re-measure.
+    useResourceRuntimeStore.setState((state) => ({
+      ...state,
+      viewportZoom: z,
+      viewportEpoch: state.viewportEpoch + 1,
+    }))
   },
 
   setNodeDragging(nextNodeDragging: boolean) {

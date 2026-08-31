@@ -99,7 +99,7 @@ function renderType(type, t) {
     case 1:
       return (
         <Tag color='cyan' shape='circle'>
-          {t('充值')}
+          {t('额度入账')}
         </Tag>
       );
     case 2:
@@ -772,6 +772,51 @@ export const getLogsColumns = ({
       ),
       dataIndex: 'prompt_tokens',
       render: (text, record, index) => {
+        // 聚合行（同会话合并）：显示会话内全部调用的合计
+        if (record._agg) {
+          const aggCache =
+            record._agg.cache_read_tokens > 0 || record._agg.cache_write_tokens > 0
+              ? {
+                  cacheReadTokens: record._agg.cache_read_tokens,
+                  cacheWriteTokens: record._agg.cache_write_tokens,
+                }
+              : null;
+          text = record._agg.prompt_tokens;
+          const hasAggRead = (aggCache?.cacheReadTokens || 0) > 0;
+          const hasAggWrite = (aggCache?.cacheWriteTokens || 0) > 0;
+          let aggCacheText = '';
+          if (hasAggRead && hasAggWrite) {
+            aggCacheText = `${t('缓存读')} ${formatTokenCount(aggCache.cacheReadTokens)} · ${t('写')} ${formatTokenCount(aggCache.cacheWriteTokens)}`;
+          } else if (hasAggRead) {
+            aggCacheText = `${t('缓存读')} ${formatTokenCount(aggCache.cacheReadTokens)}`;
+          } else if (hasAggWrite) {
+            aggCacheText = `${t('缓存写')} ${formatTokenCount(aggCache.cacheWriteTokens)}`;
+          }
+          return (
+            <div
+              style={{
+                display: 'inline-flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                lineHeight: 1.2,
+              }}
+            >
+              <span>{text}</span>
+              {aggCacheText ? (
+                <span
+                  style={{
+                    marginTop: 2,
+                    fontSize: 11,
+                    color: 'var(--semi-color-text-2)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {aggCacheText}
+                </span>
+              ) : null}
+            </div>
+          );
+        }
         const other = getLogOther(record.other);
         const cacheSummary = getPromptCacheSummary(other);
         const hasCacheRead = (cacheSummary?.cacheReadTokens || 0) > 0;
@@ -821,6 +866,9 @@ export const getLogsColumns = ({
       title: t('输出'),
       dataIndex: 'completion_tokens',
       render: (text, record, index) => {
+        if (record._agg) {
+          text = record._agg.completion_tokens;
+        }
         return parseInt(text) > 0 &&
           (record.type === 0 ||
             record.type === 2 ||
@@ -846,6 +894,35 @@ export const getLogsColumns = ({
           )
         ) {
           return <></>;
+        }
+        // 聚合行（同会话合并）：花费显示会话内全部调用的合计并标注次数
+        if (record._agg) {
+          return (
+            <Tooltip
+              content={`${t('同会话')} ${record._agg.count} ${t('次调用花费合计（当前页范围）')}`}
+            >
+              <div
+                style={{
+                  display: 'inline-flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  lineHeight: 1.2,
+                }}
+              >
+                <span>{renderQuota(record._agg.quota, 6)}</span>
+                <span
+                  style={{
+                    marginTop: 2,
+                    fontSize: 11,
+                    color: 'var(--semi-color-text-2)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {record._agg.count} {t('次合计')}
+                </span>
+              </div>
+            </Tooltip>
+          );
         }
         const other = getLogOther(record.other);
         const isSubscription = other?.billing_source === 'subscription';

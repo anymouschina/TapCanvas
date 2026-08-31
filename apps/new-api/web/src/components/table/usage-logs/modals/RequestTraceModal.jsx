@@ -1,7 +1,14 @@
 import React from 'react';
 import { Button, Empty, Modal, Spin, Typography } from '@douyinfe/semi-ui';
 import { IconCopy } from '@douyinfe/semi-icons';
-import { copy, showError, showSuccess } from '../../../../helpers';
+import {
+  copy,
+  showError,
+  showSuccess,
+  extractMediaUrls,
+  hasPreviewableMedia,
+} from '../../../../helpers';
+import MediaPreviewStrip from '../../../common/media/MediaPreviewStrip';
 
 const { Text } = Typography;
 
@@ -28,6 +35,19 @@ const renderCodeBlock = (content, emptyText) => {
     );
   }
   return <pre style={codeStyle}>{content}</pre>;
+};
+
+// body 上方先渲染媒体预览条（若有），再展示原始文本
+const renderBody = (content, emptyText, t) => {
+  const media = extractMediaUrls(content);
+  return (
+    <>
+      {hasPreviewableMedia(media) ? (
+        <MediaPreviewStrip media={media} title={t('媒体预览')} compact />
+      ) : null}
+      {renderCodeBlock(content, emptyText)}
+    </>
+  );
 };
 
 const RequestTraceModal = ({
@@ -132,9 +152,10 @@ const RequestTraceModal = ({
                 <Text style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
                   {t('原始请求 Body')}
                 </Text>
-                {renderCodeBlock(
+                {renderBody(
                   requestTraceData.original_request_body,
                   t('当前没有记录原始请求体'),
+                  t,
                 )}
               </section>
 
@@ -198,9 +219,10 @@ const RequestTraceModal = ({
                         >
                           {t('上游请求 Body')}
                         </Text>
-                        {renderCodeBlock(
+                        {renderBody(
                           attempt.upstream_request_body,
                           t('当前没有记录上游请求体'),
+                          t,
                         )}
                       </div>
 
@@ -210,9 +232,10 @@ const RequestTraceModal = ({
                         >
                           {t('上游响应 Body')}
                         </Text>
-                        {renderCodeBlock(
+                        {renderBody(
                           attempt.upstream_response_body,
                           t('当前没有记录上游响应体'),
+                          t,
                         )}
                       </div>
 

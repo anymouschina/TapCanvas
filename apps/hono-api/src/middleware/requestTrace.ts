@@ -54,6 +54,9 @@ export async function requestTraceMiddleware(c: AppContext, next: Next) {
 	const requestId = ensureRequestId(c);
 	initTrace(c, startedAtMs);
 
+	// Echo the trace ID so callers (frontend, curl) can correlate logs
+	try { c.header("X-Trace-ID", requestId); } catch { /* streaming response – header already sent */ }
+
 	const path = safePath(c);
 	const method = safeMethod(c);
 
@@ -130,33 +133,37 @@ export async function requestTraceMiddleware(c: AppContext, next: Next) {
 		const durationMs = Math.max(0, Date.now() - startedAtMs);
 		const slowMs = getSlowThresholdMs(c);
 		const aborted = abortedAtMs !== null;
+		const isSlow = durationMs >= slowMs;
 		const status = typeof c.res?.status === "number" ? c.res.status : null;
 
-		if (aborted || durationMs >= slowMs) {
-			const snap = getTraceSnapshot(c);
-			const userId = c.get("userId");
-			const apiKeyId = c.get("apiKeyId");
-			const nowIso = new Date().toISOString();
+		const snap = getTraceSnapshot(c);
+		const userId = c.get("userId");
+		const apiKeyId = c.get("apiKeyId");
+		const nowIso = new Date().toISOString();
 
+		// Always emit every request to stdout so Loki captures the full picture
+		emitTraceLog({
+			ts: nowIso,
+			type: "request_trace",
+			event: "request_finished",
+			requestId,
+			method,
+			path,
+			status,
+			aborted,
+			durationMs,
+			slow: isSlow,
+			stage: snap.stage,
+			userId: typeof userId === "string" ? userId : null,
+			apiKeyId: typeof apiKeyId === "string" ? apiKeyId : null,
+		});
+
+		// Persist detailed trace to DB only for slow or aborted requests (write budget)
+		if (aborted || isSlow) {
 			const traceJson = stringifyTraceJson({
 				...(abortedAtMs ? { abortedAtMs: Math.max(0, abortedAtMs - startedAtMs) } : {}),
 				stage: snap.stage,
 				events: snap.events,
-			});
-
-			emitTraceLog({
-				ts: nowIso,
-				type: "request_trace",
-				event: "request_finished",
-				requestId,
-				method,
-				path,
-				status,
-				aborted,
-				durationMs,
-				stage: snap.stage,
-				userId: typeof userId === "string" ? userId : null,
-				apiKeyId: typeof apiKeyId === "string" ? apiKeyId : null,
 			});
 
 			try {

@@ -1,0 +1,43 @@
+# tc.tanvas.cn 生产入口（compose profile "webprod"）：
+# 静态 dist + /api、/public、/assets/local 同源反代到 api:8788。
+# 先 HTTP:80（外网可达性未验证前不开 ACME）；确认 80/443 转发就绪后，
+# 把 http:// 前缀去掉即自动升级 HTTPS（Caddy 自动签发）。
+http://tc.tanvas.cn {
+	root * /srv
+	encode gzip
+	@api path /api/*
+	handle @api {
+		uri strip_prefix /api
+		reverse_proxy api:8788
+	}
+	handle /public/* {
+		reverse_proxy api:8788
+	}
+	handle /assets/local/* {
+		reverse_proxy api:8788
+	}
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+# 兜底：直接敲 IP/localhost 也给页面（本机验证用）
+http://:80 {
+	root * /srv
+	encode gzip
+	@api path /api/*
+	handle @api {
+		uri strip_prefix /api
+		reverse_proxy api:8788
+	}
+	handle /public/* {
+		reverse_proxy api:8788
+	}
+	handle /assets/local/* {
+		reverse_proxy api:8788
+	}
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

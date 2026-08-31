@@ -46,6 +46,7 @@ function createMemoryContext(): MemoryContextResult {
 		},
 		recentConversation: [
 			{
+				messageId: "assistant-message-1",
 				role: "assistant",
 				content: "已验证项目级接口会报：projectId 不在 bridge 授权白名单内",
 				assets: [],

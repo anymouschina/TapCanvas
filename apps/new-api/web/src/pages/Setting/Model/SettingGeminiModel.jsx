@@ -31,7 +31,7 @@ import { useTranslation } from 'react-i18next';
 import Text from '@douyinfe/semi-ui/lib/es/typography/text';
 
 const GEMINI_SETTING_EXAMPLE = {
-  default: 'OFF'
+  default: 'OFF',
 };
 
 const GEMINI_VERSION_EXAMPLE = {
@@ -46,6 +46,7 @@ const DEFAULT_GEMINI_INPUTS = {
   'gemini.thinking_adapter_budget_tokens_percentage': 0.6,
   'gemini.function_call_thought_signature_enabled': true,
   'gemini.remove_function_response_id_enabled': true,
+  'gemini.official_channel_only_enabled': false,
 };
 
 export default function SettingGeminiModel(props) {
@@ -115,6 +116,24 @@ export default function SettingGeminiModel(props) {
           style={{ marginBottom: 15 }}
         >
           <Form.Section text={t('Gemini设置')}>
+            <Row className='gemini-official-channel-row'>
+              <Col className='gemini-official-channel-column' span={16}>
+                <Form.Switch
+                  className='gemini-official-channel-switch'
+                  label={t('强制 Gemini 使用 Google 官方渠道')}
+                  field={'gemini.official_channel_only_enabled'}
+                  extraText={t(
+                    '开启后，所有 gemini-* 请求只使用 google-gemini-official 渠道，模型 ID 原样传递并直连 generativelanguage.googleapis.com；官渠不可用时会明确失败，不会回退到 CF 或其他渠道',
+                  )}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'gemini.official_channel_only_enabled': value,
+                    })
+                  }
+                />
+              </Col>
+            </Row>
             <Row>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.TextArea

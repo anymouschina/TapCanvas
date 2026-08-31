@@ -82,6 +82,7 @@ const EditTokenModal = (props) => {
     group: '',
     cross_group_retry: false,
     tokenCount: 1,
+    display_ratio: 1,
   });
 
   const handleCancel = () => {
@@ -577,6 +578,18 @@ const EditTokenModal = (props) => {
                         showClear
                       />
                     </div>
+                  </Col>
+                  <Col span={24}>
+                    <Form.InputNumber
+                      field='display_ratio'
+                      label={t('对外展示倍率')}
+                      extraText={t('仅影响对外显示的价格（做活动用），不影响真实扣费。展示价 = 真实额 × 倍率。')}
+                      min={0.0001}
+                      step={0.1}
+                      precision={4}
+                      style={{ width: '100%' }}
+                      placeholder='1'
+                    />
                   </Col>
                   <Col span={24}>
                     <Form.Switch

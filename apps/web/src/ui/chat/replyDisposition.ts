@@ -1,7 +1,31 @@
 import type { AgentsChatResponseDto } from '../../api/server'
+import type { AgentLogicalTaskStatusV1 } from '@tapcanvas/agent-observability'
 
 export type ChatTurnVerdict = NonNullable<NonNullable<AgentsChatResponseDto['trace']>['turnVerdict']>
 type ChatTurnVerdictCarrier = { trace?: { turnVerdict?: ChatTurnVerdict } }
+
+type ChatTerminalCarrier = Pick<AgentsChatResponseDto, 'trace'>
+
+export type ChatTerminalProjection = Readonly<{
+  status: AgentLogicalTaskStatusV1
+  reason: string
+}>
+
+/**
+ * Consume the single Hono-committed logical-task state. The browser does not
+ * re-arbitrate completion from delivery evidence, verdict prose, transport
+ * completion or legacy request terminals.
+ */
+export function resolveChatTerminalProjection(
+  response: ChatTerminalCarrier,
+): ChatTerminalProjection {
+  const state = response.trace?.logicalTaskState
+  if (!state) return { status: 'failed', reason: 'logical_task_state_missing' }
+  return {
+    status: state.status,
+    reason: String(state.reasonCode || '').trim() || 'logical_task_reason_missing',
+  }
+}
 
 export function readChatTurnVerdict(
   response: ChatTurnVerdictCarrier,
@@ -68,80 +92,96 @@ export function formatChatTurnVerdictSummary(
 }
 
 export function isFailedChatTurn(
-  response: ChatTurnVerdictCarrier,
+  response: ChatTerminalCarrier,
 ): boolean {
-  return readChatTurnVerdict(response)?.status === 'failed'
+  return resolveChatTerminalProjection(response).status === 'failed'
+}
+
+export function resolveTerminalReply(input: {
+  response: ChatTerminalCarrier
+  originalReply: string
+  verdictSummary?: string | null
+}): { text: string; failed: boolean } {
+  const projection = resolveChatTerminalProjection(input.response)
+  if (projection.status === 'failed' && projection.reason === 'logical_task_state_missing') {
+    return {
+      text: '本轮执行失败：服务端未返回逻辑任务状态（logical_task_state_missing）。',
+      failed: true,
+    }
+  }
+  if (projection.status !== 'failed') {
+    return { text: input.originalReply, failed: false }
+  }
+  return {
+    text: input.verdictSummary || `本轮执行失败：${projection.reason}`,
+    failed: true,
+  }
+}
+
+export function isAsyncSubmissionResponse(
+  response: Pick<AgentsChatResponseDto, 'trace'>,
+): boolean {
+  const logicalState = response.trace?.logicalTaskState
+  const terminalReason = String(logicalState?.reasonCode || '').trim()
+  if (
+    terminalReason === 'managed_async_submission' ||
+    terminalReason === 'agents_bridge_request_accepted_pending'
+  ) {
+    return true
+  }
+
+  if (response.trace?.runtime?.deliveryReport?.satisfiedByAsyncSubmission === true) {
+    return true
+  }
+
+  return response.trace?.deliveryEvidence?.artifacts.some(
+    (artifact) => artifact.deliveryState === 'accepted_async',
+  ) === true
+}
+
+export function resolveAssistantReplyText(input: {
+  response: Pick<AgentsChatResponseDto, 'trace'>
+  reply: string
+}): string {
+  const normalizedReply = String(input.reply || '').trim()
+  if (normalizedReply) return normalizedReply
+  const logicalState = input.response.trace?.logicalTaskState
+  if (logicalState?.status === 'waiting_external' || logicalState?.status === 'active') {
+    return isAsyncSubmissionResponse(input.response)
+      ? '异步编排已持久受理；供应商是否受理与最终交付以真实任务和资产证据为准。'
+      : '当前执行窗口已结束，任务已进入持久续跑。'
+  }
+  if (logicalState?.status === 'waiting_input') return '需要补充信息后才能继续执行。'
+  return '（空响应）'
 }
 
 export function shouldShowMissingCanvasPlanError(input: {
   hasCanvasPlan: boolean
   hasWrongCanvasPlanTag: boolean
-  response: Pick<AgentsChatResponseDto, 'agentDecision' | 'trace'>
+  response: Pick<AgentsChatResponseDto, 'trace'>
 }): boolean {
   if (input.hasCanvasPlan) return false
   if (input.hasWrongCanvasPlanTag) return true
-
-  const turnVerdict = readChatTurnVerdict(input.response)
-  const verdictReasons = new Set(turnVerdict?.reasons ?? [])
-  if (
-    isFailedChatTurn(input.response) &&
-    (verdictReasons.has('invalid_canvas_plan') || verdictReasons.has('parsed_plan_without_nodes'))
-  ) {
-    return true
-  }
-
-  const outputMode = input.response.trace?.outputMode
-  const executionKind = input.response.agentDecision?.executionKind
-  const canvasAction = input.response.agentDecision?.canvasAction
-  const wroteCanvas = canvasAction === 'write_canvas'
-  const isPlainAnswer =
-    executionKind === 'answer' &&
-    canvasAction !== 'create_canvas_workflow' &&
-    canvasAction !== 'write_canvas'
-  const backendExpectedCanvasPlan =
-    outputMode === 'plan_only' ||
-    outputMode === 'plan_with_assets' ||
-    canvasAction === 'create_canvas_workflow'
-
-  if (wroteCanvas || executionKind === 'execute') {
-    return false
-  }
-
-  if (isPlainAnswer && outputMode === 'text_only') {
-    return false
-  }
-
-  if (
-    outputMode === 'text_only' &&
-    executionKind === 'answer' &&
-    canvasAction !== 'create_canvas_workflow'
-  ) {
-    return false
-  }
-
-  if (isPlainAnswer && !backendExpectedCanvasPlan) {
-    return false
-  }
-
-  return backendExpectedCanvasPlan
+  const verification = input.response.trace?.deliveryVerification
+	return verification?.status === 'unsatisfied' &&
+		input.response.trace?.logicalTaskState?.status === 'failed'
 }
 
 export function shouldAutoAddAssistantAssetsToCanvas(input: {
   canvasPlanExecuted: boolean
   aiChatWatchAssetsEnabled: boolean
   assistantAssetCount: number
-  response: Pick<AgentsChatResponseDto, 'agentDecision' | 'trace'>
+  response: Pick<AgentsChatResponseDto, 'trace'>
 }): boolean {
   if (input.canvasPlanExecuted) return false
   if (!input.aiChatWatchAssetsEnabled) return false
   if (input.assistantAssetCount <= 0) return false
 
-  const backendWroteCanvas =
-    input.response.agentDecision?.canvasAction === 'write_canvas' ||
-    input.response.trace?.toolEvidence?.wroteCanvas === true
+  const backendWroteCanvas = input.response.trace?.deliveryEvidence?.wroteCanvas === true
 
   if (backendWroteCanvas) return false
-  if (isFailedChatTurn(input.response)) return false
+	if (input.response.trace?.deliveryVerification?.status === 'unsatisfied') return false
+	if (input.response.trace?.logicalTaskState?.status === 'failed') return false
 
   return true
 }

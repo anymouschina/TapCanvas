@@ -3,8 +3,8 @@ import { AppError } from "../../middleware/error";
 import type { AppContext } from "../../types";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
 import {
-	createRustfsClient,
-	resolveRustfsConfig,
+	createObjectStorageClient,
+	resolveObjectStorageConfig,
 } from "../asset/rustfs.client";
 
 export function decodeBase64ToBytes(base64: string): Uint8Array {
@@ -38,7 +38,7 @@ function buildInlineAssetKey(userId: string, ext: string, prefix: string): strin
 	return `${dir}/${safeUser}/${datePrefix}/${random}.${ext || "bin"}`;
 }
 
-export async function uploadInlineImageToRustfs(options: {
+export async function uploadInlineImageToObjectStorage(options: {
 	c: AppContext;
 	userId: string;
 	mimeType: string;
@@ -46,18 +46,26 @@ export async function uploadInlineImageToRustfs(options: {
 	prefix?: string;
 }): Promise<string> {
 	const { c, userId, mimeType, base64 } = options;
-	const rustfs = resolveRustfsConfig(c.env);
-	if (!rustfs) {
+	const storage = resolveObjectStorageConfig(c.env);
+	if (!storage) {
 		throw new AppError("Object storage is not configured", {
 			status: 500,
 			code: "oss_not_configured",
 			details: {
 				bindings: [
-					"R2_BUCKET_URL",
+					"OBJECT_STORAGE_PROVIDER",
+					"TOS_ACCESS_KEY_ID",
+					"TOS_SECRET_ACCESS_KEY",
+					"TOS_ENDPOINT_URL",
+					"TOS_REGION",
+					"TOS_BUCKET",
+					"TOS_PUBLIC_BASE_URL",
+					"R2_ACCESS_KEY_ID",
+					"R2_SECRET_ACCESS_KEY",
 					"R2_ENDPOINT_URL",
+					"R2_REGION",
 					"R2_BUCKET",
-					"RUSTFS_ENDPOINT_URL",
-					"RUSTFS_BUCKET",
+					"R2_PUBLIC_BASE_URL",
 				],
 			},
 		});
@@ -66,13 +74,14 @@ export async function uploadInlineImageToRustfs(options: {
 	const ext = detectImageExtensionFromMimeType(mimeType);
 	const key = buildInlineAssetKey(userId, ext, options.prefix || "gen/images");
 	const bytes = decodeBase64ToBytes(base64);
-	const client = createRustfsClient(c.env);
+	const client = createObjectStorageClient(c.env);
 	await client.send(
 		new PutObjectCommand({
-			Bucket: rustfs.bucket,
+			Bucket: storage.bucket,
 			Key: key,
 			Body: bytes,
 			ContentType: mimeType || "application/octet-stream",
+			CacheControl: "public, max-age=31536000, immutable",
 		}),
 	);
 

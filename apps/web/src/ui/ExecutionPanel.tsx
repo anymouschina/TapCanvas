@@ -362,7 +362,7 @@ export default function ExecutionPanel(props: {
 
                   <Group className="execution-panel-agent-header" justify="space-between" mt="sm">
                     <Title className="execution-panel-agent-title" order={6}>Agents 生产运行</Title>
-                    <Badge className="execution-panel-agent-mode-badge" size="xs" variant="light" color="blue">
+                    <Badge className="execution-panel-agent-mode-badge" size="xs" variant="light" color="gray">
                       仅保留记录，生产请走 public/chat
                     </Badge>
                   </Group>

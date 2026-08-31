@@ -42,23 +42,23 @@ export const tapCanvasDesignTokens = {
     modal: '0 28px 64px rgba(0, 0, 0, 0.4)'
   },
   dark: {
-    appBg: '#05070b',
-    appBgStrong: '#020409',
-    surface: '#0b0f14',
-    surfaceRaised: '#10161d',
-    surfaceSubtle: '#131a22',
+    appBg: '#0a0a0b',
+    appBgStrong: '#050506',
+    surface: '#0f0f11',
+    surfaceRaised: '#151517',
+    surfaceSubtle: '#19191c',
     surfaceInline: 'rgba(255, 255, 255, 0.035)',
-    borderSubtle: 'rgba(226, 232, 240, 0.08)',
-    borderStrong: 'rgba(125, 211, 252, 0.24)',
-    textPrimary: '#edf3ff',
-    textSecondary: '#aab7ca',
-    textTertiary: '#73839a',
-    accentBlue: '#60a5fa',
-    accentCyan: '#22d3ee',
+    borderSubtle: 'rgba(212, 215, 220, 0.08)',
+    borderStrong: 'rgba(212, 215, 220, 0.2)',
+    textPrimary: '#eef0f4',
+    textSecondary: '#a9afb9',
+    textTertiary: '#7b828e',
+    accentBlue: '#c2c7cf',
+    accentCyan: '#aeb3bc',
     success: '#34d399',
     warning: '#fbbf24',
     danger: '#f87171',
-    info: '#38bdf8'
+    info: '#9aa1ac'
   }
 } as const
 
@@ -90,6 +90,22 @@ export function buildTapCanvasTheme(colorScheme: MantineColorScheme) {
     defaultRadius: 'xs',
     primaryColor: isDark ? 'gray' : 'dark',
     primaryShade: { light: 6, dark: 4 },
+    // 暗色统一「科技灰」：覆盖 Mantine 默认偏蓝的 dark 调色板为中性灰（R≈G≈B），
+    // 让 --mantine-color-body / 各暗色表面不再泛蓝。
+    colors: {
+      dark: [
+        '#c9cace',
+        '#a8a9ad',
+        '#909195',
+        '#5b5c60',
+        '#3a3b3e',
+        '#2b2c2f',
+        '#232427',
+        '#1a1b1d',
+        '#141517',
+        '#0e0f11',
+      ],
+    },
     fontFamily: sansSerifFontFamily,
     fontFamilyMonospace: monospaceFontFamily,
     radius: {
@@ -251,7 +267,8 @@ export function buildTapCanvasTheme(colorScheme: MantineColorScheme) {
       Modal: {
         defaultProps: {
           radius: 'md',
-          shadow: 'lg'
+          shadow: 'lg',
+          zIndex: 500,
         },
         styles: {
           content: isDark ? {
@@ -266,19 +283,25 @@ export function buildTapCanvasTheme(colorScheme: MantineColorScheme) {
       Drawer: {
         defaultProps: {
           radius: 'sm',
-          shadow: 'lg'
+          shadow: 'lg',
+          zIndex: 500,
         }
       },
       Menu: {
         defaultProps: {
           radius: 'sm',
-          shadow: 'md'
+          shadow: 'md',
+          // 浮层必须压过 Modal/Drawer（本主题把两者 zIndex 提到 500，Mantine Menu 默认才 300）：
+          // 否则任何弹窗/抽屉里的 … 菜单都会"打开但被盖住"——看不见也点不到（2026-07-11 全部项目抽屉实测）。
+          zIndex: 600,
         }
       },
       Popover: {
         defaultProps: {
           radius: 'sm',
-          shadow: 'md'
+          shadow: 'md',
+          // 同 Menu：浮层须压过 zIndex=500 的 Modal/Drawer（Select/Combobox/HoverCard 同源受益）。
+          zIndex: 600,
         },
         styles: {
           dropdown: isDark ? {
@@ -305,7 +328,9 @@ export function buildTapCanvasTheme(colorScheme: MantineColorScheme) {
       },
       Tooltip: {
         defaultProps: {
-          openDelay: 140
+          openDelay: 140,
+          // 同 Menu/Popover：Mantine Tooltip 默认 400，会被 zIndex=500 的 Modal/Drawer 盖住。
+          zIndex: 600,
         },
         styles: {
           tooltip: isDark ? {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -91,6 +92,25 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		return
 	}
 	CloseResponseBodyGracefully(resp)
+	retryHint, retryHintDiagnostics := extractUpstreamRetryHint(resp, responseBody, time.Now())
+	for _, diagnostic := range retryHintDiagnostics {
+		logger.LogWarn(ctx, fmt.Sprintf("upstream retry metadata ignored: %v", diagnostic))
+	}
+	attachRetryHint := func(apiErr *types.NewAPIError) *types.NewAPIError {
+		if retryHint.RetryAtUnix > 0 {
+			apiErr.SetRetryAt(retryHint.RetryAtUnix, retryHint.Source)
+		}
+		return apiErr
+	}
+	var detailEnvelope struct {
+		Detail struct {
+			Code string `json:"code"`
+		} `json:"detail"`
+	}
+	if common.Unmarshal(responseBody, &detailEnvelope) == nil && detailEnvelope.Detail.Code != "" {
+		code := types.ErrorCode(detailEnvelope.Detail.Code)
+		return attachRetryHint(types.NewOpenAIError(errors.New(detailEnvelope.Detail.Code), code, resp.StatusCode))
+	}
 	var errResponse dto.GeneralErrorResponse
 	buildErrWithBody := func(message string) error {
 		if message == "" {
@@ -107,7 +127,7 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody)))
 			neoSparkMartErr.Err = fmt.Errorf("bad response status code %d", resp.StatusCode)
 		}
-		return
+		return attachRetryHint(neoSparkMartErr)
 	}
 
 	if common.GetJsonType(errResponse.Error) == "object" {
@@ -118,14 +138,14 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 			if showBodyWhenFail {
 				neoSparkMartErr.Err = buildErrWithBody(neoSparkMartErr.Error())
 			}
-			return
+			return attachRetryHint(neoSparkMartErr)
 		}
 	}
 	neoSparkMartErr = types.NewOpenAIError(errors.New(errResponse.ToMessage()), types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 	if showBodyWhenFail {
 		neoSparkMartErr.Err = buildErrWithBody(neoSparkMartErr.Error())
 	}
-	return
+	return attachRetryHint(neoSparkMartErr)
 }
 
 func ResetStatusCode(neoSparkMartErr *types.NewAPIError, statusCodeMappingStr string) {

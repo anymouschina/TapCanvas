@@ -19,9 +19,6 @@
       "name": "用户管理"
     },
     {
-      "name": "充值"
-    },
-    {
       "name": "两步验证"
     },
     {
@@ -1465,14 +1462,32 @@
       }
     },
     "/api/user/topup": {
-      "get": {
-        "summary": "获取所有充值记录",
+      "post": {
+        "summary": "使用兑换码增加额度",
         "deprecated": false,
-        "description": "👨‍💼 需要管理员权限（Admin）",
+        "description": "🔐 需要登录（User权限）",
         "tags": [
-          "用户管理"
+          "兑换码"
         ],
         "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "key"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "成功",
@@ -1581,31 +1596,6 @@
             }
           }
         },
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/topup/complete": {
-      "post": {
-        "summary": "管理员完成充值",
-        "deprecated": false,
-        "description": "👨‍💼 需要管理员权限（Admin）",
-        "tags": [
-          "用户管理"
-        ],
-        "parameters": [],
         "responses": {
           "200": {
             "description": "成功",
@@ -1841,256 +1831,6 @@
             }
           }
         },
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/topup/info": {
-      "get": {
-        "summary": "获取充值信息",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/topup/self": {
-      "get": {
-        "summary": "获取用户充值记录",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/pay": {
-      "post": {
-        "summary": "发起易支付",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/amount": {
-      "post": {
-        "summary": "获取支付金额",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/stripe/pay": {
-      "post": {
-        "summary": "发起Stripe支付",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/stripe/amount": {
-      "post": {
-        "summary": "获取Stripe支付金额",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/creem/pay": {
-      "post": {
-        "summary": "发起Creem支付",
-        "deprecated": false,
-        "description": "🔐 需要登录（User权限）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/user/epay/notify": {
-      "get": {
-        "summary": "易支付回调",
-        "deprecated": false,
-        "description": "🔓 无需鉴权（支付回调）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/stripe/webhook": {
-      "post": {
-        "summary": "Stripe Webhook",
-        "deprecated": false,
-        "description": "🔓 无需鉴权（Webhook回调）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "headers": {}
-          }
-        },
-        "security": [
-          {
-            "Combination343": []
-          },
-          {
-            "Combination1243": []
-          }
-        ]
-      }
-    },
-    "/api/creem/webhook": {
-      "post": {
-        "summary": "Creem Webhook",
-        "deprecated": false,
-        "description": "🔓 无需鉴权（Webhook回调）",
-        "tags": [
-          "充值"
-        ],
-        "parameters": [],
         "responses": {
           "200": {
             "description": "成功",

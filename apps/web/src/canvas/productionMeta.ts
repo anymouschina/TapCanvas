@@ -4,9 +4,16 @@ export const PRODUCTION_LAYER_VALUES = [
   'evidence',
   'constraints',
   'anchors',
+  'preproduction',
+  'draft',
   'expansion',
+  'blocking_diagram',
+  'keyframe',
   'execution',
   'results',
+  'design_board',
+  'master_board',
+  'preview',
 ] as const
 
 export type ProductionLayer = (typeof PRODUCTION_LAYER_VALUES)[number]
@@ -14,12 +21,21 @@ export type ProductionLayer = (typeof PRODUCTION_LAYER_VALUES)[number]
 export const CREATION_STAGE_VALUES = [
   'source_understanding',
   'constraint_definition',
+  'preproduction',
   'world_anchor_lock',
   'character_anchor_lock',
   'shot_anchor_lock',
+  'authority_base_frame',
+  'intent_generate_scene_references',
+  'spatial_blocking',
   'single_variable_expansion',
+  'storyboard_stills',
   'approved_keyframe_selection',
+  'intent_generate_shot_design_board',
+  'story_preview',
+  'beat_keyframe',
   'video_plan',
+  'video_followup',
   'video_execution',
   'result_persistence',
 ] as const

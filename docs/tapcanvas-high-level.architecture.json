@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "TapCanvas 高层架构",
+    "locale": "zh-CN",
+    "output": "tapcanvas-high-level-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [1390, 650],
+    "views": [
+      {
+        "id": "agent-production",
+        "label": "Agent 生产主链",
+        "focus": ["web-canvas", "hono-api", "agents-bridge", "workflow-kernel", "task-workers", "durable-delivery"],
+        "note": "Agent 读取真实上下文，调用工作流执行可恢复的多步生产，最终以节点、资产和 trace 交付。"
+      },
+      {
+        "id": "aigc-execution",
+        "label": "AIGC 执行链",
+        "focus": ["workflow-kernel", "task-workers", "luban-api", "aigc-models", "media-storage", "durable-delivery"],
+        "note": "工作流把图片、视频与音频任务交给统一模型网关，真实媒体资产持久化后再回填画布。"
+      },
+      {
+        "id": "production-stability",
+        "label": "生产级稳定性",
+        "focus": ["workflow-kernel", "project-state", "runtime-control", "task-workers", "media-storage", "durable-delivery"],
+        "note": "任务账本、队列、幂等、reconcile 与交付证据共同保证长任务可恢复、可追溯、可验收。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "web-canvas",
+      "type": "frontend",
+      "label": "无限画布",
+      "sublabel": "apps/web · React Flow",
+      "tag": "真实上下文与执行界面",
+      "pos": [20, 270],
+      "size": [145, 88]
+    },
+    {
+      "id": "hono-api",
+      "type": "backend",
+      "label": "协议与安全编排",
+      "sublabel": "apps/hono-api",
+      "tag": "Auth · contracts · trace",
+      "pos": [230, 270],
+      "size": [170, 88]
+    },
+    {
+      "id": "agents-bridge",
+      "type": "backend",
+      "label": "Agents Bridge",
+      "sublabel": "apps/agents-cli",
+      "tag": "理解 · 规划 · 自主决策",
+      "pos": [470, 260],
+      "size": [170, 108]
+    },
+    {
+      "id": "agent-capabilities",
+      "type": "cloud",
+      "label": "Skills · MCP · Subagents",
+      "sublabel": "渐进知识与专业能力",
+      "pos": [460, 60],
+      "size": [190, 78]
+    },
+    {
+      "id": "workflow-kernel",
+      "type": "backend",
+      "label": "生产工作流内核",
+      "sublabel": "DAG · delivery gates",
+      "tag": "Agent 调用工作流 · 一键成片底座",
+      "pos": [715, 250],
+      "size": [180, 128]
+    },
+    {
+      "id": "project-state",
+      "type": "database",
+      "label": "项目与画布状态",
+      "sublabel": "PostgreSQL · local metadata",
+      "tag": "project · flow · execution",
+      "pos": [710, 60],
+      "size": [190, 88]
+    },
+    {
+      "id": "task-workers",
+      "type": "backend",
+      "label": "任务与媒体 Workers",
+      "sublabel": "async jobs · Go media worker",
+      "tag": "提交 · 轮询 · reconcile",
+      "pos": [970, 260],
+      "size": [165, 108]
+    },
+    {
+      "id": "runtime-control",
+      "type": "messagebus",
+      "label": "持久运行控制面",
+      "sublabel": "Redis · queue · lease",
+      "tag": "idempotency · retry · reconcile",
+      "pos": [957.5, 60],
+      "size": [190, 88]
+    },
+    {
+      "id": "luban-api",
+      "type": "backend",
+      "label": "鲁班 API",
+      "sublabel": "apps/new-api · 模型网关",
+      "tag": "动态目录 · 计量 · 路由",
+      "pos": [972.5, 510],
+      "size": [160, 88]
+    },
+    {
+      "id": "aigc-models",
+      "type": "external",
+      "label": "AIGC 模型",
+      "sublabel": "Text · Image · Video · Audio",
+      "pos": [715, 520],
+      "size": [180, 68]
+    },
+    {
+      "id": "media-storage",
+      "type": "cloud",
+      "label": "媒体资产存储",
+      "sublabel": "Object storage · Assets",
+      "tag": "assetId + real URL",
+      "pos": [1200, 470],
+      "size": [160, 88]
+    },
+    {
+      "id": "durable-delivery",
+      "type": "cloud",
+      "label": "可验证交付",
+      "sublabel": "节点 · 资产 · trace · evidence",
+      "tag": "生产级稳定输出",
+      "pos": [1190, 260],
+      "size": [180, 108]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "TapCanvas 生产系统",
+      "wraps": ["web-canvas", "hono-api", "agents-bridge", "agent-capabilities", "workflow-kernel", "project-state", "task-workers", "runtime-control", "luban-api", "media-storage", "durable-delivery"],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    { "id": "canvas-to-api", "from": "web-canvas", "to": "hono-api", "label": "HTTPS / SSE", "variant": "emphasis" },
+    { "id": "api-to-agents", "from": "hono-api", "to": "agents-bridge", "label": "Agents API", "variant": "emphasis" },
+    { "id": "capabilities-to-agents", "from": "agent-capabilities", "to": "agents-bridge", "label": "按需加载与工具调用", "variant": "dashed", "labelDy": 24 },
+    { "id": "agents-to-workflow", "from": "agents-bridge", "to": "workflow-kernel", "label": "调用工作流", "variant": "emphasis" },
+    { "id": "workflow-to-workers", "from": "workflow-kernel", "to": "task-workers", "label": "持久 DAG", "variant": "emphasis" },
+    { "id": "workflow-to-state", "from": "workflow-kernel", "to": "project-state", "label": "project · flow · execution" },
+    { "id": "state-to-runtime", "from": "project-state", "to": "runtime-control", "label": "enqueue · 幂等", "labelDy": 68 },
+    { "id": "runtime-to-workers", "from": "runtime-control", "to": "task-workers", "label": "claim · retry · reconcile", "labelDy": 24 },
+    { "id": "workers-to-luban", "from": "task-workers", "to": "luban-api", "label": "统一 AIGC 任务", "variant": "emphasis", "labelDy": 24 },
+    { "id": "luban-to-models", "from": "luban-api", "to": "aigc-models", "label": "模型协议", "variant": "emphasis" },
+    { "id": "workers-to-storage", "from": "task-workers", "to": "media-storage" },
+    { "id": "storage-to-delivery", "from": "media-storage", "to": "durable-delivery", "label": "assetId + URL" },
+    { "id": "workers-to-delivery", "from": "task-workers", "to": "durable-delivery", "label": "验收证据", "variant": "emphasis" }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "Agent 原生编排",
+      "items": ["Agents 基于真实项目与画布上下文自主选择 Skills、工具和工作流", "语义决策留在 Agents，前后端只执行可验证协议与动作"]
+    },
+    {
+      "dot": "cyan",
+      "title": "工作流驱动 AIGC",
+      "items": ["图片、视频、音频等多模态任务进入持久 DAG，而不是一次性模型调用", "一键成片底层能力已具备但产品入口尚未上线，当前需自行编排工作流", "鲁班 API 统一模型目录、供应商协议、计量与路由"]
+    },
+    {
+      "dot": "emerald",
+      "title": "生产级稳定交付",
+      "items": ["队列、租约、幂等、任务账本与 reconcile 支撑长任务恢复", "最终以真实资产 URL、节点状态、trace 与 delivery evidence 验收"]
+    }
+  ]
+}

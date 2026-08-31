@@ -50,6 +50,8 @@ function makeCtx(): AppContext {
 	return {
 		env: {
 			DB: {},
+			NEW_API_INTERNAL_BASE_URL: "http://new-api.local",
+			NEW_API_INTERNAL_TOKEN: "test-new-api-token",
 			PUBLIC_VENDOR_ROUTING: "",
 		} as AppContext["env"],
 		req: {
@@ -208,7 +210,7 @@ describe("resolvePublicTaskVendors modelKey routing", () => {
 			extras: { modelAlias: "gemini-3.1-flash-image-preview" },
 		});
 
-		expect(resolved.vendorCandidates).toEqual(["yunwu"]);
+		expect(resolved.vendorCandidates).toEqual(["newapi"]);
 		expect(resolved.modelAliasRaw).toBe("gemini-3.1-flash-image-preview");
 		expect(resolved.aliasMap?.get("yunwu")).toBe("gemini-3.1-flash-image-preview");
 		expect(listCatalogModelsByModelAlias).toHaveBeenCalledWith(
@@ -220,10 +222,21 @@ describe("resolvePublicTaskVendors modelKey routing", () => {
 			"gemini-3.1-flash-image-preview",
 		);
 	});
+
+	it("lets public vision use new-api auto routing instead of a static vendor tag", async () => {
+		const resolved = await resolvePublicTaskVendors(makeCtx(), "user-1", "auto", {
+			kind: "image_to_prompt",
+			extras: { modelKey: "gpt-5.5" },
+		});
+
+		expect(resolved.vendorCandidates).toEqual(["newapi"]);
+		expect(resolved.modelAliasRaw).toBe("");
+		expect(resolved.aliasMap).toBeNull();
+	});
 });
 
 describe("buildPublicVisionTaskRequest", () => {
-	it("does not inject default modelAlias when caller explicitly provides modelKey", () => {
+	it("ignores a caller model override and always uses the fixed image-understanding model", () => {
 		const request = buildPublicVisionTaskRequest(
 			{
 				imageUrl: "https://example.com/reference.png",
@@ -241,12 +254,12 @@ describe("buildPublicVisionTaskRequest", () => {
 			prompt: "analyze this image",
 			extras: {
 				imageUrl: "https://example.com/reference.png",
-				modelKey: "gemini-3.1-flash-image-preview",
+				modelKey: "gpt-5.6-luna",
 			},
 		});
 	});
 
-	it("uses the default modelAlias only when both modelAlias and modelKey are absent", () => {
+	it("accepts an http URL and uses gpt-5.6-luna when no model fields are present", () => {
 		const request = buildPublicVisionTaskRequest(
 			{
 				imageUrl: "https://example.com/reference.png",
@@ -258,7 +271,7 @@ describe("buildPublicVisionTaskRequest", () => {
 			},
 		);
 
-		expect(request.extras.modelAlias).toBe("gemini-3.1-flash-image-preview");
-		expect(request.extras.modelKey).toBeUndefined();
+		expect(request.extras.modelKey).toBe("gpt-5.6-luna");
+		expect(request.extras.modelAlias).toBeUndefined();
 	});
 });

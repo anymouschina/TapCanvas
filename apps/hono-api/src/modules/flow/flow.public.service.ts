@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
 	PublicFlowCreateNodeSchema,
+	PublicFlowTaskNodeDataSchema,
 	type PublicFlowGraph,
 	type PublicFlowPatchRequestDto,
 } from "./flow.public.schemas";
@@ -10,6 +11,7 @@ import {
 	listPublicFlowNodeHandles,
 } from "./flow.node-protocol";
 import { autoWireReferenceEdges } from "./flow.reference-autowire";
+import { finalizeStoryboardAdventureContracts } from "./flow.storyboard-adventure-contract";
 import { AppError } from "../../middleware/error";
 
 type NodeLike = Record<string, unknown> & { id?: unknown; data?: unknown };
@@ -25,6 +27,10 @@ type ApplyPatchResult = {
 		patchedNodes: number;
 		appendedArrays: number;
 	};
+	createdNodeIds: string[];
+	reusedNodeIds: string[];
+	createdEdgeIds: string[];
+	deletedEdgeIds: string[];
 };
 
 const GROUP_PADDING = 8;
@@ -129,6 +135,12 @@ function shouldExcludeNodeFromGroupArrange(node: NodeLike): boolean {
 	const data = asObject(node.data) || {};
 	const source = readId(data.source);
 	return Boolean(source) && LAYOUT_EXCLUDED_GROUP_SOURCES.has(source);
+}
+
+function isWorkflowGroup(node: NodeLike): boolean {
+	if (!isGroupNode(node)) return false;
+	const data = asObject(node.data) || {};
+	return readId(data.workflowKey).length > 0;
 }
 
 function rebuildNodeById(nodes: readonly NodeLike[]): Map<string, NodeLike> {
@@ -286,6 +298,7 @@ function updateSingleGroupFrame(options: {
 
 function compactSingleGroup(options: {
 	nodes: readonly NodeLike[];
+	edges: readonly unknown[];
 	groupId: string;
 }): NodeLike[] {
 	const group = options.nodes.find((node) => readId(node.id) === options.groupId);
@@ -299,21 +312,23 @@ function compactSingleGroup(options: {
 	const arrangeableChildren = allChildren.filter(
 		(node) => !shouldExcludeNodeFromGroupArrange(node),
 	);
+	const orderedArrangeableChildren = isWorkflowGroup(group)
+		? orderWorkflowChildrenByTopology(arrangeableChildren, options.edges)
+		: arrangeableChildren;
 
 	let nextNodes = [...options.nodes];
-	if (arrangeableChildren.length > 0) {
-		const colCount = Math.max(
-			1,
-			Math.ceil(Math.sqrt(arrangeableChildren.length)),
-		);
+	if (orderedArrangeableChildren.length > 0) {
+		const colCount = isWorkflowGroup(group)
+			? orderedArrangeableChildren.length
+			: Math.max(1, Math.ceil(Math.sqrt(orderedArrangeableChildren.length)));
 		const rowCount = Math.max(
 			1,
-			Math.ceil(arrangeableChildren.length / colCount),
+			Math.ceil(orderedArrangeableChildren.length / colCount),
 		);
 		const colWidths = Array.from({ length: colCount }, () => 0);
 		const rowHeights = Array.from({ length: rowCount }, () => 0);
 
-		arrangeableChildren.forEach((node, index) => {
+		orderedArrangeableChildren.forEach((node, index) => {
 			const row = Math.floor(index / colCount);
 			const col = index % colCount;
 			const size = readNodeSize(node);
@@ -337,7 +352,7 @@ function compactSingleGroup(options: {
 		}
 
 		const positionById = new Map<string, { x: number; y: number }>();
-		arrangeableChildren.forEach((node, index) => {
+		orderedArrangeableChildren.forEach((node, index) => {
 			const row = Math.floor(index / colCount);
 			const col = index % colCount;
 			positionById.set(readId(node.id), {
@@ -356,6 +371,60 @@ function compactSingleGroup(options: {
 		nodes: nextNodes,
 		groupId: options.groupId,
 	});
+}
+
+/**
+ * Workflow groups are execution graphs, so their visual order follows the DAG
+ * instead of insertion order. This prevents a late-added upstream node from
+ * being placed after delivery and drawing a misleading backward/looping edge.
+ */
+function orderWorkflowChildrenByTopology(
+	children: readonly NodeLike[],
+	edges: readonly unknown[],
+): NodeLike[] {
+	const childById = new Map(children.map((node) => [readId(node.id), node] as const));
+	const stableIndexById = new Map(children.map((node, index) => [readId(node.id), index] as const));
+	const compareReady = (left: NodeLike, right: NodeLike): number => (
+		(stableIndexById.get(readId(left.id)) ?? Number.MAX_SAFE_INTEGER)
+		- (stableIndexById.get(readId(right.id)) ?? Number.MAX_SAFE_INTEGER)
+		|| readId(left.id).localeCompare(readId(right.id))
+	);
+	const indegree = new Map([...childById.keys()].map((id) => [id, 0] as const));
+	const outgoing = new Map<string, Set<string>>();
+	for (const rawEdge of edges) {
+		const edge = asObject(rawEdge) as EdgeLike | null;
+		const source = readId(edge?.source);
+		const target = readId(edge?.target);
+		if (!source || !target || source === target || !childById.has(source) || !childById.has(target)) continue;
+		const targets = outgoing.get(source) ?? new Set<string>();
+		if (targets.has(target)) continue;
+		targets.add(target);
+		outgoing.set(source, targets);
+		indegree.set(target, (indegree.get(target) ?? 0) + 1);
+	}
+
+	const ready = children
+		.filter((node) => (indegree.get(readId(node.id)) ?? 0) === 0)
+		.sort(compareReady);
+	const ordered: NodeLike[] = [];
+	while (ready.length > 0) {
+		const node = ready.shift();
+		if (!node) break;
+		ordered.push(node);
+		for (const targetId of outgoing.get(readId(node.id)) ?? []) {
+			const nextIndegree = (indegree.get(targetId) ?? 0) - 1;
+			indegree.set(targetId, nextIndegree);
+			const target = childById.get(targetId);
+			if (nextIndegree === 0 && target) {
+				ready.push(target);
+				ready.sort(compareReady);
+			}
+		}
+	}
+
+	return ordered.length === children.length
+		? ordered
+		: [...children];
 }
 
 function collectAffectedGroupIds(options: {
@@ -513,14 +582,16 @@ function assertValidEdgeHandle(options: {
 	const handleSet = direction === "source" ? knownHandles.sources : knownHandles.targets;
 	if (handleSet.has(handleId)) return;
 	const side = direction === "source" ? "sourceHandle" : "targetHandle";
-	throw new AppError(`createEdges ${side} 非法: ${handleId}`, {
+	const allowed = listPublicFlowNodeHandles(node, direction);
+	const allowedStr = allowed.length ? allowed.join(", ") : "（此节点无合法 handle）";
+	throw new AppError(`createEdges ${side} 非法: ${handleId}，节点 ${nodeId} 允许的 ${side}: ${allowedStr}`, {
 		status: 400,
 		code: "flow_patch_invalid_handle",
 		details: {
 			nodeId,
 			side,
 			handleId,
-			allowedHandles: listPublicFlowNodeHandles(node, direction),
+			allowedHandles: allowed,
 		},
 	});
 }
@@ -544,6 +615,43 @@ function ensureNodeDataObject(node: NodeLike): Record<string, unknown> {
 	return data ? data : {};
 }
 
+/**
+ * A composition node is a durable projection of one video run, not an ad-hoc canvas node.
+ * Its identity is fully declared by structured fields, so a repeated create can safely become
+ * an update without broadening the behavior of ordinary createNodes writes.
+ */
+function isSameCanonicalComposeNode(options: {
+	id: string;
+	existing: NodeLike;
+	incoming: NodeLike;
+}): boolean {
+	const existingData = ensureNodeDataObject(options.existing);
+	const incomingData = ensureNodeDataObject(options.incoming);
+	const existingRunId = readCanonicalComposeRunId(existingData);
+	const incomingRunId = readCanonicalComposeRunId(incomingData);
+	return (
+		options.existing.type === "taskNode" &&
+		options.incoming.type === "taskNode" &&
+		existingData.kind === "composeVideo" &&
+		incomingData.kind === "composeVideo" &&
+		existingRunId.length > 0 &&
+		existingRunId === incomingRunId &&
+		options.id === `film-${incomingRunId}`
+	);
+}
+
+function readCanonicalComposeRunId(data: Record<string, unknown>): string {
+	const directRunId = readId(data.clipRunId);
+	if (directRunId) return directRunId;
+	const productionMetadata = asObject(data.productionMetadata);
+	return readId(productionMetadata?.runId);
+}
+
+function isIdenticalExistingEdge(options: { existing: EdgeLike; incoming: EdgeLike }): boolean {
+	const fields: Array<keyof EdgeLike> = ["source", "target", "sourceHandle", "targetHandle", "type", "label", "data"];
+	return fields.every((field) => stableJson(options.existing[field]) === stableJson(options.incoming[field]));
+}
+
 function validateCreateNode(raw: unknown): NodeLike {
 	const parsed = PublicFlowCreateNodeSchema.safeParse(raw);
 	if (!parsed.success) {
@@ -562,13 +670,35 @@ function validateCreateNode(raw: unknown): NodeLike {
 	return parsed.data as NodeLike;
 }
 
+function assertShotTableNodeContract(node: NodeLike): void {
+	const nodeId = readId(node.id);
+	const data = ensureNodeDataObject(node);
+	if (data.kind !== "shotTable") return;
+	const parsed = PublicFlowTaskNodeDataSchema.safeParse(data);
+	if (parsed.success) return;
+	throw new AppError("分镜表节点缺少可渲染的结构化 shotTable 数据", {
+		status: 400,
+		code: "invalid_shot_table_node_data",
+		details: {
+			nodeId: nodeId || null,
+			issues: parsed.error.issues.map((issue) => ({
+				path: issue.path,
+				message: issue.message,
+			})),
+			requiredAction:
+				"在同一次 tapcanvas_flow_patch 修复链中提供 data.shotTable 对象；content、prompt 或 Markdown 表格不能替代结构化分镜表。",
+		},
+	});
+}
+
 function mergeNodeData(options: {
 	existing: Record<string, unknown>;
 	patch: Record<string, unknown>;
 	allowOverwrite: boolean;
 	nodeId: string;
+	recoveryArgs: PublicFlowPatchRequestDto;
 }): Record<string, unknown> {
-	const { existing, patch, allowOverwrite, nodeId } = options;
+	const { existing, patch, allowOverwrite, nodeId, recoveryArgs } = options;
 	const next: Record<string, unknown> = { ...existing };
 
 	const conflicts: string[] = [];
@@ -582,11 +712,39 @@ function mergeNodeData(options: {
 	}
 
 	if (conflicts.length) {
-		throw new AppError(`patchNodeData 会覆盖既有字段: ${conflicts.join(", ")}`, {
-			status: 409,
-			code: "flow_patch_conflict",
-			details: { nodeId, keys: conflicts },
-		});
+		const immutableArgs = Object.fromEntries(
+			Object.entries(recoveryArgs).filter(([, value]) => typeof value !== "undefined"),
+		) as PublicFlowPatchRequestDto;
+		const exactRetryArgs: PublicFlowPatchRequestDto = {
+			...immutableArgs,
+			allowOverwrite: true,
+		};
+		throw new AppError(
+			`patchNodeData 会覆盖既有字段: ${conflicts.join(", ")}。若本次写入本就要补齐或更新这些字段，请按 recovery 合同原样重试`,
+			{
+				status: 409,
+				code: "flow_patch_conflict",
+				details: {
+					nodeId,
+					keys: conflicts,
+					hint: "resubmit the exact recovery.exactRetryArgs; no additional user confirmation is required",
+					recovery: {
+						allowed: true,
+						retryKey: `tapcanvas_flow_patch:${nodeId}:${conflicts.join(",")}`,
+						retryToolName: "tapcanvas_flow_patch",
+						maxAttempts: 1,
+						immutableArgs,
+						// The source call is verified against immutableArgs first. The recovery turn
+						// must then equal this complete request, so it cannot change node data, add
+						// operations, or broaden the write scope while enabling the intended update.
+						exactRetryArgs,
+						requiredActions: [
+							"使用 exactRetryArgs 中的完整参数原样重调 tapcanvas_flow_patch；不得修改、增加或删除任何其他操作。",
+						],
+					},
+				},
+			},
+		);
 	}
 
 	return next;
@@ -608,10 +766,50 @@ function appendNodeArray(options: {
 
 	const data = ensureNodeDataObject(node);
 	const current = (data as Record<string, unknown>)[key];
+	const sameSbaSelectionEvent = (left: unknown, right: unknown): boolean => {
+		const leftEvent = asObject(left);
+		const rightEvent = asObject(right);
+		if (!leftEvent || !rightEvent) return false;
+		return [
+			"version",
+			"eventId",
+			"branchNodeId",
+			"parentNodeId",
+			"sbaPath",
+			"basisFingerprint",
+			"selectedAt",
+			"source",
+		].every((field) => leftEvent[field] === rightEvent[field]);
+	};
+	const appendItems = (existingItems: readonly unknown[]): unknown[] => {
+		if (key !== "sbaSelectionEvents") return [...items];
+		const eventById = new Map<string, unknown>();
+		for (const existingItem of existingItems) {
+			const eventId = readId(asObject(existingItem)?.eventId);
+			if (eventId) eventById.set(eventId, existingItem);
+		}
+		const pending: unknown[] = [];
+		for (const item of items) {
+			const eventId = readId(asObject(item)?.eventId);
+			const existingItem = eventId ? eventById.get(eventId) : undefined;
+			if (existingItem !== undefined) {
+				if (sameSbaSelectionEvent(existingItem, item)) continue;
+				throw new AppError(`sbaSelectionEvents.eventId 已存在但内容不同: ${eventId}`, {
+					status: 409,
+					code: "flow_patch_conflict",
+					details: { nodeId: readId(node.id), key, eventId },
+				});
+			}
+			if (eventId) eventById.set(eventId, item);
+			pending.push(item);
+		}
+		return pending;
+	};
 	if (typeof current === "undefined" || current === null) {
+		const pending = appendItems([]);
 		return {
-			nextNode: { ...node, data: { ...data, [key]: [...items] } },
-			appended: items.length,
+			nextNode: { ...node, data: { ...data, [key]: pending } },
+			appended: pending.length,
 		};
 	}
 	if (!Array.isArray(current)) {
@@ -621,9 +819,12 @@ function appendNodeArray(options: {
 			details: { nodeId: readId(node.id), key, currentType: typeof current },
 		});
 	}
+	const pending = appendItems(current);
 	return {
-		nextNode: { ...node, data: { ...data, [key]: [...current, ...items] } },
-		appended: items.length,
+		nextNode: pending.length > 0
+			? { ...node, data: { ...data, [key]: [...current, ...pending] } }
+			: node,
+		appended: pending.length,
 	};
 }
 
@@ -655,6 +856,9 @@ export function applyPublicFlowGraphPatch(options: {
 	let createdNodeWithoutExplicitId = false;
 	const autoWireTargetNodeIds = new Set<string>();
 	const createdNodeIds: string[] = [];
+	const reusedNodeIds: string[] = [];
+	const createdEdgeIds: string[] = [];
+	const deletedEdgeIds = new Set<string>();
 
 	const deleteEdgeIdSet = new Set(
 		(options.patch.deleteEdgeIds || []).map((id) => readId(id)).filter(Boolean),
@@ -680,6 +884,7 @@ export function applyPublicFlowGraphPatch(options: {
 			const edgeId = readId(edge?.id);
 			if (edgeId && deleteEdgeIdSet.has(edgeId)) {
 				deletedEdges += 1;
+				deletedEdgeIds.add(edgeId);
 				continue;
 			}
 			retainedEdges.push(raw);
@@ -722,6 +927,7 @@ export function applyPublicFlowGraphPatch(options: {
 				if (!edgeId || !deleteEdgeIdSet.has(edgeId)) {
 					deletedEdges += 1;
 				}
+				if (edgeId) deletedEdgeIds.add(edgeId);
 				continue;
 			}
 			retainedEdges.push(raw);
@@ -730,19 +936,39 @@ export function applyPublicFlowGraphPatch(options: {
 		edgeList.push(...retainedEdges);
 	}
 
-	const normalizedCreateNodes = (options.patch.createNodes || []).map((raw) => {
+	const normalizedCreateNodes: NodeLike[] = [];
+	for (const raw of options.patch.createNodes || []) {
 		const obj = validateCreateNode(raw);
 		if (!readId(obj.id)) createdNodeWithoutExplicitId = true;
 		const id = ensureNodeId(obj);
-		if (nodeById.has(id)) {
+		const existing = nodeById.get(id);
+		if (existing && !isSameCanonicalComposeNode({ id, existing, incoming: obj })) {
 			throw new AppError(`createNodes 节点已存在: ${id}`, {
 				status: 409,
 				code: "flow_patch_conflict",
 				details: { nodeId: id },
 			});
 		}
-		return { ...obj, id };
-	});
+		if (existing) {
+			const next = {
+				...existing,
+				data: mergeNodeData({
+					existing: ensureNodeDataObject(existing),
+					patch: ensureNodeDataObject(obj),
+					allowOverwrite: true,
+					nodeId: id,
+					recoveryArgs: options.patch,
+				}),
+			};
+			nodeById.set(id, next);
+			nodeList = nodeList.map((node) => (readId(node.id) === id ? next : node));
+			patchedNodes += 1;
+			reusedNodeIds.push(id);
+			autoWireTargetNodeIds.add(id);
+			continue;
+		}
+		normalizedCreateNodes.push({ ...obj, id });
+	}
 
 	for (const obj of orderNodesParentFirst(normalizedCreateNodes)) {
 		const id = readId(obj.id);
@@ -771,8 +997,13 @@ export function applyPublicFlowGraphPatch(options: {
 		const merged = mergeNodeData({
 			existing: prevData,
 			patch: item.data,
-			allowOverwrite,
+			// 顶层 allowOverwrite 兜全量；条目级 allowOverwrite 让 agent 能精准只覆盖某一条
+			// （错误提示就是这么指引的），二者任一为真即放行。
+			allowOverwrite:
+				allowOverwrite ||
+				(item as { allowOverwrite?: boolean }).allowOverwrite === true,
 			nodeId: id,
+			recoveryArgs: options.patch,
 		});
 		const next = { ...existing, data: merged };
 		nodeById.set(id, next);
@@ -795,32 +1026,22 @@ export function applyPublicFlowGraphPatch(options: {
 		appendedArrays += appended.appended;
 	}
 
-	if (createdNodeIds.length > 0) {
-		nodeList = orderNodesParentFirst(
-			nodeList.map((node) => {
-				const id = readId(node.id);
-				return id ? nodeById.get(id) || node : node;
-			}),
-		);
-		let workingNodeById = rebuildNodeById(nodeList);
-		const affectedGroupIds = sortGroupIdsByDepthDesc(
-			collectAffectedGroupIds({
-				createdNodeIds,
-				nodeById: workingNodeById,
-			}),
-			workingNodeById,
-		);
-		for (const groupId of affectedGroupIds) {
-			nodeList = compactSingleGroup({
-				nodes: nodeList,
-				groupId,
-			});
-			workingNodeById = rebuildNodeById(nodeList);
-		}
-		nodeById.clear();
-		for (const [id, node] of workingNodeById.entries()) {
-			nodeById.set(id, node);
-		}
+	const contractTouchedNodeIds = new Set<string>([
+		...createdNodeIds,
+		...reusedNodeIds,
+		...(options.patch.patchNodeData || []).map((item) => readId(item.id)).filter(Boolean),
+		...(options.patch.appendNodeArrays || []).map((item) => readId(item.id)).filter(Boolean),
+	]);
+	for (const nodeId of contractTouchedNodeIds) {
+		const node = nodeById.get(nodeId);
+		if (node) assertShotTableNodeContract(node);
+	}
+
+	const layoutAffectedNodeIds = new Set(createdNodeIds);
+	for (const item of options.patch.patchNodeData || []) {
+		const id = readId(item.id);
+		const node = id ? nodeById.get(id) : null;
+		if (id && isGroupNode(node)) layoutAffectedNodeIds.add(id);
 	}
 
 	const finalNodeIds = new Set(nodeById.keys());
@@ -907,6 +1128,10 @@ export function applyPublicFlowGraphPatch(options: {
 		}
 		const id = ensureEdgeId(obj);
 		if (edgeById.has(id)) {
+			const existing = edgeList
+				.map((raw) => asObject(raw) as EdgeLike | null)
+				.find((edge): edge is EdgeLike => readId(edge?.id) === id);
+			if (existing && isIdenticalExistingEdge({ existing, incoming: obj })) continue;
 			throw new AppError(`createEdges 边已存在: ${id}`, {
 				status: 409,
 				code: "flow_patch_conflict",
@@ -924,7 +1149,14 @@ export function applyPublicFlowGraphPatch(options: {
 		edgeById.add(id);
 		edgeList.push(next);
 		createdEdges += 1;
+		createdEdgeIds.push(id);
 	}
+
+	finalizeStoryboardAdventureContracts({
+		nodeById,
+		edges: edgeList,
+		touchedNodeIds: contractTouchedNodeIds,
+	});
 
 	const autoWired = autoWireReferenceEdges({
 		nodeById,
@@ -932,6 +1164,35 @@ export function applyPublicFlowGraphPatch(options: {
 		targetNodeIds: autoWireTargetNodeIds,
 	});
 	createdEdges += autoWired.createdEdges;
+
+	if (layoutAffectedNodeIds.size > 0) {
+		nodeList = orderNodesParentFirst(
+			nodeList.map((node) => {
+				const id = readId(node.id);
+				return id ? nodeById.get(id) || node : node;
+			}),
+		);
+		let workingNodeById = rebuildNodeById(nodeList);
+		const affectedGroupIds = sortGroupIdsByDepthDesc(
+			collectAffectedGroupIds({
+				createdNodeIds: Array.from(layoutAffectedNodeIds),
+				nodeById: workingNodeById,
+			}),
+			workingNodeById,
+		);
+		for (const groupId of affectedGroupIds) {
+			nodeList = compactSingleGroup({
+				nodes: nodeList,
+				edges: edgeList,
+				groupId,
+			});
+			workingNodeById = rebuildNodeById(nodeList);
+		}
+		nodeById.clear();
+		for (const [id, node] of workingNodeById.entries()) {
+			nodeById.set(id, node);
+		}
+	}
 
 	const finalNodes = orderNodesParentFirst(
 		nodeList.map((node) => {
@@ -941,12 +1202,59 @@ export function applyPublicFlowGraphPatch(options: {
 		}),
 	);
 
+	const currentExtra = (typeof current === "object" && current !== null && !Array.isArray(current))
+		? Object.fromEntries(
+			Object.entries(current as Record<string, unknown>).filter(
+				([k]) => k !== "nodes" && k !== "edges" && k !== "viewport",
+			),
+		)
+		: {};
 	return {
 		data: {
+			...currentExtra,
 			nodes: finalNodes,
 			edges: edgeList,
 			...(typeof current.viewport === "undefined" ? {} : { viewport: current.viewport }),
 		},
 		stats: { deletedNodes, deletedEdges, createdNodes, createdEdges, patchedNodes, appendedArrays },
+		createdNodeIds,
+		reusedNodeIds,
+		createdEdgeIds,
+		deletedEdgeIds: [...deletedEdgeIds],
 	};
+}
+
+/**
+ * 从 applyPublicFlowGraphPatch 的结果构造画布 SSE 同步补丁（upsertNodes/removeNodeIds/...）。
+ * 关键约束：createNodes/createEdges 的 id 常由服务端生成（agent 请求普遍不带 id），
+ * 必须用 applied.createdNodeIds/createdEdgeIds 反查最终数据；按请求里的 id 反查会恒空，
+ * 导致写库成功但浏览器收不到任何节点变更（须手动刷新）。
+ * `data` 可传持久化前经 sanitize/schema 校验后的图数据（与落库内容一致），缺省用 applied.data。
+ */
+export function buildCanvasSyncPatch(options: {
+	applied: ApplyPatchResult;
+	patch: PublicFlowPatchRequestDto;
+	data?: PublicFlowGraph;
+}): Record<string, unknown> | null {
+	const { applied, patch } = options;
+	const graph = options.data ?? applied.data;
+	const nodeMap = new Map(
+		(graph.nodes ?? []).map((n) => [String((n as NodeLike).id ?? ""), n]),
+	);
+	const edgeMap = new Map(
+		(graph.edges ?? []).map((e) => [String((e as EdgeLike).id ?? ""), e]),
+	);
+	const upsertNodes = [
+		...applied.createdNodeIds.map((id) => nodeMap.get(id)),
+		...applied.reusedNodeIds.map((id) => nodeMap.get(id)),
+		...(patch.patchNodeData ?? []).map((p) => nodeMap.get(String(p.id ?? ""))),
+		...(patch.appendNodeArrays ?? []).map((p) => nodeMap.get(String(p.id ?? ""))),
+	].filter(Boolean);
+	const upsertEdges = applied.createdEdgeIds.map((id) => edgeMap.get(id)).filter(Boolean);
+	const syncPatch: Record<string, unknown> = {};
+	if (upsertNodes.length) syncPatch.upsertNodes = upsertNodes;
+	if (patch.deleteNodeIds?.length) syncPatch.removeNodeIds = patch.deleteNodeIds;
+	if (upsertEdges.length) syncPatch.upsertEdges = upsertEdges;
+	if (applied.deletedEdgeIds.length) syncPatch.removeEdgeIds = applied.deletedEdgeIds;
+	return Object.keys(syncPatch).length ? syncPatch : null;
 }

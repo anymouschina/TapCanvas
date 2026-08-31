@@ -300,6 +300,44 @@ export function deepClone(obj: any, visited = new WeakSet()): any {
   return obj;
 }
 
+function isRemoteUrl(url: unknown): boolean {
+  return typeof url === 'string' && /^https?:\/\//i.test(url.trim())
+}
+
+/**
+ * 过滤掉不适合持久化的节点：
+ * 1. 仍在生成中（running / queued）的节点——保存后再打开任务无法续上
+ * 2. image / video 节点没有远程 URL——没有资产等同于空壳，保存意义为零
+ *
+ * 同时返回过滤后兼容的 edges（删除悬空边）。
+ */
+export function filterNodesForPersistence(
+  nodes: Node[],
+  edges: Edge[],
+): { nodes: Node[]; edges: Edge[] } {
+  const keptIds = new Set<string>()
+
+  for (const node of nodes) {
+    const data = (node.data || {}) as Record<string, unknown>
+    const status = data.status as string | undefined
+    const kind   = data.kind   as string | undefined
+
+    // 生成中的节点不保存
+    if (status === 'running' || status === 'queued') continue
+
+    // image / video 节点必须有远程 URL 才保存
+    if (kind === 'image' && !isRemoteUrl(data.imageUrl)) continue
+    if (kind === 'video' && !isRemoteUrl(data.videoUrl)) continue
+
+    keptIds.add(node.id)
+  }
+
+  const keptNodes = nodes.filter(n => keptIds.has(n.id))
+  const keptEdges = edges.filter(e => keptIds.has(e.source) && keptIds.has(e.target))
+
+  return { nodes: keptNodes, edges: keptEdges }
+}
+
 /**
  * 清理节点数据，移除不必要的属性
  * @param nodes 节点数组
@@ -310,21 +348,12 @@ export function sanitizeNodes(nodes: Node[]): Node[] {
     // Never export `dragHandle`: it can make imported nodes appear "undraggable".
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { dragHandle: _dragHandle, ...rest } = (node && typeof node === 'object') ? node : { ...node }
+    // Only strip true runtime-only fields; preserve all user content.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { progress: _progress, status: _status, logs: _logs, ...nodeData } = node.data || {}
     return {
       ...rest,
-      data: {
-        id: node.data.id,
-        label: node.data.label,
-        kind: node.data.kind,
-        config: node.data.config || {},
-        experimentGroupId: node.data.experimentGroupId,
-        workflowStage: node.data.workflowStage,
-        iterationKey: node.data.iterationKey,
-        // 移除运行时状态
-        progress: undefined,
-        status: undefined,
-        logs: undefined,
-      },
+      data: nodeData,
       // 移除React Flow的内部状态
       selected: false,
       dragging: false,

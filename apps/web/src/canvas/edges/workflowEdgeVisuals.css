@@ -1,0 +1,50 @@
+.typed-edge-path--workflow,
+.orth-typed-edge-path--workflow {
+  transition: stroke 140ms ease, stroke-width 140ms ease, opacity 140ms ease;
+}
+
+.orth-typed-edge-path--reference {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 46%, transparent));
+}
+
+.react-flow__edge:hover .typed-edge-path--workflow,
+.react-flow__edge:hover .orth-typed-edge-path--workflow,
+.react-flow__edge.selected .typed-edge-path--workflow,
+.react-flow__edge.selected .orth-typed-edge-path--workflow {
+  stroke-width: 1.8px !important;
+}
+
+.typed-edge-path--running,
+.typed-edge-path--failed,
+.orth-typed-edge-path--running,
+.orth-typed-edge-path--failed,
+.orth-typed-edge-path--reference-actual,
+.orth-typed-edge-path--reference-running {
+  stroke-width: 2.4px !important;
+}
+
+.typed-edge-path--succeeded,
+.orth-typed-edge-path--succeeded {
+  stroke-width: 2.2px !important;
+}
+
+.typed-edge-path--running,
+.orth-typed-edge-path--running,
+.orth-typed-edge-path--reference-running {
+  animation: tc-workflow-edge-running 900ms linear infinite;
+}
+
+@keyframes tc-workflow-edge-running {
+  to {
+    stroke-dashoffset: -13;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typed-edge-path--workflow,
+  .orth-typed-edge-path--workflow,
+  .orth-typed-edge-path--reference-running {
+    transition: none;
+    animation: none;
+  }
+}

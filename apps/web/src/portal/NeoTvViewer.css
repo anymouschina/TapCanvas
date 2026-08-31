@@ -1,0 +1,581 @@
+.neo-tv-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #fff;
+  background: #000;
+  animation: neo-tv-viewer-in 240ms ease both;
+}
+
+.neo-tv-viewer__background {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.neo-tv-viewer__background-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  filter: blur(34px) saturate(1.16) brightness(0.62);
+  transform: scale(1.1);
+}
+
+.neo-tv-viewer__topbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent);
+  transition: opacity 220ms ease;
+}
+
+.neo-tv-viewer__back,
+.neo-tv-viewer__playing-process {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.9);
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 200ms ease, background 200ms ease, transform 140ms ease;
+}
+
+.neo-tv-viewer__back:hover,
+.neo-tv-viewer__playing-process:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.neo-tv-viewer__back:active,
+.neo-tv-viewer__playing-process:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.neo-tv-viewer__identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.neo-tv-viewer__avatar {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.neo-tv-viewer__avatar-image,
+.neo-tv-viewer__avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+}
+
+.neo-tv-viewer__author {
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.neo-tv-viewer__title {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.neo-tv-viewer__topbar-spacer {
+  width: 84px;
+}
+
+.neo-tv-viewer__playing-process.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.neo-tv-viewer__stage {
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 0;
+}
+
+.neo-tv-viewer__frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 0;
+  background: #000;
+  box-shadow: none;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.neo-tv-viewer__frame.is-aspect-ready {
+  opacity: 1;
+}
+
+.neo-tv-viewer.is-playing .neo-tv-viewer__frame {
+  opacity: 1;
+}
+
+.neo-tv-viewer__poster,
+.neo-tv-viewer__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: #000;
+}
+
+.neo-tv-viewer__poster {
+  z-index: 2;
+  opacity: 1;
+  transition: opacity 220ms ease;
+}
+
+.neo-tv-viewer__poster.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.neo-tv-viewer__video {
+  z-index: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 220ms ease;
+}
+
+.neo-tv-viewer__video.is-ready {
+  opacity: 1;
+}
+
+.neo-tv-viewer__error {
+  position: relative;
+  z-index: 4;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: #ffb0b0;
+  background: rgba(0, 0, 0, 0.76);
+  font-size: 13px;
+}
+
+.neo-tv-viewer__actions {
+  position: absolute;
+  bottom: 140px;
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+}
+
+.neo-tv-viewer__action {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 200ms ease, background 200ms ease, transform 160ms ease;
+}
+
+.neo-tv-viewer__action--primary {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.neo-tv-viewer__action:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.24);
+  transform: translateY(-1px);
+}
+
+.neo-tv-viewer__action:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.neo-tv-viewer__action.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.neo-tv-viewer__icon-action {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  cursor: pointer;
+  transition: color 200ms ease, background 200ms ease, transform 160ms ease;
+}
+
+.neo-tv-viewer__icon-action:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.08);
+}
+
+.neo-tv-viewer__icon-action:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
+.neo-tv-viewer__icon-action.is-active {
+  color: #f87171;
+  background: transparent;
+  filter: drop-shadow(0 0 4px rgba(248, 113, 113, 0.35));
+}
+
+.neo-tv-viewer__icon-action:disabled {
+  cursor: wait;
+  opacity: 0.4;
+}
+
+.neo-tv-viewer__carousel {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  height: 140px;
+  display: flex;
+  align-items: center;
+  padding: 18px 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.4) 70%, transparent);
+}
+
+.neo-tv-viewer__carousel-arrow,
+.neo-tv-viewer__carousel-arrow-spacer {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  margin: 0 12px;
+}
+
+.neo-tv-viewer__carousel-arrow {
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: color 200ms ease, background 200ms ease, transform 140ms ease;
+}
+
+.neo-tv-viewer__carousel-arrow:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.neo-tv-viewer__carousel-arrow:active {
+  transform: scale(0.9);
+}
+
+.neo-tv-viewer__carousel-track {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 1;
+  overflow-x: auto;
+  padding: 4px 10px;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+
+.neo-tv-viewer__carousel-track::-webkit-scrollbar {
+  display: none;
+}
+
+.neo-tv-viewer__carousel-item {
+  min-width: 40px;
+  height: 104px;
+  display: flex;
+  align-items: flex-end;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.neo-tv-viewer__carousel-item:first-child {
+  margin-left: auto;
+}
+
+.neo-tv-viewer__carousel-item:last-child {
+  margin-right: auto;
+}
+
+.neo-tv-viewer__carousel-thumb {
+  position: relative;
+  height: 58px;
+  display: block;
+  overflow: hidden;
+  border-radius: 8px;
+  transform-origin: center bottom;
+  transition: transform 220ms cubic-bezier(0.2, 0, 0, 1), box-shadow 220ms ease;
+}
+
+.neo-tv-viewer__carousel-item:hover,
+.neo-tv-viewer__carousel-item.is-active {
+  z-index: 2;
+}
+
+.neo-tv-viewer__carousel-item:hover .neo-tv-viewer__carousel-thumb,
+.neo-tv-viewer__carousel-item.is-active .neo-tv-viewer__carousel-thumb {
+  transform: scale(1.72);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85), 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.neo-tv-viewer__carousel-image,
+.neo-tv-viewer__carousel-placeholder {
+  width: auto;
+  min-width: 92px;
+  height: 58px;
+  display: block;
+  object-fit: cover;
+  background: #181818;
+}
+
+.neo-tv-viewer__carousel-title {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  padding: 3px 4px;
+  border-radius: 0 0 8px 8px;
+  color: rgba(255, 255, 255, 0.9);
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.82), transparent);
+  font-size: 7px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.neo-tv-viewer__carousel-item:hover .neo-tv-viewer__carousel-title,
+.neo-tv-viewer__carousel-item.is-active .neo-tv-viewer__carousel-title {
+  opacity: 1;
+}
+
+.neo-tv-viewer__controls {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 24px 16px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.76), transparent);
+  transition: opacity 220ms ease;
+}
+
+.neo-tv-viewer.is-playing.is-chrome-hidden .neo-tv-viewer__topbar,
+.neo-tv-viewer.is-playing.is-chrome-hidden .neo-tv-viewer__controls {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.neo-tv-viewer.is-playing.is-chrome-hidden .neo-tv-viewer__video {
+  cursor: none;
+}
+
+.neo-tv-viewer__control {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  color: rgba(255, 255, 255, 0.86);
+  background: transparent;
+  cursor: pointer;
+  transition: color 160ms ease, transform 140ms ease;
+}
+
+.neo-tv-viewer__control:hover {
+  color: #fff;
+  transform: scale(1.1);
+}
+
+.neo-tv-viewer__control:active {
+  transform: scale(0.9);
+}
+
+.neo-tv-viewer__time {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: "SF Pro Display", Inter, monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.neo-tv-viewer__progress {
+  position: relative;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  cursor: pointer;
+}
+
+.neo-tv-viewer__progress-track {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+}
+
+.neo-tv-viewer__progress-fill {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: #fff;
+  transform-origin: left center;
+}
+
+.neo-tv-viewer__progress-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+@keyframes neo-tv-viewer-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (max-width: 768px) {
+  .neo-tv-viewer__topbar {
+    padding: 10px 12px;
+  }
+
+  .neo-tv-viewer__identity,
+  .neo-tv-viewer__topbar-spacer {
+    display: none;
+  }
+
+  .neo-tv-viewer__stage {
+    padding: 0;
+  }
+
+  .neo-tv-viewer__frame {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+  }
+
+  .neo-tv-viewer__actions {
+    bottom: 122px;
+    width: calc(100% - 24px);
+    justify-content: center;
+  }
+
+  .neo-tv-viewer__action {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .neo-tv-viewer__carousel {
+    height: 122px;
+  }
+
+  .neo-tv-viewer__carousel-arrow {
+    display: none;
+  }
+
+  .neo-tv-viewer__carousel-item:first-child {
+    margin-left: 8px;
+  }
+
+  .neo-tv-viewer__carousel-item:last-child {
+    margin-right: 8px;
+  }
+
+  .neo-tv-viewer__carousel-item:hover .neo-tv-viewer__carousel-thumb,
+  .neo-tv-viewer__carousel-item.is-active .neo-tv-viewer__carousel-thumb {
+    transform: scale(1.35);
+  }
+
+  .neo-tv-viewer__controls {
+    gap: 8px;
+    padding: 24px 12px 10px;
+  }
+
+  .neo-tv-viewer__time {
+    display: none;
+  }
+}

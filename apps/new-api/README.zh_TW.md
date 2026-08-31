@@ -189,12 +189,12 @@ docker run --name new-api -d --restart always \
 | 📈 數據看板 | 視覺化控制檯與統計分析 |
 | 🔒 權限管理 | 令牌分組、模型限制、用戶管理 |
 
-### 💰 支付與計費
+### 📊 額度計量
 
-- ✅ 在線儲值（易支付、Stripe）
 - ✅ 模型按次數收費
 - ✅ 快取計費支援（OpenAI、Azure、DeepSeek、Claude、Qwen等所有支援的模型）
 - ✅ 靈活的計費策略配置
+- ✅ TapCanvas 社群部署保留兌換碼與管理員額度分配，不包含線上支付
 
 ### 🔐 授權與安全
 

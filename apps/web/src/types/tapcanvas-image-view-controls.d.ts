@@ -47,6 +47,8 @@ declare module '@tapcanvas/image-view-controls' {
     azimuthDeg: number
     elevationDeg: number
     intensity: number
+    /** 硬↔柔光质感：0=硬光（锐利阴影），100=柔光（弥散无硬边）。对标小云雀 2.0 光影面板「质感」维度。 */
+    softness: number
     colorHex: string
   }
 

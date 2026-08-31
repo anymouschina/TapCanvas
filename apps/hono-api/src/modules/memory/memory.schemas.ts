@@ -64,6 +64,15 @@ export const MemoryProjectChatArtifactSessionsRequestSchema = z.object({
 	limitTurns: z.number().int().min(1).max(20).optional(),
 });
 
+export const MemoryProjectSessionsRequestSchema = z.object({
+	projectId: z.string().min(1).max(120),
+	flowId: z.string().min(1).max(120).optional(),
+	// 章节画布作用域：按 project:<pid>:chapter:<chapterId> 前缀列会话（优先于 flowId）。
+	chapterId: z.string().min(1).max(160).optional(),
+	limit: z.number().int().min(1).max(20).optional(),
+});
+export type MemoryProjectSessionsRequest = z.infer<typeof MemoryProjectSessionsRequestSchema>;
+
 export const MemorySearchScopeSchema = z.object({
 	scopeType: MemoryScopeTypeSchema,
 	scopeId: z.string().min(1).max(120),

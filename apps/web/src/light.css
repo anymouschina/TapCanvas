@@ -27,10 +27,7 @@
   --canvas-node-action-primary-hover-bg: #1d4ed8;
   --canvas-node-action-primary-text: #ffffff;
   --canvas-node-action-muted-text: #64748b;
-  --canvas-surface-bg:
-    radial-gradient(circle at 14% 12%, rgba(59, 130, 246, 0.08), transparent 34%),
-    radial-gradient(circle at 86% 0%, rgba(14, 165, 233, 0.06), transparent 30%),
-    linear-gradient(180deg, #f7f9ff 0%, #eef3ff 100%);
+  --canvas-surface-bg: linear-gradient(180deg, #f7f8fa 0%, #eff0f2 100%);
 
   --canvas-io-bg: rgba(248, 250, 255, 0.95);
   --canvas-io-border: rgba(148, 163, 184, 0.45);
@@ -60,6 +57,23 @@
   --tc-run-error-icon: #dc2626;
   --tc-run-info-bg: rgba(239, 246, 255, 0.96);
   --tc-run-info-border: rgba(59, 130, 246, 0.18);
+
+  --tc-asset-card-bg: #f1f5f9;
+  --tc-node-toolbar-bg: rgba(255, 255, 255, 0.97);
+  --tc-node-toolbar-border: rgba(15, 23, 42, 0.08);
+  --tc-node-toolbar-shadow: 0 22px 48px rgba(15, 23, 42, 0.12);
+  --tc-node-settings-dropdown-bg: rgba(255, 255, 255, 0.98);
+  --tc-node-settings-dropdown-border: rgba(15, 23, 42, 0.08);
+  --tc-node-ref-card-bg: rgba(15, 23, 42, 0.05);
+  --tc-node-ref-card-border: rgba(15, 23, 42, 0.12);
+  --tc-node-ref-img-bg: rgba(15, 23, 42, 0.06);
+  --tc-node-ref-badge-bg: rgba(255, 255, 255, 0.88);
+  --tc-node-ref-badge-color: rgba(15, 23, 42, 0.82);
+  --tc-node-ref-add-bg: rgba(15, 23, 42, 0.04);
+  --tc-node-ref-add-color: rgba(15, 23, 42, 0.55);
+  --tc-node-settings-trigger-bg: rgba(15, 23, 42, 0.04);
+  --tc-node-settings-trigger-border: rgba(15, 23, 42, 0.12);
+  --tc-node-settings-thumb-bg: rgba(15, 23, 42, 0.06);
 }
 
 :root[data-mantine-color-scheme="light"] .mantine-AppShell-main {
@@ -100,9 +114,23 @@
   background: transparent !important;
 }
 
-:root[data-mantine-color-scheme="light"] .mantine-Paper-root[data-with-border]:not(.template-panel-shell):not(.template-panel-card):not(.template-space):not(.template-detail) {
+:root[data-mantine-color-scheme="light"] .mantine-Paper-root:not(.template-panel-shell):not(.template-panel-card):not(.template-space):not(.template-detail):not(.tc-canvas__selection-action-bar-card) {
+  background: #ffffff !important;
+  color: var(--mantine-color-text) !important;
+}
+:root[data-mantine-color-scheme="light"] .mantine-Paper-root[data-with-border]:not(.template-panel-shell):not(.template-panel-card):not(.template-space):not(.template-detail):not(.tc-canvas__selection-action-bar-card) {
   border: none !important;
   box-shadow: 0 15px 40px rgba(15, 23, 42, 0.08);
+}
+
+/* Selection action bar toolbar stays dark in light mode (it's a floating overlay) */
+:root[data-mantine-color-scheme="light"] .tc-canvas__selection-action-bar-card {
+  background: rgba(28, 28, 30, 0.94) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #f5f5f7 !important;
+}
+:root[data-mantine-color-scheme="light"] .tc-canvas__selection-action-bar-card .mantine-Button-root {
+  color: #f5f5f7 !important;
 }
 
 :root[data-mantine-color-scheme="light"] .glass {
@@ -111,6 +139,10 @@
   box-shadow: 0 25px 60px rgba(15, 23, 42, 0.12);
   backdrop-filter: blur(10px) !important;
   -webkit-backdrop-filter: blur(10px) !important;
+}
+
+:root[data-mantine-color-scheme="light"] .mantine-Paper-root[data-with-border].workflow-history-panel-shell.glass {
+  background: #ffffff !important;
 }
 
 :root[data-mantine-color-scheme="light"] .panel-arrow {
@@ -138,27 +170,24 @@
 }
 
 :root[data-mantine-color-scheme="light"] .react-flow__minimap {
-  background: rgba(255, 255, 255, 0.9) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
   border: none !important;
-  box-shadow: 0 18px 30px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  border-radius: 14px;
+  overflow: hidden;
 }
 
 /* Canvas perf: backdrop blur is expensive while the graph is moving underneath */
-.tc-canvas[data-viewport-moving="true"] .glass,
 .tc-canvas[data-dragging="true"] .glass,
-.tc-canvas[data-viewport-moving="true"] .react-flow__controls,
 .tc-canvas[data-dragging="true"] .react-flow__controls {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-:root[data-mantine-color-scheme="light"] .react-flow__minimap-mask {
-  fill: rgba(59, 130, 246, 0.08) !important;
-}
-
 :root[data-mantine-color-scheme="light"] .react-flow__selection {
-  background: rgba(59, 130, 246, 0.2) !important;
-  border: none !important;
-  box-shadow: 0 12px 24px rgba(59, 130, 246, 0.15);
+  background: transparent !important;
+  border: 1.5px dashed rgba(37, 99, 235, 0.85) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
 }
 
 :root[data-mantine-color-scheme="light"] .react-flow__handle {
@@ -234,5 +263,5 @@
 
 [data-dragging="true"] .react-flow__node:not(.selected) {
   opacity: 0.45;
-  transition: opacity 0.12s ease;
+  transition: none;
 }

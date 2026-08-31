@@ -92,6 +92,7 @@ const EditUserModal = (props) => {
     email: '',
     quota: 0,
     quota_amount: 0,
+    price_ratio: 1,
     group: 'default',
     remark: '',
   });
@@ -410,6 +411,19 @@ const EditUserModal = (props) => {
                             readonly
                           />
                         </div>
+                      </Col>
+
+                      <Col span={24}>
+                        <Form.InputNumber
+                          field='price_ratio'
+                          label={t('价格折扣倍率')}
+                          extraText={t('真实扣减 = 原价 × 倍率。1 = 原价，0.8 = 打八折。真实生效。')}
+                          min={0.0001}
+                          step={0.1}
+                          precision={4}
+                          style={{ width: '100%' }}
+                          placeholder='1'
+                        />
                       </Col>
                     </Row>
                   </Card>

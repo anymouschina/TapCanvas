@@ -1,0 +1,145 @@
+.stats-users-tabs {
+  margin-top: 10px;
+}
+
+.stats-users-tabs .mantine-Tabs-list {
+  min-height: 32px;
+}
+
+.stats-users-tabs .mantine-Tabs-tab {
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-records {
+  min-width: 0;
+  padding-top: 10px;
+}
+
+.admin-records-filter {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.25fr) minmax(108px, .7fr) minmax(108px, .7fr) minmax(166px, .95fr) auto minmax(166px, .95fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.admin-records-filter--grants {
+  grid-template-columns: minmax(180px, 1.4fr) minmax(116px, .75fr) minmax(166px, 1fr) auto minmax(166px, 1fr) auto;
+}
+
+.admin-records-filter__keyword,
+.admin-records-filter__select,
+.admin-records-filter__date {
+  min-width: 0;
+}
+
+.admin-records-filter__range-separator {
+  white-space: nowrap;
+}
+
+.admin-records-table-wrap {
+  width: 100%;
+  min-width: 0;
+  max-height: clamp(280px, calc(100vh - 330px), 620px);
+  overflow: auto;
+}
+
+.admin-records-table {
+  min-width: 1010px;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.admin-records-table__head-cell {
+  height: 32px;
+  padding: 0 8px;
+  background: var(--mantine-color-body);
+  color: var(--mantine-color-dimmed);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.admin-records-table__head-cell--user { width: 150px; }
+.admin-records-table__head-cell--plan { width: 190px; }
+.admin-records-table__head-cell--order { width: 154px; }
+.admin-records-table__head-cell--number { width: 96px; text-align: right; }
+.admin-records-table__head-cell--status { width: 94px; }
+.admin-records-table__head-cell--time { width: 128px; }
+
+.admin-records-table__row {
+  height: 42px;
+}
+
+.admin-records-table__cell {
+  height: 42px;
+  padding: 3px 8px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.admin-records-table__cell--number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-records-table__primary,
+.admin-records-table__secondary,
+.admin-records-table__mono,
+.admin-records-table__time,
+.admin-records-table__amount {
+  max-width: 100%;
+  line-height: 16px;
+  letter-spacing: 0;
+}
+
+.admin-records-table__mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.admin-records-table__state-cell {
+  height: 180px;
+}
+
+.admin-records-footer {
+  min-height: 28px;
+}
+
+.admin-records-footer__summary {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+  .admin-records-filter,
+  .admin-records-filter--grants {
+    grid-template-columns: minmax(180px, 1fr) minmax(120px, .65fr) minmax(160px, .8fr) auto minmax(160px, .8fr) auto;
+  }
+
+  .admin-records-filter:not(.admin-records-filter--grants) .admin-records-filter__date:first-of-type {
+    grid-column: 1 / 3;
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-records-filter,
+  .admin-records-filter--grants {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .admin-records-filter__keyword {
+    flex: 1 1 100%;
+  }
+
+  .admin-records-filter__select,
+  .admin-records-filter__date {
+    flex: 1 1 150px;
+  }
+
+  .admin-records-filter__range-separator {
+    display: none;
+  }
+}

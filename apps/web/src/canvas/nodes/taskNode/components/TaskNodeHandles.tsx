@@ -3,7 +3,7 @@ import { Handle, Position } from '@xyflow/react'
 import { getHandleTypeLabel } from '../../../utils/handleLabels'
 import { buildHandleStyle, getHandlePositionName, HANDLE_HORIZONTAL_OFFSET } from '../../taskNodeHelpers'
 
-type HandleDef = { id: string; type: string; pos: Position }
+type HandleDef = { id: string; type: string; pos: Position; label?: string }
 
 type TaskNodeHandlesProps = {
   targets: HandleDef[]
@@ -14,6 +14,7 @@ type TaskNodeHandlesProps = {
   wideHandleBase: React.CSSProperties
   showHandles?: boolean
   showWideHandles?: boolean
+  handleOffsets?: Readonly<{ horizontal: number; vertical: number }>
 }
 
 export function TaskNodeHandles({
@@ -25,12 +26,13 @@ export function TaskNodeHandles({
   wideHandleBase,
   showHandles = true,
   showWideHandles = true,
+  handleOffsets,
 }: TaskNodeHandlesProps) {
   if (!showHandles) return null
   return (
     <div className="tc-handle-layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
       {targets.map((h) => {
-        const handleLabel = getHandleTypeLabel(h.type)
+        const handleLabel = h.label ?? getHandleTypeLabel(h.type)
         const handlePositionName = getHandlePositionName(h.pos)
         return (
           <Handle
@@ -39,7 +41,7 @@ export function TaskNodeHandles({
             className="tc-handle"
             type="target"
             position={h.pos}
-            style={buildHandleStyle(h, layout)}
+            style={buildHandleStyle(h, layout, handleOffsets)}
             data-handle-type={h.type}
             data-handle-position={handlePositionName}
             title={`输入: ${handleLabel}`}
@@ -48,7 +50,7 @@ export function TaskNodeHandles({
         )
       })}
       {sources.map((h) => {
-        const handleLabel = getHandleTypeLabel(h.type)
+        const handleLabel = h.label ?? getHandleTypeLabel(h.type)
         const handlePositionName = getHandlePositionName(h.pos)
         return (
           <Handle
@@ -57,7 +59,7 @@ export function TaskNodeHandles({
             className="tc-handle"
             type="source"
             position={h.pos}
-            style={buildHandleStyle(h, layout)}
+            style={buildHandleStyle(h, layout, handleOffsets)}
             data-handle-type={h.type}
             data-handle-position={handlePositionName}
             title={`输出: ${handleLabel}`}

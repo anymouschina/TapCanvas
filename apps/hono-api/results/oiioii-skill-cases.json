@@ -1,0 +1,349 @@
+{
+  "importedAt": "2026-07-26T01:09:31.685Z",
+  "provider": "r2",
+  "complete": true,
+  "cases": [
+    {
+      "index": 0,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/Storyboards_skills.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/01-741e388b37bdcbe0.mp4",
+      "key": "portal/skills/oiioii/cases/01-741e388b37bdcbe0.mp4",
+      "contentType": "video/mp4",
+      "size": 16027454,
+      "sha256": "741e388b37bdcbe0afca7a0012aaa8fb28679f3f5026fbc8f75072ec18d93bed"
+    },
+    {
+      "index": 1,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E6%88%91%E5%9C%A8%E4%B8%96%E7%95%8C%E6%9D%AF%E7%8E%B0%E5%9C%BA%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%91.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/02-dfb3ca8622eeebdd.mp4",
+      "key": "portal/skills/oiioii/cases/02-dfb3ca8622eeebdd.mp4",
+      "contentType": "video/mp4",
+      "size": 15437952,
+      "sha256": "dfb3ca8622eeebdd683bd2c5b8a3ac4f0dcaf4cacaa127879ac0e9a9fee2d92f"
+    },
+    {
+      "index": 2,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E5%A4%A9%E5%BA%AD%E5%A4%A7%E6%88%98%E5%8F%A4%E5%B8%8C%E8%85%8A%E7%A5%9E%E8%AF%9D%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%91.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/03-4691c194fb4dc050.mp4",
+      "key": "portal/skills/oiioii/cases/03-4691c194fb4dc050.mp4",
+      "contentType": "video/mp4",
+      "size": 11181796,
+      "sha256": "4691c194fb4dc05062fa15c7de7ad4c82b4ead605fa1c61edcdcf3083312e907"
+    },
+    {
+      "index": 3,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/path-ani1.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/04-8ced13c3ba292661.mp4",
+      "key": "portal/skills/oiioii/cases/04-8ced13c3ba292661.mp4",
+      "contentType": "video/mp4",
+      "size": 1787264,
+      "sha256": "8ced13c3ba2926610941d19cafdd41870aa23a22e850635705b53095b5d8945d"
+    },
+    {
+      "index": 4,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E6%B0%B4%E6%9E%9C%E7%9F%AD%E5%89%A7%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%911.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/05-c42d1352c813dfbc.mp4",
+      "key": "portal/skills/oiioii/cases/05-c42d1352c813dfbc.mp4",
+      "contentType": "video/mp4",
+      "size": 10771403,
+      "sha256": "c42d1352c813dfbc1e0b0d950ec962fc4a70752d795d15559d09c364ddb3ff38"
+    },
+    {
+      "index": 5,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E9%A3%9E%E5%B1%8B%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%911.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/06-f949317bea8826f2.mp4",
+      "key": "portal/skills/oiioii/cases/06-f949317bea8826f2.mp4",
+      "contentType": "video/mp4",
+      "size": 9665695,
+      "sha256": "f949317bea8826f2072df8dee6032650ea525c4293e2673956db62118779edda"
+    },
+    {
+      "index": 6,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E4%B8%87%E7%89%A9%E6%8B%9F%E4%BA%BA%E5%8C%96%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%91.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/07-1aeec6c9cf1071ef.mp4",
+      "key": "portal/skills/oiioii/cases/07-1aeec6c9cf1071ef.mp4",
+      "contentType": "video/mp4",
+      "size": 21621820,
+      "sha256": "1aeec6c9cf1071ef9d8135d964d8bff3a18ed09d884fa9e516565a178d602f88"
+    },
+    {
+      "index": 7,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E9%A2%84%E8%A7%88_%E8%90%8C%E5%AE%A0%E6%95%85%E4%BA%8B.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/08-bd1cd6f00d99f426.mp4",
+      "key": "portal/skills/oiioii/cases/08-bd1cd6f00d99f426.mp4",
+      "contentType": "video/mp4",
+      "size": 10224902,
+      "sha256": "bd1cd6f00d99f42604eed2cde348b9b45a71304faab91f9e6c0bd3bc959cfcdc"
+    },
+    {
+      "index": 8,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E9%A2%84%E8%A7%88_%E6%90%9E%E7%AC%91%E6%95%85%E4%BA%8B.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/09-a647b22c9b38e559.mp4",
+      "key": "portal/skills/oiioii/cases/09-a647b22c9b38e559.mp4",
+      "contentType": "video/mp4",
+      "size": 17637036,
+      "sha256": "a647b22c9b38e5591bdfeaf67e05e39d584ca96746ac20ba885b33888d1f6a03"
+    },
+    {
+      "index": 9,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E9%A2%84%E8%A7%88_%E6%82%AC%E7%96%91%E6%95%85%E4%BA%8B.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/10-de2dbe21d11aeacf.mp4",
+      "key": "portal/skills/oiioii/cases/10-de2dbe21d11aeacf.mp4",
+      "contentType": "video/mp4",
+      "size": 8953960,
+      "sha256": "de2dbe21d11aeacfd14c8233fe8d15aa0fd0b672e6c35df7571917e035b91389"
+    },
+    {
+      "index": 10,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E9%A2%84%E8%A7%88_%E4%BB%8A%E6%95%8F%E7%9F%AD%E7%89%87.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/11-d127e3c88068e5af.mp4",
+      "key": "portal/skills/oiioii/cases/11-d127e3c88068e5af.mp4",
+      "contentType": "video/mp4",
+      "size": 8553510,
+      "sha256": "d127e3c88068e5afa30628a68f9047b155a5c8cc4b33b81f03551e18ae5098c5"
+    },
+    {
+      "index": 11,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E6%B3%A1%E9%9D%A2%E7%95%AA%E9%A2%84%E8%A7%88.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/12-ea333c5434876a8f.mp4",
+      "key": "portal/skills/oiioii/cases/12-ea333c5434876a8f.mp4",
+      "contentType": "video/mp4",
+      "size": 16038417,
+      "sha256": "ea333c5434876a8f269181ca9910eb3242f4ed6448af89965bf775a120c2853a"
+    },
+    {
+      "index": 12,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E4%B8%96%E5%A5%87%E6%95%85%E4%BA%8B%E9%A2%84%E8%A7%88.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/13-8ba69793b1e06e86.mp4",
+      "key": "portal/skills/oiioii/cases/13-8ba69793b1e06e86.mp4",
+      "contentType": "video/mp4",
+      "size": 16108992,
+      "sha256": "8ba69793b1e06e86edc792bd89a32e92c60af53e7b00ee509096837bc0dd43bc"
+    },
+    {
+      "index": 13,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E6%97%A0%E5%8E%98%E5%A4%B4%E9%A2%84%E8%A7%88.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/14-968b90d3323e583f.mp4",
+      "key": "portal/skills/oiioii/cases/14-968b90d3323e583f.mp4",
+      "contentType": "video/mp4",
+      "size": 20722754,
+      "sha256": "968b90d3323e583f04a8f01e8d9f9bd67751839c0bc903213c23452c7b11df2d"
+    },
+    {
+      "index": 14,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E7%9F%AD%E5%89%A7%E5%B8%A6%E8%B4%A7%E8%A7%86%E9%A2%91%E9%A2%84%E8%A7%88.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/15-b3ace495edb234b8.mp4",
+      "key": "portal/skills/oiioii/cases/15-b3ace495edb234b8.mp4",
+      "contentType": "video/mp4",
+      "size": 19222019,
+      "sha256": "b3ace495edb234b83612eb08bcc918d86f8e2859b3ca101ced683c0725c63bb8"
+    },
+    {
+      "index": 15,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E7%9C%9F%E4%BA%BA%E5%B8%A6%E8%B4%A7%E8%A7%86%E9%A2%91.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/16-0fc0ceef1f7eb87c.mp4",
+      "key": "portal/skills/oiioii/cases/16-0fc0ceef1f7eb87c.mp4",
+      "contentType": "video/mp4",
+      "size": 6999863,
+      "sha256": "0fc0ceef1f7eb87c41e96d515ffcadf66728322ae6fdc1f2aadb4a1a82079168"
+    },
+    {
+      "index": 16,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E9%80%9A%E7%94%A8%E5%95%86%E5%93%81%E5%B1%95%E7%A4%BA%E5%B9%BF%E5%91%8A.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/17-b661a9bec4dbb3a6.mp4",
+      "key": "portal/skills/oiioii/cases/17-b661a9bec4dbb3a6.mp4",
+      "contentType": "video/mp4",
+      "size": 8840744,
+      "sha256": "b661a9bec4dbb3a6ae0fb58f41cdd44b926e145a2a17559b5d24e5bf6d2ca73b"
+    },
+    {
+      "index": 17,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E6%B2%99%E5%8F%91%E5%B9%BF%E5%91%8A%E9%A2%84%E8%A7%88.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/18-338b5eb61b776ffc.mp4",
+      "key": "portal/skills/oiioii/cases/18-338b5eb61b776ffc.mp4",
+      "contentType": "video/mp4",
+      "size": 11077276,
+      "sha256": "338b5eb61b776ffc5e7e99018275e059c32706e3c9ebdb2cc53581871b078a79"
+    },
+    {
+      "index": 18,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E7%8C%AB%E7%B2%AE%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%91.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/19-8dc95c76ef162ca9.mp4",
+      "key": "portal/skills/oiioii/cases/19-8dc95c76ef162ca9.mp4",
+      "contentType": "video/mp4",
+      "size": 4319433,
+      "sha256": "8dc95c76ef162ca979fd6e6098fa03bf278fdd86be72fcf203ec22a3ab02a55a"
+    },
+    {
+      "index": 19,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E6%B4%97%E5%8F%91%E6%B0%B4%E9%A2%84%E8%A7%88.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/20-eaafc3d5c33484c4.mp4",
+      "key": "portal/skills/oiioii/cases/20-eaafc3d5c33484c4.mp4",
+      "contentType": "video/mp4",
+      "size": 23519804,
+      "sha256": "eaafc3d5c33484c4888470cfeedc39178b29a32cf465734fd539fe9e9ac27918"
+    },
+    {
+      "index": 20,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E6%88%92%E6%8C%87%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%91.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/21-82516140566c874f.mp4",
+      "key": "portal/skills/oiioii/cases/21-82516140566c874f.mp4",
+      "contentType": "video/mp4",
+      "size": 12222645,
+      "sha256": "82516140566c874f6893497d7fd143c452a09afd276682f32a19e657e8ab8ace"
+    },
+    {
+      "index": 21,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E8%80%B3%E6%9C%BA%E5%B9%BF%E5%91%8A%E9%A2%84%E8%A7%88%E7%89%88.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/22-236061fa8799b0f8.mp4",
+      "key": "portal/skills/oiioii/cases/22-236061fa8799b0f8.mp4",
+      "contentType": "video/mp4",
+      "size": 13151761,
+      "sha256": "236061fa8799b0f88966c336047db4e27b7ce32141988f887a9f94c86a8c163f"
+    },
+    {
+      "index": 22,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E7%B2%89%E5%BA%95%E6%B6%B2%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%91.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/23-ae9aa0880931dbf1.mp4",
+      "key": "portal/skills/oiioii/cases/23-ae9aa0880931dbf1.mp4",
+      "contentType": "video/mp4",
+      "size": 18826431,
+      "sha256": "ae9aa0880931dbf1463ca74e9cf7be6d270ace50173f4db162cc32ba8650cadd"
+    },
+    {
+      "index": 23,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mr357jf8_39d26ef332953d9b.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/24-485eb05fc985e7fe.mp4",
+      "key": "portal/skills/oiioii/cases/24-485eb05fc985e7fe.mp4",
+      "contentType": "video/mp4",
+      "size": 15958057,
+      "sha256": "485eb05fc985e7fe9dbe2bbed0b890573deb209fbb73f0afe393a5546ddf9454"
+    },
+    {
+      "index": 24,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E5%8D%A1%E7%89%8C%E6%B8%B8%E6%88%8F%E9%A2%84%E8%A7%88%E8%A7%86%E9%A2%91.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/25-d5bdd4bb98bbf31f.mp4",
+      "key": "portal/skills/oiioii/cases/25-d5bdd4bb98bbf31f.mp4",
+      "contentType": "video/mp4",
+      "size": 15847874,
+      "sha256": "d5bdd4bb98bbf31f0143c2a748c4d719f6ed7f2f9ef382745203b8a25c39cc2c"
+    },
+    {
+      "index": 25,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/%E6%94%BE%E7%BD%AE%E7%B1%BB%E6%B8%B8%E6%88%8F%E9%A2%84%E8%A7%88.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/26-a60781b4c86367f7.mp4",
+      "key": "portal/skills/oiioii/cases/26-a60781b4c86367f7.mp4",
+      "contentType": "video/mp4",
+      "size": 19170406,
+      "sha256": "a60781b4c86367f752c8a9f82f51c90d2e32ad79c8bb580de7c77e3c698df460"
+    },
+    {
+      "index": 26,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/ve_1782963127943_t8gkfg.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/27-0d70ab5fea226fdc.mp4",
+      "key": "portal/skills/oiioii/cases/27-0d70ab5fea226fdc.mp4",
+      "contentType": "video/mp4",
+      "size": 17510957,
+      "sha256": "0d70ab5fea226fdc9f79929da44e0a18926ec198b0fdaa8ec86ea4bcb3b61164"
+    },
+    {
+      "index": 27,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mr2wosy7_c3b37ccfab322e38.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/28-53d18e5174163ceb.mp4",
+      "key": "portal/skills/oiioii/cases/28-53d18e5174163ceb.mp4",
+      "contentType": "video/mp4",
+      "size": 8935052,
+      "sha256": "53d18e5174163ceb35fee878c34b026e0e1543e0f5e5c79be65c4db3979fd4f4"
+    },
+    {
+      "index": 28,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/ve_1782961515128_uvnwcz.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/29-339997ddaa3a43f1.mp4",
+      "key": "portal/skills/oiioii/cases/29-339997ddaa3a43f1.mp4",
+      "contentType": "video/mp4",
+      "size": 38083280,
+      "sha256": "339997ddaa3a43f19ffc69f3a85fcf8222b632c221d80d209790ada7cde91ee8"
+    },
+    {
+      "index": 29,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/ve_1782972031470_ie969y.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/30-3d136cbea258bb05.mp4",
+      "key": "portal/skills/oiioii/cases/30-3d136cbea258bb05.mp4",
+      "contentType": "video/mp4",
+      "size": 31216683,
+      "sha256": "3d136cbea258bb05cf1ccb64090f5da1d251c07e8e4fae649f7cbcd20aa5fa5c"
+    },
+    {
+      "index": 30,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mr2xp8g9_7b1af3432ac89994.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/31-19017d0ce4877a3d.mp4",
+      "key": "portal/skills/oiioii/cases/31-19017d0ce4877a3d.mp4",
+      "contentType": "video/mp4",
+      "size": 17640585,
+      "sha256": "19017d0ce4877a3d38440330abab807fffb4a7f54b8c244f5257f60f6bc83462"
+    },
+    {
+      "index": 31,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/ve_1782970413014_v9wr5j.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/32-8afff3543935daee.mp4",
+      "key": "portal/skills/oiioii/cases/32-8afff3543935daee.mp4",
+      "contentType": "video/mp4",
+      "size": 37154606,
+      "sha256": "8afff3543935daeee367bc8307857d6c4b74473a24ff262dc7e116865b3f6e24"
+    },
+    {
+      "index": 32,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mr37unn5_33fdcd8f51abf549.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/33-2edc2b01d6df7582.mp4",
+      "key": "portal/skills/oiioii/cases/33-2edc2b01d6df7582.mp4",
+      "contentType": "video/mp4",
+      "size": 22921145,
+      "sha256": "2edc2b01d6df75826df1b8a0da94b71a45d3c58f76dc4a42238446ada6902669"
+    },
+    {
+      "index": 33,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mr37l0wi_ac7ed024acbf1caa.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/34-135ee2315884b2ee.mp4",
+      "key": "portal/skills/oiioii/cases/34-135ee2315884b2ee.mp4",
+      "contentType": "video/mp4",
+      "size": 28862907,
+      "sha256": "135ee2315884b2ee7a4115f18a2850393896223cd6cc752ea9b971fe9beb8332"
+    },
+    {
+      "index": 34,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mr3254os_c8f03a86d74f7e53.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/35-52075afb67c57d94.mp4",
+      "key": "portal/skills/oiioii/cases/35-52075afb67c57d94.mp4",
+      "contentType": "video/mp4",
+      "size": 25648568,
+      "sha256": "52075afb67c57d94a8d53c87f804dd0fc4d58796d68a92ba6f2df2dbc582ccbd"
+    },
+    {
+      "index": 35,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/a0dd3d78-71a0-4625-9c87-7022cac957f6.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/36-35e0d0fce8a719c8.mp4",
+      "key": "portal/skills/oiioii/cases/36-35e0d0fce8a719c8.mp4",
+      "contentType": "video/mp4",
+      "size": 62762256,
+      "sha256": "35e0d0fce8a719c80132eeece0fcea071def47ea34b497646f5abaedb289c9f4"
+    },
+    {
+      "index": 36,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/20aca0ba-d0cf-4c9a-a3f7-676cb5d24268.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/37-8f0a1205d246ef64.mp4",
+      "key": "portal/skills/oiioii/cases/37-8f0a1205d246ef64.mp4",
+      "contentType": "video/mp4",
+      "size": 81011060,
+      "sha256": "8f0a1205d246ef6407b0d7c439c6518950d3c0dd67c31bccf4b967bbfc71d797"
+    },
+    {
+      "index": 37,
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/ea613117-64f0-4b30-b588-501f23e53628.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/38-2fa17e929bb0590f.mp4",
+      "key": "portal/skills/oiioii/cases/38-2fa17e929bb0590f.mp4",
+      "contentType": "video/mp4",
+      "size": 37979462,
+      "sha256": "2fa17e929bb0590f7105f58654d7ba4cd381adfef1be84b24d6c6c48a93df0d5"
+    }
+  ]
+}

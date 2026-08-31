@@ -3,6 +3,9 @@ package taskcommon
 import (
 	"encoding/base64"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -64,6 +67,56 @@ func DecodeLocalTaskID(id string) (string, error) {
 // e.g., "https://your-server.com/v1/videos/task_xxxx/content"
 func BuildProxyURL(taskID string) string {
 	return fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, taskID)
+}
+
+// ResolveTaskVideoSpec 解析任务请求中的视频规格：metadata 优先，其次顶层字段。
+// 不做默认值兜底 —— 只有请求显式携带规格时才返回非空值，供按 (分辨率×时长)
+// 规格价计费（model.VideoSpecPriceCNY）使用。
+func ResolveTaskVideoSpec(req *relaycommon.TaskSubmitReq) (resolution string, duration int) {
+	resolution = strings.TrimSpace(req.Resolution)
+	duration = req.Duration
+	if req.Metadata != nil {
+		if v, ok := req.Metadata["resolution"].(string); ok && strings.TrimSpace(v) != "" {
+			resolution = strings.TrimSpace(v)
+		}
+		switch v := req.Metadata["duration"].(type) {
+		case float64:
+			if v > 0 {
+				duration = int(v)
+			}
+		case string:
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+				duration = n
+			}
+		}
+	}
+	if duration <= 0 {
+		if sec, err := strconv.Atoi(strings.TrimSpace(req.Seconds)); err == nil && sec > 0 {
+			duration = sec
+		}
+	}
+	return resolution, duration
+}
+
+// ResolveTaskVideoBillingSpec keeps the requested output duration untouched for
+// the upstream payload, while adding the authoritative reference-video duration
+// only for pricing.
+func ResolveTaskVideoBillingSpec(req *relaycommon.TaskSubmitReq) (resolution string, billableDuration int) {
+	resolution, billableDuration = ResolveTaskVideoSpec(req)
+	if req.Metadata == nil {
+		return resolution, billableDuration
+	}
+	switch value := req.Metadata["billing_reference_video_duration_seconds"].(type) {
+	case float64:
+		if value > 0 {
+			billableDuration += int(math.Ceil(value))
+		}
+	case int:
+		if value > 0 {
+			billableDuration += value
+		}
+	}
+	return resolution, billableDuration
 }
 
 // Status-to-progress mapping constants for polling updates.

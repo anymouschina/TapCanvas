@@ -25,7 +25,12 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 		return
 	}
 
-	success := model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
+	var success bool
+	if channelError.KeyIndex != nil {
+		success = model.UpdateChannelStatusByKeyIndex(channelError.ChannelId, *channelError.KeyIndex, common.ChannelStatusAutoDisabled, reason)
+	} else {
+		success = model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
+	}
 	if success {
 		subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelError.ChannelName, channelError.ChannelId)
 		content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason)
@@ -54,6 +59,10 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	}
 	if types.IsSkipRetryError(err) {
 		return false
+	}
+	if err.GetErrorCode() == types.ErrorCodeDeactivatedWorkspace ||
+		err.GetErrorCode() == types.ErrorCodeUsageLimitReached {
+		return true
 	}
 	if operation_setting.ShouldDisableByStatusCode(err.StatusCode) {
 		return true

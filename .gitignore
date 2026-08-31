@@ -15,6 +15,7 @@ graphify-out
 .env.local
 .env.development
 .env.production
+.env.fresh
 apps/**/.env
 apps/**/.env.local
 apps/**/.env.development

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CommerceEntitlementTypeSchema } from "../commerce/commerce.schemas";
 
 export const ProductStatusSchema = z.enum(["draft", "active", "inactive"]);
+export const ProductCatalogScopeSchema = z.enum(["all", "billing"]);
 
 export const ProductSkuSchema = z.object({
 	id: z.string(),
@@ -40,6 +41,7 @@ export const ProductListQuerySchema = z.object({
 	keyword: z.string().trim().optional(),
 	status: ProductStatusSchema.optional(),
 	entitlementType: CommerceEntitlementTypeSchema.exclude(["none"]).optional(),
+	scope: ProductCatalogScopeSchema.default("all"),
 	page: z.coerce.number().int().min(1).default(1),
 	size: z.coerce.number().int().min(1).max(100).default(20),
 });

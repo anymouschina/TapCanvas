@@ -1,0 +1,131 @@
+/* apps/web/src/auth/loginOverlay.css — 全屏登录覆盖层（恒暗色，不随主题） */
+.tc-login {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  background: #08080a;
+  color: #f2f2f5;
+}
+
+/* 左侧视频舞台 */
+.tc-login__stage { position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.tc-login__video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tc-login__fallback {
+  width: 100%; height: 100%;
+  background:
+    radial-gradient(1200px 600px at 20% 20%, rgba(120, 90, 40, 0.35), transparent 60%),
+    radial-gradient(900px 500px at 80% 80%, rgba(40, 44, 70, 0.5), transparent 65%),
+    #0a0a0d;
+}
+.tc-login__stage-shade {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to right, transparent 55%, rgba(8, 8, 10, 0.55) 85%, rgba(8, 8, 10, 0.92) 100%);
+}
+.tc-login__caption {
+  position: absolute; left: 0; right: 0; bottom: 28px;
+  text-align: center; font-size: 15px; line-height: 1.7;
+  color: rgba(255, 255, 255, 0.88); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
+  white-space: pre-line; pointer-events: none;
+}
+.tc-login__dots {
+  position: absolute; left: 18px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.tc-login__dot {
+  width: 8px; height: 8px; border-radius: 50%; border: none; padding: 0;
+  background: rgba(255, 255, 255, 0.35); cursor: pointer; transition: background 0.2s;
+}
+.tc-login__dot--active { background: #fff; }
+
+/* 右侧登录面板 */
+.tc-login__panel {
+  position: relative; flex: 0 0 460px; max-width: 100vw;
+  background: #101013; display: flex; align-items: center; justify-content: center;
+  padding: 48px 44px; overflow-y: auto;
+}
+.tc-login__close { position: absolute; top: 20px; right: 20px; }
+.tc-login__panel-inner { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 14px; }
+.tc-login__brand {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  text-align: center; font-size: 26px; font-weight: 800; letter-spacing: 0;
+}
+.tc-login__brand-mark { width: 32px; height: 32px; object-fit: contain; }
+.tc-login__brand-name { line-height: 1; }
+.tc-login__title { margin: 4px 0 0; text-align: center; font-size: 30px; font-weight: 700; }
+.tc-login__subtitle { margin: 0 0 6px; text-align: center; font-size: 14px; color: rgba(255, 255, 255, 0.55); }
+.tc-login__referral {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 10px 12px; border-radius: 10px; background: rgba(150, 120, 255, 0.12);
+}
+.tc-login__agreement {
+  margin: 6px 0 0; text-align: center; font-size: 12px; color: rgba(255, 255, 255, 0.4); line-height: 1.7;
+}
+.tc-login-form__default-credentials {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.08);
+}
+.tc-login-form__default-credentials-title { color: #fbbf24; }
+.tc-login-form__default-credentials-list { display: grid; gap: 3px; }
+.tc-login-form__default-credential {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  align-items: baseline;
+  gap: 8px;
+}
+.tc-login-form__default-credential-platform {
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 12px;
+}
+.tc-login-form__default-credential-value {
+  color: #fde68a;
+  font: 700 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tc-login-form__default-credentials-note { line-height: 16px; }
+
+/* 面板内 Mantine 输入控件强制暗色（不随全局主题） */
+.tc-login__panel .mantine-TextInput-input,
+.tc-login__panel .mantine-PasswordInput-input,
+.tc-login__panel .mantine-PasswordInput-innerInput {
+  background: #1a1a1f; border-color: rgba(255, 255, 255, 0.12); color: #f2f2f5;
+}
+.tc-login__panel .mantine-TextInput-label,
+.tc-login__panel .mantine-PasswordInput-label {
+  color: rgba(255, 255, 255, 0.75);
+}
+.tc-login__panel .mantine-SegmentedControl-root {
+  background: #1a1a1f;
+}
+.tc-login__panel .mantine-Divider-label {
+  color: rgba(255, 255, 255, 0.4);
+}
+.tc-login-form__third-party-divider { margin-top: 2px; }
+.tc-login-form__third-party-actions { min-height: 40px; }
+.tc-login-form__third-party-button { border-radius: 50% !important; }
+.tc-login-form__third-party-button--wechat { background: #07c160; color: #fff; }
+.tc-login-form__third-party-button--wechat:hover { background: #06ad56; }
+.tc-login-wechat-modal .mantine-Modal-content { background: #151517; color: #f2f2f5; }
+.tc-login-wechat-modal .mantine-Modal-header { min-height: 46px; background: #151517; }
+.tc-login-wechat-modal .mantine-Modal-title { font-size: 14px; font-weight: 650; }
+.tc-login-wechat-modal .mantine-Modal-body { padding-top: 8px; }
+
+/* 窄屏：视频退居背景，面板全宽 */
+@media (max-width: 780px) {
+  .tc-login__stage { position: absolute; inset: 0; }
+  .tc-login__panel { flex: 1 1 auto; background: rgba(16, 16, 19, 0.92); backdrop-filter: blur(6px); }
+}
+
+/* 微信扫码登录二维码。
+   ⚠️ ManagedImage 会在外层包一个 wrapper，尺寸必须【同时】覆盖 wrapper 和内部 img，
+   只写其中一个会导致图片撑破或塌陷（项目既有约定）。 */
+.wechat-login-qrcode,
+.wechat-login-qrcode img {
+  width: 200px;
+  height: 200px;
+  display: block;
+  border-radius: 8px;
+  background: #fff;
+  object-fit: contain;
+}

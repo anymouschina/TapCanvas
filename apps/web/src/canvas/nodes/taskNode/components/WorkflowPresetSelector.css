@@ -1,0 +1,92 @@
+.tc-workflow-preset-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.035);
+  user-select: none;
+}
+
+.tc-workflow-preset-selector__status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.tc-workflow-preset-selector__eyebrow {
+  color: rgba(246, 247, 249, 0.9);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.tc-workflow-preset-selector__hint {
+  overflow: hidden;
+  color: rgba(179, 183, 191, 0.72);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-workflow-preset-selector__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tc-workflow-preset-selector__option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: rgb(38, 40, 45);
+  color: rgba(210, 213, 219, 0.78);
+  cursor: pointer;
+  font: inherit;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tc-workflow-preset-selector__option:hover:not(:disabled) {
+  background: rgb(48, 51, 57);
+  color: rgb(246, 247, 249);
+}
+
+.tc-workflow-preset-selector__option[data-active='true'] {
+  background: rgb(91, 97, 108);
+  color: rgb(255, 255, 255);
+}
+
+.tc-workflow-preset-selector__option:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.tc-workflow-preset-selector__option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-workflow-preset-selector__option-icon {
+  flex: 0 0 auto;
+}
+
+.tc-workflow-preset-selector__option-icon--loading {
+  animation: tc-workflow-preset-selector-spin 800ms linear infinite;
+}
+
+@keyframes tc-workflow-preset-selector-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,46 +1,39 @@
-# neoSparkMart Data Patches
+# TapCanvas new-api data patch
 
-这个目录用于存放 TapCanvas 自己维护的 `new-api` 生产数据 patch。
+本目录只保留一个常驻、幂等的部署 patch：
 
-作用范围：
+- `2026-08-31/001-bootstrap-lluban-channel-and-models.sql`
 
-- 仅补数据
-- 仅按 PostgreSQL 语义编写
-- 必须幂等执行
-- 不允许建表、删表、删数据、清库或结构迁移
+它面向空的 new-api PostgreSQL 数据库，一次建立以下完整运行事实：
 
-为什么单独放这里：
+- `Lluban API` 供应商；
+- 由鲁班 `/v1/models`、`/api/models/list`、`/api/pricing` 三个真实接口共同确认的 20 个可执行目录模型：10 个图片、4 个视频、6 个文本/对话模型；
+- 唯一的 `lluban-recommended` 共享渠道；
+- `default` 分组下的 20 条可执行 ability；
+- new-api 结算所需的模型、输出与缓存倍率。
 
-- `apps/new-api/bin/migration_*.sql` 更接近上游历史迁移，不适合作为 TapCanvas 的长期生产补数据入口
-- TapCanvas 这次需要的是“代码更新后，线上可手动执行的一组数据 patch”，而不是把补数据逻辑混进通用 migration
+新部署使用产品方明确授权公开分发的免费渠道凭证，因此无需人工粘贴
+Key。管理员后续在 new-api 中替换 Key 或修改渠道启停状态后，再次部署
+不会覆盖这两个字段。其余结构性字段继续由 patch 收敛到当前单渠道合同。
+上游模型检查保持启用，但自动写入渠道能力关闭；新发现的模型必须先补齐
+目录元数据与正价格并更新本 patch，才能成为前端可选模型，避免把仅有名称的
+未验证路由伪装成可用模型。
 
-执行顺序：
+## 自动执行
 
-按 `find /patches -name "*.sql" | sort` 的字典序依次执行，即目录名（日期）→ 文件名（序号）升序。
+开发与生产 Compose 使用同一条初始化链：
 
-当前顺序：
+`new-api-db-init -> new-api-schema-init -> new-api-patch -> new-api`
 
-1. `2026-04-18/001-seed-vendors-models.sql`
-2. `2026-04-18/002-seed-pricing-options.sql`
-3. `2026-04-18/003-seed-channels-abilities.sql`
-4. `2026-04-20/001-add-gemini-31-pro-preview-gpt-54.sql`
+`new-api-patch` 调用
+`apps/hono-api/docker/run-new-api-patches.sh`，递归扫描
+`/patches/**/*.sql` 并按路径排序执行。当前扫描结果必须恰好只有上述一个
+SQL 文件。
 
-Compose 自动执行：
+## 失败策略
 
-- `apps/hono-api/docker-compose.yml` 包含一次性 `new-api-patch` service
-- 默认会在 `docker-compose up --build` 时递归扫描 `/patches/**/*.sql` 并按路径排序执行
-- 全部 patch 成功后，`new-api` 才会启动
-- 如需临时关闭，设置 `NEW_API_PATCH_ENABLED=0`
-
-执行原则：
-
-- 只能使用业务键做 upsert，不允许依赖本地自增 id
-- 发现无法安全判定的冲突时，应显式失败并人工处理
-- 允许重复执行，重复执行后结果必须稳定
-- 不允许写入与本次模型真源切换无关的数据
-
-前端 API 配置说明：
-
-- `apps/new-api/web` 通过 `VITE_REACT_APP_SERVER_URL` 配置后端 API 地址
-- 同域部署时可以为空，前端会直接请求相对路径 `/api/*`
-- 分域部署时必须在构建时显式注入 `VITE_REACT_APP_SERVER_URL=https://<new-api-domain>`
+- SQL 使用 PostgreSQL 语义并开启 `ON_ERROR_STOP`；
+- schema 不完整、唯一业务键冲突、模型目录不完整或 ability 未启用时直接失败；
+- 禁止创建占位渠道、伪造模型或在失败时跳过；
+- patch 可重复执行，重复执行后的结果必须稳定；
+- TapCanvas 前端仅在渠道被禁用、Key 被清空或没有可执行模型时显示强制配置引导。

@@ -55,10 +55,12 @@ const (
 	ErrorCodeChannelNoAvailableKey        ErrorCode = "channel:no_available_key"
 	ErrorCodeChannelParamOverrideInvalid  ErrorCode = "channel:param_override_invalid"
 	ErrorCodeChannelHeaderOverrideInvalid ErrorCode = "channel:header_override_invalid"
+	ErrorCodeChannelProtocolInvalid       ErrorCode = "channel:protocol_invalid"
 	ErrorCodeChannelModelMappedError      ErrorCode = "channel:model_mapped_error"
 	ErrorCodeChannelAwsClientError        ErrorCode = "channel:aws_client_error"
 	ErrorCodeChannelInvalidKey            ErrorCode = "channel:invalid_key"
 	ErrorCodeChannelResponseTimeExceeded  ErrorCode = "channel:response_time_exceeded"
+	ErrorCodeChannelAllAccountsAtCapacity ErrorCode = "channel:all_accounts_at_capacity"
 
 	// client request error
 	ErrorCodeReadRequestBodyFailed ErrorCode = "read_request_body_failed"
@@ -85,6 +87,8 @@ const (
 	// quota error
 	ErrorCodeInsufficientUserQuota      ErrorCode = "insufficient_user_quota"
 	ErrorCodePreConsumeTokenQuotaFailed ErrorCode = "pre_consume_token_quota_failed"
+	ErrorCodeDeactivatedWorkspace       ErrorCode = "deactivated_workspace"
+	ErrorCodeUsageLimitReached          ErrorCode = "usage_limit_reached"
 )
 
 type NewAPIError struct {
@@ -96,6 +100,8 @@ type NewAPIError struct {
 	errorCode      ErrorCode
 	StatusCode     int
 	Metadata       json.RawMessage
+	retryAtUnix    int64
+	retryAtSource  string
 }
 
 // Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.
@@ -118,6 +124,28 @@ func (e *NewAPIError) GetErrorType() ErrorType {
 		return ""
 	}
 	return e.errorType
+}
+
+// SetRetryAt records an absolute upstream retry time without changing the
+// provider error exposed to the caller. The relay uses this deterministic hint
+// to keep a quota-limited account out of scheduling until the provider's own
+// reset window has elapsed.
+func (e *NewAPIError) SetRetryAt(unixSeconds int64, source string) {
+	if e == nil || unixSeconds <= 0 {
+		return
+	}
+	e.retryAtUnix = unixSeconds
+	e.retryAtSource = source
+}
+
+// GetRetryAt returns the provider-supplied absolute retry time and the exact
+// field that produced it. The boolean is false when the upstream supplied no
+// valid retry timing metadata.
+func (e *NewAPIError) GetRetryAt() (unixSeconds int64, source string, ok bool) {
+	if e == nil || e.retryAtUnix <= 0 {
+		return 0, "", false
+	}
+	return e.retryAtUnix, e.retryAtSource, true
 }
 
 func (e *NewAPIError) Error() string {

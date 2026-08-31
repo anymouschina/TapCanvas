@@ -62,15 +62,16 @@ func GetStatus(c *gin.Context) {
 		"telegram_oauth":              common.TelegramOAuthEnabled,
 		"telegram_bot_name":           common.TelegramBotName,
 		"system_name":                 common.SystemName,
-		"logo":                        common.Logo,
+		"logo":                        "/logo.png",
 		"footer_html":                 common.Footer,
 		"wechat_qrcode":               common.WeChatAccountQRCodeImageURL,
 		"wechat_login":                common.WeChatAuthEnabled,
 		"server_address":              system_setting.ServerAddress,
 		"turnstile_check":             common.TurnstileCheckEnabled,
 		"turnstile_site_key":          common.TurnstileSiteKey,
-		"top_up_link":                 common.TopUpLink,
-		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
+		"register_enabled":            common.RegisterEnabled,
+		"password_register_enabled":   common.PasswordRegisterEnabled,
+		"docs_link":                   "/docs",
 		"quota_per_unit":              common.QuotaPerUnit,
 		// 兼容旧前端：保留 display_in_currency，同时提供新的 quota_display_type
 		"display_in_currency":           operation_setting.IsCurrencyDisplay(),
@@ -89,9 +90,7 @@ func GetStatus(c *gin.Context) {
 		"self_use_mode_enabled":         operation_setting.SelfUseModeEnabled,
 		"default_use_auto_group":        setting.DefaultUseAutoGroup,
 
-		"usd_exchange_rate": operation_setting.USDExchangeRate,
 		"price":             operation_setting.Price,
-		"stripe_unit_price": setting.StripeUnitPrice,
 
 		// 面板启用开关
 		"api_info_enabled":      cs.ApiInfoEnabled,
@@ -116,8 +115,7 @@ func GetStatus(c *gin.Context) {
 		"setup":                       constant.Setup,
 		"user_agreement_enabled":      legalSetting.UserAgreement != "",
 		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "",
-		"checkin_enabled": operation_setting.GetCheckinSetting().Enabled,
-		"sms_enabled":     common.AliyunSMSEnabled,
+		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
 
 		// relay 并发监控
 		"relay_in_flight": middleware.GetRelayInFlight(),
@@ -368,39 +366,4 @@ func ResetPassword(c *gin.Context) {
 		"data":    password,
 	})
 	return
-}
-
-func SendSmsCode(c *gin.Context) {
-	if !common.AliyunSMSEnabled {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "短信服务未启用"})
-		return
-	}
-	phone := strings.TrimSpace(c.Query("phone"))
-	if !isValidChinesePhone(phone) {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "手机号格式不正确"})
-		return
-	}
-	code := common.GenerateVerificationCode(6)
-	common.RegisterVerificationCodeWithKey(phone, code, common.PhoneVerificationPurpose)
-	if err := common.SendSMS(phone, code); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("send sms code to %s failed: %v", phone, err))
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "短信发送失败，请稍后重试"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
-}
-
-func isValidChinesePhone(phone string) bool {
-	if len(phone) != 11 {
-		return false
-	}
-	if phone[0] != '1' {
-		return false
-	}
-	for _, ch := range phone {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
-	return true
 }

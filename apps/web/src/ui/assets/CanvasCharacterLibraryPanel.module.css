@@ -1,0 +1,302 @@
+.anchor {
+  pointer-events: none;
+}
+
+.transition {
+  pointer-events: none;
+}
+
+.transitionInner {
+  pointer-events: auto;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--mantine-color-body) 96%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.header,
+.toolbar,
+.heading,
+.headerActions {
+  display: flex;
+  align-items: center;
+}
+
+.header {
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.heading {
+  min-width: 0;
+}
+
+.headingIcon,
+.actionIcon,
+.searchIcon {
+  flex: 0 0 auto;
+}
+
+.headingCopy {
+  min-width: 0;
+}
+
+.title,
+.subtitle {
+  line-height: 1.25;
+}
+
+.headerActions {
+  flex: 0 0 auto;
+}
+
+.tooltip {
+  pointer-events: auto;
+}
+
+.iconButton {
+  color: var(--mantine-color-dimmed);
+}
+
+.toolbar {
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.recentToggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.worldviewScroller {
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.worldviewScroller::-webkit-scrollbar {
+  display: none;
+}
+
+.worldviewRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: max-content;
+}
+
+.worldviewButton {
+  appearance: none;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mantine-color-dimmed);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.worldviewButton:hover {
+  background: var(--mantine-color-default-hover);
+  color: var(--mantine-color-text);
+}
+
+.worldviewButton[data-active='true'] {
+  background: var(--mantine-color-default);
+  color: var(--mantine-color-text);
+  font-weight: 700;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 184px;
+  gap: 10px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.results {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  align-content: start;
+}
+
+.card {
+  appearance: none;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--tc-color-surface-inline-weak);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.card:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+.card[data-selected='true'] {
+  background: color-mix(in srgb, var(--mantine-primary-color-light) 58%, var(--tc-color-surface-inline-weak));
+  box-shadow: inset 3px 0 0 var(--mantine-primary-color-filled);
+}
+
+.cardMedia {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: var(--mantine-color-dark-7);
+}
+
+.cardImage,
+.selectionImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cardImageEmpty {
+  width: 100%;
+  height: 100%;
+}
+
+.cardImageEmptyText {
+  line-height: 1.2;
+}
+
+.cardCopy {
+  min-width: 0;
+  padding: 6px 7px 7px;
+}
+
+.cardTitle,
+.cardMeta {
+  line-height: 1.25;
+}
+
+.cardMeta {
+  margin-top: 3px;
+}
+
+.selection {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 10px;
+  border-left: 1px solid var(--mantine-color-default-border);
+}
+
+.selectionBody {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.selectionMedia {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--tc-color-surface-inline-weak);
+}
+
+.selectionCopy {
+  margin-top: 8px;
+}
+
+.selectionTitle,
+.selectionSummary {
+  line-height: 1.35;
+}
+
+.selectionSummary {
+  margin-top: 4px;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 7px;
+}
+
+.badge {
+  max-width: 100%;
+}
+
+.applyButton {
+  flex: 0 0 auto;
+  margin-top: auto;
+}
+
+.selectionEmpty,
+.state {
+  width: 100%;
+  height: 100%;
+  min-height: 150px;
+}
+
+.selectionEmptyStack,
+.stateStack {
+  max-width: 220px;
+}
+
+.selectionEmptyIcon {
+  color: var(--mantine-color-dimmed);
+  opacity: 0.68;
+}
+
+.selectionEmptyText,
+.stateText {
+  line-height: 1.4;
+}
+
+.loader {
+  flex: 0 0 auto;
+}
+
+.retryButton {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  .content {
+    grid-template-columns: minmax(0, 1fr) 154px;
+  }
+
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

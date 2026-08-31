@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Progress, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
+import { Progress, Tag, Tooltip, Typography, Image } from '@douyinfe/semi-ui';
 import {
   Music,
   FileText,
@@ -241,6 +241,8 @@ export const getTaskLogsColumns = ({
   isAdminUser,
   openVideoModal,
   openAudioModal,
+  openInputModal,
+  openRequestTraceModal,
 }) => {
   return [
     {
@@ -414,6 +416,66 @@ export const getTaskLogsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.INPUT,
+      title: t('入参'),
+      dataIndex: 'properties',
+      render: (props, record) => {
+        const p = props || {};
+        const refUrls = Array.isArray(p.reference_urls)
+          ? p.reference_urls.filter(
+              (u) => typeof u === 'string' && /^https?:\/\//.test(u),
+            )
+          : [];
+        const hasInputVideo =
+          typeof p.input_video_url === 'string' &&
+          /^https?:\/\//.test(p.input_video_url);
+        const refCount = refUrls.length || p.reference_count || 0;
+        // 参考图为 asset:// 占位（送审转换）时本地无法直接渲染，但请求链路的原始请求体里
+        // 仍是真实 https，可在那里预览。有 request_id 就给一个「原始请求体」入口。
+        const requestId =
+          typeof p.request_id === 'string' ? p.request_id : '';
+        const hasOpaqueRefs =
+          Array.isArray(p.reference_urls) &&
+          p.reference_urls.some(
+            (u) => typeof u === 'string' && u && !/^https?:\/\//.test(u),
+          );
+        const hasPreview =
+          refCount > 0 || hasInputVideo || p.input || p.negative_prompt;
+        if (!hasPreview && !requestId) {
+          return <Typography.Text type='tertiary'>-</Typography.Text>;
+        }
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {hasPreview && (
+              <a
+                href='#'
+                onClick={(e) => {
+                  e.preventDefault();
+                  openInputModal(p);
+                }}
+              >
+                {refCount > 0
+                  ? t('查看参考图') + `(${refCount})`
+                  : t('查看入参')}
+              </a>
+            )}
+            {requestId && openRequestTraceModal && (
+              <a
+                href='#'
+                title={hasOpaqueRefs ? t('参考图在原始请求体中可预览') : ''}
+                onClick={(e) => {
+                  e.preventDefault();
+                  openRequestTraceModal(requestId);
+                }}
+              >
+                {t('原始请求体')}
+              </a>
+            )}
+          </div>
+        );
+      },
+    },
+    {
       key: COLUMN_KEYS.FAIL_REASON,
       title: t('详情'),
       dataIndex: 'fail_reason',
@@ -450,16 +512,57 @@ export const getTaskLogsColumns = ({
         const resultUrl = record.result_url;
         const hasResultUrl = typeof resultUrl === 'string' && /^https?:\/\//.test(resultUrl);
         if (isSuccess && isVideoTask && hasResultUrl) {
+          const isImageResult =
+            /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#]|$)/i.test(resultUrl);
           return (
-            <a
-              href='#'
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+                cursor: 'pointer',
+              }}
               onClick={(e) => {
                 e.preventDefault();
-                openVideoModal(resultUrl);
+                if (isImageResult) {
+                  openContentModal(resultUrl);
+                } else {
+                  openVideoModal(resultUrl);
+                }
               }}
             >
-              {t('点击预览视频')}
-            </a>
+              {isImageResult ? (
+                <Image
+                  src={resultUrl}
+                  width={96}
+                  height={64}
+                  preview={false}
+                  style={{
+                    objectFit: 'cover',
+                    borderRadius: 6,
+                    border: '1px solid var(--semi-color-border)',
+                  }}
+                />
+              ) : (
+                <video
+                  src={resultUrl}
+                  muted
+                  preload='metadata'
+                  style={{
+                    width: 96,
+                    height: 64,
+                    objectFit: 'cover',
+                    borderRadius: 6,
+                    border: '1px solid var(--semi-color-border)',
+                    background: '#000',
+                    pointerEvents: 'none',
+                  }}
+                />
+              )}
+              <a href='#' onClick={(e) => e.preventDefault()}>
+                {isImageResult ? t('点击预览图片') : t('点击预览视频')}
+              </a>
+            </div>
           );
         }
         if (!text) {

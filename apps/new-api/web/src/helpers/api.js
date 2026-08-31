@@ -36,7 +36,6 @@ export let API = axios.create({
   },
 });
 
-
 function redirectToOAuthUrl(url, options = {}) {
   const { openInNewTab = false } = options;
   const targetUrl = typeof url === 'string' ? url : url.toString();
@@ -48,7 +47,6 @@ function redirectToOAuthUrl(url, options = {}) {
 
   window.location.assign(targetUrl);
 }
-
 
 function patchAPIInstance(instance) {
   const originalGet = instance.get.bind(instance);
@@ -365,33 +363,4 @@ export async function onCustomOAuthClicked(provider, options = {}) {
     console.error('Failed to initiate custom OAuth:', error);
     showError('OAuth 登录失败：' + (error.message || '未知错误'));
   }
-}
-
-let channelModels = undefined;
-export async function loadChannelModels() {
-  const res = await API.get('/api/models');
-  const { success, data } = res.data;
-  if (!success) {
-    return;
-  }
-  channelModels = data;
-  localStorage.setItem('channel_models', JSON.stringify(data));
-}
-
-export function getChannelModels(type) {
-  if (channelModels !== undefined && type in channelModels) {
-    if (!channelModels[type]) {
-      return [];
-    }
-    return channelModels[type];
-  }
-  let models = localStorage.getItem('channel_models');
-  if (!models) {
-    return [];
-  }
-  channelModels = JSON.parse(models);
-  if (type in channelModels) {
-    return channelModels[type];
-  }
-  return [];
 }

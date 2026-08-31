@@ -1,5 +1,6 @@
 import { normalizeOrientation, type Orientation } from '../utils/orientation'
 import { normalizeVideoResolution } from '../utils/videoBillingSpec'
+import type { ModelOptionPricing } from './models'
 
 type UnknownRecord = Record<string, unknown>
 
@@ -35,24 +36,33 @@ export type ImageModelAspectRatioOption = {
   label: string
 }
 
-export type ImageModelSizeOption = {
-  value: string
-  label: string
-  priceLabel?: string
-}
-
 export type ImageModelResolutionOption = {
   value: string
   label: string
   priceLabel?: string
 }
 
-export type ImageModelControlBinding = 'aspectRatio' | 'imageSize' | 'resolution'
+export type ImageModelControlBinding = 'aspectRatio' | 'imageSize' | 'resolution' | 'quality'
+
+export type ImageModelSizeWhenSelected = {
+  /** 限制比例选项；缺省 = 使用模型全局选项 */
+  aspectRatioOptions?: string[]
+  /** 选中该尺寸时隐藏的控件 */
+  hides?: ImageModelControlBinding[]
+}
+
+export type ImageModelSizeOption = {
+  value: string
+  label: string
+  priceLabel?: string
+  whenSelected?: ImageModelSizeWhenSelected
+}
 
 export type ImageModelControlOptionSource =
   | 'aspectRatioOptions'
   | 'imageSizeOptions'
   | 'resolutionOptions'
+  | 'qualityOptions'
 
 export type ImageModelControlConfig = {
   key: string
@@ -64,9 +74,11 @@ export type ImageModelControlConfig = {
 export type ImageModelCatalogConfig = {
   defaultAspectRatio?: string
   defaultImageSize?: string
+  defaultQuality?: string
   aspectRatioOptions: ImageModelAspectRatioOption[]
   imageSizeOptions: ImageModelSizeOption[]
   resolutionOptions: ImageModelResolutionOption[]
+  qualityOptions: ImageModelResolutionOption[]
   controls: ImageModelControlConfig[]
   supportsReferenceImages?: boolean
   supportsTextToImage?: boolean
@@ -98,7 +110,31 @@ export type VideoModelCatalogConfig = {
   resolutionOptions: VideoModelResolutionOption[]
   orientationOptions: VideoModelOrientationOption[]
   controls: VideoModelControlConfig[]
+  maxReferenceImages?: number
+  maxReferenceVideos?: number
+  maxReferenceAudios?: number
+  maxReferenceMedia?: number
+  maxReferenceVideoDurationSeconds?: number
+  maxReferenceAudioDurationSeconds?: number
+  maxVideoExtensionDurationSeconds?: number
+  maxNestedVideoDurationSeconds?: number
+  maxUltraLongDurationSeconds?: number
+  supportsMultimodalReferences?: boolean
+  supportsReferenceImages?: boolean
+  supportsReferenceVideos?: boolean
+  supportsReferenceAudios?: boolean
+  supportsAudioOnlyReference?: boolean
+  supportsFirstLastFrame?: boolean
+  supportsVideoEditing?: boolean
+  supportsVideoSubjectRemoval?: boolean
+  supportsVideoSubtitleRemoval?: boolean
+  supportsVideoExtension?: boolean
+  supportsUltraLongVideo?: boolean
+  supportsTimestampPrompt?: boolean
+  supportsNativeAudio?: boolean
 }
+
+export const DEFAULT_VIDEO_REFERENCE_IMAGE_LIMIT = 8
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -138,6 +174,23 @@ function parseImageAspectRatioOption(value: unknown): ImageModelAspectRatioOptio
   }
 }
 
+function parseImageSizeWhenSelected(value: unknown): ImageModelSizeWhenSelected | undefined {
+  if (!isRecord(value)) return undefined
+  const aspectRatioOptions = Array.isArray(value.aspectRatioOptions)
+    ? value.aspectRatioOptions.map(normalizeCompactString).filter(Boolean)
+    : undefined
+  const hides = Array.isArray(value.hides)
+    ? value.hides
+        .map((v) => parseImageControlBinding(v))
+        .filter((v): v is ImageModelControlBinding => v !== null)
+    : undefined
+  if (!aspectRatioOptions?.length && !hides?.length) return undefined
+  return {
+    ...(aspectRatioOptions?.length ? { aspectRatioOptions } : {}),
+    ...(hides?.length ? { hides } : {}),
+  }
+}
+
 function parseImageSizeOption(value: unknown): ImageModelSizeOption | null {
   if (typeof value === 'string') {
     const normalized = normalizeCompactString(value)
@@ -151,10 +204,12 @@ function parseImageSizeOption(value: unknown): ImageModelSizeOption | null {
   if (!size) return null
   const label = asTrimmedString(value.label) || size
   const priceLabel = asTrimmedString(value.priceLabel ?? value.price)
+  const whenSelected = parseImageSizeWhenSelected(value.whenSelected)
   return {
     value: size,
     label,
     ...(priceLabel ? { priceLabel } : {}),
+    ...(whenSelected ? { whenSelected } : {}),
   }
 }
 
@@ -195,12 +250,16 @@ function parseImageControlBinding(value: unknown): ImageModelControlBinding | nu
   if (raw === 'resolution' || raw === 'imageresolution' || raw === 'outputresolution') {
     return 'resolution'
   }
+  if (raw === 'quality' || raw === 'imagequality' || raw === 'outputquality') {
+    return 'quality'
+  }
   return null
 }
 
 function defaultImageControlLabel(binding: ImageModelControlBinding): string {
   if (binding === 'aspectRatio') return '比例'
   if (binding === 'resolution') return '分辨率'
+  if (binding === 'quality') return '画质'
   return '尺寸'
 }
 
@@ -209,6 +268,7 @@ function defaultImageControlOptionSource(
 ): ImageModelControlOptionSource {
   if (binding === 'aspectRatio') return 'aspectRatioOptions'
   if (binding === 'resolution') return 'resolutionOptions'
+  if (binding === 'quality') return 'qualityOptions'
   return 'imageSizeOptions'
 }
 
@@ -230,6 +290,9 @@ function parseImageControlOptionSource(
   }
   if (raw === 'resolutionoptions' || raw === 'resolution' || raw === 'outputresolution') {
     return 'resolutionOptions'
+  }
+  if (raw === 'qualityoptions' || raw === 'quality' || raw === 'outputquality') {
+    return 'qualityOptions'
   }
   return defaultImageControlOptionSource(binding)
 }
@@ -467,10 +530,55 @@ function parseVideoControlConfigs(root: UnknownRecord): VideoModelControlConfig[
     : isRecord(root.controlMap)
       ? root.controlMap
       : null
-  if (!mappingSource) return []
-  return Object.entries(mappingSource)
-    .map(([key, value]) => parseControlConfig(key, value))
-    .filter((item): item is VideoModelControlConfig => item !== null)
+  if (mappingSource) {
+    const controlsFromMapping = Object.entries(mappingSource)
+      .map(([key, value]) => parseControlConfig(key, value))
+      .filter((item): item is VideoModelControlConfig => item !== null)
+    if (controlsFromMapping.length) return controlsFromMapping
+  }
+
+  const inferredControls: VideoModelControlConfig[] = []
+  if (Array.isArray(root.durationOptions) && root.durationOptions.length > 0) {
+    inferredControls.push({
+      key: 'duration',
+      label: '时长',
+      binding: 'durationSeconds',
+      optionSource: 'durationOptions',
+    })
+  }
+  if (
+    (Array.isArray(root.sizeOptions) && root.sizeOptions.length > 0) ||
+    (Array.isArray(root.aspectRatioOptions) && root.aspectRatioOptions.length > 0)
+  ) {
+    inferredControls.push({
+      key: 'size',
+      label: '画幅',
+      binding: 'size',
+      optionSource: 'sizeOptions',
+    })
+  }
+  const resolutionOptions = Array.isArray(root.resolutionOptions)
+    ? root.resolutionOptions
+    : Array.isArray(root.outputResolutionOptions)
+      ? root.outputResolutionOptions
+      : []
+  if (resolutionOptions.length > 0) {
+    inferredControls.push({
+      key: 'resolution',
+      label: '分辨率',
+      binding: 'resolution',
+      optionSource: 'resolutionOptions',
+    })
+  }
+  if (Array.isArray(root.orientationOptions) && root.orientationOptions.length > 0) {
+    inferredControls.push({
+      key: 'orientation',
+      label: '方向',
+      binding: 'orientation',
+      optionSource: 'orientationOptions',
+    })
+  }
+  return inferredControls
 }
 
 function dedupeByValue<T extends { value: string | number }>(items: T[]): T[] {
@@ -504,6 +612,7 @@ export function parseImageModelCatalogConfig(meta: unknown): ImageModelCatalogCo
     : Array.isArray(root.outputResolutionOptions)
       ? root.outputResolutionOptions
       : []
+  const qualitySource = Array.isArray(root.qualityOptions) ? root.qualityOptions : []
 
   const aspectRatioOptions = dedupeByValue(
     aspectRatioSource
@@ -520,6 +629,11 @@ export function parseImageModelCatalogConfig(meta: unknown): ImageModelCatalogCo
       .map(parseImageResolutionOption)
       .filter((item): item is ImageModelResolutionOption => item !== null),
   )
+  const qualityOptions = dedupeByValue(
+    qualitySource
+      .map(parseImageResolutionOption)
+      .filter((item): item is ImageModelResolutionOption => item !== null),
+  )
 
   const defaultAspectRatio = normalizeCompactString(
     root.defaultAspectRatio ?? root.defaultAspect ?? root.aspectRatio,
@@ -527,6 +641,7 @@ export function parseImageModelCatalogConfig(meta: unknown): ImageModelCatalogCo
   const defaultImageSize = normalizeCompactString(
     root.defaultImageSize ?? root.defaultSize ?? root.imageSize ?? root.image_size,
   )
+  const defaultQuality = normalizeCompactString(root.defaultQuality ?? root.quality)
   const controls = parseImageControlConfigs(root)
   const supportsReferenceImages = asOptionalBoolean(root.supportsReferenceImages)
   const supportsTextToImage = asOptionalBoolean(root.supportsTextToImage)
@@ -536,9 +651,11 @@ export function parseImageModelCatalogConfig(meta: unknown): ImageModelCatalogCo
     !aspectRatioOptions.length &&
     !imageSizeOptions.length &&
     !resolutionOptions.length &&
+    !qualityOptions.length &&
     !controls.length &&
     !defaultAspectRatio &&
     !defaultImageSize &&
+    !defaultQuality &&
     typeof supportsReferenceImages === 'undefined' &&
     typeof supportsTextToImage === 'undefined' &&
     typeof supportsImageToImage === 'undefined'
@@ -549,9 +666,11 @@ export function parseImageModelCatalogConfig(meta: unknown): ImageModelCatalogCo
   return {
     ...(defaultAspectRatio ? { defaultAspectRatio } : {}),
     ...(defaultImageSize ? { defaultImageSize } : {}),
+    ...(defaultQuality ? { defaultQuality } : {}),
     aspectRatioOptions,
     imageSizeOptions,
     resolutionOptions,
+    qualityOptions,
     controls,
     ...(typeof supportsReferenceImages === 'boolean' ? { supportsReferenceImages } : {}),
     ...(typeof supportsTextToImage === 'boolean' ? { supportsTextToImage } : {}),
@@ -570,7 +689,11 @@ export function parseVideoModelCatalogConfig(meta: unknown): VideoModelCatalogCo
         : meta
 
   const durationSource = Array.isArray(root.durationOptions) ? root.durationOptions : []
-  const sizeSource = Array.isArray(root.sizeOptions) ? root.sizeOptions : []
+  const sizeSource = Array.isArray(root.sizeOptions) && root.sizeOptions.length > 0
+    ? root.sizeOptions
+    : Array.isArray(root.aspectRatioOptions)
+      ? root.aspectRatioOptions
+      : []
   const resolutionSource = Array.isArray(root.resolutionOptions)
     ? root.resolutionOptions
     : Array.isArray(root.outputResolutionOptions)
@@ -611,7 +734,54 @@ export function parseVideoModelCatalogConfig(meta: unknown): VideoModelCatalogCo
       : normalizeOrientation(defaultOrientationRaw)
   const controls = parseVideoControlConfigs(root)
 
-  if (!durationOptions.length && !sizeOptions.length && !resolutionOptions.length && !orientationOptions.length && !controls.length && defaultDuration == null && !defaultSize && !defaultResolution && !defaultOrientation) {
+  const maxReferenceImages = asPositiveNumber(root.maxReferenceImages)
+  const maxReferenceVideos = asPositiveNumber(root.maxReferenceVideos)
+  const maxReferenceAudios = asPositiveNumber(root.maxReferenceAudios)
+  const maxReferenceMedia = asPositiveNumber(root.maxReferenceMedia)
+  const maxReferenceVideoDurationSeconds = asPositiveNumber(root.maxReferenceVideoDurationSeconds)
+  const maxReferenceAudioDurationSeconds = asPositiveNumber(root.maxReferenceAudioDurationSeconds)
+  const maxVideoExtensionDurationSeconds = asPositiveNumber(root.maxVideoExtensionDurationSeconds)
+  const maxNestedVideoDurationSeconds = asPositiveNumber(root.maxNestedVideoDurationSeconds)
+  const maxUltraLongDurationSeconds = asPositiveNumber(root.maxUltraLongDurationSeconds)
+  const supportsMultimodalReferences = asOptionalBoolean(root.supportsMultimodalReferences)
+  const supportsReferenceImages = asOptionalBoolean(root.supportsReferenceImages)
+  const supportsReferenceVideos = asOptionalBoolean(root.supportsReferenceVideos)
+  const supportsReferenceAudios = asOptionalBoolean(root.supportsReferenceAudios)
+  const supportsAudioOnlyReference = asOptionalBoolean(root.supportsAudioOnlyReference)
+  const supportsFirstLastFrame = asOptionalBoolean(root.supportsFirstLastFrame)
+  const supportsVideoEditing = asOptionalBoolean(root.supportsVideoEditing)
+  const supportsVideoSubjectRemoval = asOptionalBoolean(root.supportsVideoSubjectRemoval)
+  const supportsVideoSubtitleRemoval = asOptionalBoolean(root.supportsVideoSubtitleRemoval)
+  const supportsVideoExtension = asOptionalBoolean(root.supportsVideoExtension)
+  const supportsUltraLongVideo = asOptionalBoolean(root.supportsUltraLongVideo)
+  const supportsTimestampPrompt = asOptionalBoolean(root.supportsTimestampPrompt)
+  const supportsNativeAudio = asOptionalBoolean(root.supportsNativeAudio)
+  const hasCapabilityConfig = [
+    maxReferenceImages,
+    maxReferenceVideos,
+    maxReferenceAudios,
+    maxReferenceMedia,
+    maxReferenceVideoDurationSeconds,
+    maxReferenceAudioDurationSeconds,
+    maxVideoExtensionDurationSeconds,
+    maxNestedVideoDurationSeconds,
+    maxUltraLongDurationSeconds,
+    supportsMultimodalReferences,
+    supportsReferenceImages,
+    supportsReferenceVideos,
+    supportsReferenceAudios,
+    supportsAudioOnlyReference,
+    supportsFirstLastFrame,
+    supportsVideoEditing,
+    supportsVideoSubjectRemoval,
+    supportsVideoSubtitleRemoval,
+    supportsVideoExtension,
+    supportsUltraLongVideo,
+    supportsTimestampPrompt,
+    supportsNativeAudio,
+  ].some((value) => typeof value !== 'undefined' && value !== null)
+
+  if (!durationOptions.length && !sizeOptions.length && !resolutionOptions.length && !orientationOptions.length && !controls.length && defaultDuration == null && !defaultSize && !defaultResolution && !defaultOrientation && !hasCapabilityConfig) {
     return null
   }
 
@@ -625,6 +795,299 @@ export function parseVideoModelCatalogConfig(meta: unknown): VideoModelCatalogCo
     resolutionOptions,
     orientationOptions,
     controls,
+    ...(maxReferenceImages != null ? { maxReferenceImages: Math.trunc(maxReferenceImages) } : {}),
+    ...(maxReferenceVideos != null ? { maxReferenceVideos: Math.trunc(maxReferenceVideos) } : {}),
+    ...(maxReferenceAudios != null ? { maxReferenceAudios: Math.trunc(maxReferenceAudios) } : {}),
+    ...(maxReferenceMedia != null ? { maxReferenceMedia: Math.trunc(maxReferenceMedia) } : {}),
+    ...(maxReferenceVideoDurationSeconds != null ? { maxReferenceVideoDurationSeconds } : {}),
+    ...(maxReferenceAudioDurationSeconds != null ? { maxReferenceAudioDurationSeconds } : {}),
+    ...(maxVideoExtensionDurationSeconds != null ? { maxVideoExtensionDurationSeconds } : {}),
+    ...(maxNestedVideoDurationSeconds != null ? { maxNestedVideoDurationSeconds } : {}),
+    ...(maxUltraLongDurationSeconds != null ? { maxUltraLongDurationSeconds } : {}),
+    ...(typeof supportsMultimodalReferences === 'boolean' ? { supportsMultimodalReferences } : {}),
+    ...(typeof supportsReferenceImages === 'boolean' ? { supportsReferenceImages } : {}),
+    ...(typeof supportsReferenceVideos === 'boolean' ? { supportsReferenceVideos } : {}),
+    ...(typeof supportsReferenceAudios === 'boolean' ? { supportsReferenceAudios } : {}),
+    ...(typeof supportsAudioOnlyReference === 'boolean' ? { supportsAudioOnlyReference } : {}),
+    ...(typeof supportsFirstLastFrame === 'boolean' ? { supportsFirstLastFrame } : {}),
+    ...(typeof supportsVideoEditing === 'boolean' ? { supportsVideoEditing } : {}),
+    ...(typeof supportsVideoSubjectRemoval === 'boolean' ? { supportsVideoSubjectRemoval } : {}),
+    ...(typeof supportsVideoSubtitleRemoval === 'boolean' ? { supportsVideoSubtitleRemoval } : {}),
+    ...(typeof supportsVideoExtension === 'boolean' ? { supportsVideoExtension } : {}),
+    ...(typeof supportsUltraLongVideo === 'boolean' ? { supportsUltraLongVideo } : {}),
+    ...(typeof supportsTimestampPrompt === 'boolean' ? { supportsTimestampPrompt } : {}),
+    ...(typeof supportsNativeAudio === 'boolean' ? { supportsNativeAudio } : {}),
+  }
+}
+
+type ParsedVideoPricingSpec = {
+  durationSeconds: number
+  resolution: string
+}
+
+function parseVideoPricingSpecKey(specKey: string): ParsedVideoPricingSpec | null {
+  const normalized = specKey.trim().toLowerCase()
+  const match = normalized.match(/^video:([a-z0-9x_-]+):(\d+)s$/i)
+  if (!match) return null
+  const resolution = normalizeVideoResolution(match[1] || '')
+  const durationSeconds = Number(match[2] || '')
+  if (!resolution || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return null
+  }
+  return {
+    durationSeconds: Math.trunc(durationSeconds),
+    resolution,
+  }
+}
+
+export function constrainVideoModelCatalogConfigByPricing(
+  config: VideoModelCatalogConfig | null,
+  pricing: ModelOptionPricing | null | undefined,
+): VideoModelCatalogConfig | null {
+  if (!config || !pricing) return config
+
+  const pricedSpecs = pricing.specCosts
+    .filter((spec) => spec.enabled !== false)
+    .map((spec) => parseVideoPricingSpecKey(spec.specKey))
+    .filter((spec): spec is ParsedVideoPricingSpec => spec !== null)
+
+  if (!pricedSpecs.length) return config
+
+  const pricedDurationSet = new Set<number>(pricedSpecs.map((spec) => spec.durationSeconds))
+  const pricedResolutionSet = new Set<string>(pricedSpecs.map((spec) => spec.resolution))
+
+  const durationOptions = config.durationOptions.length
+    ? config.durationOptions.filter((option) => pricedDurationSet.has(option.value))
+    : Array.from(pricedDurationSet)
+        .sort((a, b) => a - b)
+        .map((value) => ({ value, label: `${value}s` }))
+
+  const resolutionOptions = config.resolutionOptions.length
+    ? config.resolutionOptions.filter((option) => pricedResolutionSet.has(normalizeVideoResolution(option.value)))
+    : Array.from(pricedResolutionSet)
+        .sort((a, b) => a.localeCompare(b))
+        .map((value) => ({ value, label: value }))
+
+  const defaultDurationSeconds =
+    typeof config.defaultDurationSeconds === 'number' && pricedDurationSet.has(config.defaultDurationSeconds)
+      ? config.defaultDurationSeconds
+      : durationOptions[0]?.value
+
+  const normalizedDefaultResolution = config.defaultResolution
+    ? normalizeVideoResolution(config.defaultResolution)
+    : ''
+  const defaultResolution = normalizedDefaultResolution && pricedResolutionSet.has(normalizedDefaultResolution)
+    ? normalizedDefaultResolution
+    : resolutionOptions[0]?.value
+
+  const controls = config.controls.filter((control) => {
+    if (control.binding === 'durationSeconds') return durationOptions.length > 0
+    if (control.binding === 'resolution') return resolutionOptions.length > 0
+    return true
+  })
+
+  const {
+    defaultDurationSeconds: _defaultDurationSeconds,
+    defaultResolution: _defaultResolution,
+    ...restConfig
+  } = config
+
+  return {
+    ...restConfig,
+    ...(typeof defaultDurationSeconds === 'number' ? { defaultDurationSeconds } : {}),
+    ...(defaultResolution ? { defaultResolution } : {}),
+    durationOptions,
+    resolutionOptions,
+    controls,
+  }
+}
+
+type ParsedImagePricingSpec = {
+  aspectRatio: string | null
+  resolution: string
+  quality: string | null
+}
+
+export type ImageModelPricingSelection = Readonly<{
+  aspectRatio: string
+  imageSize: string
+  resolution: string
+  quality: string
+}>
+
+function imageQualitySortRank(value: string): number {
+  switch (value) {
+    case 'auto':
+      return 0
+    case 'low':
+      return 1
+    case 'medium':
+    case 'standard':
+      return 2
+    case 'high':
+    case 'hd':
+      return 3
+    default:
+      return 4
+  }
+}
+
+function denormalizeImageAspectSegment(value: string): string | null {
+  const raw = asTrimmedString(value).toLowerCase()
+  if (!raw) return null
+  const match = raw.match(/^(\d+)_+(\d+)$/)
+  if (match) return `${match[1]}:${match[2]}`
+  const compact = raw.replace(/\s+/g, '')
+  if (/^\d+[:x]\d+$/i.test(compact)) return compact.replace(/x/i, ':')
+  return null
+}
+
+function parseImagePricingSpecKey(specKey: string): ParsedImagePricingSpec | null {
+  const normalized = asTrimmedString(specKey).toLowerCase()
+  if (!normalized.startsWith('image:')) return null
+  const parts = normalized.split(':').map((part) => part.trim()).filter(Boolean)
+  if (parts.length === 2) {
+    return {
+      aspectRatio: null,
+      resolution: parts[1],
+      quality: null,
+    }
+  }
+  if (parts.length === 3) {
+    return {
+      aspectRatio: null,
+      resolution: parts[1],
+      quality: parts[2],
+    }
+  }
+  if (parts.length >= 4) {
+    const aspectRatio = denormalizeImageAspectSegment(parts[1])
+    const resolution = parts[2]
+    if (!aspectRatio || !resolution) return null
+    return {
+      aspectRatio,
+      resolution,
+      quality: parts[3] || null,
+    }
+  }
+  return null
+}
+
+export function findImageModelPricingSpec(
+  pricing: ModelOptionPricing | null | undefined,
+  selection: ImageModelPricingSelection,
+): ModelOptionPricing['specCosts'][number] | null {
+  if (!pricing) return null
+  const resolution = normalizeCompactString(selection.resolution || selection.imageSize).toLowerCase()
+  const aspectRatio = normalizeCompactString(selection.aspectRatio)
+  const quality = normalizeCompactString(selection.quality).toLowerCase()
+  if (!resolution) return null
+
+  const matches = pricing.specCosts.flatMap((spec) => {
+    if (spec.enabled === false) return []
+    const parsed = parseImagePricingSpecKey(spec.specKey)
+    if (!parsed || parsed.resolution !== resolution) return []
+    if (parsed.aspectRatio && parsed.aspectRatio !== aspectRatio) return []
+    if (parsed.quality && parsed.quality !== quality) return []
+    const specificity = Number(Boolean(parsed.aspectRatio)) + Number(Boolean(parsed.quality))
+    return [{ spec, specificity }]
+  })
+  matches.sort((left, right) => right.specificity - left.specificity)
+  return matches[0]?.spec ?? null
+}
+
+export function constrainImageModelCatalogConfigByPricing(
+  config: ImageModelCatalogConfig | null,
+  pricing: ModelOptionPricing | null | undefined,
+): ImageModelCatalogConfig | null {
+  if (!pricing) return config
+
+  const pricedSpecs = pricing.specCosts
+    .filter((spec) => spec.enabled !== false)
+    .map((spec) => parseImagePricingSpecKey(spec.specKey))
+    .filter((spec): spec is ParsedImagePricingSpec => spec !== null)
+
+  if (!pricedSpecs.length) return config
+
+  const pricedResolutionSet = new Set(pricedSpecs.map((spec) => spec.resolution))
+  const pricedAspectSet = new Set(
+    pricedSpecs
+      .map((spec) => spec.aspectRatio)
+      .filter((aspectRatio): aspectRatio is string => Boolean(aspectRatio)),
+  )
+  const pricedQualitySet = new Set(
+    pricedSpecs
+      .map((spec) => spec.quality)
+      .filter((quality): quality is string => Boolean(quality)),
+  )
+
+  const base: ImageModelCatalogConfig = config ?? {
+    aspectRatioOptions: [],
+    imageSizeOptions: [],
+    resolutionOptions: [],
+    qualityOptions: [],
+    controls: [],
+  }
+
+  const imageSizeOptions = base.imageSizeOptions.length
+    ? base.imageSizeOptions.filter((option) =>
+        pricedResolutionSet.has(normalizeCompactString(option.value).toLowerCase()),
+      )
+    : Array.from(pricedResolutionSet)
+        .sort((a, b) => a.localeCompare(b))
+        .map((value) => ({ value, label: value.toUpperCase() }))
+
+  const resolutionOptions = base.resolutionOptions.length
+    ? base.resolutionOptions.filter((option) =>
+        pricedResolutionSet.has(normalizeCompactString(option.value).toLowerCase()),
+      )
+    : []
+
+  const qualityOptions = base.qualityOptions.length
+    ? base.qualityOptions.filter((option) =>
+        pricedQualitySet.size === 0 ||
+        pricedQualitySet.has(normalizeCompactString(option.value).toLowerCase()),
+      )
+    : Array.from(pricedQualitySet)
+        .sort((a, b) => imageQualitySortRank(a) - imageQualitySortRank(b) || a.localeCompare(b))
+        .map((value) => ({ value, label: value }))
+
+  const aspectRatioOptions = base.aspectRatioOptions.length
+    ? base.aspectRatioOptions.filter((option) => pricedAspectSet.size === 0 || pricedAspectSet.has(option.value))
+    : Array.from(pricedAspectSet)
+        .sort((a, b) => a.localeCompare(b))
+        .map((value) => ({ value, label: value }))
+
+  const defaultImageSize =
+    base.defaultImageSize &&
+    pricedResolutionSet.has(normalizeCompactString(base.defaultImageSize).toLowerCase())
+      ? base.defaultImageSize
+      : imageSizeOptions[0]?.value
+
+  const defaultAspectRatio =
+    base.defaultAspectRatio && (pricedAspectSet.size === 0 || pricedAspectSet.has(base.defaultAspectRatio))
+      ? base.defaultAspectRatio
+      : aspectRatioOptions[0]?.value
+
+  const defaultQuality =
+    base.defaultQuality &&
+    (pricedQualitySet.size === 0 ||
+      pricedQualitySet.has(normalizeCompactString(base.defaultQuality).toLowerCase()))
+      ? base.defaultQuality
+      : qualityOptions[0]?.value
+
+  return {
+    ...(defaultAspectRatio ? { defaultAspectRatio } : {}),
+    ...(defaultImageSize ? { defaultImageSize } : {}),
+    ...(defaultQuality ? { defaultQuality } : {}),
+    aspectRatioOptions,
+    imageSizeOptions,
+    resolutionOptions,
+    qualityOptions,
+    controls: base.controls.filter((control) => control.binding !== 'quality' || qualityOptions.length > 0),
+    ...(typeof base.supportsReferenceImages === 'boolean' ? { supportsReferenceImages: base.supportsReferenceImages } : {}),
+    ...(typeof base.supportsTextToImage === 'boolean' ? { supportsTextToImage: base.supportsTextToImage } : {}),
+    ...(typeof base.supportsImageToImage === 'boolean' ? { supportsImageToImage: base.supportsImageToImage } : {}),
   }
 }
 

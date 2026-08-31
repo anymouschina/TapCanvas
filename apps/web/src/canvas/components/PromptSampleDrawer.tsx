@@ -237,7 +237,7 @@ export function PromptSampleDrawer({ opened, nodeKind, onClose, onApplySample }:
   }
 
   const kindBadge = effectiveKind ? (
-    <Badge className="prompt-sample-drawer__kind-badge" variant="light" color="blue" size="sm">
+    <Badge className="prompt-sample-drawer__kind-badge" variant="light" color="gray" size="sm">
       {nodeKindLabel[effectiveKind]}
     </Badge>
   ) : null

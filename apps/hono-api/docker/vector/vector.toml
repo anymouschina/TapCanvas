@@ -1,0 +1,22 @@
+# 【proxy 免疫·2026-07-11】宿主 docker proxies 注入 HTTP_PROXY(127.0.0.1:1087) 曾把 sink 全打向
+# 死代理 → 集中日志静默断流 40+ 天。全局禁用代理：vector 不再读任何 *_PROXY env。
+[proxy]
+enabled = false
+
+[sources.docker_logs]
+type = "docker_logs"
+
+[sinks.victoria_logs]
+type = "elasticsearch"
+inputs = ["docker_logs"]
+# VictoriaLogs 的 ES 兼容摄入端点挂在 /insert/elasticsearch/ 前缀（根路径 /_bulk 恒 400
+# "unsupported path"·2026-07-11 实测——本管道自建立起就没通过，代理问题修掉后才暴露）。
+endpoints = ["http://victoria-logs:9428/insert/elasticsearch/"]
+mode = "bulk"
+compression = "none"
+# 把 vector 字段映射到 VL 关键概念（_msg=message、_time=timestamp、流标签=容器名）。
+# ⚠️必须走 sink 的 query 表——参数写进 endpoint URL 会破坏 vector 追加 /_bulk 的路径拼接。
+[sinks.victoria_logs.query]
+_msg_field = "message"
+_time_field = "timestamp"
+_stream_fields = "container_name"

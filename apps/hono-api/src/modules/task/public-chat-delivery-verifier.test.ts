@@ -2,309 +2,360 @@ import { describe, expect, it } from "vitest";
 
 import {
 	buildPublicChatExpectedDeliverySummary,
-	verifyPublicChatDelivery,
+	isPublicChatDeliveryEnvelopeStructurallyConsistent,
+	normalizePublicChatDurableTerminalDelivery,
+	normalizePublicChatDeliveryEvidence,
+	normalizePublicChatDeliveryVerification,
+	normalizePublicChatSemanticDeliveryContract,
 } from "./public-chat-delivery-verifier";
 
 describe("public-chat-delivery-verifier", () => {
-	it("defaults chapter-grounded execution to multishot still delivery without token guessing", () => {
-		const expected = buildPublicChatExpectedDeliverySummary({
-			taskSummary: {
-				taskGoal: "先做预生产单帧，再继续第三章定格动画。",
-				requestedOutput: "第三章预生产锚点",
-				taskKind: "chapter_grounded_storyboard_regeneration_with_preproduction",
-				recommendedNextStage: "create_authority_baseframe_then_continue_storyboard",
-				mustStop: false,
-				blockingGaps: [],
-				successCriteria: ["先锁定风格和角色"],
+	it("accepts one TaskStore-backed final-response terminal closure", () => {
+		const terminalDelivery = normalizePublicChatDurableTerminalDelivery({
+			version: 1,
+			requestTerminal: {
+				version: 1,
+				terminal: true,
+				status: "succeeded",
+				reason: "delivery_verified",
 			},
-			requiresExecutionDelivery: true,
-			forceAssetGeneration: false,
-			chapterGroundedPromptSpecRequired: true,
-			chapterAssetPreproductionRequired: false,
-			chapterAssetPreproductionCount: null,
-			selectedNodeKind: "image",
-			selectedReferenceKind: null,
-			workspaceAction: null,
-		});
-
-		expect(expected).toEqual({
-			active: true,
-			kind: "chapter_multishot_stills",
-			source: "chapter_grounded_scope",
-			reason: "chapter_grounded_execution_defaults_to_multishot_still_delivery",
-			minStillCount: 2,
-		});
-	});
-
-	it("honors explicit structured delivery contracts from semantic task summary", () => {
-		const expected = buildPublicChatExpectedDeliverySummary({
-			taskSummary: {
-				taskGoal: "只做一张章节 authority base frame。",
-				requestedOutput: "单张预生产基底帧",
-				taskKind: "chapter_grounded_preproduction",
-				recommendedNextStage: "create_single_baseframe_preproduction",
-				mustStop: false,
-				blockingGaps: [],
-				successCriteria: ["写入单张 authority base frame 节点"],
-				deliveryContract: {
-					kind: "single_baseframe_preproduction",
+			expectedDelivery: {
+				version: 2,
+				contractHash: "sha256:text-contract",
+				delivery: {
+					mode: "response",
+					mediaType: null,
+					kind: "answer",
+					output: "回答用户是谁",
 				},
 			},
-			requiresExecutionDelivery: true,
-			forceAssetGeneration: false,
-			chapterGroundedPromptSpecRequired: true,
-			chapterAssetPreproductionRequired: false,
-			chapterAssetPreproductionCount: null,
-			selectedNodeKind: "image",
-			selectedReferenceKind: null,
-			workspaceAction: null,
+			deliveryEvidence: [{
+				evidenceId: "runtime-final-response",
+				kind: "final_response",
+				sourceRef: "final_response",
+				requirementIds: ["intent:must:identity:1"],
+				attributes: { sha256: "a".repeat(64) },
+			}],
+			deliveryVerification: {
+				version: 2,
+				contractHash: "sha256:text-contract",
+				status: "satisfied",
+				criteria: [{
+					requirementId: "intent:must:identity:1",
+					status: "satisfied",
+					evidenceIds: ["runtime-final-response"],
+					reason: "runtime 已绑定本轮实际正文",
+				}],
+				verifiedAt: "2026-08-24T07:12:00.000Z",
+			},
 		});
 
-		expect(expected).toEqual({
-			active: true,
-			kind: "single_baseframe_preproduction",
-			source: "semantic_task_summary",
-			reason: "explicit_structured_delivery_contract",
-			minStillCount: null,
+		expect(terminalDelivery?.deliveryEvidence[0]).toMatchObject({
+			kind: "final_response",
+			sourceRef: "final_response",
+		});
+		expect(terminalDelivery?.deliveryVerification.status).toBe("satisfied");
+	});
+
+	it("rejects a durable terminal closure whose contract hashes drift", () => {
+		expect(normalizePublicChatDurableTerminalDelivery({
+			version: 1,
+			requestTerminal: {
+				version: 1,
+				terminal: true,
+				status: "succeeded",
+				reason: "delivery_verified",
+			},
+			expectedDelivery: { version: 2, contractHash: "contract-a" },
+			deliveryEvidence: [{
+				evidenceId: "runtime-final-response",
+				kind: "final_response",
+				sourceRef: "final_response",
+				requirementIds: ["must-answer"],
+				attributes: {},
+			}],
+			deliveryVerification: {
+				version: 2,
+				contractHash: "contract-b",
+				status: "satisfied",
+				criteria: [{
+					requirementId: "must-answer",
+					status: "satisfied",
+					evidenceIds: ["runtime-final-response"],
+					reason: "正文已绑定",
+				}],
+				verifiedAt: "2026-08-24T07:12:00.000Z",
+			},
+		})).toBeNull();
+	});
+
+	it("preserves an open agents-cli delivery contract without classifying its kind in Hono", () => {
+		const contract = normalizePublicChatSemanticDeliveryContract({
+			kind: "interactive_story_package",
+			requirements: [
+				{ id: "story", output: "branching narrative" },
+				{ id: "canvas", output: "persisted nodes" },
+			],
+			minimumBranches: 3,
+			requiresPublishedAsset: false,
+		});
+
+		expect(contract).toEqual({
+			kind: "interactive_story_package",
+			requirements: [
+				{ id: "story", output: "branching narrative" },
+				{ id: "canvas", output: "persisted nodes" },
+			],
+			minimumBranches: 3,
+			requiresPublishedAsset: false,
 		});
 	});
 
-	it("uses structured multishot minimums instead of local case thresholds", () => {
-		const expected = buildPublicChatExpectedDeliverySummary({
-			taskSummary: {
-				taskGoal: "完成四镜头定格动画静帧交付。",
-				requestedOutput: "四张镜头静帧",
-				taskKind: "chapter_storyboard",
-				recommendedNextStage: "deliver_four_still_units",
-				mustStop: false,
-				blockingGaps: [],
-				successCriteria: ["至少四个镜头静帧"],
-				deliveryContract: {
-					kind: "chapter_multishot_stills",
-					minStillCount: 4,
+	it("rejects malformed, non-JSON, and oversized delivery contracts", () => {
+		const circular: Record<string, unknown> = { kind: "circular" };
+		circular.self = circular;
+
+		expect(normalizePublicChatSemanticDeliveryContract(null)).toBeNull();
+		expect(normalizePublicChatSemanticDeliveryContract({ kind: "" })).toBeNull();
+		expect(normalizePublicChatSemanticDeliveryContract(circular)).toBeNull();
+		expect(normalizePublicChatSemanticDeliveryContract({
+			kind: "oversized",
+			payload: "x".repeat(16_001),
+		})).toBeNull();
+	});
+
+	it("normalizes canonical evidence while preserving factual attributes", () => {
+		const evidence = normalizePublicChatDeliveryEvidence([
+			{
+				evidenceId: "tool:generate-1",
+				kind: "tool_call",
+				sourceRef: "generate-1",
+				requirementIds: ["asset-created", "asset-created"],
+				artifactClass: "image",
+				attributes: {
+					status: "completed",
+					assetCount: 1,
+					persisted: true,
+					failureCode: null,
 				},
 			},
-			requiresExecutionDelivery: true,
-			forceAssetGeneration: false,
-			chapterGroundedPromptSpecRequired: true,
-			chapterAssetPreproductionRequired: false,
-			chapterAssetPreproductionCount: null,
-			selectedNodeKind: "storyboard",
-			selectedReferenceKind: null,
-			workspaceAction: null,
-		});
-		const verification = verifyPublicChatDelivery({
-			expected,
-			evidence: {
-				assetCount: 0,
-				imageAssetCount: 0,
-				videoAssetCount: 0,
-				wroteCanvas: true,
-				generatedAssets: false,
-				imageLikeNodeCount: 3,
-				preproductionImageLikeNodeCount: 0,
-				reusablePreproductionImageLikeNodeCount: 0,
-				materializedStoryboardStillCount: 0,
-				hasVideoNodes: false,
-				hasMaterializedVisualOutputs: false,
-				hasPlannedAuthorityBaseFrame: false,
-				hasConfirmedAuthorityBaseFrame: false,
-				storyboardPlanPersistenceCount: 0,
-			},
-		});
+		]);
 
-		expect(expected.minStillCount).toBe(4);
-		expect(verification).toEqual({
-			applicable: true,
-			status: "failed",
-			code: "chapter_grounded_multishot_delivery_missing",
-			summary: "chapter_multishot_still_delivery_missing",
-		});
+		expect(evidence).toEqual([
+			{
+				evidenceId: "tool:generate-1",
+				kind: "tool_call",
+				sourceRef: "generate-1",
+				requirementIds: ["asset-created"],
+				artifactClass: "image",
+				attributes: {
+					status: "completed",
+					assetCount: 1,
+					persisted: true,
+					failureCode: null,
+				},
+			},
+		]);
 	});
 
-	it("counts materialized storyboard stills as generic still delivery evidence", () => {
-		const verification = verifyPublicChatDelivery({
-			expected: {
-				active: true,
-				kind: "chapter_multishot_stills",
-				source: "chapter_grounded_scope",
-				reason: "chapter_grounded_execution_defaults_to_multishot_still_delivery",
-				minStillCount: 2,
-			},
-			evidence: {
-				assetCount: 0,
-				imageAssetCount: 0,
-				videoAssetCount: 0,
-				wroteCanvas: true,
-				generatedAssets: false,
-				imageLikeNodeCount: 0,
-				preproductionImageLikeNodeCount: 0,
-				reusablePreproductionImageLikeNodeCount: 0,
-				materializedStoryboardStillCount: 2,
-				hasVideoNodes: false,
-				hasMaterializedVisualOutputs: true,
-				hasPlannedAuthorityBaseFrame: false,
-				hasConfirmedAuthorityBaseFrame: true,
-				storyboardPlanPersistenceCount: 0,
-			},
-		});
+	it("rejects duplicate evidence identities and non-scalar evidence attributes", () => {
+		const evidence = {
+			evidenceId: "duplicate",
+			kind: "artifact",
+			mediaType: null,
+			sourceRef: "https://cdn.example/asset.png",
+			requirementIds: [],
+			attributes: { materialized: true },
+		};
 
-		expect(verification).toEqual({
-			applicable: true,
+		expect(normalizePublicChatDeliveryEvidence([evidence, evidence])).toBeNull();
+		expect(normalizePublicChatDeliveryEvidence([{
+			...evidence,
+			evidenceId: "nested-attribute",
+			attributes: { nested: { forbidden: true } },
+		}])).toBeNull();
+		expect(normalizePublicChatDeliveryEvidence([])).toBeNull();
+	});
+
+	it("requires explicit artifact media identity and preserves the typed value", () => {
+		const untyped = {
+			evidenceId: "untyped",
+			kind: "artifact",
+			sourceRef: "https://cdn.example/asset.png",
+			requirementIds: ["asset-created"],
+			attributes: { url: "https://cdn.example/asset.png" },
+		};
+		expect(normalizePublicChatDeliveryEvidence([untyped])).toBeNull();
+		expect(normalizePublicChatDeliveryEvidence([{
+			...untyped,
+			mediaType: "image",
+		}])).toEqual([{
+			...untyped,
+			mediaType: "image",
+		}]);
+	});
+
+	it("normalizes the agents-cli v2 verification envelope without re-verifying it", () => {
+		const verification = normalizePublicChatDeliveryVerification({
+			version: 2,
+			contractHash: "sha256:contract-1",
 			status: "satisfied",
-			code: null,
-			summary: "chapter_multishot_still_delivery_verified",
+			criteria: [
+				{
+					requirementId: "asset-created",
+					status: "satisfied",
+					evidenceIds: ["tool:generate-1"],
+					reason: "The generation tool returned a durable materialized asset.",
+				},
+			],
+			verifiedAt: "2026-08-10T01:02:03.000Z",
+		});
+
+		expect(verification).toEqual({
+			version: 2,
+			contractHash: "sha256:contract-1",
+			status: "satisfied",
+			criteria: [
+				{
+					requirementId: "asset-created",
+					status: "satisfied",
+					evidenceIds: ["tool:generate-1"],
+					reason: "The generation tool returned a durable materialized asset.",
+				},
+			],
+			verifiedAt: "2026-08-10T01:02:03.000Z",
 		});
 	});
 
-	it("forces chapter-grounded requests with missing reusable assets into preproduction-first delivery", () => {
+	it("rejects malformed verification envelopes instead of inventing a host verdict", () => {
+		const baseVerification = {
+			version: 2,
+			contractHash: "sha256:contract-1",
+			status: "unsatisfied",
+			criteria: [
+				{
+					requirementId: "asset-created",
+					status: "unresolved",
+					evidenceIds: [],
+					reason: "No durable asset evidence was reported.",
+				},
+			],
+			verifiedAt: "2026-08-10T01:02:03.000Z",
+		};
+
+		expect(normalizePublicChatDeliveryVerification({
+			...baseVerification,
+			version: 1,
+		})).toBeNull();
+		expect(normalizePublicChatDeliveryVerification({
+			...baseVerification,
+			criteria: [...baseVerification.criteria, baseVerification.criteria[0]],
+		})).toBeNull();
+		expect(normalizePublicChatDeliveryVerification({
+			...baseVerification,
+			status: "pending",
+		})).toBeNull();
+		expect(normalizePublicChatDeliveryVerification({
+			...baseVerification,
+			status: "satisfied",
+		})).toBeNull();
+	});
+
+	it("requires every criterion reference to bind evidence for the same requirement and contract", () => {
+		const evidence = normalizePublicChatDeliveryEvidence([{
+			evidenceId: "persisted:1",
+			kind: "persisted_state",
+			sourceRef: "state:1",
+			requirementIds: ["persisted-output"],
+			attributes: { revision: 1 },
+		}]);
+		const verification = normalizePublicChatDeliveryVerification({
+			version: 2,
+			contractHash: "sha256:contract-1",
+			status: "satisfied",
+			criteria: [{
+				requirementId: "persisted-output",
+				status: "satisfied",
+				evidenceIds: ["persisted:1"],
+				reason: "The persisted revision proves the output exists.",
+			}],
+			verifiedAt: "2026-08-10T01:02:03.000Z",
+		});
+		expect(evidence).not.toBeNull();
+		expect(verification).not.toBeNull();
+		if (!evidence || !verification) throw new Error("test fixture normalization failed");
+
+		expect(isPublicChatDeliveryEnvelopeStructurallyConsistent({
+			evidence,
+			verification,
+			expectedContractHash: "sha256:contract-1",
+		})).toBe(true);
+		expect(isPublicChatDeliveryEnvelopeStructurallyConsistent({
+			evidence,
+			verification: {
+				...verification,
+				criteria: [{ ...verification.criteria[0], requirementId: "different-requirement" }],
+			},
+			expectedContractHash: "sha256:contract-1",
+		})).toBe(false);
+		expect(isPublicChatDeliveryEnvelopeStructurallyConsistent({
+			evidence,
+			verification,
+			expectedContractHash: "sha256:other-contract",
+		})).toBe(false);
+	});
+
+	it("projects an open expected-delivery summary from an agents-cli tool trace", () => {
 		const expected = buildPublicChatExpectedDeliverySummary({
 			taskSummary: {
-				taskGoal: "完成第二章漫剧创作。",
-				requestedOutput: "第二章漫剧节点",
-				taskKind: "chapter_grounded_storyboard",
-				recommendedNextStage: "create_storyboard_nodes",
+				taskGoal: "Create an interactive story package",
+				requestedOutput: "A persisted branching narrative",
+				taskKind: "story",
+				recommendedNextStage: "ready_for_review",
 				mustStop: false,
+				requiresExecutionDelivery: true,
 				blockingGaps: [],
-				successCriteria: ["完成章节分镜"],
+				successCriteria: ["All branches are persisted"],
 				deliveryContract: {
-					kind: "chapter_multishot_stills",
-					minStillCount: 4,
+					kind: "interactive_story_package",
+					minimumBranches: 3,
+				},
+				deliveryVerification: {
+					version: 2,
+					contractHash: "sha256:contract-1",
+					status: "satisfied",
+					criteria: [],
+					verifiedAt: "2026-08-10T01:02:03.000Z",
 				},
 			},
-			requiresExecutionDelivery: true,
-			forceAssetGeneration: false,
-			chapterGroundedPromptSpecRequired: true,
-			chapterAssetPreproductionRequired: true,
-			chapterAssetPreproductionCount: 3,
-			selectedNodeKind: "image",
-			selectedReferenceKind: null,
-			workspaceAction: null,
-		});
-		const verification = verifyPublicChatDelivery({
-			expected,
-			evidence: {
-				assetCount: 0,
-				imageAssetCount: 0,
-				videoAssetCount: 0,
-				wroteCanvas: true,
-				generatedAssets: false,
-				imageLikeNodeCount: 4,
-				preproductionImageLikeNodeCount: 1,
-				reusablePreproductionImageLikeNodeCount: 1,
-				materializedStoryboardStillCount: 0,
-				hasVideoNodes: false,
-				hasMaterializedVisualOutputs: false,
-				hasPlannedAuthorityBaseFrame: true,
-				hasConfirmedAuthorityBaseFrame: false,
-				storyboardPlanPersistenceCount: 0,
-			},
+			source: "agents_cli_tool_trace",
 		});
 
 		expect(expected).toEqual({
 			active: true,
-			kind: "chapter_asset_preproduction",
-			source: "chapter_missing_assets",
-			reason: "chapter_grounded_missing_reusable_assets_requires_preproduction_first",
-			minStillCount: 3,
-		});
-		expect(verification).toEqual({
-			applicable: true,
-			status: "failed",
-			code: "chapter_asset_preproduction_missing",
-			summary: "chapter_asset_preproduction_missing",
+			kind: "interactive_story_package",
+			source: "agents_cli_tool_trace",
+			reason: "ready_for_review",
+			taskGoal: "Create an interactive story package",
+			requestedOutput: "A persisted branching narrative",
+			successCriteria: ["All branches are persisted"],
+			deliveryContract: {
+				kind: "interactive_story_package",
+				minimumBranches: 3,
+			},
+			contractHash: "sha256:contract-1",
 		});
 	});
 
-	it("counts reusable anchor nodes as chapter asset preproduction delivery evidence", () => {
-		const verification = verifyPublicChatDelivery({
-			expected: {
-				active: true,
-				kind: "chapter_asset_preproduction",
-				source: "chapter_missing_assets",
-				reason: "chapter_grounded_missing_reusable_assets_requires_preproduction_first",
-				minStillCount: 3,
-			},
-			evidence: {
-				assetCount: 0,
-				imageAssetCount: 0,
-				videoAssetCount: 0,
-				wroteCanvas: true,
-				generatedAssets: false,
-				imageLikeNodeCount: 5,
-				preproductionImageLikeNodeCount: 0,
-				reusablePreproductionImageLikeNodeCount: 3,
-				materializedStoryboardStillCount: 0,
-				hasVideoNodes: false,
-				hasMaterializedVisualOutputs: false,
-				hasPlannedAuthorityBaseFrame: true,
-				hasConfirmedAuthorityBaseFrame: false,
-				storyboardPlanPersistenceCount: 0,
-			},
-		});
-
-		expect(verification).toEqual({
-			applicable: true,
-			status: "satisfied",
-			code: null,
-			summary: "chapter_asset_preproduction_verified",
-		});
-	});
-
-	it("requires storyboard plan persistence for chapter script workspace actions", () => {
-		const expected = buildPublicChatExpectedDeliverySummary({
+	it("reports an inactive projection when agents-cli has no task summary", () => {
+		expect(buildPublicChatExpectedDeliverySummary({
 			taskSummary: null,
-			requiresExecutionDelivery: false,
-			forceAssetGeneration: false,
-			chapterGroundedPromptSpecRequired: false,
-			chapterAssetPreproductionRequired: false,
-			chapterAssetPreproductionCount: null,
-			selectedNodeKind: null,
-			selectedReferenceKind: null,
-			workspaceAction: "chapter_script_generation",
-		});
-
-		expect(expected).toEqual({
-			active: true,
-			kind: "chapter_storyboard_plan_persistence",
-			source: "workspace_action",
-			reason: "workspace_action_requires_chapter_storyboard_plan_persistence",
-			minStillCount: null,
-		});
-	});
-
-	it("fails chapter script delivery when storyboard plan upsert evidence is missing", () => {
-		const verification = verifyPublicChatDelivery({
-			expected: {
-				active: true,
-				kind: "chapter_storyboard_plan_persistence",
-				source: "workspace_action",
-				reason: "workspace_action_requires_chapter_storyboard_plan_persistence",
-				minStillCount: null,
-			},
-			evidence: {
-				assetCount: 0,
-				imageAssetCount: 0,
-				videoAssetCount: 0,
-				wroteCanvas: false,
-				generatedAssets: false,
-				imageLikeNodeCount: 0,
-				preproductionImageLikeNodeCount: 0,
-				reusablePreproductionImageLikeNodeCount: 0,
-				materializedStoryboardStillCount: 0,
-				hasVideoNodes: false,
-				hasMaterializedVisualOutputs: false,
-				hasPlannedAuthorityBaseFrame: false,
-				hasConfirmedAuthorityBaseFrame: false,
-				storyboardPlanPersistenceCount: 0,
-			},
-		});
-
-		expect(verification).toEqual({
-			applicable: true,
-			status: "failed",
-			code: "chapter_storyboard_plan_persistence_missing",
-			summary: "chapter_storyboard_plan_persistence_missing",
+			source: "agents_cli_tool_trace",
+		})).toEqual({
+			active: false,
+			kind: "none",
+			source: "none",
+			reason: "agents_cli_task_summary_missing",
 		});
 	});
 });

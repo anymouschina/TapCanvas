@@ -278,7 +278,7 @@ const NotificationSettings = ({
       title: t('个人中心区域'),
       description: t('用户个人功能'),
       modules: [
-        { key: 'topup', title: t('钱包管理'), description: t('余额充值管理') },
+        { key: 'topup', title: t('额度管理'), description: t('兑换码与邀请额度管理') },
         {
           key: 'personal',
           title: t('个人设置'),

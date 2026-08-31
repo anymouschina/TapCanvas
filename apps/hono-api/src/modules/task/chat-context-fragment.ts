@@ -21,6 +21,21 @@ export function buildPublicChatContextFragment(
 	const lines = [
 		"<tapcanvas_context>",
 		"【当前轮已确认上下文】",
+		...(input.generationProposal
+			? [
+					"【用户已明确点击的生成提案（结构化事实）】",
+					`- proposalId: ${input.generationProposal.proposalId}`,
+					`- kind: ${input.generationProposal.kind}`,
+					`- title: ${input.generationProposal.title}`,
+					`- prompt: ${clipBriefingText(input.generationProposal.prompt, 20_000)}`,
+					`- model: ${input.generationProposal.model || "none"}`,
+					`- parameters: ${input.generationProposal.parameters.map((item) => `${item.label}=${item.value}`).join(" | ") || "none"}`,
+					`- action: ${input.generationProposal.action || "none"}`,
+					`- nodeId: ${input.generationProposal.nodeId || "none"}`,
+			  ]
+			: []),
+		`- chatMode: ${input.chatMode || "none"}`,
+		`- creativePhase: ${input.creativePhase || "none"}`,
 		`- planOnly: ${input.planOnly ? "true" : "false"}`,
 		`- forceAssetGeneration: ${input.forceAssetGeneration ? "true" : "false"}`,
 		`- project: ${input.currentProjectName?.trim() || "none"}`,
@@ -47,8 +62,8 @@ export function buildPublicChatContextFragment(
 		`- selectedReference.kind: ${input.selectedReference?.kind?.trim() || "none"}`,
 		`- selectedReference.roleName: ${input.selectedReference?.roleName?.trim() || "none"}`,
 		`- selectedReference.roleCardId: ${input.selectedReference?.roleCardId?.trim() || "none"}`,
-		`- selectedReference.imageUrl: ${input.selectedReference?.imageUrl?.trim() || "none"}`,
-		`- selectedReference.sourceUrl: ${input.selectedReference?.sourceUrl?.trim() || "none"}`,
+		`- selectedReference.hasImage: ${input.selectedReference?.imageUrl?.trim() ? "true" : "false"}`,
+		`- selectedReference.hasSourceMedia: ${input.selectedReference?.sourceUrl?.trim() ? "true" : "false"}`,
 		`- selectedReference.bookId: ${input.selectedReference?.bookId?.trim() || "none"}`,
 		`- selectedReference.chapterId: ${input.selectedReference?.chapterId?.trim() || "none"}`,
 		`- selectedReference.shotNo: ${typeof input.selectedReference?.shotNo === "number" ? String(input.selectedReference.shotNo) : "none"}`,
@@ -82,6 +97,10 @@ function buildReferenceImageSlotBriefingLines(
 			.map((slot) => {
 				const parts = [slot.slot];
 				if (slot.label) parts.push(slot.label);
+				if (slot.referenceId) parts.push(`referenceId=${slot.referenceId}`);
+				if (slot.nodeId) parts.push(`nodeId=${slot.nodeId}`);
+				if (slot.assetId) parts.push(`assetId=${slot.assetId}`);
+				if (slot.assetRefId) parts.push(`assetRefId=${slot.assetRefId}`);
 				if (slot.role) parts.push(`role=${slot.role}`);
 				if (slot.note) parts.push(`note=${slot.note}`);
 				return parts.join(" | ");
@@ -102,13 +121,25 @@ function buildEnabledModelCatalogBriefingLines(
 			`- enabledModelCatalogSummary.error: ${clipBriefingText(error, 400)}`,
 		];
 	}
-	const imageModels = summary?.imageModels ?? [];
-	const videoModels = summary?.videoModels ?? [];
-	if (imageModels.length === 0 && videoModels.length === 0) {
+	if (!summary) {
+		return [];
+	}
+	const imageModels = summary.imageModels;
+	const videoModels = summary.videoModels;
+	const audioModels = summary.audioModels;
+	const videoFinishingModels = summary.videoFinishingModels ?? [];
+	if (
+		imageModels.length === 0 &&
+		videoModels.length === 0 &&
+		audioModels.length === 0 &&
+		videoFinishingModels.length === 0
+	) {
 		return [
 			"- enabledModelCatalogSummary.status: available",
 			"- enabledImageModels.count: 0",
 			"- enabledVideoModels.count: 0",
+			"- enabledAudioModels.count: 0",
+			"- enabledVideoFinishingModels.count: 0",
 		];
 	}
 	return [
@@ -117,7 +148,43 @@ function buildEnabledModelCatalogBriefingLines(
 		...imageModels.map((model, index) => buildEnabledImageModelBriefingLine(index + 1, model)),
 		`- enabledVideoModels.count: ${videoModels.length}`,
 		...videoModels.map((model, index) => buildEnabledVideoModelBriefingLine(index + 1, model)),
+		`- enabledAudioModels.count: ${audioModels.length}`,
+		...audioModels.map((model, index) => buildEnabledAudioModelBriefingLine(index + 1, model)),
+		`- enabledVideoFinishingModels.count: ${videoFinishingModels.length}`,
+		...videoFinishingModels.map((model, index) =>
+			buildEnabledVideoFinishingModelBriefingLine(index + 1, model),
+		),
 	];
+}
+
+/**
+ * Compact factual briefing for agents that need to select a video generation
+ * contract.  This deliberately exposes only the live executable video
+ * catalog; it does not choose a model or infer a workflow.
+ */
+export function buildEnabledVideoModelCatalogBriefing(
+	summary: PublicChatEnabledModelCatalogSummary | null | undefined,
+	error: string | null | undefined,
+): string {
+	const lines = error
+		? [
+				"- enabledVideoModels.status: unavailable",
+				`- enabledVideoModels.error: ${clipBriefingText(error, 400)}`,
+			]
+		: summary
+			? [
+				"- enabledVideoModels.status: available",
+				`- enabledVideoModels.count: ${summary.videoModels.length}`,
+				...summary.videoModels.map((model, index) =>
+					buildEnabledVideoModelBriefingLine(index + 1, model),
+				),
+				`- enabledVideoFinishingModels.count: ${summary.videoFinishingModels?.length ?? 0}`,
+				...(summary.videoFinishingModels ?? []).map((model, index) =>
+					buildEnabledVideoFinishingModelBriefingLine(index + 1, model),
+				),
+			]
+			: ["- enabledVideoModels.status: not_loaded"];
+	return lines.join("\n");
 }
 
 function buildEnabledImageModelBriefingLine(
@@ -130,7 +197,6 @@ function buildEnabledImageModelBriefingLine(
 		`vendor=${model.vendorKey}`,
 		`label=${model.labelZh}`,
 		`access=${model.availability}`,
-		`pricing=${model.pricingCost === null ? "none" : String(model.pricingCost)}`,
 		`useCases=${formatBriefingList(model.useCases)}`,
 	];
 	if (model.imageOptions) {
@@ -174,7 +240,6 @@ function buildEnabledVideoModelBriefingLine(
 		`vendor=${model.vendorKey}`,
 		`label=${model.labelZh}`,
 		`access=${model.availability}`,
-		`pricing=${model.pricingCost === null ? "none" : String(model.pricingCost)}`,
 		`useCases=${formatBriefingList(model.useCases)}`,
 	];
 	if (model.videoOptions) {
@@ -195,10 +260,34 @@ function buildEnabledVideoModelBriefingLine(
 		parts.push(`resolutions=${formatBriefingList(resolutionValues)}`);
 		parts.push(`sizes=${formatBriefingList(sizeValues)}`);
 		parts.push(`orientations=${formatBriefingList(orientationValues)}`);
+		parts.push(`supportsNativeAudio=${model.videoOptions.supportsNativeAudio ?? "undeclared"}`);
+		parts.push(`supportsReferenceImages=${model.videoOptions.supportsReferenceImages ?? "undeclared"}`);
+		parts.push(`maxReferenceImages=${model.videoOptions.maxReferenceImages ?? "undeclared"}`);
+		parts.push(`supportsReferenceAudios=${model.videoOptions.supportsReferenceAudios ?? "undeclared"}`);
+		parts.push(`maxReferenceAudios=${model.videoOptions.maxReferenceAudios ?? "undeclared"}`);
+		parts.push(`maxReferenceAudioDuration=${model.videoOptions.maxReferenceAudioDurationSeconds ?? "undeclared"}`);
 	} else {
 		parts.push("videoOptions=undeclared");
 	}
 	return `- enabledVideoModel[${index}]: ${clipBriefingText(parts.join(" | "), 900)}`;
+}
+
+function buildEnabledAudioModelBriefingLine(
+	index: number,
+	model: PublicChatEnabledModelCatalogSummary["audioModels"][number],
+): string {
+	return `- enabledAudioModel[${index}]: modelKey=${model.modelKey} | label=${model.label} | audioType=${model.audioType} | engine=${model.engine || "undeclared"} | pricingCost=${model.pricingCost}`;
+}
+
+function buildEnabledVideoFinishingModelBriefingLine(
+	index: number,
+	model: NonNullable<PublicChatEnabledModelCatalogSummary["videoFinishingModels"]>[number],
+): string {
+	const parameters = model.parameters.map((parameter) => {
+		const options = parameter.options.map((option) => String(option.value));
+		return `${parameter.key}=${options.length > 0 ? options.join(",") : "declared"}`;
+	});
+	return `- enabledVideoFinishingModel[${index}]: modelKey=${model.modelKey} | label=${model.label} | parameters=${formatBriefingList(parameters)}`;
 }
 
 function buildStoryboardSelectionBriefingLines(

@@ -5,7 +5,7 @@ import { getStoryboardEditorCellCount, normalizeStoryboardEditorGrid } from '../
 import { hasPotentialImagePromptExecution } from '../../canvas/nodes/taskNode/imagePromptSpec'
 import { useRFStore } from '../../canvas/store'
 
-const AUTO_RUN_CORE_TYPES = new Set(['image', 'storyboard'])
+const AUTO_RUN_CORE_TYPES = new Set(['image', 'storyboard', 'audio'])
 const ACTIVE_STATUSES = new Set(['queued', 'running'])
 const TERMINAL_SKIP_STATUSES = new Set(['success'])
 const PATCHED_NODE_SKIP_STATUSES = new Set(['running', 'success', 'canceled'])
@@ -55,8 +55,18 @@ function hasStoryboardPromptExecution(data: Record<string, unknown>): boolean {
   })
 }
 
-function hasAutoRunnableVisualExecution(kind: string | null, coreType: string | null, data: Record<string, unknown>): boolean {
+function hasAudioExecution(data: Record<string, unknown>): boolean {
+  return (
+    (hasNonEmptyString(data.text) || hasNonEmptyString(data.prompt)) &&
+    hasNonEmptyString(data.audioModel)
+  )
+}
+
+function hasAutoRunnableExecution(kind: string | null, coreType: string | null, data: Record<string, unknown>): boolean {
   if (!coreType || !AUTO_RUN_CORE_TYPES.has(coreType)) return false
+  if (coreType === 'audio' || kind === 'audio') {
+    return hasAudioExecution(data)
+  }
   if (coreType === 'storyboard' || kind === 'storyboard') {
     return hasStoryboardPromptExecution(data)
   }
@@ -77,7 +87,7 @@ export function shouldAutoRunAiChatNode(node: Node): boolean {
   if (ACTIVE_STATUSES.has(status) || TERMINAL_SKIP_STATUSES.has(status)) return false
   if (hasExistingExecutionMarker(data) || hasResolvedAssetOutput(data)) return false
 
-  return hasAutoRunnableVisualExecution(kind, coreType, data)
+  return hasAutoRunnableExecution(kind, coreType, data)
 }
 
 export function collectAiChatAutoRunNodeIds(input: {
@@ -116,7 +126,7 @@ export function shouldAutoRunAiChatPatchedNode(node: Node): boolean {
   if (PATCHED_NODE_SKIP_STATUSES.has(status)) return false
   if (hasExistingExecutionMarker(data) || hasResolvedAssetOutput(data)) return false
 
-  return hasAutoRunnableVisualExecution(kind, coreType, data)
+  return hasAutoRunnableExecution(kind, coreType, data)
 }
 
 export function collectAiChatPatchedNodeIds(input: {

@@ -1,9 +1,12 @@
 package model
 
 import (
+	"sort"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 
 	"gorm.io/gorm"
 )
@@ -16,8 +19,19 @@ const (
 )
 
 type BoundChannel struct {
-	Name string `json:"name"`
-	Type int    `json:"type"`
+	ID                int                        `json:"id"`
+	Name              string                     `json:"name"`
+	Type              int                        `json:"type"`
+	Status            int                        `json:"status"`
+	AbilityEnabled    bool                       `json:"ability_enabled"`
+	EffectiveProtocol string                     `json:"effective_protocol,omitempty"`
+	ProtocolTransport constant.ProtocolTransport `json:"protocol_transport,omitempty"`
+	ProtocolSource    string                     `json:"protocol_source,omitempty"`
+	ProtocolModelKey  string                     `json:"protocol_model_key,omitempty"`
+	ProtocolOptions   map[string]string          `json:"protocol_options,omitempty"`
+	DefaultProtocol   *dto.ProtocolBinding       `json:"default_protocol,omitempty"`
+	ModelProtocol     *dto.ProtocolBinding       `json:"model_protocol,omitempty"`
+	ProtocolError     string                     `json:"protocol_error,omitempty"`
 }
 
 type Model struct {
@@ -41,9 +55,12 @@ type Model struct {
 	Kind          string         `json:"kind"                   gorm:"type:varchar(32);default:''"`
 	Capabilities  string         `json:"capabilities,omitempty" gorm:"type:text"`
 	ParamsDef     string         `json:"params_def,omitempty"   gorm:"type:text"`
+	PricingConfig string         `json:"pricing_config,omitempty" gorm:"type:text"`
 
-	MatchedModels []string `json:"matched_models,omitempty" gorm:"-"`
-	MatchedCount  int      `json:"matched_count,omitempty" gorm:"-"`
+	EffectiveEndpoints []constant.EndpointType `json:"effective_endpoints,omitempty" gorm:"-"`
+	MatchedModels      []string                `json:"matched_models,omitempty" gorm:"-"`
+	MatchedCount       int                     `json:"matched_count,omitempty" gorm:"-"`
+	RoutingAliases     []string                `json:"routing_aliases,omitempty" gorm:"-"`
 }
 
 func (mi *Model) Insert() error {
@@ -81,13 +98,29 @@ func (mi *Model) Update() error {
 	// 使用 Select 强制更新所有字段，包括零值
 	return DB.Model(&Model{}).Where("id = ?", mi.Id).
 		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule",
-			"kind", "capabilities", "params_def",
+			"kind", "capabilities", "params_def", "pricing_config",
 			"updated_time").
 		Updates(mi).Error
 }
 
 func (mi *Model) Delete() error {
 	return DB.Delete(mi).Error
+}
+
+func BatchUpdateModelStatus(ids []int, status int) (int64, error) {
+	var matchedCount int64
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Model{}).Where("id IN ?", ids).Count(&matchedCount).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Model{}).
+			Where("id IN ?", ids).
+			Updates(map[string]interface{}{
+				"status":       status,
+				"updated_time": common.GetTimestamp(),
+			}).Error
+	})
+	return matchedCount, err
 }
 
 func GetVendorModelCounts() (map[int64]int64, error) {
@@ -120,22 +153,65 @@ func GetBoundChannelsByModelsMap(modelNames []string) (map[string][]BoundChannel
 		return result, nil
 	}
 	type row struct {
-		Model string
-		Name  string
-		Type  int
+		Model   string
+		ID      int
+		Name    string
+		Type    int
+		Status  int
+		Enabled bool
+		Setting *string
 	}
 	var rows []row
 	err := DB.Table("channels").
-		Select("abilities.model as model, channels.name as name, channels.type as type").
+		Select("abilities.model as model, channels.id as id, channels.name as name, channels.type as type, channels.status as status, abilities.enabled as enabled, channels.setting as setting").
 		Joins("JOIN abilities ON abilities.channel_id = channels.id").
-		Where("abilities.model IN ? AND abilities.enabled = ?", modelNames, true).
+		Where("abilities.model IN ?", modelNames).
 		Distinct().
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range rows {
-		result[r.Model] = append(result[r.Model], BoundChannel{Name: r.Name, Type: r.Type})
+		boundChannel := BoundChannel{
+			ID:             r.ID,
+			Name:           r.Name,
+			Type:           r.Type,
+			Status:         r.Status,
+			AbilityEnabled: r.Enabled,
+		}
+		settings, parseErr := parseChannelSettings(r.Setting)
+		if parseErr != nil {
+			boundChannel.ProtocolError = "渠道协议设置不是合法 JSON: " + parseErr.Error()
+			result[r.Model] = append(result[r.Model], boundChannel)
+			continue
+		}
+		if settings.DefaultProtocol != nil {
+			defaultProtocol := cloneProtocolBinding(*settings.DefaultProtocol)
+			boundChannel.DefaultProtocol = &defaultProtocol
+		}
+		resolved, resolveErr := ResolveProtocolBinding(settings, r.Model)
+		if resolveErr != nil {
+			boundChannel.ProtocolError = resolveErr.Error()
+			result[r.Model] = append(result[r.Model], boundChannel)
+			continue
+		}
+		boundChannel.EffectiveProtocol = resolved.Protocol.ID
+		boundChannel.ProtocolTransport = resolved.Protocol.Transport
+		boundChannel.ProtocolSource = resolved.Source
+		boundChannel.ProtocolModelKey = resolved.ModelKey
+		if len(resolved.Binding.Options) > 0 {
+			boundChannel.ProtocolOptions = resolved.Binding.Options
+		}
+		if resolved.Source == ProtocolBindingSourceModel {
+			modelProtocol := cloneProtocolBinding(resolved.Binding)
+			boundChannel.ModelProtocol = &modelProtocol
+		}
+		result[r.Model] = append(result[r.Model], boundChannel)
+	}
+	for modelName := range result {
+		sort.Slice(result[modelName], func(i, j int) bool {
+			return result[modelName][i].ID < result[modelName][j].ID
+		})
 	}
 	return result, nil
 }

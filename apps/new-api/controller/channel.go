@@ -3,8 +3,10 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +16,11 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/claude"
+	"github.com/QuantumNous/new-api/relay/channel/codex"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
+	vertexchannel "github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -434,14 +439,24 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 
 // validateChannel 通用的渠道校验函数
 func validateChannel(channel *model.Channel, isAdd bool) error {
+	if channel == nil {
+		return fmt.Errorf("channel cannot be nil")
+	}
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
 	}
+	if channel.Type == constant.ChannelTypeAIStudioToAPI {
+		runtimeURL := strings.TrimSpace(channel.GetBaseURL())
+		parsedRuntimeURL, err := url.Parse(runtimeURL)
+		if err != nil || parsedRuntimeURL.Scheme != "https" || parsedRuntimeURL.Host == "" {
+			return fmt.Errorf("AI Studio To API Runtime 地址必须是有效的 HTTPS URL")
+		}
+	}
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel == nil || channel.Key == "" {
+		if strings.TrimSpace(channel.Key) == "" {
 			return fmt.Errorf("channel cannot be empty")
 		}
 
@@ -455,6 +470,12 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// VertexAI 特殊校验
 	if channel.Type == constant.ChannelTypeVertexAi {
+		vertexKeyType := channel.GetOtherSettings().VertexKeyType
+		switch vertexKeyType {
+		case "", dto.VertexKeyTypeJSON, dto.VertexKeyTypeAPIKey:
+		default:
+			return fmt.Errorf("不支持的 Vertex AI 密钥格式: %s", vertexKeyType)
+		}
 		if channel.Other == "" {
 			return fmt.Errorf("部署地区不能为空")
 		}
@@ -469,22 +490,25 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
-	// Codex OAuth key validation (optional, only when JSON object is provided)
+	// Codex channels may aggregate multiple compact OAuth JSON objects, one per line.
 	if channel.Type == constant.ChannelTypeCodex {
 		trimmedKey := strings.TrimSpace(channel.Key)
 		if isAdd || trimmedKey != "" {
-			if !strings.HasPrefix(trimmedKey, "{") {
-				return fmt.Errorf("Codex key must be a valid JSON object")
+			keys, parseErr := codex.ParseOAuthKeys(trimmedKey)
+			if parseErr != nil {
+				return parseErr
 			}
-			var keyMap map[string]any
-			if err := common.Unmarshal([]byte(trimmedKey), &keyMap); err != nil {
-				return fmt.Errorf("Codex key must be a valid JSON object")
-			}
-			if v, ok := keyMap["access_token"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
-				return fmt.Errorf("Codex key JSON must include access_token")
-			}
-			if v, ok := keyMap["account_id"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
-				return fmt.Errorf("Codex key JSON must include account_id")
+			for index, rawKey := range keys {
+				oauthKey, err := codex.ParseOAuthKey(rawKey)
+				if err != nil {
+					return fmt.Errorf("Codex account %d must be a valid JSON object", index+1)
+				}
+				if strings.TrimSpace(oauthKey.AccessToken) == "" {
+					return fmt.Errorf("Codex account %d must include access_token", index+1)
+				}
+				if strings.TrimSpace(oauthKey.AccountID) == "" {
+					return fmt.Errorf("Codex account %d must include account_id", index+1)
+				}
 			}
 		}
 	}
@@ -502,7 +526,7 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	oauthKey, ch, err := service.RefreshCodexChannelCredential(ctx, channelId, service.CodexCredentialRefreshOptions{ResetCaches: true})
+	refreshed, ch, err := service.RefreshCodexChannelCredentials(ctx, channelId, service.CodexCredentialRefreshOptions{ResetCaches: true})
 	if err != nil {
 		common.SysError("failed to refresh codex channel credential: " + err.Error())
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "刷新凭证失败，请稍后重试"})
@@ -513,10 +537,7 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 		"success": true,
 		"message": "refreshed",
 		"data": gin.H{
-			"expires_at":   oauthKey.Expired,
-			"last_refresh": oauthKey.LastRefresh,
-			"account_id":   oauthKey.AccountID,
-			"email":        oauthKey.Email,
+			"refreshed":    refreshed,
 			"channel_id":   ch.Id,
 			"channel_type": ch.Type,
 			"channel_name": ch.Name,
@@ -529,38 +550,8 @@ type AddChannelRequest struct {
 	MultiKeyMode              constant.MultiKeyMode `json:"multi_key_mode"`
 	BatchAddSetKeyPrefix2Name bool                  `json:"batch_add_set_key_prefix_2_name"`
 	Channel                   *model.Channel        `json:"channel"`
-}
-
-func getVertexArrayKeys(keys string) ([]string, error) {
-	if keys == "" {
-		return nil, nil
-	}
-	var keyArray []interface{}
-	err := common.Unmarshal([]byte(keys), &keyArray)
-	if err != nil {
-		return nil, fmt.Errorf("批量添加 Vertex AI 必须使用标准的JsonArray格式，例如[{key1}, {key2}...]，请检查输入: %w", err)
-	}
-	cleanKeys := make([]string, 0, len(keyArray))
-	for _, key := range keyArray {
-		var keyStr string
-		switch v := key.(type) {
-		case string:
-			keyStr = strings.TrimSpace(v)
-		default:
-			bytes, err := json.Marshal(v)
-			if err != nil {
-				return nil, fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
-			}
-			keyStr = string(bytes)
-		}
-		if keyStr != "" {
-			cleanKeys = append(cleanKeys, keyStr)
-		}
-	}
-	if len(cleanKeys) == 0 {
-		return nil, fmt.Errorf("批量添加 Vertex AI 的 keys 不能为空")
-	}
-	return cleanKeys, nil
+	MultiKeySessionAffinity   bool                  `json:"multi_key_session_affinity"`
+	MultiKeySessionTTL        int                   `json:"multi_key_session_ttl"`
 }
 
 func AddChannel(c *gin.Context) {
@@ -586,6 +577,8 @@ func AddChannel(c *gin.Context) {
 	case "multi_to_single":
 		addChannelRequest.Channel.ChannelInfo.IsMultiKey = true
 		addChannelRequest.Channel.ChannelInfo.MultiKeyMode = addChannelRequest.MultiKeyMode
+		addChannelRequest.Channel.ChannelInfo.MultiKeySessionAffinity = addChannelRequest.MultiKeySessionAffinity
+		addChannelRequest.Channel.ChannelInfo.MultiKeySessionTTL = addChannelRequest.MultiKeySessionTTL
 		if addChannelRequest.Channel.Type == constant.ChannelTypeVertexAi && addChannelRequest.Channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
 			array, err := getVertexArrayKeys(addChannelRequest.Channel.Key)
 			if err != nil {
@@ -597,14 +590,19 @@ func AddChannel(c *gin.Context) {
 			}
 			addChannelRequest.Channel.ChannelInfo.MultiKeySize = len(array)
 			addChannelRequest.Channel.Key = strings.Join(array, "\n")
+		} else if addChannelRequest.Channel.Type == constant.ChannelTypeCodex {
+			cleanKeys, parseErr := codex.ParseOAuthKeys(addChannelRequest.Channel.Key)
+			if parseErr != nil {
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": parseErr.Error()})
+				return
+			}
+			addChannelRequest.Channel.ChannelInfo.MultiKeySize = len(cleanKeys)
+			addChannelRequest.Channel.Key = strings.Join(cleanKeys, "\n")
 		} else {
-			cleanKeys := make([]string, 0)
-			for _, key := range strings.Split(addChannelRequest.Channel.Key, "\n") {
-				if key == "" {
-					continue
-				}
-				key = strings.TrimSpace(key)
-				cleanKeys = append(cleanKeys, key)
+			cleanKeys, parseErr := getLineSeparatedKeys(addChannelRequest.Channel.Key)
+			if parseErr != nil {
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": parseErr.Error()})
+				return
 			}
 			addChannelRequest.Channel.ChannelInfo.MultiKeySize = len(cleanKeys)
 			addChannelRequest.Channel.Key = strings.Join(cleanKeys, "\n")
@@ -622,10 +620,14 @@ func AddChannel(c *gin.Context) {
 				return
 			}
 		} else {
-			keys = strings.Split(addChannelRequest.Channel.Key, "\n")
+			keys, err = getLineSeparatedKeys(addChannelRequest.Channel.Key)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+				return
+			}
 		}
 	case "single":
-		keys = []string{addChannelRequest.Channel.Key}
+		keys = []string{strings.TrimSpace(addChannelRequest.Channel.Key)}
 	default:
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -656,6 +658,9 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 	service.ResetProxyClientCache()
+	if !refreshChannelRuntimeAfterWrite(c, "渠道已创建") {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -671,7 +676,9 @@ func DeleteChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	if !refreshChannelRuntimeAfterWrite(c, "渠道已删除") {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -685,7 +692,9 @@ func DeleteDisabledChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	if !refreshChannelRuntimeAfterWrite(c, "停用渠道已删除") {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -721,7 +730,9 @@ func DisableTagChannels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	if !refreshChannelRuntimeAfterWrite(c, "标签渠道已停用") {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -744,7 +755,9 @@ func EnableTagChannels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	if !refreshChannelRuntimeAfterWrite(c, "标签渠道已启用") {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -796,7 +809,9 @@ func EditTagChannels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	if !refreshChannelRuntimeAfterWrite(c, "标签渠道已更新") {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -824,7 +839,9 @@ func DeleteChannelBatch(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	if !refreshChannelRuntimeAfterWrite(c, "渠道已批量删除") {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -835,8 +852,10 @@ func DeleteChannelBatch(c *gin.Context) {
 
 type PatchChannel struct {
 	model.Channel
-	MultiKeyMode *string `json:"multi_key_mode"`
-	KeyMode      *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	MultiKeyMode            *string `json:"multi_key_mode"`
+	KeyMode                 *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	MultiKeySessionAffinity *bool   `json:"multi_key_session_affinity"`
+	MultiKeySessionTTL      *int    `json:"multi_key_session_ttl"`
 }
 
 func UpdateChannel(c *gin.Context) {
@@ -871,6 +890,12 @@ func UpdateChannel(c *gin.Context) {
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
+	}
+	if channel.MultiKeySessionAffinity != nil {
+		channel.ChannelInfo.MultiKeySessionAffinity = *channel.MultiKeySessionAffinity
+	}
+	if channel.MultiKeySessionTTL != nil {
+		channel.ChannelInfo.MultiKeySessionTTL = *channel.MultiKeySessionTTL
 	}
 
 	// 处理多key模式下的密钥追加/覆盖逻辑
@@ -925,28 +950,7 @@ func UpdateChannel(c *gin.Context) {
 					}
 				}
 
-				seen := make(map[string]struct{}, len(existingKeys)+len(newKeys))
-				for _, key := range existingKeys {
-					normalized := strings.TrimSpace(key)
-					if normalized == "" {
-						continue
-					}
-					seen[normalized] = struct{}{}
-				}
-				dedupedNewKeys := make([]string, 0, len(newKeys))
-				for _, key := range newKeys {
-					normalized := strings.TrimSpace(key)
-					if normalized == "" {
-						continue
-					}
-					if _, ok := seen[normalized]; ok {
-						continue
-					}
-					seen[normalized] = struct{}{}
-					dedupedNewKeys = append(dedupedNewKeys, normalized)
-				}
-
-				allKeys := append(existingKeys, dedupedNewKeys...)
+				allKeys := mergeUniqueKeys(existingKeys, newKeys)
 				channel.Key = strings.Join(allKeys, "\n")
 			}
 		case "replace":
@@ -958,8 +962,13 @@ func UpdateChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	if channel.Type == constant.ChannelTypeVertexAi {
+		vertexchannel.ResetAccessTokenCache(channel.Id)
+	}
 	service.ResetProxyClientCache()
+	if !refreshChannelRuntimeAfterWrite(c, "渠道已更新") {
+		return
+	}
 	channel.Key = ""
 	clearChannelInfo(&channel.Channel)
 	c.JSON(http.StatusOK, gin.H{
@@ -1105,7 +1114,9 @@ func BatchSetChannelTag(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	if !refreshChannelCacheAfterWrite(c, "渠道标签已批量更新") {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1202,7 +1213,9 @@ func CopyChannel(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "复制渠道失败，请稍后重试"})
 		return
 	}
-	model.InitChannelCache()
+	if !refreshChannelRuntimeAfterWrite(c, "渠道已复制") {
+		return
+	}
 	// success
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"id": clone.Id}})
 }
@@ -1232,10 +1245,93 @@ type MultiKeyStatusResponse struct {
 
 type KeyStatus struct {
 	Index        int    `json:"index"`
-	Status       int    `json:"status"` // 1: enabled, 2: disabled
+	Status       int    `json:"status"` // 1: enabled, 2: manually disabled, 3: automatically disabled
 	DisabledTime int64  `json:"disabled_time,omitempty"`
 	Reason       string `json:"reason,omitempty"`
 	KeyPreview   string `json:"key_preview"` // first 10 chars of key for identification
+	// 账号元信息（OAuth 或 Vertex 服务账号 JSON，用于「账号会话管理面板」展示）
+	IsOAuth        bool                   `json:"is_oauth"`
+	IsAccount      bool                   `json:"is_account"`
+	CredentialType string                 `json:"credential_type,omitempty"`
+	Email          string                 `json:"email,omitempty"`
+	AccountID      string                 `json:"account_id,omitempty"`
+	Expired        string                 `json:"expired,omitempty"`      // OAuth access_token 过期时间 (RFC3339)
+	LastRefresh    string                 `json:"last_refresh,omitempty"` // 最近一次刷新时间 (RFC3339)
+	Usage          *model.ChannelKeyUsage `json:"usage,omitempty"`
+	CooldownUntil  int64                  `json:"cooldown_until,omitempty"`
+}
+
+type MultiKeyChatTestRequest struct {
+	KeyIndex int    `json:"key_index"`
+	Model    string `json:"model"`
+	Prompt   string `json:"prompt"`
+}
+
+func channelForExactKeyTest(channel *model.Channel, keyIndex int) (*model.Channel, error) {
+	if channel == nil || !channel.ChannelInfo.IsMultiKey {
+		return nil, errors.New("该渠道不是多密钥模式")
+	}
+	keys := channel.GetKeys()
+	if keyIndex < 0 || keyIndex >= len(keys) {
+		return nil, fmt.Errorf("账号索引越界: %d", keyIndex)
+	}
+	if status, exists := channel.ChannelInfo.MultiKeyStatusList[keyIndex]; exists && status != common.ChannelStatusEnabled {
+		return nil, fmt.Errorf("指定账号当前未启用，状态码: %d", status)
+	}
+	selected := *channel
+	selected.Key = keys[keyIndex]
+	selected.ChannelInfo.IsMultiKey = false
+	return &selected, nil
+}
+
+func TestMultiKeyAccountChat(c *gin.Context) {
+	channelId, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	request := MultiKeyChatTestRequest{}
+	if err = c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	request.Prompt = strings.TrimSpace(request.Prompt)
+	if request.Prompt == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "测试消息不能为空"})
+		return
+	}
+	if len([]rune(request.Prompt)) > 4000 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "测试消息不能超过 4000 个字符"})
+		return
+	}
+	channel, err := model.GetChannelById(channelId, true)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道不存在"})
+		return
+	}
+	selected, err := channelForExactKeyTest(channel, request.KeyIndex)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	tik := time.Now()
+	isStream := selected.Type == constant.ChannelTypeCodex
+	result := testChannelWithPrompt(selected, strings.TrimSpace(request.Model), "", isStream, request.Prompt)
+	consumedTime := float64(time.Since(tik).Milliseconds()) / 1000.0
+	if result.localErr != nil {
+		response := gin.H{"success": false, "message": result.localErr.Error(), "time": consumedTime}
+		if result.NewAPIError != nil {
+			response["error_code"] = result.NewAPIError.GetErrorCode()
+		}
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"message":  "",
+		"time":     consumedTime,
+		"response": string(result.responseBody),
+	})
 }
 
 // ManageMultiKeys handles multi-key management operations
@@ -1323,13 +1419,60 @@ func ManageMultiKeys(c *gin.Context) {
 				keyPreview = key[:10] + "..."
 			}
 
-			allKeyStatusList = append(allKeyStatusList, KeyStatus{
+			ks := KeyStatus{
 				Index:        i,
 				Status:       status,
 				DisabledTime: disabledTime,
 				Reason:       reason,
 				KeyPreview:   keyPreview,
-			})
+			}
+			if usage, exists := channel.ChannelInfo.MultiKeyUsage[i]; exists {
+				usageCopy := usage
+				ks.Usage = &usageCopy
+			}
+			if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+				ks.CooldownUntil = channel.ChannelInfo.MultiKeyCooldownUntil[i]
+			}
+
+			// 若该 key 是 Claude 订阅式 OAuth JSON，解析出 email/account_id 等账号元信息，
+			// 供「账号会话管理面板」展示（裸 API Key 不受影响，IsOAuth=false）。
+			if channel.Type == constant.ChannelTypeAnthropic && claude.IsClaudeOAuthKey(key) {
+				if oauthKey, perr := claude.ParseClaudeOAuthKey(key); perr == nil {
+					ks.IsOAuth = true
+					ks.Email = oauthKey.Email
+					ks.AccountID = oauthKey.AccountID
+					ks.Expired = oauthKey.Expired
+					ks.LastRefresh = oauthKey.LastRefresh
+				}
+			}
+			if channel.Type == constant.ChannelTypeCodex {
+				if oauthKey, perr := codex.ParseOAuthKey(strings.TrimSpace(key)); perr == nil {
+					ks.IsOAuth = true
+					ks.Email = oauthKey.Email
+					ks.AccountID = oauthKey.AccountID
+					ks.Expired = oauthKey.Expired
+					ks.LastRefresh = oauthKey.LastRefresh
+				}
+			}
+			if channel.Type == constant.ChannelTypeGemini {
+				if oauthKey, perr := gemini.ParseGeminiOAuthKey(strings.TrimSpace(key)); perr == nil {
+					ks.IsOAuth = true
+					ks.Email = oauthKey.Email
+					ks.AccountID = oauthKey.AccountID
+					ks.Expired = oauthKey.Expired
+					ks.LastRefresh = oauthKey.LastRefresh
+				}
+			}
+			if channel.Type == constant.ChannelTypeVertexAi && channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
+				if metadata, parseErr := service.ParseVertexServiceAccountMetadata(strings.TrimSpace(key)); parseErr == nil {
+					ks.IsAccount = true
+					ks.CredentialType = "service_account"
+					ks.Email = metadata.ClientEmail
+					ks.AccountID = metadata.ProjectID
+				}
+			}
+
+			allKeyStatusList = append(allKeyStatusList, ks)
 		}
 
 		// Apply status filter if specified
@@ -1419,7 +1562,9 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		if !refreshChannelCacheAfterWrite(c, "密钥已禁用") {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "密钥已禁用",
@@ -1454,6 +1599,9 @@ func ManageMultiKeys(c *gin.Context) {
 		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
 			delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
 		}
+		if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+			delete(channel.ChannelInfo.MultiKeyCooldownUntil, keyIndex)
+		}
 
 		err = channel.Update()
 		if err != nil {
@@ -1461,7 +1609,9 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		if !refreshChannelCacheAfterWrite(c, "密钥已启用") {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "密钥已启用",
@@ -1478,6 +1628,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
 		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		channel.ChannelInfo.MultiKeyCooldownUntil = make(map[int]int64)
 
 		err = channel.Update()
 		if err != nil {
@@ -1485,7 +1636,9 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		if !refreshChannelCacheAfterWrite(c, "全部密钥已启用") {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": fmt.Sprintf("已启用 %d 个密钥", enabledCount),
@@ -1503,6 +1656,7 @@ func ManageMultiKeys(c *gin.Context) {
 		if channel.ChannelInfo.MultiKeyDisabledReason == nil {
 			channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
 		}
+		channel.ChannelInfo.MultiKeyCooldownUntil = make(map[int]int64)
 
 		var disabledCount int
 		for i := 0; i < channel.ChannelInfo.MultiKeySize; i++ {
@@ -1532,7 +1686,9 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		if !refreshChannelCacheAfterWrite(c, "全部密钥已禁用") {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": fmt.Sprintf("已禁用 %d 个密钥", disabledCount),
@@ -1562,6 +1718,7 @@ func ManageMultiKeys(c *gin.Context) {
 		var newStatusList = make(map[int]int)
 		var newDisabledTime = make(map[int]int64)
 		var newDisabledReason = make(map[int]string)
+		var newCooldownUntil = make(map[int]int64)
 
 		newIndex := 0
 		for i, key := range keys {
@@ -1588,6 +1745,11 @@ func ManageMultiKeys(c *gin.Context) {
 					newDisabledReason[newIndex] = r
 				}
 			}
+			if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+				if until, exists := channel.ChannelInfo.MultiKeyCooldownUntil[i]; exists {
+					newCooldownUntil[newIndex] = until
+				}
+			}
 			newIndex++
 		}
 
@@ -1605,6 +1767,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+		channel.ChannelInfo.MultiKeyCooldownUntil = newCooldownUntil
 
 		err = channel.Update()
 		if err != nil {
@@ -1612,7 +1775,9 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		if !refreshChannelCacheAfterWrite(c, "密钥已删除") {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "密钥已删除",
@@ -1626,6 +1791,7 @@ func ManageMultiKeys(c *gin.Context) {
 		var newStatusList = make(map[int]int)
 		var newDisabledTime = make(map[int]int64)
 		var newDisabledReason = make(map[int]string)
+		var newCooldownUntil = make(map[int]int64)
 
 		newIndex := 0
 		for i, key := range keys {
@@ -1655,6 +1821,11 @@ func ManageMultiKeys(c *gin.Context) {
 						}
 					}
 				}
+				if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+					if until, exists := channel.ChannelInfo.MultiKeyCooldownUntil[i]; exists {
+						newCooldownUntil[newIndex] = until
+					}
+				}
 				newIndex++
 			}
 		}
@@ -1673,6 +1844,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+		channel.ChannelInfo.MultiKeyCooldownUntil = newCooldownUntil
 
 		err = channel.Update()
 		if err != nil {
@@ -1680,7 +1852,9 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		if !refreshChannelCacheAfterWrite(c, "自动停用密钥已删除") {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": fmt.Sprintf("已删除 %d 个自动禁用的密钥", deletedCount),

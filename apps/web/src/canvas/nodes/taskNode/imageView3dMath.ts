@@ -167,3 +167,50 @@ export function mapLightIntensityToSceneIntensity(intensity: number): number {
   if (normalized <= 0) return 0
   return 0.25 + normalized / 34
 }
+
+// ─── Orbit arc mapping (2D preview drag handles) ───────────────────────────
+// Maps camera azimuth/elevation to/from points on the preview's orbit guide
+// ellipses, so each angle can be dragged on its own arc (single-axis control).
+// Half-axes match the guide ellipses in ImageViewPreviewLite:
+//   horizontal guide: width 62% / height 31%  -> half-axes 31% / 15.5%
+//   vertical guide:   width 31% / height 62%  -> half-axes 15.5% / 31%
+// Points are expressed in percent of the square stage; helpers that take a
+// pointer offset receive it as (pointerPct - 50) on each axis.
+
+export const AZIMUTH_ARC_HALF_X = 31
+export const AZIMUTH_ARC_HALF_Y = 15.5
+export const ELEVATION_ARC_HALF_X = 15.5
+export const ELEVATION_ARC_HALF_Y = 31
+// Visible vertical arc span used for the ±45° elevation range.
+const ELEVATION_ARC_SPAN_DEG = 60
+
+export type ArcPointPct = { leftPct: number; topPct: number }
+
+export function azimuthToArcPoint(azimuthDeg: number): ArcPointPct {
+  const rad = degToRad(normalizeDegrees(azimuthDeg, 0))
+  return {
+    leftPct: 50 + AZIMUTH_ARC_HALF_X * Math.sin(rad),
+    topPct: 50 + AZIMUTH_ARC_HALF_Y * Math.cos(rad),
+  }
+}
+
+export function arcPointToAzimuth(dxPct: number, dyPct: number): number {
+  const x = finiteOr(dxPct, 0) / AZIMUTH_ARC_HALF_X
+  const y = finiteOr(dyPct, 0) / AZIMUTH_ARC_HALF_Y
+  return normalizeDegrees(radToDeg(Math.atan2(x, y)), 0)
+}
+
+export function elevationToArcPoint(elevationDeg: number): ArcPointPct {
+  const el = clamp(elevationDeg, -45, 45, 0)
+  const theta = degToRad((el / 45) * ELEVATION_ARC_SPAN_DEG)
+  return {
+    leftPct: 50 + ELEVATION_ARC_HALF_X * Math.cos(theta),
+    topPct: 50 - ELEVATION_ARC_HALF_Y * Math.sin(theta),
+  }
+}
+
+export function arcPointToElevation(dyPct: number): number {
+  const sin = clamp(-finiteOr(dyPct, 0) / ELEVATION_ARC_HALF_Y, -1, 1, 0)
+  const thetaDeg = radToDeg(Math.asin(sin))
+  return clamp((thetaDeg / ELEVATION_ARC_SPAN_DEG) * 45, -45, 45, 0)
+}

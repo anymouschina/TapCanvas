@@ -200,6 +200,7 @@ ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace
 - 主表面统一落在 `surface / surface-raised / surface-inline` 三层，不再用偏灰玻璃色做第四层视觉体系。
 - 内嵌信息块统一优先用 `surface-inline`，不要单独再画小边框卡。
 - 强调使用蓝青冷色点到即止，不允许大面积紫色、粉色或高饱和玻璃发光。
+- 工作流原子节点按根规范保留类别彩色 glyph 与最多 `16%` 的局部混色底；执行状态继续由独立角标、边框和文案表达，禁止把类别色误作状态色。
 
 ### 3.6 Motion
 
@@ -340,6 +341,9 @@ Card 是“信息块”，不是万能外壳。
 - Card 标题默认 `16px`，正文默认 `14px`。
 - Card 顶部操作区应右对齐或自然跟随标题，不在视觉上与标题抢主次。
 - 数据卡里的主要数字允许 `20px` 或 `24px`，但辅助信息必须明显收住。
+- `FloatingNav` 上方的底部面板必须通过 `bottomBarPanelMetrics` 选择 `compact(300)`、`regular(440)` 或 `wide(664)` 固定最大宽度，高度统一使用安全可用高度的 `2/3`。
+- 底部面板外壳必须显式设置相同的 `height` 与 `maxHeight`；Tab、分类、加载态和空状态仅替换内部内容，禁止改变外框尺寸。
+- 底部面板的头部和分类导航保持固定，长内容设置 `min-height: 0` 与内部 `overflow-y: auto`；禁止让 `PanelCard` 根据列表长度自然撑开。
 
 禁用项：
 

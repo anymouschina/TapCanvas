@@ -34,7 +34,6 @@ const SubscriptionsTable = (subscriptionsData) => {
     openEdit,
     setPlanEnabled,
     t,
-    enableEpay,
   } = subscriptionsData;
 
   const columns = useMemo(() => {
@@ -42,9 +41,8 @@ const SubscriptionsTable = (subscriptionsData) => {
       t,
       openEdit,
       setPlanEnabled,
-      enableEpay,
     });
-  }, [t, openEdit, setPlanEnabled, enableEpay]);
+  }, [t, openEdit, setPlanEnabled]);
 
   const tableColumns = useMemo(() => {
     return compactMode

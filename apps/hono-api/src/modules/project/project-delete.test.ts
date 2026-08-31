@@ -12,6 +12,13 @@ const {
 			findMany: vi.fn(),
 			deleteMany: vi.fn(),
 		},
+		agent_capability_attachments: {
+			findMany: vi.fn(),
+			deleteMany: vi.fn(),
+		},
+		agent_capability_preferences: {
+			deleteMany: vi.fn(),
+		},
 		flow_versions: {
 			findMany: vi.fn(),
 			deleteMany: vi.fn(),
@@ -33,6 +40,7 @@ const {
 			deleteMany: vi.fn(),
 		},
 		assets: {
+			updateMany: vi.fn(),
 			deleteMany: vi.fn(),
 		},
 		chapters: {
@@ -64,6 +72,9 @@ describe("deleteProjectGraph", () => {
 			return await (callback as TransactionCallback)(transactionClient);
 		});
 		transactionClient.flows.findMany.mockResolvedValue([]);
+		transactionClient.agent_capability_attachments.findMany.mockResolvedValue([]);
+		transactionClient.agent_capability_attachments.deleteMany.mockResolvedValue({ count: 0 });
+		transactionClient.agent_capability_preferences.deleteMany.mockResolvedValue({ count: 0 });
 		transactionClient.flow_versions.findMany.mockResolvedValue([]);
 		transactionClient.workflow_executions.findMany.mockResolvedValue([]);
 		transactionClient.workflow_node_runs.deleteMany.mockResolvedValue({ count: 0 });
@@ -81,6 +92,7 @@ describe("deleteProjectGraph", () => {
 		transactionClient.agent_pipeline_runs.deleteMany.mockResolvedValue({
 			count: 0,
 		});
+		transactionClient.assets.updateMany.mockResolvedValue({ count: 0 });
 		transactionClient.assets.deleteMany.mockResolvedValue({ count: 0 });
 		transactionClient.chapters.deleteMany.mockResolvedValue({ count: 0 });
 		transactionClient.projects.delete.mockResolvedValue({ id: "project-1" });
@@ -88,6 +100,9 @@ describe("deleteProjectGraph", () => {
 
 	it("deletes chapter and workflow dependents before deleting the project", async () => {
 		transactionClient.flows.findMany.mockResolvedValue([{ id: "flow-1" }]);
+		transactionClient.agent_capability_attachments.findMany.mockResolvedValue([
+			{ descriptor_json: JSON.stringify({ capabilityId: "workflow:one-click" }) },
+		]);
 		transactionClient.flow_versions.findMany.mockResolvedValue([
 			{ id: "flow-version-1" },
 		]);
@@ -114,11 +129,24 @@ describe("deleteProjectGraph", () => {
 		expect(transactionClient.flows.deleteMany).toHaveBeenCalledWith({
 			where: { id: { in: ["flow-1"] } },
 		});
+		expect(transactionClient.agent_capability_attachments.deleteMany).toHaveBeenCalledWith({
+			where: { source_id: { in: ["flow-1"] } },
+		});
+		expect(transactionClient.agent_capability_preferences.deleteMany).toHaveBeenCalledWith({
+			where: { replaced_by_capability_id: { in: ["workflow:one-click"] } },
+		});
 		expect(transactionClient.video_generation_histories.deleteMany).toHaveBeenCalledWith({
 			where: { project_id: "project-1" },
 		});
 		expect(transactionClient.agent_pipeline_runs.deleteMany).toHaveBeenCalledWith({
 			where: { project_id: "project-1" },
+		});
+		expect(transactionClient.assets.updateMany).toHaveBeenCalledWith({
+			where: {
+				project_id: "project-1",
+				data: { contains: '\"kind\":\"publishRecord\"' },
+			},
+			data: { project_id: null },
 		});
 		expect(transactionClient.assets.deleteMany).toHaveBeenCalledWith({
 			where: { project_id: "project-1" },
@@ -141,6 +169,13 @@ describe("deleteProjectGraph", () => {
 			transactionClient.workflow_execution_events.deleteMany,
 		).not.toHaveBeenCalled();
 		expect(transactionClient.workflow_executions.deleteMany).not.toHaveBeenCalled();
+		expect(transactionClient.assets.updateMany).toHaveBeenCalledWith({
+			where: {
+				project_id: "project-2",
+				data: { contains: '\"kind\":\"publishRecord\"' },
+			},
+			data: { project_id: null },
+		});
 		expect(transactionClient.chapters.deleteMany).toHaveBeenCalledWith({
 			where: { project_id: "project-2" },
 		});

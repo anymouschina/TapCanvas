@@ -263,7 +263,7 @@ export function CharacterGraph3D(props: {
       canvas.style.height = `${h}px`
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, w, h)
-      ctx.fillStyle = isDark ? 'rgba(2,6,23,0.92)' : 'rgba(248,250,252,0.96)'
+      ctx.fillStyle = isDark ? 'rgba(2,6,23,0.92)' : 'rgba(246,247,249,0.96)'
       ctx.fillRect(0, 0, w, h)
 
       const centerX = w / 2
@@ -314,8 +314,8 @@ export function CharacterGraph3D(props: {
           : tone === 'warm'
             ? (isDark ? 'rgba(251,191,36,0.34)' : 'rgba(180,83,9,0.32)')
             : tone === 'cold'
-              ? (isDark ? 'rgba(56,189,248,0.32)' : 'rgba(3,105,161,0.30)')
-              : (isDark ? 'rgba(148,163,184,0.28)' : 'rgba(71,85,105,0.26)')
+              ? (isDark ? 'rgba(154,161,172,0.32)' : 'rgba(3,105,161,0.30)')
+              : (isDark ? 'rgba(132,136,142,0.28)' : 'rgba(62,64,68,0.26)')
         ctx.strokeStyle = stroke.replace(/0\.\d+\)/, `${alphaBoost.toFixed(2)})`)
         ctx.stroke()
         const mx = (s.x + t.x) / 2
@@ -343,14 +343,14 @@ export function CharacterGraph3D(props: {
         const r = Math.max(2.6, Math.min(11, base * p.scale))
         const color =
           stage === 'past'
-            ? (isDark ? '#60a5fa' : '#2563eb')
+            ? (isDark ? '#989ea8' : '#5c636e')
             : stage === 'new'
               ? (isDark ? '#f59e0b' : '#d97706')
               : stage === 'future'
-                ? (isDark ? '#64748b' : '#94a3b8')
+                ? (isDark ? '#585b60' : '#84878d')
                 : stage === 'current'
                   ? (isDark ? '#22c55e' : '#16a34a')
-                  : (isDark ? '#e2e8f0' : '#0f172a')
+                  : (isDark ? '#d4d6da' : '#131316')
         const prevAlpha = ctx.globalAlpha
         ctx.globalAlpha = shouldDim ? 0.2 : 1
         ctx.beginPath()
@@ -358,7 +358,7 @@ export function CharacterGraph3D(props: {
         ctx.fillStyle = color
         ctx.fill()
         ctx.lineWidth = 1
-        ctx.strokeStyle = isDark ? 'rgba(226,232,240,0.6)' : 'rgba(15,23,42,0.35)'
+        ctx.strokeStyle = isDark ? 'rgba(212,215,220,0.6)' : 'rgba(17,18,21,0.35)'
         ctx.stroke()
         ctx.globalAlpha = prevAlpha
         pointsRef.current.push({ node: p.node, x: p.x, y: p.y, r })
@@ -385,7 +385,7 @@ export function CharacterGraph3D(props: {
               ? (isDark ? 'rgba(254,243,199,0.92)' : 'rgba(120,53,15,0.94)')
               : label.tone === 'cold'
                 ? (isDark ? 'rgba(186,230,253,0.9)' : 'rgba(8,47,73,0.9)')
-                : (isDark ? 'rgba(226,232,240,0.88)' : 'rgba(30,41,59,0.85)')
+                : (isDark ? 'rgba(212,215,220,0.88)' : 'rgba(26,27,30,0.85)')
         ctx.fillText(label.text, label.x + 4, label.y - 2)
       }
 
@@ -401,12 +401,12 @@ export function CharacterGraph3D(props: {
         const bh = 16
         const bx = label.x
         const by = label.y - bh * 0.5
-        ctx.fillStyle = isDark ? 'rgba(15,23,42,0.72)' : 'rgba(255,255,255,0.8)'
+        ctx.fillStyle = isDark ? 'rgba(17,18,21,0.72)' : 'rgba(255,255,255,0.8)'
         ctx.fillRect(bx, by, bw, bh)
-        ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.35)' : 'rgba(148,163,184,0.55)'
+        ctx.strokeStyle = isDark ? 'rgba(132,136,142,0.35)' : 'rgba(132,136,142,0.55)'
         ctx.lineWidth = 1
         ctx.strokeRect(bx, by, bw, bh)
-        ctx.fillStyle = isDark ? 'rgba(241,245,249,0.96)' : 'rgba(15,23,42,0.9)'
+        ctx.fillStyle = isDark ? 'rgba(234,236,239,0.96)' : 'rgba(17,18,21,0.9)'
         ctx.fillText(label.text, bx + padX, by + bh * 0.5 + padY * 0.25)
       }
 
@@ -486,7 +486,7 @@ export function CharacterGraph3D(props: {
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerLeave}
         onWheel={onWheel}
-        style={{ width: '100%', height: '100%', borderRadius: 12, cursor: 'grab', border: isDark ? '1px solid rgba(148,163,184,0.2)' : '1px solid rgba(148,163,184,0.3)' }}
+        style={{ width: '100%', height: '100%', borderRadius: 12, cursor: 'grab', border: isDark ? '1px solid rgba(132,136,142,0.2)' : '1px solid rgba(132,136,142,0.3)' }}
       />
       <Text className="character-graph-3d-help" size="xs" c="dimmed" style={{ position: 'absolute', left: 10, bottom: 8 }}>
         拖拽旋转 · 滚轮缩放 · 悬浮查看角色
@@ -502,15 +502,15 @@ export function CharacterGraph3D(props: {
           gap: 6,
           padding: '6px 8px',
           borderRadius: 8,
-          background: isDark ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.9)',
-          border: isDark ? '1px solid rgba(148,163,184,0.25)' : '1px solid rgba(148,163,184,0.35)',
+          background: isDark ? 'rgba(17,18,21,0.82)' : 'rgba(255,255,255,0.9)',
+          border: isDark ? '1px solid rgba(132,136,142,0.25)' : '1px solid rgba(132,136,142,0.35)',
           backdropFilter: 'blur(4px)',
         }}
       >
-        <button type="button" onClick={zoomOut} style={{ borderRadius: 6, border: '1px solid rgba(148,163,184,.45)', background: 'transparent', color: 'inherit', width: 24, height: 22, cursor: 'pointer' }}>-</button>
+        <button type="button" onClick={zoomOut} style={{ borderRadius: 6, border: '1px solid rgba(132,136,142,.45)', background: 'transparent', color: 'inherit', width: 24, height: 22, cursor: 'pointer' }}>-</button>
         <Text size="xs" c="dimmed" style={{ minWidth: 42, textAlign: 'center' }}>{`${zoomLevel.toFixed(2)}x`}</Text>
-        <button type="button" onClick={zoomIn} style={{ borderRadius: 6, border: '1px solid rgba(148,163,184,.45)', background: 'transparent', color: 'inherit', width: 24, height: 22, cursor: 'pointer' }}>+</button>
-        <button type="button" onClick={zoomReset} style={{ borderRadius: 6, border: '1px solid rgba(148,163,184,.45)', background: 'transparent', color: 'inherit', padding: '0 6px', height: 22, cursor: 'pointer', fontSize: 11 }}>重置</button>
+        <button type="button" onClick={zoomIn} style={{ borderRadius: 6, border: '1px solid rgba(132,136,142,.45)', background: 'transparent', color: 'inherit', width: 24, height: 22, cursor: 'pointer' }}>+</button>
+        <button type="button" onClick={zoomReset} style={{ borderRadius: 6, border: '1px solid rgba(132,136,142,.45)', background: 'transparent', color: 'inherit', padding: '0 6px', height: 22, cursor: 'pointer', fontSize: 11 }}>重置</button>
       </div>
       <div
         className="character-graph-3d-legend"
@@ -523,8 +523,8 @@ export function CharacterGraph3D(props: {
           gap: 6,
           padding: '8px 10px',
           borderRadius: 8,
-          background: isDark ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.9)',
-          border: isDark ? '1px solid rgba(148,163,184,0.25)' : '1px solid rgba(148,163,184,0.35)',
+          background: isDark ? 'rgba(17,18,21,0.82)' : 'rgba(255,255,255,0.9)',
+          border: isDark ? '1px solid rgba(132,136,142,0.25)' : '1px solid rgba(132,136,142,0.35)',
           backdropFilter: 'blur(4px)',
           fontSize: 11,
         }}
@@ -540,9 +540,9 @@ export function CharacterGraph3D(props: {
             style={{
               fontSize: 11,
               borderRadius: 999,
-              border: focusMode === 'dim' ? `1px solid ${isDark ? '#cbd5e1' : '#334155'}` : `1px solid ${isDark ? 'rgba(148,163,184,0.35)' : 'rgba(148,163,184,0.5)'}`,
-              background: focusMode === 'dim' ? (isDark ? 'rgba(30,41,59,0.9)' : 'rgba(241,245,249,0.92)') : 'transparent',
-              color: isDark ? '#e2e8f0' : '#0f172a',
+              border: focusMode === 'dim' ? `1px solid ${isDark ? '#bcbfc4' : '#2c2e32'}` : `1px solid ${isDark ? 'rgba(132,136,142,0.35)' : 'rgba(132,136,142,0.5)'}`,
+              background: focusMode === 'dim' ? (isDark ? 'rgba(26,27,30,0.9)' : 'rgba(234,236,239,0.92)') : 'transparent',
+              color: isDark ? '#d4d6da' : '#131316',
               padding: '2px 8px',
               cursor: 'pointer',
             }}
@@ -556,9 +556,9 @@ export function CharacterGraph3D(props: {
             style={{
               fontSize: 11,
               borderRadius: 999,
-              border: focusMode === 'hide' ? `1px solid ${isDark ? '#cbd5e1' : '#334155'}` : `1px solid ${isDark ? 'rgba(148,163,184,0.35)' : 'rgba(148,163,184,0.5)'}`,
-              background: focusMode === 'hide' ? (isDark ? 'rgba(30,41,59,0.9)' : 'rgba(241,245,249,0.92)') : 'transparent',
-              color: isDark ? '#e2e8f0' : '#0f172a',
+              border: focusMode === 'hide' ? `1px solid ${isDark ? '#bcbfc4' : '#2c2e32'}` : `1px solid ${isDark ? 'rgba(132,136,142,0.35)' : 'rgba(132,136,142,0.5)'}`,
+              background: focusMode === 'hide' ? (isDark ? 'rgba(26,27,30,0.9)' : 'rgba(234,236,239,0.92)') : 'transparent',
+              color: isDark ? '#d4d6da' : '#131316',
               padding: '2px 8px',
               cursor: 'pointer',
             }}
@@ -567,9 +567,9 @@ export function CharacterGraph3D(props: {
           </button>
         </div>
         {[
-          { label: '已出场', color: isDark ? '#60a5fa' : '#2563eb' },
+          { label: '已出场', color: isDark ? '#989ea8' : '#5c636e' },
           { label: '新出场', color: isDark ? '#f59e0b' : '#d97706' },
-          { label: '未出场', color: isDark ? '#64748b' : '#94a3b8' },
+          { label: '未出场', color: isDark ? '#585b60' : '#84878d' },
           { label: '当前章节出场', color: isDark ? '#22c55e' : '#16a34a' },
         ].map((item, idx) => {
           const stageKey = (['past', 'new', 'future', 'current'] as const)[idx]
@@ -584,11 +584,11 @@ export function CharacterGraph3D(props: {
               display: 'flex',
               alignItems: 'center',
               gap: 6,
-              color: isDark ? '#e2e8f0' : '#0f172a',
+              color: isDark ? '#d4d6da' : '#131316',
               borderRadius: 999,
               padding: '2px 6px',
               border: active ? `1px solid ${item.color}` : '1px solid transparent',
-              background: active ? (isDark ? 'rgba(30,41,59,0.9)' : 'rgba(241,245,249,0.92)') : 'transparent',
+              background: active ? (isDark ? 'rgba(26,27,30,0.9)' : 'rgba(234,236,239,0.92)') : 'transparent',
               cursor: 'pointer',
             }}
           >
@@ -608,9 +608,9 @@ export function CharacterGraph3D(props: {
             marginTop: 2,
             fontSize: 11,
             borderRadius: 999,
-            border: `1px solid ${isDark ? 'rgba(148,163,184,0.35)' : 'rgba(148,163,184,0.5)'}`,
+            border: `1px solid ${isDark ? 'rgba(132,136,142,0.35)' : 'rgba(132,136,142,0.5)'}`,
             background: 'transparent',
-            color: isDark ? '#cbd5e1' : '#334155',
+            color: isDark ? '#bcbfc4' : '#2c2e32',
             padding: '2px 8px',
             cursor: 'pointer',
           }}
@@ -626,8 +626,8 @@ export function CharacterGraph3D(props: {
             left: Math.max(8, hover.x + 14),
             top: Math.max(8, hover.y - 10),
             pointerEvents: 'none',
-            background: isDark ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.92)',
-            border: isDark ? '1px solid rgba(148,163,184,0.35)' : '1px solid rgba(148,163,184,0.45)',
+            background: isDark ? 'rgba(17,18,21,0.92)' : 'rgba(255,255,255,0.92)',
+            border: isDark ? '1px solid rgba(132,136,142,0.35)' : '1px solid rgba(132,136,142,0.45)',
             color: 'inherit',
             borderRadius: 8,
             padding: '8px 10px',

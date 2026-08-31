@@ -1,18 +1,47 @@
 /**
- * Detect display kind for a pricing model based on param_pricing structure.
+ * Detect the display kind for a pricing model.
+ *
+ * `model_kind` is the backend's canonical classification. The pricing
+ * metadata is retained as a structural fallback for older catalog entries;
+ * fixed-spec pricing is shared by image and video models, so the result
+ * spec key/duration must be inspected before falling back to chat.
+ *
  * @param {Object} model - Pricing model from /api/pricing
  * @returns {'image' | 'video' | 'chat'}
  */
 export const getModelKind = (model) => {
+  const declaredKind =
+    typeof model?.model_kind === 'string'
+      ? model.model_kind.trim().toLowerCase()
+      : '';
+
+  if (declaredKind === 'image' || declaredKind === 'video') {
+    return declaredKind;
+  }
+  if (declaredKind === 'chat' || declaredKind === 'text') {
+    return 'chat';
+  }
+
   const pp = model?.param_pricing;
   if (!pp) return 'chat';
   if (pp.billing_mode === 'fixed_by_image_spec') return 'image';
-  if (
-    Array.isArray(pp.results) &&
-    pp.results.length > 0 &&
-    pp.results[0].duration_seconds > 0
-  )
-    return 'video';
+
+  const results = Array.isArray(pp.results) ? pp.results : [];
+  const hasVideoSpec = results.some(
+    (result) =>
+      Number(result?.duration_seconds) > 0 ||
+      (typeof result?.spec_key === 'string' &&
+        result.spec_key.trim().toLowerCase().startsWith('video:')),
+  );
+  if (hasVideoSpec) return 'video';
+
+  const hasImageSpec = results.some(
+    (result) =>
+      typeof result?.spec_key === 'string' &&
+      result.spec_key.trim().toLowerCase().startsWith('image:'),
+  );
+  if (hasImageSpec) return 'image';
+
   return 'chat';
 };
 

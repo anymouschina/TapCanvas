@@ -24,6 +24,82 @@ type codexOAuthCompleteRequest struct {
 	Input string `json:"input"`
 }
 
+type codexCredentialImportRequest struct {
+	Credential  string   `json:"credential"`
+	Credentials []string `json:"credentials"`
+}
+
+func NormalizeCodexChannelCredentials(c *gin.Context) {
+	req := codexCredentialImportRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	keys := make([]string, 0, len(req.Credentials)+1)
+	if strings.TrimSpace(req.Credential) != "" {
+		keys = append(keys, req.Credential)
+	}
+	for _, credential := range req.Credentials {
+		if strings.TrimSpace(credential) != "" {
+			keys = append(keys, credential)
+		}
+	}
+	result, err := service.NormalizeCodexCredentialImports(keys)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"key":           strings.Join(result.Keys, "\n"),
+		"account_count": result.AccountCount,
+		"diagnostics":   result.Diagnostics,
+	}})
+}
+
+func AddCodexChannelCredential(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+		return
+	}
+	req := codexCredentialImportRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	keys := make([]string, 0, len(req.Credentials)+1)
+	if strings.TrimSpace(req.Credential) != "" {
+		if _, _, parseErr := codex.NormalizeOAuthCredential(req.Credential); parseErr != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "必须提供有效的 Codex 账号 JSON"})
+			return
+		}
+		keys = append(keys, req.Credential)
+	}
+	for index, rawCredential := range req.Credentials {
+		if _, _, parseErr := codex.NormalizeOAuthCredential(rawCredential); parseErr != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": fmt.Sprintf("第 %d 个文件不是有效的单账号 Codex JSON", index+1)})
+			return
+		}
+		keys = append(keys, rawCredential)
+	}
+	result, err := service.ImportCodexChannelCredentials(channelID, keys)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	service.ResetProxyClientCache()
+	if !refreshChannelCacheAfterWrite(c, "Codex 渠道凭据已导入") {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"account_count":  result.AccountCount,
+		"added_count":    result.AddedCount,
+		"replaced_count": result.ReplacedCount,
+		"replaced":       result.ReplacedCount > 0 && result.AddedCount == 0,
+		"diagnostics":    result.Diagnostics,
+	}})
+}
+
 func codexOAuthSessionKey(channelID int, field string) string {
 	return fmt.Sprintf("codex_oauth_%s_%d", field, channelID)
 }
@@ -213,21 +289,26 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	_ = session.Save()
 
 	if channelID > 0 {
-		if err := model.DB.Model(&model.Channel{}).Where("id = ?", channelID).Update("key", string(encoded)).Error; err != nil {
+		accountCount, replaced, err := service.UpsertCodexChannelCredential(channelID, string(encoded))
+		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
 		service.ResetProxyClientCache()
+		if !refreshChannelCacheAfterWrite(c, "Codex OAuth 凭据已保存") {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "saved",
 			"data": gin.H{
-				"channel_id":   channelID,
-				"account_id":   accountID,
-				"email":        email,
-				"expires_at":   key.Expired,
-				"last_refresh": key.LastRefresh,
+				"channel_id":    channelID,
+				"account_id":    accountID,
+				"email":         email,
+				"expires_at":    key.Expired,
+				"last_refresh":  key.LastRefresh,
+				"account_count": accountCount,
+				"replaced":      replaced,
 			},
 		})
 		return

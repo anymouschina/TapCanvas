@@ -1,0 +1,46 @@
+.execution-log-events-message-wrap {
+  min-width: 0;
+}
+
+.execution-log-events-data {
+  margin-top: var(--tc-space-1, 4px);
+}
+
+.execution-log-events-data-summary {
+  color: var(--tc-color-text-tertiary, #7b828e);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.execution-log-events-data-value {
+  max-height: 240px;
+  margin: var(--tc-space-1, 4px) 0 0;
+  overflow: auto;
+  padding: var(--tc-space-2, 8px);
+  background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.035));
+  color: var(--tc-color-text-secondary, #a9afb9);
+  font: 11px/1.5 ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.execution-log-project-context {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.execution-log-project-context summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.execution-log-project-context pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

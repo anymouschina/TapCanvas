@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { taskHubRuntime } from '../runner/taskHub'
 
 export type User = {
   sub: string | number
@@ -12,245 +13,146 @@ export type User = {
   guest?: boolean
 }
 
-type JwtPayload = {
-  sub?: string | number
-  login?: string
-  name?: string
-  avatarUrl?: string | null
-  email?: string | null
-  phone?: string | null
-  hasPassword?: boolean
-  role?: string | null
-  guest?: boolean
+export type SavedAccount = {
+  id: string
+  user: User
+  lastUsedAt: string
+  current: boolean
 }
 
-const ONE_WEEK_SECONDS = 7 * 24 * 60 * 60
-
-function base64UrlDecode(input: string): string {
-  input = input.replace(/-/g, '+').replace(/_/g, '/')
-  const pad = input.length % 4
-  if (pad) input += '='.repeat(4 - pad)
-  try { return atob(input) } catch { return '' }
-}
+const SESSION_MARKER = 'cookie-session'
+const SESSION_COOKIE_NAME = 'tap_session_present'
+const USER_CACHE_KEY = 'tap_user'
 
 function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null
-  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
-  return match ? decodeURIComponent(match[1]) : null
+  const prefix = `${name}=`
+  const entry = document.cookie
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+  return entry ? decodeURIComponent(entry.slice(prefix.length)) : null
 }
 
-function resolveTapTokenCookieAttributes(): string {
-  if (typeof window === 'undefined') return `Path=/; Max-Age=${ONE_WEEK_SECONDS}; SameSite=Lax`
-
-  const host = String(window.location.hostname || '').toLowerCase()
-  const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1')
-  const protocol = String(window.location.protocol || '').toLowerCase()
-
-  const domain = host.endsWith('.tapcanvas.com') || host === 'tapcanvas.com' ? '.tapcanvas.com' : undefined
-  const secure = !isLocalhost && protocol === 'https:'
-  const sameSite = isLocalhost || !secure ? 'Lax' : 'None'
-
-  const parts = [`Path=/`, `Max-Age=${ONE_WEEK_SECONDS}`, `SameSite=${sameSite}`]
-  if (secure) parts.push('Secure')
-  if (domain) parts.push(`Domain=${domain}`)
-  return parts.join('; ')
-}
-
-function writeCookie(name: string, value: string, attributes: string) {
-  if (typeof document === 'undefined') return
-  try {
-    document.cookie = `${name}=${encodeURIComponent(value)}; ${attributes}`
-  } catch {
-    // ignore
+function clearReadableSessionMarker(): void {
+  if (typeof document !== 'undefined') {
+    document.cookie = `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax`
   }
 }
 
-function clearCookie(name: string, attributes: string) {
-  if (typeof document === 'undefined') return
+function readCachedUser(): User | null {
+  if (typeof localStorage === 'undefined') return null
   try {
-    const cleared = attributes.replace(/Max-Age=\d+/i, 'Max-Age=0')
-    document.cookie = `${name}=; ${cleared}`
-  } catch {
-    // ignore
-  }
-}
-
-function toUser(payload: JwtPayload | null | undefined): User | null {
-  if (!payload?.sub || !payload.login) return null
-  return {
-    sub: payload.sub,
-    login: payload.login,
-    name: payload.name,
-    avatarUrl: typeof payload.avatarUrl === 'string' ? payload.avatarUrl : undefined,
-    email: typeof payload.email === 'string' ? payload.email : undefined,
-    phone: typeof payload.phone === 'string' ? payload.phone : undefined,
-    hasPassword: typeof payload.hasPassword === 'boolean' ? payload.hasPassword : undefined,
-    role: payload.role ?? null,
-    guest: payload.guest,
-  }
-}
-
-function decodeJwtUser(token: string | null): User | null {
-  if (!token) return null
-  const parts = token.split('.')
-  if (parts.length < 2) return null
-  try {
-    const payload = JSON.parse(base64UrlDecode(parts[1])) as JwtPayload
-    return toUser(payload)
+    const raw = localStorage.getItem(USER_CACHE_KEY)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    const user = parsed as Partial<User>
+    if ((typeof user.sub !== 'string' && typeof user.sub !== 'number') || typeof user.login !== 'string') return null
+    return user as User
   } catch {
     return null
   }
 }
 
-function mergeUser(decoded: User | null, provided?: User | null): User | null {
-  if (!decoded && !provided) return null
-  if (!decoded) return provided ?? null
-  if (!provided) return decoded
-  return {
-    sub: provided.sub ?? decoded.sub,
-    login: provided.login ?? decoded.login,
-    name: provided.name ?? decoded.name,
-    avatarUrl: provided.avatarUrl ?? decoded.avatarUrl,
-    email: provided.email ?? decoded.email,
-    phone: provided.phone ?? decoded.phone,
-    hasPassword: provided.hasPassword ?? decoded.hasPassword,
-    role: provided.role ?? decoded.role ?? null,
-    guest: provided.guest ?? decoded.guest,
+function cacheUser(user: User | null): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.removeItem('tap_token')
+    localStorage.removeItem('tapcanvas_saved_accounts_v1')
+    if (user) localStorage.setItem(USER_CACHE_KEY, JSON.stringify(user))
+    else localStorage.removeItem(USER_CACHE_KEY)
+  } catch {
+    // Storage is optional; the server cookie remains the session authority.
   }
 }
 
-const initialToken = (() => {
-  const cookie = readCookie('tap_token')
-  const local = (() => {
-    if (typeof localStorage === 'undefined') return null
-    try {
-      return localStorage.getItem('tap_token')
-    } catch {
-      return null
-    }
-  })()
+function savedAccountFor(user: User | null): SavedAccount[] {
+  if (!user) return []
+  return [{
+    id: String(user.sub),
+    user,
+    lastUsedAt: new Date().toISOString(),
+    current: true,
+  }]
+}
 
-  const token = local || cookie
-  if (!token) return null
-  const attrs = resolveTapTokenCookieAttributes()
-  if (cookie !== token) writeCookie('tap_token', token, attrs)
-  if (local !== token && typeof localStorage !== 'undefined') {
-    try {
-      localStorage.setItem('tap_token', token)
-    } catch {
-      // ignore
-    }
-  }
-  return token
-})()
-
-const initialUser = (() => {
-  const decoded = decodeJwtUser(initialToken)
-  const cachedRaw = (() => {
-    if (typeof localStorage === 'undefined') return null
-    try {
-      return localStorage.getItem('tap_user')
-    } catch {
-      return null
-    }
-  })()
-  const cached = (() => {
-    if (!cachedRaw) return null
-    try {
-      return JSON.parse(cachedRaw) as User
-    } catch {
-      return null
-    }
-  })()
-
-  return mergeUser(decoded, cached)
-})()
+const markerPresent = readCookie(SESSION_COOKIE_NAME) === '1'
+const cachedUser = markerPresent ? readCachedUser() : null
 
 type AuthState = {
+  /** A non-secret UI marker. The real session token only exists in the HttpOnly cookie. */
   token: string | null
   user: User | null
   loading: boolean
+  savedAccounts: SavedAccount[]
+  hydrate: () => Promise<void>
   login: (code: string, state?: string) => Promise<void>
-  setAuth: (token: string, user?: User | null) => void
+  setAuth: (user: User) => void
   clear: () => void
+  removeSavedAccount: (id: string) => void
+  switchAccount: (id: string) => Promise<void>
 }
 
 export const useAuth = create<AuthState>((set, get) => ({
-  token: initialToken,
-  user: initialUser,
-  loading: false,
-  login: async (code: string, state?: string) => {
+  token: markerPresent ? SESSION_MARKER : null,
+  user: cachedUser,
+  loading: true,
+  savedAccounts: savedAccountFor(cachedUser),
+  hydrate: async () => {
     set({ loading: true })
     try {
-      const response = await fetch('/api/auth/github', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ code, state }),
+      const { getBrowserSession } = await import('../api/server')
+      const session = await getBrowserSession()
+      cacheUser(session.user)
+      set({
+        token: SESSION_MARKER,
+        user: session.user,
+        savedAccounts: savedAccountFor(session.user),
       })
-
-      if (!response.ok) {
-        throw new Error('Authentication failed')
+    } catch (sessionError: unknown) {
+      const { requestSessionRefresh } = await import('./authSessionRefresh')
+      const refreshResult = await requestSessionRefresh(window.fetch.bind(window))
+      if (refreshResult === 'unauthorized') {
+        get().clear()
+      } else if (refreshResult === 'failed') {
+        console.error('[auth] browser session hydration is temporarily unavailable', {
+          message: sessionError instanceof Error ? sessionError.message : String(sessionError),
+        })
       }
-
-      const data = await response.json() as { token: string; user?: User | null }
-      get().setAuth(data.token, data.user)
-    } catch (error) {
-      console.error('Login failed:', error)
-      throw error
     } finally {
       set({ loading: false })
     }
   },
-  setAuth: (token, user) => {
-    const attrs = resolveTapTokenCookieAttributes()
-    writeCookie('tap_token', token, attrs)
-    try { localStorage.setItem('tap_token', token) } catch {}
-    const mergedUser = mergeUser(decodeJwtUser(token), user)
+  login: async (code: string) => {
+    set({ loading: true })
     try {
-      if (mergedUser) {
-        localStorage.setItem('tap_user', JSON.stringify(mergedUser))
-      } else {
-        localStorage.removeItem('tap_user')
-      }
-    } catch {
-      // ignore
+      const { exchangeGithub } = await import('../api/server')
+      const response = await exchangeGithub(code)
+      get().setAuth(response.user)
+    } finally {
+      set({ loading: false })
     }
-    set({ token, user: mergedUser })
+  },
+  setAuth: (user) => {
+    cacheUser(user)
+    set({ token: SESSION_MARKER, user, loading: false, savedAccounts: savedAccountFor(user) })
   },
   clear: () => {
-    const attrs = resolveTapTokenCookieAttributes()
-    clearCookie('tap_token', attrs)
-    try { localStorage.removeItem('tap_token'); localStorage.removeItem('tap_user') } catch {}
-    set({ token: null, user: null })
+    cacheUser(null)
+    clearReadableSessionMarker()
+    set({ token: null, user: null, savedAccounts: [] })
+    taskHubRuntime.clear()
+  },
+  removeSavedAccount: (id) => {
+    if (String(get().user?.sub ?? '') === id) get().clear()
+  },
+  switchAccount: async (id) => {
+    if (String(get().user?.sub ?? '') === id) return
+    throw new Error('安全会话模式不在浏览器保存其他账号凭据，请退出后重新登录')
   },
 }))
 
-export function getAuthToken() {
-  const cookie = getAuthTokenFromCookie()
-  const local = (() => {
-    if (typeof localStorage === 'undefined') return null
-    try {
-      return localStorage.getItem('tap_token')
-    } catch {
-      return null
-    }
-  })()
-
-  const token = local || cookie
-  if (!token) return null
-
-  const attrs = resolveTapTokenCookieAttributes()
-  if (cookie !== token) writeCookie('tap_token', token, attrs)
-  if (local !== token && typeof localStorage !== 'undefined') {
-    try {
-      localStorage.setItem('tap_token', token)
-    } catch {
-      // ignore
-    }
-  }
-  return token
+export function hasAuthSession(): boolean {
+  return useAuth.getState().token === SESSION_MARKER
 }
-
-export function getAuthTokenFromCookie() { return readCookie('tap_token') }

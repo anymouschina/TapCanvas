@@ -35,7 +35,6 @@ import {
 import {
   IconCalendarClock,
   IconClose,
-  IconCreditCard,
   IconSave,
 } from '@douyinfe/semi-icons';
 import { Clock, RefreshCw } from 'lucide-react';
@@ -83,8 +82,6 @@ const AddEditSubscriptionModal = ({
   const getInitValues = () => ({
     title: '',
     subtitle: '',
-    price_amount: 0,
-    currency: 'USD',
     duration_unit: 'month',
     duration_value: 1,
     custom_seconds: 0,
@@ -95,8 +92,6 @@ const AddEditSubscriptionModal = ({
     max_purchase_per_user: 0,
     total_amount: 0,
     upgrade_group: '',
-    stripe_price_id: '',
-    creem_product_id: '',
   });
 
   const buildFormValues = () => {
@@ -107,8 +102,6 @@ const AddEditSubscriptionModal = ({
       ...base,
       title: p.title || '',
       subtitle: p.subtitle || '',
-      price_amount: Number(p.price_amount || 0),
-      currency: 'USD',
       duration_unit: p.duration_unit || 'month',
       duration_value: Number(p.duration_value || 1),
       custom_seconds: Number(p.custom_seconds || 0),
@@ -121,8 +114,6 @@ const AddEditSubscriptionModal = ({
         quotaToDisplayAmount(p.total_amount || 0).toFixed(2),
       ),
       upgrade_group: p.upgrade_group || '',
-      stripe_price_id: p.stripe_price_id || '',
-      creem_product_id: p.creem_product_id || '',
     };
   };
 
@@ -151,8 +142,6 @@ const AddEditSubscriptionModal = ({
       const payload = {
         plan: {
           ...values,
-          price_amount: Number(values.price_amount || 0),
-          currency: 'USD',
           duration_value: Number(values.duration_value || 0),
           custom_seconds: Number(values.custom_seconds || 0),
           quota_reset_period: values.quota_reset_period || 'never',
@@ -267,7 +256,7 @@ const AddEditSubscriptionModal = ({
                         {t('基本信息')}
                       </Text>
                       <div className='text-xs text-gray-600'>
-                        {t('套餐的基本信息和定价')}
+                        {t('套餐的基本信息和额度')}
                       </div>
                     </div>
                   </div>
@@ -297,18 +286,6 @@ const AddEditSubscriptionModal = ({
 
                     <Col span={12}>
                       <Form.InputNumber
-                        field='price_amount'
-                        label={t('实付金额')}
-                        required
-                        min={0}
-                        precision={2}
-                        rules={[{ required: true, message: t('请输入金额') }]}
-                        style={{ width: '100%' }}
-                      />
-                    </Col>
-
-                    <Col span={12}>
-                      <Form.InputNumber
                         field='total_amount'
                         label={t('总额度')}
                         required
@@ -330,7 +307,7 @@ const AddEditSubscriptionModal = ({
                         loading={groupLoading}
                         placeholder={t('不升级')}
                         extraText={t(
-                          '购买或手动新增订阅会升级到该分组；当套餐失效/过期或手动作废/删除后，将回退到升级前分组。回退不会立即生效，通常会有几分钟延迟。',
+                          '管理员分配订阅后会升级到该分组；当套餐失效/过期或手动作废/删除后，将回退到升级前分组。回退不会立即生效，通常会有几分钟延迟。',
                         )}
                       >
                         <Select.Option value=''>{t('不升级')}</Select.Option>
@@ -340,15 +317,6 @@ const AddEditSubscriptionModal = ({
                           </Select.Option>
                         ))}
                       </Form.Select>
-                    </Col>
-
-                    <Col span={12}>
-                      <Form.Input
-                        field='currency'
-                        label={t('币种')}
-                        disabled
-                        extraText={t('由全站货币展示设置统一控制')}
-                      />
                     </Col>
 
                     <Col span={12}>
@@ -363,7 +331,7 @@ const AddEditSubscriptionModal = ({
                     <Col span={12}>
                       <Form.InputNumber
                         field='max_purchase_per_user'
-                        label={t('购买上限')}
+                        label={t('分配上限')}
                         min={0}
                         precision={0}
                         extraText={t('0 表示不限')}
@@ -501,46 +469,6 @@ const AddEditSubscriptionModal = ({
                   </Row>
                 </Card>
 
-                {/* 第三方支付配置 */}
-                <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
-                  <div className='flex items-center mb-2'>
-                    <Avatar
-                      size='small'
-                      color='purple'
-                      className='mr-2 shadow-md'
-                    >
-                      <IconCreditCard size={16} />
-                    </Avatar>
-                    <div>
-                      <Text className='text-lg font-medium'>
-                        {t('第三方支付配置')}
-                      </Text>
-                      <div className='text-xs text-gray-600'>
-                        {t('Stripe/Creem 商品ID（可选）')}
-                      </div>
-                    </div>
-                  </div>
-
-                  <Row gutter={12}>
-                    <Col span={24}>
-                      <Form.Input
-                        field='stripe_price_id'
-                        label='Stripe PriceId'
-                        placeholder='price_...'
-                        showClear
-                      />
-                    </Col>
-
-                    <Col span={24}>
-                      <Form.Input
-                        field='creem_product_id'
-                        label='Creem ProductId'
-                        placeholder='prod_...'
-                        showClear
-                      />
-                    </Col>
-                  </Row>
-                </Card>
               </div>
             )}
           </Form>

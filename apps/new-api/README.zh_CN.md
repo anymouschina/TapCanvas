@@ -169,7 +169,7 @@ docker run --name new-api -d --restart always \
 |------|------|
 | 🚀 部署指南 | [安装文档](https://docs.neoSparkMart.pro/zh/docs/installation) |
 | ⚙️ 环境配置 | [环境变量](https://docs.neoSparkMart.pro/zh/docs/installation/config-maintenance/environment-variables) |
-| 📡 接口文档 | [API 文档](/console/docs)（登录后访问，自托管交互式文档） |
+| 📡 接口文档 | [API 文档](/docs)（站内公开访问，动态模型/规格与 curl 生成） |
 | ❓ 常见问题 | [FAQ](https://docs.neoSparkMart.pro/zh/docs/support/faq) |
 | 💬 社区交流 | [交流渠道](https://docs.neoSparkMart.pro/zh/docs/support/community-interaction) |
 
@@ -189,12 +189,12 @@ docker run --name new-api -d --restart always \
 | 📈 数据看板 | 可视化控制台与统计分析 |
 | 🔒 权限管理 | 令牌分组、模型限制、用户管理 |
 
-### 💰 支付与计费
+### 📊 额度计量
 
-- ✅ 在线充值（易支付、Stripe）
 - ✅ 模型按次数收费
 - ✅ 缓存计费支持（OpenAI、Azure、DeepSeek、Claude、Qwen等所有支持的模型）
 - ✅ 灵活的计费策略配置
+- ✅ TapCanvas 社区部署保留兑换码和管理员额度分配，不包含在线支付
 
 ### 🔐 授权与安全
 
@@ -208,12 +208,13 @@ docker run --name new-api -d --restart always \
 
 **API 格式支持：**
 - ⚡ OpenAI Responses
+- ⚡ DeepSeek V4 原生 Responses（含供应商侧 `web_search`；不降级转换为 Chat Completions）
 - ⚡ OpenAI Realtime API（含 Azure）
 - ⚡ Claude Messages
 - ⚡ Google Gemini
 - 🔄 Rerank 模型（Cohere、Jina）
 
-> 完整接口文档见登录后的 [API 文档页](/console/docs)
+> 完整接口文档见站内 [API 文档页](/docs)，模型、规格与请求示例均由当前网关配置动态生成。
 
 **智能路由：**
 - ⚖️ 渠道加权随机
@@ -256,7 +257,7 @@ docker run --name new-api -d --restart always \
 
 ## 🤖 模型支持
 
-> 完整接口文档见登录后的 [API 文档页](/console/docs)
+> 完整接口文档见站内 [API 文档页](/docs)，可按模型与规格生成对应 curl。
 
 | 模型类型 | 说明 |
 |---------|------|
@@ -286,7 +287,7 @@ docker run --name new-api -d --restart always \
 - Claude Messages
 - Google Gemini
 
-> 所有接口的详细参数、示例请在 [API 文档页](/console/docs) 中查阅
+> 所有接口的详细参数、实时规格与示例请在站内 [API 文档页](/docs) 中查阅。
 
 </details>
 
@@ -423,6 +424,18 @@ docker run --name new-api -d --restart always \
 |------|------|
 | [neko-api-key-tool](https://github.com/Calcium-Ion/neko-api-key-tool) | Key 额度查询工具 |
 | [new-api-horizon](https://github.com/Calcium-Ion/new-api-horizon) | neoSparkMart 高性能优化版 |
+
+---
+
+## Codex / CLIProxy 凭证兼容
+
+Codex 渠道的账号导入接口支持 CLIProxyAPI 顶层 OAuth JSON、Codex `auth.json` 的 `tokens` 嵌套结构，以及包含 `chatgpt_account_id` / `workspace_id` 别名的 CPA 导出结构。服务端统一规范化为 `access_token`、`refresh_token`、`account_id`、`expired` 等内部字段；前端不使用固定顶层字段拦截格式。
+
+AI Studio To API 渠道支持从控制台把 Playwright `storageState` 直接转发到受信任的 Studio Importer，并强制一号一代理主机。Cookie 不进入 new-api 数据库；Importer 密码只从渠道指定的环境变量读取。多个 Runtime 由 new-api 按优先级/权重分流，单个 Runtime 内的账号轮询、忙碌排除和 429 冷却仍由 aistudio-to-api 统一负责。配置与边界见 [AI Studio To API 渠道说明](docs/channel/aistudio_to_api.md)。
+
+导入成功只表示结构已规范化，不表示上游认证成功。接口会返回 `source_format`、`refreshable`、`token_client_id`、`declared_client_id`、`expires_at` 和 `warnings` 诊断。缺少 `refresh_token`、ID/access token 相同、JWT 签发客户端不一致时均显式告警，不伪造刷新能力，也不自动替换 token。
+
+账号会话面板通过上游 `/backend-api/wham/usage` 展示真实的 5 小时与 7 天配额窗口，包括各自的 `used_percent`、`reset_at`，以及因额度不足进入调度冷却后的恢复时间。
 
 ---
 

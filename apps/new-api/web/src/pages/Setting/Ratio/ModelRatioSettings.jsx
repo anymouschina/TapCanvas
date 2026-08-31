@@ -36,6 +36,10 @@ import {
   verifyJSON,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+import {
+  MODEL_PRICING_OPTION_KEYS,
+  parsePricingOptionMaps,
+} from './utils/pricingOptionMaps';
 
 export default function ModelRatioSettings(props) {
   const [loading, setLoading] = useState(false);
@@ -55,56 +59,69 @@ export default function ModelRatioSettings(props) {
   const { t } = useTranslation();
 
   async function onSubmit() {
+    let pricingSaved = false;
+    let writesCompleted = false;
+    let hasExplicitPartialMessage = false;
     try {
-      await refForm.current
-        .validate()
-        .then(() => {
-          const updateArray = compareObjects(inputs, inputsRow);
-          if (!updateArray.length)
-            return showWarning(t('你似乎并没有修改什么'));
+      await refForm.current.validate();
+      const updates = compareObjects(inputs, inputsRow);
+      if (!updates.length) {
+        showWarning(t('你似乎并没有修改什么'));
+        return;
+      }
 
-          const requestQueue = updateArray.map((item) => {
-            const value =
-              typeof inputs[item.key] === 'boolean'
-                ? String(inputs[item.key])
-                : inputs[item.key];
-            return API.put('/api/option/', { key: item.key, value });
-          });
-
-          setLoading(true);
-          Promise.all(requestQueue)
-            .then((res) => {
-              if (res.includes(undefined)) {
-                return showError(
-                  requestQueue.length > 1
-                    ? t('部分保存失败，请重试')
-                    : t('保存失败'),
-                );
-              }
-
-              for (let i = 0; i < res.length; i++) {
-                if (!res[i].data.success) {
-                  return showError(res[i].data.message);
-                }
-              }
-
-              showSuccess(t('保存成功'));
-              props.refresh();
-            })
-            .catch((error) => {
-              console.error('Unexpected error:', error);
-              showError(t('保存失败，请重试'));
-            })
-            .finally(() => {
-              setLoading(false);
-            });
-        })
-        .catch(() => {
-          showError(t('请检查输入'));
+      setLoading(true);
+      if (
+        updates.some((item) => MODEL_PRICING_OPTION_KEYS.includes(item.key))
+      ) {
+        const pricingOptions = parsePricingOptionMaps(inputs);
+        const response = await API.put('/api/models/pricing', {
+          options: pricingOptions,
         });
+        if (!response?.data?.success) {
+          throw new Error(response?.data?.message || t('模型定价保存失败'));
+        }
+        pricingSaved = true;
+      }
+
+      const nonPricingUpdates = updates.filter(
+        (item) => !MODEL_PRICING_OPTION_KEYS.includes(item.key),
+      );
+      for (const item of nonPricingUpdates) {
+        const value =
+          typeof inputs[item.key] === 'boolean'
+            ? String(inputs[item.key])
+            : inputs[item.key];
+        const response = await API.put('/api/option/', {
+          key: item.key,
+          value,
+        });
+        if (!response?.data?.success) {
+          const prefix = pricingSaved ? t('模型定价已保存，但') : '';
+          hasExplicitPartialMessage = pricingSaved;
+          throw new Error(
+            `${prefix}${item.key} ${t('保存失败')}: ${
+              response?.data?.message || t('未知错误')
+            }`,
+          );
+        }
+      }
+
+      writesCompleted = true;
+      await props.refresh();
+      showSuccess(t('保存成功'));
     } catch (error) {
-      showError(t('请检查输入'));
       console.error(error);
+      const message = error.message || t('请检查输入');
+      if (writesCompleted) {
+        showError(`${t('设置已保存，但刷新失败')}: ${message}`);
+      } else if (pricingSaved && !hasExplicitPartialMessage) {
+        showError(`${t('模型定价已保存，但其它设置保存失败')}: ${message}`);
+      } else {
+        showError(message);
+      }
+    } finally {
+      setLoading(false);
     }
   }
 

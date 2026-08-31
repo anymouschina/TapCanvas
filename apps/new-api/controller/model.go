@@ -29,15 +29,85 @@ var openAIModels []dto.OpenAIModels
 var openAIModelsMap map[string]dto.OpenAIModels
 var channelId2Models map[int][]string
 
-func init() {
-	// https://platform.openai.com/docs/models/model-endpoint-compatibility
-	for i := 0; i < constant.APITypeDummy; i++ {
-		if i == constant.APITypeAIProxyLibrary {
+func appendCanonicalModels(target []string, rawModels []string) []string {
+	seen := make(map[string]struct{}, len(target)+len(rawModels))
+	for _, existing := range target {
+		seen[existing] = struct{}{}
+	}
+	for _, modelName := range rawModels {
+		canonicalModelName := model.CanonicalModelKey(modelName)
+		if canonicalModelName == "" {
 			continue
 		}
-		adaptor := relay.GetAdaptor(i)
-		channelName := adaptor.GetChannelName()
-		modelNames := adaptor.GetModelList()
+		if _, exists := seen[canonicalModelName]; exists {
+			continue
+		}
+		seen[canonicalModelName] = struct{}{}
+		target = append(target, canonicalModelName)
+	}
+	return target
+}
+
+func getProtocolModels(definition constant.ProtocolDefinition) ([]string, string, error) {
+	channelType := 0
+	if len(definition.RecommendedChannelTypes) > 0 {
+		channelType = definition.RecommendedChannelTypes[0]
+	}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType:       channelType,
+		ProtocolID:        definition.ID,
+		ProtocolTransport: definition.Transport,
+		ApiType:           definition.APIType,
+	}}
+	switch definition.Transport {
+	case constant.ProtocolTransportRelay:
+		adaptor := relay.GetAdaptor(definition.APIType)
+		if adaptor == nil {
+			return nil, "", fmt.Errorf(
+				"协议 %q 的 relay adaptor 未注册（API type %d）",
+				definition.ID,
+				definition.APIType,
+			)
+		}
+		adaptor.Init(info)
+		return adaptor.GetModelList(), adaptor.GetChannelName(), nil
+	case constant.ProtocolTransportTask:
+		adaptor := relay.GetTaskAdaptor(definition.TaskPlatform)
+		if adaptor == nil {
+			return nil, "", fmt.Errorf(
+				"协议 %q 的 task adaptor 未注册（platform %q）",
+				definition.ID,
+				definition.TaskPlatform,
+			)
+		}
+		adaptor.Init(info)
+		return adaptor.GetModelList(), adaptor.GetChannelName(), nil
+	case constant.ProtocolTransportNative:
+		if definition.ID != constant.ProtocolNativeMJ {
+			return nil, "", fmt.Errorf("协议 %q 的 native handler 未注册", definition.ID)
+		}
+		modelNames := make([]string, 0, len(constant.MidjourneyModel2Action))
+		for modelName := range constant.MidjourneyModel2Action {
+			modelNames = append(modelNames, modelName)
+		}
+		return modelNames, "midjourney", nil
+	default:
+		return nil, "", fmt.Errorf(
+			"协议 %q 使用未知 transport %q",
+			definition.ID,
+			definition.Transport,
+		)
+	}
+}
+
+func init() {
+	// https://platform.openai.com/docs/models/model-endpoint-compatibility
+	channelId2Models = make(map[int][]string)
+	for _, protocolDefinition := range constant.ListProtocolDefinitions() {
+		modelNames, channelName, err := getProtocolModels(protocolDefinition)
+		if err != nil {
+			panic(err)
+		}
 		for _, modelName := range modelNames {
 			canonicalModelName := model.CanonicalModelKey(modelName)
 			if canonicalModelName == "" {
@@ -49,6 +119,9 @@ func init() {
 				Created: 1626777600,
 				OwnedBy: channelName,
 			})
+		}
+		for _, channelType := range protocolDefinition.RecommendedChannelTypes {
+			channelId2Models[channelType] = appendCanonicalModels(channelId2Models[channelType], modelNames)
 		}
 	}
 	for _, modelName := range ai360.ModelList {
@@ -99,48 +172,9 @@ func init() {
 			OwnedBy: minimax.ChannelName,
 		})
 	}
-	for modelName, _ := range constant.MidjourneyModel2Action {
-		canonicalModelName := model.CanonicalModelKey(modelName)
-		if canonicalModelName == "" {
-			continue
-		}
-		openAIModels = append(openAIModels, dto.OpenAIModels{
-			Id:      canonicalModelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: "midjourney",
-		})
-	}
 	openAIModelsMap = make(map[string]dto.OpenAIModels)
 	for _, aiModel := range openAIModels {
 		openAIModelsMap[aiModel.Id] = aiModel
-	}
-	channelId2Models = make(map[int][]string)
-	for i := 1; i <= constant.ChannelTypeDummy; i++ {
-		apiType, success := common.ChannelType2APIType(i)
-		if !success || apiType == constant.APITypeAIProxyLibrary {
-			continue
-		}
-		meta := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelType: i,
-		}}
-		adaptor := relay.GetAdaptor(apiType)
-		adaptor.Init(meta)
-		rawModels := adaptor.GetModelList()
-		models := make([]string, 0, len(rawModels))
-		seen := make(map[string]struct{}, len(rawModels))
-		for _, modelName := range rawModels {
-			canonicalModelName := model.CanonicalModelKey(modelName)
-			if canonicalModelName == "" {
-				continue
-			}
-			if _, ok := seen[canonicalModelName]; ok {
-				continue
-			}
-			seen[canonicalModelName] = struct{}{}
-			models = append(models, canonicalModelName)
-		}
-		channelId2Models[i] = models
 	}
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id

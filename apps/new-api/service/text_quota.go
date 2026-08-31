@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -51,6 +52,7 @@ type textQuotaSummary struct {
 	FileSearchCallCount      int
 	AudioInputPrice          float64
 	ImageGenerationCallPrice float64
+	ChannelPriceRatio        float64
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -112,9 +114,16 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	summary.CacheCreationTokens1h = usage.ClaudeCacheCreation1hTokens
 	summary.ImageTokens = usage.PromptTokensDetails.ImageTokens
 	summary.AudioTokens = usage.PromptTokensDetails.AudioTokens
+	if tieredModelRatio, tiered := ratio_setting.ResolveModelRatioForPromptTokens(
+		summary.ModelName,
+		relayInfo.PriceData.BaseModelRatio,
+		summary.PromptTokens,
+	); tiered {
+		summary.ModelRatio = tieredModelRatio
+	}
 	legacyClaudeDerived := isLegacyClaudeDerivedOpenAIUsage(relayInfo, usage)
 	isOpenRouterClaudeBilling := relayInfo.ChannelMeta != nil &&
-		relayInfo.ChannelType == constant.ChannelTypeOpenRouter &&
+		relayInfo.ProtocolID == constant.ProtocolOpenRouter &&
 		summary.IsClaudeUsageSemantic
 
 	if isOpenRouterClaudeBilling {
@@ -272,6 +281,23 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		summary.Quota = int(quotaCalculateDecimal.Round(0).IntPart())
 	}
 
+	// 用户真实折扣（原价 × price_ratio），作用于最终额度：一处覆盖 token 计费与固定价两条路径及全部附加费。
+	if upr := relayInfo.PriceData.UserPriceRatio; common.NormalizePriceRatio(upr) != 1 {
+		summary.Quota = int(decimal.NewFromInt(int64(summary.Quota)).
+			Mul(decimal.NewFromFloat(common.NormalizePriceRatio(upr))).Round(0).IntPart())
+	}
+
+	// 渠道价格倍率（channels.setting.price_ratio）：采购价更贵的渠道在最终额度上相乘，
+	// 与 UserPriceRatio 同位置同语义，覆盖 token 计费与固定价（含图片）两条路径。
+	// 任务(task)计费不走本函数，由 relay_task 的 OtherRatios["channel_price"] 承担。
+	if channelSetting, ok := common.GetContextKeyType[dto.ChannelSettings](ctx, constant.ContextKeyChannelSetting); ok {
+		if channelPriceRatio := channelSetting.GetPriceRatio(); channelPriceRatio != 1.0 {
+			summary.Quota = int(decimal.NewFromInt(int64(summary.Quota)).
+				Mul(decimal.NewFromFloat(channelPriceRatio)).Round(0).IntPart())
+			summary.ChannelPriceRatio = channelPriceRatio
+		}
+	}
+
 	if summary.TotalTokens == 0 {
 		summary.Quota = 0
 	} else if !ratio.IsZero() && summary.Quota == 0 {
@@ -386,6 +412,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = summary.ImageGenerationCallPrice
 	}
+	if summary.ChannelPriceRatio > 0 && summary.ChannelPriceRatio != 1.0 {
+		other["channel_price_ratio"] = summary.ChannelPriceRatio
+	}
 	if summary.CacheCreationTokens > 0 {
 		other["cache_creation_tokens"] = summary.CacheCreationTokens
 		other["cache_creation_ratio"] = summary.CacheCreationRatio
@@ -426,5 +455,6 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
+		DisplayRatio:     relayInfo.TokenDisplayRatio,
 	})
 }

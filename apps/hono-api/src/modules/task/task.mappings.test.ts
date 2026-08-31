@@ -761,6 +761,59 @@ describe("task.mappings request_profile v2", () => {
 		expect(queryRequest.init.body).toBeUndefined();
 	});
 
+	it("renders yunwu generateContent imageConfig fields from request params", async () => {
+		const createRequest = await buildMappedUpstreamRequest({
+			c: mockContext,
+			baseUrl: "https://yunwu.ai",
+			apiKey: "sk-test",
+			auth: { authType: "bearer", authHeader: null, authQueryParam: null },
+			stage: "create",
+			requestMapping: {
+				endpoint: {
+					method: "POST",
+					path: "/v1beta/models/${modelKey}:generateContent",
+				},
+				input: {
+					contents: [{ parts: [{ text: "{{request.prompt}}" }] }],
+					generationConfig: {
+						responseModalities: [{ value: "IMAGE" }],
+						imageConfig: {
+							aspectRatio: "{{request.params.aspectRatio}}",
+							imageSize: "{{request.params.imageSize}}",
+							resolution: "{{request.params.imageResolution|request.params.resolution}}",
+						},
+					},
+				},
+			},
+			req: {
+				kind: "text_to_image",
+				prompt: "一个苹果",
+				extras: {
+					modelKey: "gemini-3.1-flash-image-preview",
+					aspectRatio: "1:1",
+					imageSize: "1K",
+					imageResolution: "1K",
+					resolution: "1K",
+				},
+			},
+		});
+
+		expect(createRequest.url).toBe(
+			"https://yunwu.ai/v1beta/models/gemini-3.1-flash-image-preview:generateContent",
+		);
+		expect(createRequest.requestLog.jsonBody).toEqual({
+			contents: [{ parts: [{ text: "一个苹果" }] }],
+			generationConfig: {
+				responseModalities: ["IMAGE"],
+				imageConfig: {
+					aspectRatio: "1:1",
+					imageSize: "1K",
+					resolution: "1K",
+				},
+			},
+		});
+	});
+
 	it("parses yunwu video result payloads with succeed status and nested videos", () => {
 		const parsed = parseMappedTaskResultFromPayload({
 			vendorKey: "yunwu",
@@ -803,7 +856,7 @@ describe("task.mappings request_profile v2", () => {
 
 	it("keeps the full signed firstFrameUrl and surfaces upstream fetch error details", async () => {
 		const signedUrl =
-			"https://ark-common-storage-prod-ap-southeast-1.tos-ap-southeast-1.volces.com/seedream/example/2026-03-29/sample.jpeg?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Content-Sha256=UNSIGNED-PAYLOAD&X-Tos-Credential=EXAMPLE_ACCESS_KEY_ID%2F20260329%2Ftos-ap-southeast-1.volces.com%2Ftos-ap-southeast-1.volces.com%2Ftos%2Frequest&X-Tos-Date=20260329T142006Z&X-Tos-Expires=604800&X-Tos-SignedHeaders=host&X-Tos-Signature=example-signature";
+			"https://assets.example.test/fixture.jpeg?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Content-Sha256=UNSIGNED-PAYLOAD&X-Tos-Credential=EXAMPLE%2F20260329%2Fap-southeast-1%2Ftos%2Frequest&X-Tos-Date=20260329T142006Z&X-Tos-Expires=604800&X-Tos-SignedHeaders=host&X-Tos-Signature=example-signature";
 		const fetchSpy = vi
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValue(
@@ -863,7 +916,12 @@ describe("task.mappings request_profile v2", () => {
 			}
 
 			expect(fetchSpy).toHaveBeenCalledTimes(1);
-			expect(fetchSpy.mock.calls[0]?.[0]).toBe(signedUrl);
+			const fetchedRequest = fetchSpy.mock.calls[0]?.[0];
+			expect(fetchedRequest).toBeInstanceOf(Request);
+			expect((fetchedRequest as Request).url).toBe(signedUrl);
+			expect((fetchedRequest as Request).headers.get("accept")).toBe(
+				"image/*,video/mp4,*/*;q=0.8",
+			);
 			expect(thrown).toMatchObject({
 				name: "AppError",
 				code: "mapping_fetchAsFile_fetch_failed",
@@ -877,5 +935,49 @@ describe("task.mappings request_profile v2", () => {
 		} finally {
 			fetchSpy.mockRestore();
 		}
+	});
+
+	it("drops explicit multipart content-type headers so runtime can inject the boundary", async () => {
+		const result = await buildMappedUpstreamRequest({
+			c: { env: {} } as AppContext,
+			baseUrl: "https://api.example.com",
+			apiKey: "sk-test",
+			auth: { authType: "bearer", authHeader: null, authQueryParam: null },
+			stage: "create",
+			requestMapping: {
+				enabled: true,
+				version: "v2",
+				create: {
+					default: {
+						method: "POST",
+						path: "/v1/videos",
+						contentType: "multipart",
+						headers: {
+							"Content-Type": "multipart/form-data",
+						},
+						formData: {
+							model: "{{model.model_key}}",
+							prompt: "{{request.prompt}}",
+						},
+					},
+				},
+			},
+			req: {
+				kind: "image_to_video",
+				prompt: "test",
+				extras: {
+					modelKey: "veo3-fast",
+				},
+			},
+		});
+
+		expect(result.init.body).toBeInstanceOf(FormData);
+		expect(result.init.headers).toMatchObject({
+			Authorization: "Bearer sk-test",
+		});
+		expect((result.init.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
+		expect((result.init.headers as Record<string, string>)["content-type"]).toBeUndefined();
+		expect(result.requestLog.headers["Content-Type"]).toBeUndefined();
+		expect(result.requestLog.headers["content-type"]).toBeUndefined();
 	});
 });

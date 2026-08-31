@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../types";
 import type { AppContext } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
+import { requirePlatformCatalogOwnerId } from "../commerce/commerce.constants";
 import {
 	ProductListQuerySchema,
 	ProductListResponseSchema,
@@ -35,9 +36,11 @@ productRouter.get("/", async (c) => {
 		return c.json({ error: "Invalid query", issues: parsed.error.issues }, 400);
 	}
 	const data = await listProductsForCatalog(c, {
+		ownerId: parsed.data.scope === "billing" ? requirePlatformCatalogOwnerId(c) : undefined,
 		keyword: parsed.data.keyword,
 		status: admin ? parsed.data.status : "active",
 		entitlementType: parsed.data.entitlementType,
+		excludedCurrency: parsed.data.scope === "billing" ? "CREDITS" : undefined,
 		page: parsed.data.page,
 		size: parsed.data.size,
 	});

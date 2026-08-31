@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/imageutil"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -20,47 +21,209 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Adaptor adapts the RightCode image generation API.
-// RightCode is OpenAI-compatible for chat/audio; its /v1/images/generations
-// endpoint accepts a synchronous response with `size` as "NxM" pixel dimensions.
-// This adaptor converts incoming 1K/2K/4K + aspect-ratio aliases to pixel dims.
+// Adaptor adapts the RightCode (right.codes) multi-endpoint API behind one channel:
+//   - {root}/codex (or /codex-pro) — OpenAI-compatible chat/completions + responses (gpt-5.x)
+//   - {root}/draw     — image generation; `size` is "NxM" pixel dimensions, this
+//     adaptor converts incoming 1K/2K/4K + aspect-ratio aliases to pixel dims
+//   - {root}/claude   — Anthropic Messages API (claude-*), x-api-key auth
+//   - {root}/deepseek — OpenAI-compatible chat/completions (deepseek-v4-*), Bearer auth
+//   - {root}/grok     — OpenAI-compatible Responses API (grok-*), Bearer auth
+//
+// The channel base_url is either the bare root (https://www.right.codes), a
+// codex endpoint base (https://www.right.codes/codex-pro[/v1]) to pick the
+// codex tier, or a claude tier base (https://rightapi.ai/claude-bug) to pick a
+// claude endpoint variant; draw/deepseek always route from the root. Legacy
+// configs pointing at "/draw", "/codex", "/claude", "/deepseek" (optionally
+// with "/v1") are normalised.
 type Adaptor struct{}
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {}
 
+// isClaudeModel reports whether the upstream model routes to the Anthropic-format
+// /claude endpoint (claude-sonnet-4-5-*, claude-fable-5, ...).
+func isClaudeModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "claude")
+}
+
+// isDeepseekModel reports whether the upstream model routes to the
+// OpenAI-compatible /deepseek endpoint (deepseek-v4-pro, deepseek-v4-flash, ...).
+func isDeepseekModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
+}
+
+// isGrokModel reports whether the upstream model routes to the
+// OpenAI-compatible /grok endpoint (grok-4.5, ...).
+func isGrokModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "grok-")
+}
+
+// normalizeBaseURL trims whitespace, a trailing slash and a trailing "/v1"
+// (users often paste the full endpoint base from the provider docs).
+func normalizeBaseURL(base string) string {
+	base = strings.TrimSuffix(strings.TrimSpace(base), "/")
+	return strings.TrimSuffix(base, "/v1")
+}
+
+// rootBaseURL strips an endpoint suffix from the channel base_url so the
+// adaptor can append the per-model endpoint segment itself.
+func rootBaseURL(base string) string {
+	base = normalizeBaseURL(base)
+	for _, suffix := range []string{"/draw", "/deepseek", "/grok", "/codex-pro", "/codex"} {
+		if strings.HasSuffix(base, suffix) {
+			return strings.TrimSuffix(base, suffix)
+		}
+	}
+	if root, ok := trimClaudeTier(base); ok {
+		return root
+	}
+	return base
+}
+
+// trimClaudeTier detects a claude tier as the trailing path segment of the
+// base_url ("/claude", "/claude-bug", ...) and returns the base without it.
+// Provider hosts expose variant claude endpoints as sibling path prefixes
+// (e.g. rightapi.ai/claude-bug), so any dot-free segment starting with
+// "claude" counts; the dot guard keeps hostnames like claude.example.com out.
+func trimClaudeTier(base string) (string, bool) {
+	i := strings.LastIndex(base, "/")
+	if i < 0 {
+		return base, false
+	}
+	seg := base[i+1:]
+	if strings.HasPrefix(seg, "claude") && !strings.Contains(seg, ".") {
+		return base[:i], true
+	}
+	return base, false
+}
+
+// claudeBaseURL resolves the Anthropic-format endpoint base. A base_url that
+// already points at a claude tier ("/claude", "/claude-bug", ...) is honoured
+// as-is; otherwise the default "/claude" segment is appended to the root.
+func claudeBaseURL(base string) string {
+	base = normalizeBaseURL(base)
+	if _, ok := trimClaudeTier(base); ok {
+		return base
+	}
+	return rootBaseURL(base) + "/claude"
+}
+
+// deepseekBaseURL resolves the OpenAI-compatible DeepSeek endpoint base from the
+// channel root, regardless of which endpoint segment the base_url points at.
+func deepseekBaseURL(base string) string {
+	return rootBaseURL(base) + "/deepseek"
+}
+
+// grokBaseURL resolves the OpenAI-compatible Grok endpoint base from the
+// channel root, regardless of which endpoint segment the base_url points at.
+func grokBaseURL(base string) string {
+	return rootBaseURL(base) + "/grok"
+}
+
+// codexBaseURL resolves the OpenAI-compatible endpoint base. A base_url that
+// already points at a codex tier ("/codex" or "/codex-pro") is honoured as-is;
+// otherwise the default "/codex" segment is appended to the root.
+func codexBaseURL(base string) string {
+	base = normalizeBaseURL(base)
+	if strings.HasSuffix(base, "/codex") || strings.HasSuffix(base, "/codex-pro") {
+		return base
+	}
+	return rootBaseURL(base) + "/codex"
+}
+
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	root := rootBaseURL(info.ChannelBaseUrl)
+	codexBase := codexBaseURL(info.ChannelBaseUrl)
 	switch info.RelayMode {
 	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
-		return info.ChannelBaseUrl + "/v1/images/generations", nil
+		return root + "/draw/v1/images/generations", nil
 	case constant.RelayModeEmbeddings:
-		return fmt.Sprintf("%s/v1/embeddings", info.ChannelBaseUrl), nil
+		return fmt.Sprintf("%s/v1/embeddings", codexBase), nil
 	case constant.RelayModeAudioSpeech:
-		return fmt.Sprintf("%s/v1/audio/speech", info.ChannelBaseUrl), nil
+		return fmt.Sprintf("%s/v1/audio/speech", codexBase), nil
 	case constant.RelayModeAudioTranscription:
-		return fmt.Sprintf("%s/v1/audio/transcriptions", info.ChannelBaseUrl), nil
+		return fmt.Sprintf("%s/v1/audio/transcriptions", codexBase), nil
 	case constant.RelayModeAudioTranslation:
-		return fmt.Sprintf("%s/v1/audio/translations", info.ChannelBaseUrl), nil
+		return fmt.Sprintf("%s/v1/audio/translations", codexBase), nil
 	case constant.RelayModeCompletions:
-		return fmt.Sprintf("%s/v1/completions", info.ChannelBaseUrl), nil
+		return fmt.Sprintf("%s/v1/completions", codexBase), nil
+	case constant.RelayModeResponses, constant.RelayModeResponsesCompact:
+		if isClaudeModel(info.UpstreamModelName) {
+			return "", errors.New("rightcode: claude models do not support the responses API, use chat completions or /v1/messages")
+		}
+		if isDeepseekModel(info.UpstreamModelName) {
+			return "", errors.New("rightcode: deepseek models do not support the responses API, use chat completions")
+		}
+		if isGrokModel(info.UpstreamModelName) {
+			return relaycommon.GetFullRequestURL(grokBaseURL(info.ChannelBaseUrl), info.RequestURLPath, info.ProtocolID), nil
+		}
+		return relaycommon.GetFullRequestURL(codexBase, info.RequestURLPath, info.ProtocolID), nil
 	default:
-		return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+		if isClaudeModel(info.UpstreamModelName) {
+			return claudeBaseURL(info.ChannelBaseUrl) + "/v1/messages", nil
+		}
+		if isDeepseekModel(info.UpstreamModelName) {
+			return deepseekBaseURL(info.ChannelBaseUrl) + "/v1/chat/completions", nil
+		}
+		if isGrokModel(info.UpstreamModelName) {
+			return grokBaseURL(info.ChannelBaseUrl) + "/v1/chat/completions", nil
+		}
+		return fmt.Sprintf("%s/v1/chat/completions", codexBase), nil
 	}
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
+	if isClaudeModel(info.UpstreamModelName) && !isImageOrAudioMode(info.RelayMode) {
+		req.Set("x-api-key", info.ApiKey)
+		anthropicVersion := c.Request.Header.Get("anthropic-version")
+		if anthropicVersion == "" {
+			anthropicVersion = "2023-06-01"
+		}
+		req.Set("anthropic-version", anthropicVersion)
+		claude.CommonClaudeHeadersOperation(c, req, info)
+		return nil
+	}
 	req.Set("Authorization", "Bearer "+info.ApiKey)
 	return nil
+}
+
+func isImageOrAudioMode(relayMode int) bool {
+	switch relayMode {
+	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits,
+		constant.RelayModeAudioSpeech, constant.RelayModeAudioTranscription,
+		constant.RelayModeAudioTranslation:
+		return true
+	}
+	return false
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+	if isClaudeModel(info.UpstreamModelName) {
+		// 不注入 cache_control：实测 right.codes 号池每次请求落不同账号，
+		// 跨请求缓存永远 miss，注入只会让全 prompt 按 1.25× 缓存写入价计费（纯亏）。
+		// 客户端自带的 cache_control（native /v1/messages 透传）不受影响。
+		converted, err := claude.RequestOpenAI2ClaudeMessage(c, *request, info.ChannelOtherSettings.ClaudeImageURLPassThrough)
+		if err != nil {
+			return nil, err
+		}
+		if err := claude.EnsureClaudeCodeSystem(converted); err != nil {
+			return nil, err
+		}
+		return converted, nil
+	}
 	return request, nil
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+	if isClaudeModel(info.UpstreamModelName) {
+		if err := claude.EnsureClaudeCodeSystem(request); err != nil {
+			return nil, err
+		}
+		return request, nil
+	}
 	adaptor := openai.Adaptor{}
 	return adaptor.ConvertClaudeRequest(c, info, request)
 }
@@ -164,7 +327,11 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	return nil, errors.New("not implemented")
+	if isClaudeModel(info.UpstreamModelName) {
+		return nil, errors.New("rightcode: claude models do not support the responses API, use chat completions or /v1/messages")
+	}
+	adaptor := openai.Adaptor{}
+	return adaptor.ConvertOpenAIResponsesRequest(c, info, request)
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
@@ -172,6 +339,13 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if isClaudeModel(info.UpstreamModelName) && !isImageOrAudioMode(info.RelayMode) {
+		info.FinalRequestRelayFormat = types.RelayFormatClaude
+		if info.IsStream {
+			return claude.ClaudeStreamHandler(c, resp, info)
+		}
+		return claude.ClaudeHandler(c, resp, info)
+	}
 	adaptor := openai.Adaptor{}
 	return adaptor.DoResponse(c, resp, info)
 }

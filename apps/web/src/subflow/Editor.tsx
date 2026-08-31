@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlow, Background, BackgroundVariant, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TaskNode from '../canvas/nodes/TaskNode'
+import TaskNode from '../canvas/nodes/TaskNodeCard'
 import { useRFStore } from '../canvas/store'
 import { Button, Group, Title } from '@mantine/core'
 import { usePreventBrowserSwipeNavigation } from '../utils/usePreventBrowserSwipeNavigation'

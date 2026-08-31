@@ -3,6 +3,7 @@ import { ActionIcon, Badge, Button, Group, Modal, Stack, Text, TextInput } from 
 import { IconTrash } from '@tabler/icons-react'
 import { setTapImageDragData } from '../../../dnd/setTapImageDragData'
 import { InlinePanel } from '../../../../ui/InlinePanel'
+import { ManagedImage } from '../../../../domain/resource-runtime'
 
 type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
 
@@ -26,6 +27,8 @@ type VeoImageModalProps = {
   onSetFirstFrameUrl: (url: string) => void
   onSetLastFrameUrl: (url: string) => void
   onToggleReference: (url: string) => void
+  continueToLastFrame?: boolean
+  onContinueToLastFrame?: () => void
 }
 
 export function VeoImageModal({
@@ -48,6 +51,8 @@ export function VeoImageModal({
   onSetFirstFrameUrl,
   onSetLastFrameUrl,
   onToggleReference,
+  continueToLastFrame = false,
+  onContinueToLastFrame,
 }: VeoImageModalProps) {
   return (
     <Modal
@@ -112,11 +117,14 @@ export function VeoImageModal({
                         background: mediaFallbackSurface,
                       }}
                     >
-                      <img
+                      <ManagedImage
                         className="veo-image-modal-reference-img"
                         src={url}
                         alt="参考图"
                         draggable
+                        priority="visible"
+                        ownerSurface="preview-modal"
+                        ownerRequestKey={`veo-image-modal-reference:${url}`}
                         onDragStart={(evt) => setTapImageDragData(evt, url)}
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       />
@@ -161,11 +169,14 @@ export function VeoImageModal({
                       background: mediaFallbackSurface,
                     }}
                   >
-                    <img
+                    <ManagedImage
                       className="veo-image-modal-candidate-img"
                       src={candidate.url}
                       alt={candidate.label}
                       draggable
+                      priority="visible"
+                      ownerSurface="preview-modal"
+                      ownerRequestKey={`veo-image-modal-candidate:${candidate.url}`}
                       onDragStart={(evt) => setTapImageDragData(evt, candidate.url)}
                       style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }}
                     />
@@ -182,7 +193,8 @@ export function VeoImageModal({
                         disabled={!isImageSource}
                         onClick={() => {
                           onSetFirstFrameUrl(candidate.url)
-                          onClose()
+                          if (continueToLastFrame) onContinueToLastFrame?.()
+                          else onClose()
                         }}
                       >
                         {isFirstFrame ? '已设首帧' : '设为首帧'}

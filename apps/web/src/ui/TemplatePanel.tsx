@@ -1,15 +1,20 @@
 import React from 'react'
-import { Title, Tabs, SimpleGrid, Image, Text, Button, Group, Stack, Transition, TextInput, ActionIcon, Modal, ScrollArea, Textarea, useMantineColorScheme } from '@mantine/core'
-import { IconArrowsMaximize, IconBrackets, IconChevronDown, IconChevronLeft, IconClock, IconEdit, IconFolder, IconSearch, IconX } from '@tabler/icons-react'
+import { Title, Tabs, SimpleGrid, Image, Text, Button, Group, Stack, Transition, TextInput, NumberInput, ActionIcon, Modal, ScrollArea, Textarea, useMantineColorScheme } from '@mantine/core'
+import { IconChevronDown, IconChevronLeft, IconClock, IconCopy, IconEdit, IconFolder, IconSearch, IconX } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
-import { listProjects, listPublicProjects, listServerFlows, listProjectFlows, updateProjectTemplate, type FlowDto, type ProjectDto } from '../api/server'
-import { $, $t } from '../canvas/i18n'
-import { calculateSafeMaxHeight } from './utils/panelPosition'
+import { getPublicProjectFlows, listProjects, listPublicProjects, listServerFlows, listProjectFlows, updateProjectTemplate, type FlowDto, type ProjectDto } from '../api/server'
+import { $ } from '../canvas/i18n'
+import {
+  BOTTOM_BAR_PANEL_WIDTH,
+  bottomBarPanelMetrics,
+  bottomBarPanelStyle,
+} from './utils/panelPosition'
 import { toast } from './toast'
 import { sanitizeGraphForCanvas, useRFStore } from '../canvas/store'
-import { extractCanvasGraph, type CanvasImportData } from '../canvas/utils/serialization'
 import { stopPanelWheelPropagation } from './utils/panelWheel'
 import { PanelCard } from './PanelCard'
+import { ManagedImage } from '../domain/resource-runtime/components/ManagedImage'
+import { VirtualizedGrid } from './virtualization/VirtualizedGrid'
 
 type TemplateCategoryKey = 'all' | 'recent' | 'mine' | 'public'
 
@@ -27,18 +32,35 @@ const TEMPLATE_PUBLIC_CATEGORY_ITEMS: ReadonlyArray<TemplateCategoryKey> = [
 
 const TEMPLATE_RECENT_STORAGE_KEY = 'tapcanvas_template_recent_v1'
 const TEMPLATE_RECENT_LIMIT = 24
+const COMPACT_TEMPLATE_ROW_HEIGHT = 142
+const COMPACT_TEMPLATE_ROW_GAP = 16
+const COMPACT_TEMPLATE_COLUMN_GAP = 16
+
+function resolveCompactTemplateColumnCount(containerWidth: number): number {
+  if (containerWidth < 360) return 1
+  if (containerWidth < 580) return 2
+  return 3
+}
+
+function getProjectKey(project: ProjectDto): string {
+  return project.id
+}
+
+function getFlowKey(flow: FlowDto): string {
+  return flow.id
+}
 
 function PlaceholderImage({ label }: { label: string }) {
   const { colorScheme } = useMantineColorScheme()
   const palette = colorScheme === 'light'
     ? {
-        from: '#f8fafc',
-        to: '#e2e8f0',
-        text: '#334155',
+        from: '#f6f7f8',
+        to: '#d4d6da',
+        text: '#2c2e32',
       }
     : {
-        from: '#1f2937',
-        to: '#111827',
+        from: '#1d1d20',
+        to: '#141416',
         text: '#e5e7eb',
       }
   const svg = encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' width='480' height='270'><defs><linearGradient id='g' x1='0' x2='1'><stop offset='0%' stop-color='${palette.from}'/><stop offset='100%' stop-color='${palette.to}'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/><text x='50%' y='50%' fill='${palette.text}' dominant-baseline='middle' text-anchor='middle' font-size='16' font-family='system-ui'>${label}</text></svg>`)
@@ -52,6 +74,7 @@ type TemplateLibraryCard = {
   coverUrl: string | null
   source: 'public' | 'server'
   updatedAt: string
+  cloneCount?: number
   actionLabel: string
   onAction: () => void
   editLabel?: string
@@ -105,7 +128,7 @@ export default function TemplatePanel({ className }: { className?: string }): JS
   const active = useUIStore(s => s.activePanel)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const openLibraryFlow = useUIStore(s => s.openLibraryFlow)
-  const anchorY = useUIStore(s => s.panelAnchorY)
+  const anchorX = useUIStore(s => s.panelAnchorX)
   const addNode = useRFStore(s => s.addNode)
   const importWorkflow = useRFStore(s => s.importWorkflow)
   const currentProject = useUIStore(s => s.currentProject)
@@ -118,12 +141,11 @@ export default function TemplatePanel({ className }: { className?: string }): JS
   const [expandedCategory, setExpandedCategory] = React.useState<TemplateCategoryKey>('all')
   const [selectedCard, setSelectedCard] = React.useState<TemplateLibraryCard | null>(null)
   const [recentTemplateIds, setRecentTemplateIds] = React.useState<string[]>(() => readRecentTemplateIds())
-  const [jsonImportOpened, setJsonImportOpened] = React.useState(false)
-  const [jsonImportValue, setJsonImportValue] = React.useState('')
   const [metadataEditorProject, setMetadataEditorProject] = React.useState<ProjectDto | null>(null)
   const [metadataEditorTitle, setMetadataEditorTitle] = React.useState('')
   const [metadataEditorDescription, setMetadataEditorDescription] = React.useState('')
   const [metadataEditorCoverUrl, setMetadataEditorCoverUrl] = React.useState('')
+  const [metadataEditorSortWeight, setMetadataEditorSortWeight] = React.useState<number>(0)
   const [metadataEditorSubmitting, setMetadataEditorSubmitting] = React.useState(false)
   React.useEffect(() => {
     let alive = true
@@ -165,22 +187,28 @@ export default function TemplatePanel({ className }: { className?: string }): JS
 
   const handleImportPublicTemplate = React.useCallback(async (project: ProjectDto) => {
     try {
-      const flows = await listProjectFlows(project.id)
-      const candidate = [...flows]
+      const flows = await getPublicProjectFlows(project.id)
+      const sortedFlows = [...flows]
         .sort((a, b) => {
           const aTime = Date.parse(String(a.updatedAt || '')) || 0
           const bTime = Date.parse(String(b.updatedAt || '')) || 0
           return bTime - aTime
         })
-        .find((flow) => Array.isArray(flow.data?.nodes) && flow.data.nodes.length > 0)
+      let candidate: FlowDto | null = null
+      for (const flow of sortedFlows) {
+        if (Array.isArray(flow.data?.nodes) && flow.data.nodes.length > 0) {
+          candidate = flow
+          break
+        }
+      }
       if (!candidate) throw new Error('该模板没有可导入的工作流')
       recordTemplateRecent(`public-${project.id}`)
       importWorkflow(sanitizeGraphForCanvas(candidate.data))
       setActivePanel(null)
       toast(`已添加模板「${project.templateTitle || project.name}」到画布`, 'success')
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err)
-      toast(err?.message || '添加公共模板到画布失败', 'error')
+      toast(err instanceof Error ? err.message : '添加公共模板到画布失败', 'error')
     }
   }, [importWorkflow, recordTemplateRecent, setActivePanel])
   const handleReferenceServerFlow = React.useCallback((flow: FlowDto) => {
@@ -202,6 +230,7 @@ export default function TemplatePanel({ className }: { className?: string }): JS
     setMetadataEditorTitle(String(project.templateTitle || project.name || '').trim())
     setMetadataEditorDescription(String(project.templateDescription || '').trim())
     setMetadataEditorCoverUrl(String(project.templateCoverUrl || '').trim())
+    setMetadataEditorSortWeight(typeof project.sortWeight === 'number' ? project.sortWeight : 0)
   }, [])
 
   const applyProjectUpdate = React.useCallback((updated: ProjectDto) => {
@@ -243,6 +272,7 @@ export default function TemplatePanel({ className }: { className?: string }): JS
         templateDescription: metadataEditorDescription.trim(),
         templateCoverUrl: metadataEditorCoverUrl.trim(),
         isPublic: Boolean(project.isPublic),
+        sortWeight: metadataEditorSortWeight,
       })
       applyProjectUpdate(updated)
       setMetadataEditorProject(updated)
@@ -253,30 +283,7 @@ export default function TemplatePanel({ className }: { className?: string }): JS
     } finally {
       setMetadataEditorSubmitting(false)
     }
-  }, [applyProjectUpdate, metadataEditorCoverUrl, metadataEditorDescription, metadataEditorProject, metadataEditorSubmitting, metadataEditorTitle])
-
-  const handleImportJsonSubmit = React.useCallback(() => {
-    const raw = jsonImportValue.trim()
-    if (!raw) {
-      toast('请先粘贴画布 JSON', 'error')
-      return
-    }
-    try {
-      const parsed = JSON.parse(raw) as CanvasImportData
-      const extracted = extractCanvasGraph(parsed)
-      if (!extracted?.nodes.length) {
-        throw new Error('JSON 缺少有效的 nodes / edges / connections')
-      }
-      importWorkflow(parsed)
-      setJsonImportOpened(false)
-      setJsonImportValue('')
-      setActivePanel(null)
-      setExpanded(false)
-      toast('已把 JSON 添加进画布', 'success')
-    } catch (error) {
-      toast(error instanceof Error ? error.message : '导入 JSON 失败', 'error')
-    }
-  }, [importWorkflow, jsonImportValue, setActivePanel])
+  }, [applyProjectUpdate, metadataEditorCoverUrl, metadataEditorDescription, metadataEditorProject, metadataEditorSubmitting, metadataEditorSortWeight, metadataEditorTitle])
 
   const combinedCards = React.useMemo<TemplateLibraryCard[]>(() => {
     const publicCards = (publicProjects || []).map((project) => ({
@@ -286,6 +293,7 @@ export default function TemplatePanel({ className }: { className?: string }): JS
       coverUrl: project.templateCoverUrl || null,
       source: 'public' as const,
       updatedAt: project.updatedAt,
+      cloneCount: project.cloneCount,
       actionLabel: '导入',
       onAction: () => { void handleImportPublicTemplate(project) },
       editLabel: projectById.has(project.id) ? '信息' : undefined,
@@ -385,7 +393,7 @@ export default function TemplatePanel({ className }: { className?: string }): JS
     <PanelCard className={dense ? 'template-panel-card template-panel-card--compact' : 'template-panel-card template-panel-card--expanded'} key={card.id}>
       <div className="template-panel-card-media">
         {card.coverUrl ? (
-          <Image className="template-panel-card-cover" src={card.coverUrl} alt={card.title} radius="sm" />
+          <ManagedImage className="template-panel-card-cover" src={card.coverUrl} alt={card.title} />
         ) : (
           <PlaceholderImage label={card.title} />
         )}
@@ -399,31 +407,74 @@ export default function TemplatePanel({ className }: { className?: string }): JS
           <Button className="template-panel-card-overlay-button template-panel-card-overlay-button--primary" size="xs" onClick={card.onAction}>{card.actionLabel}</Button>
         </div>
       </div>
-      <Stack className="template-panel-card-meta" gap={dense ? 4 : 6} mt="sm">
-        <Text className="template-panel-card-title" size={dense ? 'sm' : 'md'} lineClamp={1}>{card.title}</Text>
-      </Stack>
+      <div className="template-panel-card-meta">
+        <span className="template-panel-card-title">{card.title}</span>
+        {card.source === 'public' && typeof card.cloneCount === 'number' && card.cloneCount > 0 && (
+          <span className="template-panel-card-clone">
+            <IconCopy size={10} />
+            {card.cloneCount}
+          </span>
+        )}
+      </div>
     </PanelCard>
   ), [handleViewCard])
+
+  const renderCompactPublicProject = React.useCallback((project: ProjectDto) => renderTemplateCard({
+    id: `compact-public-${project.id}`,
+    title: project.templateTitle || project.name,
+    description: project.templateDescription || '公共模板，可直接导入到当前画布',
+    coverUrl: project.templateCoverUrl || null,
+    source: 'public',
+    updatedAt: project.updatedAt,
+    cloneCount: project.cloneCount,
+    actionLabel: '导入',
+    onAction: () => { void handleImportPublicTemplate(project) },
+    editLabel: projectById.has(project.id) ? '信息' : undefined,
+    onEdit: projectById.has(project.id) ? () => { openMetadataEditor(projectById.get(project.id) || project) } : undefined,
+    metadataProject: projectById.get(project.id) || project,
+  }, true), [handleImportPublicTemplate, openMetadataEditor, projectById, renderTemplateCard])
+
+  const renderCompactServerFlow = React.useCallback((flow: FlowDto) => renderTemplateCard({
+    id: `compact-server-${flow.id}`,
+    title: currentTemplateProject?.templateTitle || flow.name,
+    description: currentTemplateProject?.templateDescription
+      ? `${currentTemplateProject.templateDescription} · 工作流：${flow.name}`
+      : '当前项目或服务端工作流，可作为子流程引用',
+    coverUrl: currentTemplateProject?.templateCoverUrl || null,
+    source: 'server',
+    updatedAt: flow.updatedAt,
+    actionLabel: '引用',
+    onAction: () => { handleReferenceServerFlow(flow) },
+    editLabel: currentTemplateProject ? '信息' : '编辑',
+    onEdit: currentTemplateProject
+      ? () => { openMetadataEditor(currentTemplateProject) }
+      : () => { handleEditServerFlow(flow) },
+    metadataProject: currentTemplateProject || undefined,
+  }, true), [currentTemplateProject, handleEditServerFlow, handleReferenceServerFlow, openMetadataEditor, renderTemplateCard])
 
   const mounted = active === 'template'
   if (!mounted) return null
 
-  // 计算安全的最大高度
-  const maxHeight = calculateSafeMaxHeight(anchorY, 150)
+  const panelMetrics = bottomBarPanelMetrics(BOTTOM_BAR_PANEL_WIDTH.wide)
 
   const panelClassName = ['template-panel', className].filter(Boolean).join(' ')
 
   return (
-    <div className={panelClassName} style={{ position: 'fixed', left: 82, top: (anchorY ? anchorY - 150 : 140), zIndex: 200 }} data-ux-panel>
+    <div
+      className={panelClassName}
+      style={bottomBarPanelStyle(anchorX, { zIndex: 200, halfWidth: panelMetrics.width / 2 })}
+      data-ux-panel
+    >
       <Transition className="template-panel-transition" mounted={mounted} transition="pop" duration={140} timingFunction="ease">
         {(styles) => (
           <div className="template-panel-transition-inner" style={styles}>
             <PanelCard
-              className="template-panel-shell"
+              className="template-panel-shell glass workflow-history-panel-shell"
               padding="compact"
               style={{
-                width: 664,
-                maxHeight: `${maxHeight}px`,
+                width: panelMetrics.width,
+                height: panelMetrics.height,
+                maxHeight: panelMetrics.height,
                 minHeight: 0,
                 transformOrigin: 'left center',
                 display: 'flex',
@@ -434,76 +485,62 @@ export default function TemplatePanel({ className }: { className?: string }): JS
               data-ux-panel
             >
               <div className="template-panel-arrow panel-arrow" />
+              {/* 组级 Tab：工作流 ↔ 历史记录 */}
+              <div style={{ display: 'flex', borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}>
+                {(['template', 'history'] as const).map((id) => {
+                  const isActive = id === 'template'
+                  return (
+                    <button key={id} style={{ flex: 1, padding: '6px 0', fontSize: 12, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--mantine-color-text)' : 'var(--mantine-color-dimmed)', background: 'none', border: 'none', borderBottom: isActive ? '2px solid var(--mantine-color-blue-6)' : '2px solid transparent', cursor: isActive ? 'default' : 'pointer', marginBottom: -1 }} onClick={() => !isActive && setActivePanel(id)}>
+                      {id === 'template' ? '工作流' : '历史记录'}
+                    </button>
+                  )
+                })}
+              </div>
               <Tabs className="template-panel-tabs" value={compactTab} onChange={(value) => setCompactTab(value === 'server' ? 'server' : 'public')} keepMounted={false}>
                 <div className="template-panel-topbar">
                   <Tabs.List className="template-panel-tab-list">
                     <Tabs.Tab className="template-panel-tab" value="public">{$('公共模板')}</Tabs.Tab>
                     <Tabs.Tab className="template-panel-tab" value="server">{$('我的模板')}</Tabs.Tab>
                   </Tabs.List>
-                  <Group className="template-panel-topbar-actions" gap="xs">
-                    <Button
-                      className="template-panel-import-json-button"
-                      size="xs"
-                      variant="light"
-                      leftSection={<IconBrackets size={14} />}
-                      onClick={() => setJsonImportOpened(true)}
-                    >
-                      导入 JSON
-                    </Button>
-                    <ActionIcon className="template-panel-expand-button" variant="subtle" radius="md" size={32} onClick={() => setExpanded(true)} aria-label="展开模板空间">
-                      <IconArrowsMaximize size={16} />
-                    </ActionIcon>
-                  </Group>
+                  <ActionIcon className="template-panel-close-button" variant="subtle" radius="md" size={28} onClick={() => setActivePanel(null)} aria-label="关闭模板面板">
+                    <IconX size={15} />
+                  </ActionIcon>
                 </div>
                 <div className="template-panel-body">
                   <Tabs.Panel className="template-panel-tab-panel" value="public" pt="md">
                     {publicProjects === null ? <Text className="template-panel-empty" size="xs" c="dimmed">载入中...</Text> : null}
                     {publicProjects && publicProjects.length === 0 ? <Text className="template-panel-empty" size="xs" c="dimmed">暂无公共模板</Text> : null}
                     {publicProjects && publicProjects.length > 0 ? (
-                      <ScrollArea className="template-panel-scroll" type="never" scrollbarSize={6}>
-                        <SimpleGrid className="template-panel-grid" cols={{ base: 2, sm: 3 }} spacing="md">
-                          {publicProjects.map((project) => renderTemplateCard({
-                            id: `compact-public-${project.id}`,
-                            title: project.templateTitle || project.name,
-                            description: project.templateDescription || '公共模板，可直接导入到当前画布',
-                            coverUrl: project.templateCoverUrl || null,
-                            source: 'public',
-                            updatedAt: project.updatedAt,
-                            actionLabel: '导入',
-                            onAction: () => { void handleImportPublicTemplate(project) },
-                            editLabel: projectById.has(project.id) ? '信息' : undefined,
-                            onEdit: projectById.has(project.id) ? () => { openMetadataEditor(projectById.get(project.id) || project) } : undefined,
-                            metadataProject: projectById.get(project.id) || project,
-                          }, true))}
-                        </SimpleGrid>
-                      </ScrollArea>
+                      <VirtualizedGrid
+                        className="template-panel-virtual-grid"
+                        items={publicProjects}
+                        getItemKey={getProjectKey}
+                        renderItem={renderCompactPublicProject}
+                        resolveColumnCount={resolveCompactTemplateColumnCount}
+                        rowHeight={COMPACT_TEMPLATE_ROW_HEIGHT}
+                        rowGap={COMPACT_TEMPLATE_ROW_GAP}
+                        columnGap={COMPACT_TEMPLATE_COLUMN_GAP}
+                        emptyLabel="暂无公共模板"
+                        ariaLabel="公共模板虚拟列表"
+                      />
                     ) : null}
                   </Tabs.Panel>
                   <Tabs.Panel className="template-panel-tab-panel" value="server" pt="md">
                     {serverFlows === null ? <Text className="template-panel-empty" size="xs" c="dimmed">载入中...</Text> : null}
                     {serverFlows && serverFlows.length === 0 ? <Text className="template-panel-empty" size="xs" c="dimmed">服务端暂无工作流</Text> : null}
                     {serverFlows && serverFlows.length > 0 ? (
-                      <ScrollArea className="template-panel-scroll" type="never" scrollbarSize={6}>
-                        <SimpleGrid className="template-panel-grid" cols={{ base: 2, sm: 3 }} spacing="md">
-                          {serverFlows.map((flow) => renderTemplateCard({
-                            id: `compact-server-${flow.id}`,
-                            title: currentTemplateProject?.templateTitle || flow.name,
-                            description: currentTemplateProject?.templateDescription
-                              ? `${currentTemplateProject.templateDescription} · 工作流：${flow.name}`
-                              : '当前项目或服务端工作流，可作为子流程引用',
-                            coverUrl: currentTemplateProject?.templateCoverUrl || null,
-                            source: 'server',
-                            updatedAt: flow.updatedAt,
-                            actionLabel: '引用',
-                            onAction: () => { handleReferenceServerFlow(flow) },
-                            editLabel: currentTemplateProject ? '信息' : '编辑',
-                            onEdit: currentTemplateProject
-                              ? () => { openMetadataEditor(currentTemplateProject) }
-                              : () => { handleEditServerFlow(flow) },
-                            metadataProject: currentTemplateProject || undefined,
-                          }, true))}
-                        </SimpleGrid>
-                      </ScrollArea>
+                      <VirtualizedGrid
+                        className="template-panel-virtual-grid"
+                        items={serverFlows}
+                        getItemKey={getFlowKey}
+                        renderItem={renderCompactServerFlow}
+                        resolveColumnCount={resolveCompactTemplateColumnCount}
+                        rowHeight={COMPACT_TEMPLATE_ROW_HEIGHT}
+                        rowGap={COMPACT_TEMPLATE_ROW_GAP}
+                        columnGap={COMPACT_TEMPLATE_COLUMN_GAP}
+                        emptyLabel="服务端暂无工作流"
+                        ariaLabel="我的模板虚拟列表"
+                      />
                     ) : null}
                   </Tabs.Panel>
                 </div>
@@ -545,7 +582,7 @@ export default function TemplatePanel({ className }: { className?: string }): JS
                 <div className="template-detail-hero">
                   <div className="template-detail-cover-wrap">
                     {selectedCard.coverUrl ? (
-                      <Image className="template-detail-cover" src={selectedCard.coverUrl} alt={selectedCard.title} radius="md" />
+                      <ManagedImage className="template-detail-cover" src={selectedCard.coverUrl} alt={selectedCard.title} />
                     ) : (
                       <PlaceholderImage label={selectedCard.title} />
                     )}
@@ -557,6 +594,12 @@ export default function TemplatePanel({ className }: { className?: string }): JS
                       <span className="template-detail-tag">{selectedCard.source === 'public' ? '公开模板' : '我的模板'}</span>
                       <span className="template-detail-tag">工作流</span>
                       <span className="template-detail-tag">{selectedCard.actionLabel}</span>
+                      {selectedCard.source === 'public' && typeof selectedCard.cloneCount === 'number' && selectedCard.cloneCount > 0 && (
+                        <span className="template-detail-tag template-detail-tag--stat">
+                          <IconCopy size={11} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+                          {selectedCard.cloneCount} 次复制
+                        </span>
+                      )}
                     </Group>
                     <Text className="template-detail-description">
                       {selectedCard.description || '暂无描述'}
@@ -582,7 +625,7 @@ export default function TemplatePanel({ className }: { className?: string }): JS
                   {filteredExpandedCards.slice(0, 7).map((card) => (
                     <button key={`detail-strip-${card.id}`} type="button" className="template-detail-strip-card" onClick={() => setSelectedCard(card)}>
                       {card.coverUrl ? (
-                        <img className="template-detail-strip-image" src={card.coverUrl} alt={card.title} />
+                        <ManagedImage className="template-detail-strip-image" src={card.coverUrl} alt={card.title} />
                       ) : (
                         <div className="template-detail-strip-fallback">{card.title.slice(0, 2)}</div>
                       )}
@@ -609,14 +652,6 @@ export default function TemplatePanel({ className }: { className?: string }): JS
                 />
                 <Button className="template-space-search-button" variant="light" aria-label="搜索">
                   <IconSearch size={18} />
-                </Button>
-                <Button
-                  className="template-space-import-json-button"
-                  variant="light"
-                  leftSection={<IconBrackets size={16} />}
-                  onClick={() => setJsonImportOpened(true)}
-                >
-                  导入 JSON
                 </Button>
                 <Button
                   className="template-space-create-button"
@@ -667,6 +702,17 @@ export default function TemplatePanel({ className }: { className?: string }): JS
             minRows={4}
             maxRows={8}
           />
+          <NumberInput
+            className="template-metadata-editor-sort-weight"
+            label="排序权重"
+            description="数值越大排列越靠前，默认 0"
+            value={metadataEditorSortWeight}
+            onChange={(value) => setMetadataEditorSortWeight(typeof value === 'number' ? value : 0)}
+            min={-9999}
+            max={9999}
+            step={1}
+            allowDecimal={false}
+          />
           <TextInput
             className="template-metadata-editor-cover-url"
             label="封面 URL"
@@ -699,37 +745,6 @@ export default function TemplatePanel({ className }: { className?: string }): JS
               loading={metadataEditorSubmitting}
             >
               保存信息
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-      <Modal
-        className="template-json-import-modal"
-        opened={jsonImportOpened}
-        onClose={() => setJsonImportOpened(false)}
-        title="导入画布 JSON"
-        centered
-        size="lg"
-      >
-        <Stack className="template-json-import-modal-stack" gap="md">
-          <Text className="template-json-import-modal-copy" size="sm" c="dimmed">
-            支持裸 nodes/edges、nodes/connections、data 包裹对象，以及完整接口返回体。
-          </Text>
-          <Textarea
-            className="template-json-import-modal-textarea"
-            value={jsonImportValue}
-            onChange={(event) => setJsonImportValue(event.currentTarget.value)}
-            placeholder="把画布 JSON 粘贴到这里"
-            autosize
-            minRows={12}
-            maxRows={20}
-          />
-          <Group className="template-json-import-modal-actions" justify="flex-end">
-            <Button className="template-json-import-modal-cancel" variant="default" onClick={() => setJsonImportOpened(false)}>
-              取消
-            </Button>
-            <Button className="template-json-import-modal-submit" onClick={handleImportJsonSubmit}>
-              导入到画布
             </Button>
           </Group>
         </Stack>

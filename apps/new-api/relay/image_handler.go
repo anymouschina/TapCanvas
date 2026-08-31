@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/imageutil"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -26,6 +27,22 @@ import (
 type captureWriter struct {
 	gin.ResponseWriter
 	body []byte
+}
+
+func effectiveFixedImageRequestPriceCNY(modelName string, request *dto.ImageRequest) (float64, bool) {
+	if request == nil {
+		return 0, false
+	}
+	basePrice, ok := model.EffectiveFixedImageSpecPriceCNY(
+		modelName,
+		imageResolutionTier(*request),
+		request.Quality,
+	)
+	if !ok {
+		return 0, false
+	}
+	referenceImagePrice := model.EffectiveImageReferencePriceCNY(modelName)
+	return basePrice + referenceImagePrice*float64(len(imageutil.ExtractReferenceImages(request))), true
 }
 
 func (w *captureWriter) Write(b []byte) (int, error) {
@@ -64,7 +81,26 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *type
 		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
 			ErrorMessage: err.Error(),
 		})
+		// A channel-capability mismatch (e.g. a 2K gpt-image-2 request that landed on a
+		// base/1K-only channel, or an official SKU on a non-APIMart channel) is not a
+		// request-level error — another candidate channel may satisfy it. Surface it as a
+		// retryable 503 so the relay loop excludes this channel and tries the next one
+		// instead of failing the whole request.
+		if isChannelImageCapabilityError(err) {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeChannelModelMappedError, http.StatusServiceUnavailable)
+		}
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+	if model.CanonicalModelKey(info.OriginModelName) == "gpt-image-2" ||
+		model.CanonicalModelKey(info.OriginModelName) == "gpt-image-2-official" {
+		if _, valid := model.NormalizeGptImage2Quality(request.Quality); !valid {
+			return types.NewErrorWithStatusCode(
+				fmt.Errorf("gpt-image-2 quality must be one of low, medium, high, or auto"),
+				types.ErrorCodeInvalidRequest,
+				http.StatusBadRequest,
+				types.ErrOptionWithSkipRetry(),
+			)
+		}
 	}
 
 	adaptor := GetAdaptor(info.ApiType)
@@ -233,16 +269,16 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *type
 		usage.(*dto.Usage).PromptTokens = 1
 	}
 
-	quality := "standard"
-	if request.Quality == "hd" {
-		quality = "hd"
+	quality := strings.TrimSpace(request.Quality)
+	if quality == "" {
+		quality = "standard"
 	}
 
 	// For models with tiered fixed image pricing, update ModelPrice to the price for
 	// the actual resolution tier so billing matches the pricing API.
 	if info.PriceData.UsePrice {
-		if tierPrice, ok := model.FixedImagePriceCNYForTier(info.OriginModelName, imageResolutionTier(*request)); ok {
-			info.PriceData.ModelPrice = tierPrice
+		if requestPrice, ok := effectiveFixedImageRequestPriceCNY(info.OriginModelName, request); ok {
+			info.PriceData.ModelPrice = requestPrice
 		}
 	}
 
@@ -262,7 +298,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *type
 
 	// Insert into midjourney table so image requests appear in the 绘图日志 panel.
 	action := constant.MjActionImagine
-	if len(request.Image) > 0 && string(request.Image) != "null" {
+	if (len(request.Image) > 0 && string(request.Image) != "null") || len(request.Images) > 0 {
 		action = constant.MjActionEdits
 	}
 	nowMs := time.Now().UnixNano() / int64(time.Millisecond)
@@ -301,6 +337,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *type
 		}
 	}
 	appendHTTPUrls(request.Image)
+	for _, image := range request.Images {
+		if imageURL := strings.TrimSpace(image.ImageURL); strings.HasPrefix(imageURL, "http") {
+			refImages = append(refImages, imageURL)
+		}
+	}
 	for _, key := range []string{"image_urls", "images", "urls", "input_reference"} {
 		if raw, ok := request.Extra[key]; ok {
 			appendHTTPUrls(raw)

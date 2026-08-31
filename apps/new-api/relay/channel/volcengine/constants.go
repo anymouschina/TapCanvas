@@ -25,6 +25,8 @@ var ModelList = []string{
 	"doubao-seed-2.0-pro",
 	"doubao-seed-2.0-lite",
 	"doubao-seed-2.0-mini",
+	// doubao-seed-audio 系列（豆包语音 TTS，同步 HTTP openspeech /api/v3/tts/create）
+	"doubao-seed-audio-1-0",
 }
 
 var ChannelName = "volcengine"

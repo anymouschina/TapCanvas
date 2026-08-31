@@ -2,8 +2,8 @@
   "openapi": "3.0.1",
   "info": {
     "title": "AI模型接口",
-    "description": "",
-    "version": "1.0.0"
+    "description": "兼容 OpenAI 协议的模型网关。\n\n**快速接入**\n\n1. 在控制台创建 API Key。\n2. 将本站根地址作为 `BASE_URL`，例如 `https://your-domain.example`。\n3. 所有模型请求携带 `Authorization: Bearer <API_KEY>`。\n4. 先调用 `GET /v1/models` 获取当前账号可用的真实模型 ID。\n5. GPT-5.6 与图文理解优先使用 `POST /v1/responses`。\n\n```bash\ncurl \"$BASE_URL/v1/responses\" \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"gpt-5.6-luna\",\"input\":\"Hello\"}'\n```\n\n实时模型价格以本站 `/pricing` 页面与 `/api/pricing` 返回为准，计费日志中的 Token 用量以成功响应的 `usage` 为准。",
+    "version": "1.1.0"
   },
   "tags": [
     {
@@ -630,7 +630,7 @@
       "post": {
         "summary": "创建响应（Responses API）",
         "deprecated": false,
-        "description": "Responses API，支持多轮对话、工具调用（function calling）、推理模型（thinking）。\n\n与 Chat Completions 的主要区别：支持通过 `previous_response_id` 引用上一轮响应实现有状态对话，无需每次传递完整 messages 历史。\n\n**主要参数：**\n\n| 参数 | 类型 | 说明 |\n|---|---|---|\n| model | string | 必填，指定模型名称 |\n| input | string / array | 必填，输入内容或对话历史 |\n| stream | boolean | 是否流式返回（SSE），默认 false |\n| previous_response_id | string | 上一轮响应的 ID，用于有状态多轮对话 |\n| reasoning | object | 推理配置，适用于 thinking 系列模型 |",
+        "description": "Responses API，支持文本、图片理解、多轮对话、工具调用与推理配置。\n\n**图片输入**\n\n在消息 `content` 中同时传入 `input_text` 与 `input_image`。`image_url` 必须是上游可访问的 HTTPS 地址或合法 Data URL；远程地址应直接返回真实图片内容，不能依赖登录 Cookie、跳转到 HTML 页面或设置防盗链。`detail` 可用 `auto`、`low`、`high`。\n\n**流式终态**\n\n`stream: true` 返回 SSE。客户端只有收到 `response.completed` 才能判定生成成功。`response.incomplete` 是有效终态，表示只得到部分结果，其中的 `usage` 仍可能产生费用；应用层不能把它显示成成功。收到 `response.failed`、`response.cancelled` 或 `response.error` 必须判定失败。连接关闭、`[DONE]` 或 Token 为 0 都不能单独作为成功依据。HTTP 200 只表示 SSE 连接已建立，不表示模型任务成功。\n\n**多轮状态**\n\n使用 `previous_response_id` 前，应在前一轮设置 `store: true` 并保存成功响应的 `id`。不需要服务端状态时，直接在 `input` 中传递完整对话历史。\n\n**主要参数：**\n\n| 参数 | 类型 | 说明 |\n|---|---|---|\n| model | string | 必填，使用 `GET /v1/models` 返回的模型 ID |\n| input | string / array | 输入文本或消息数组；消息内容支持 `input_text`、`input_image` |\n| stream | boolean | 是否流式返回 SSE，默认 false |\n| store | boolean | 是否保存响应，供 `previous_response_id` 继续对话 |\n| previous_response_id | string | 已成功保存的上一轮响应 ID |\n| reasoning | object | 推理配置，例如 `effort: low` |\n| max_output_tokens | integer | 最大输出 Token 数 |",
         "operationId": "createResponse",
         "tags": [
           "AI对话"
@@ -641,6 +641,47 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ResponsesRequest"
+              },
+              "examples": {
+                "text": {
+                  "summary": "文本响应",
+                  "value": {
+                    "model": "gpt-5.6-luna",
+                    "input": "Summarize the benefits of a unified API gateway.",
+                    "reasoning": {
+                      "effort": "low"
+                    },
+                    "max_output_tokens": 1024
+                  }
+                },
+                "vision": {
+                  "summary": "图片理解",
+                  "value": {
+                    "model": "gpt-5.6-luna",
+                    "input": [
+                      {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                          {
+                            "type": "input_text",
+                            "text": "Describe the subject, composition, lighting, color palette, and visual style of this image."
+                          },
+                          {
+                            "type": "input_image",
+                            "image_url": "https://example.com/reference.jpg",
+                            "detail": "auto"
+                          }
+                        ]
+                      }
+                    ],
+                    "stream": true,
+                    "reasoning": {
+                      "effort": "low"
+                    },
+                    "max_output_tokens": 2048
+                  }
+                }
               }
             }
           },
@@ -654,9 +695,56 @@
                 "schema": {
                   "$ref": "#/components/schemas/ResponsesResponse"
                 }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "SSE 事件流；仅 response.completed 表示成功"
+                },
+                "example": "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"total_tokens\":15}}}\n\n"
               }
             },
             "headers": {}
+          },
+          "400": {
+            "description": "请求格式、参数或模型不受支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key 缺失或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "额度不足或请求频率受限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "上游拒绝、返回失败终态，或流在 response.completed/response.incomplete 前中断",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1399,8 +1487,7 @@
               {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "properties": {}
+                  "$ref": "#/components/schemas/ResponsesInputMessage"
                 }
               }
             ]
@@ -1418,7 +1505,13 @@
             "type": "number"
           },
           "stream": {
-            "type": "boolean"
+            "type": "boolean",
+            "default": false
+          },
+          "store": {
+            "type": "boolean",
+            "description": "保存本次响应，以便后续通过 previous_response_id 继续",
+            "default": false
           },
           "tools": {
             "type": "array",
@@ -1465,6 +1558,87 @@
             ]
           }
         }
+      },
+      "ResponsesInputMessage": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "message"
+            ],
+            "default": "message"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              "developer"
+            ]
+          },
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResponsesInputContent"
+            }
+          }
+        }
+      },
+      "ResponsesInputContent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "text"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "input_text"
+                ]
+              },
+              "text": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "image_url"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "input_image"
+                ]
+              },
+              "image_url": {
+                "type": "string",
+                "description": "上游可直接访问的 HTTPS 图片地址或合法 Data URL"
+              },
+              "detail": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "low",
+                  "high"
+                ],
+                "default": "auto"
+              }
+            }
+          }
+        ]
       },
       "ResponsesResponse": {
         "type": "object",
@@ -5645,7 +5819,12 @@
       }
     }
   },
-  "servers": [],
+  "servers": [
+    {
+      "url": "/",
+      "description": "当前站点"
+    }
+  ],
   "security": [
     {
       "BearerAuth": []

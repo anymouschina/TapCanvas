@@ -15,12 +15,6 @@ function normalizeSpecKey(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function defaultCostForNodeKind(kind: NodeKind | null | undefined): number {
-  if (kind === 'image' || kind === 'imageEdit') return 1
-  if (kind === 'video') return 10
-  return 0
-}
-
 function resolveUnitCostFromPricing(
   pricing: ModelOptionPricing | null | undefined,
   specKey: string,
@@ -29,9 +23,13 @@ function resolveUnitCostFromPricing(
   if (specKey) {
     for (const spec of pricing.specCosts) {
       if (normalizeSpecKey(spec.specKey) !== specKey) continue
-      if (!spec.enabled) break
+      if (!spec.enabled) return null
       return normalizeNonNegativeInteger(spec.cost)
     }
+    // A caller that supplied a specification is asking for an exact settlement
+    // row. Falling through to the base price makes 1K/2K/4K appear identical and
+    // disagrees with the backend billing contract, which rejects a missing spec.
+    return null
   }
   if (!pricing.enabled) return null
   return normalizeNonNegativeInteger(pricing.cost)
@@ -43,8 +41,7 @@ export function resolveModelGenerationCredits(input: {
   specKey?: string | null
   quantity?: number | null
 }): number {
-  const unitCost =
-    resolveUnitCostFromPricing(input.modelOption?.pricing, normalizeSpecKey(input.specKey)) ??
-    defaultCostForNodeKind(input.kind)
+  const unitCost = resolveUnitCostFromPricing(input.modelOption?.pricing, normalizeSpecKey(input.specKey))
+  if (typeof unitCost !== 'number' || !Number.isFinite(unitCost) || unitCost <= 0) return 0
   return unitCost * normalizeQuantity(input.quantity)
 }

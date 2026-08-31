@@ -64,6 +64,9 @@ type ChannelMeta struct {
 	ChannelIsMultiKey    bool
 	ChannelMultiKeyIndex int
 	ChannelBaseUrl       string
+	ProtocolID           string
+	ProtocolTransport    constant.ProtocolTransport
+	ProtocolOptions      map[string]string
 	ApiType              int
 	ApiVersion           string
 	ApiKey               string
@@ -73,6 +76,7 @@ type ChannelMeta struct {
 	HeadersOverride      map[string]interface{}
 	ChannelSetting       dto.ChannelSettings
 	ChannelOtherSettings dto.ChannelOtherSettings
+	EgressCellID         string
 	UpstreamModelName    string
 	IsModelMapped        bool
 	SupportStreamOptions bool // 是否支持流式选项
@@ -87,6 +91,7 @@ type RelayInfo struct {
 	TokenId           int
 	TokenKey          string
 	TokenGroup        string
+	TokenDisplayRatio float64
 	UserId            int
 	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
 	UserGroup         string // 用户所在分组
@@ -101,6 +106,7 @@ type RelayInfo struct {
 	UsePrice               bool
 	RelayMode              int
 	OriginModelName        string
+	PricingModelName       string
 	RequestURLPath         string
 	RequestHeaders         map[string]string
 	ShouldIncludeUsage     bool
@@ -178,13 +184,20 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
 	headerOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride)
-	apiType, _ := common.ChannelType2APIType(channelType)
+	protocol, hasProtocol := common.GetContextKeyType[constant.ProtocolDefinition](c, constant.ContextKeyChannelProtocol)
+	protocolBinding, hasProtocolBinding := common.GetContextKeyType[dto.ProtocolBinding](c, constant.ContextKeyChannelProtocolBinding)
+	apiType := -1
+	if hasProtocol && protocol.Transport == constant.ProtocolTransportRelay {
+		apiType = protocol.APIType
+	}
 	channelMeta := &ChannelMeta{
 		ChannelType:          channelType,
 		ChannelId:            common.GetContextKeyInt(c, constant.ContextKeyChannelId),
 		ChannelIsMultiKey:    common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey),
 		ChannelMultiKeyIndex: common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex),
 		ChannelBaseUrl:       common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl),
+		ProtocolID:           protocol.ID,
+		ProtocolTransport:    protocol.Transport,
 		ApiType:              apiType,
 		ApiVersion:           c.GetString("api_version"),
 		ApiKey:               common.GetContextKeyString(c, constant.ContextKeyChannelKey),
@@ -196,12 +209,25 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		IsModelMapped:        false,
 		SupportStreamOptions: false,
 	}
+	if hasProtocolBinding && len(protocolBinding.Options) > 0 {
+		channelMeta.ProtocolOptions = make(map[string]string, len(protocolBinding.Options))
+		for key, value := range protocolBinding.Options {
+			channelMeta.ProtocolOptions[key] = value
+		}
+	}
 
-	if channelType == constant.ChannelTypeAzure {
+	if hasProtocol && protocol.ID == constant.ProtocolAzureOpenAI {
 		channelMeta.ApiVersion = GetAPIVersion(c)
 	}
-	if channelType == constant.ChannelTypeVertexAi {
+	if hasProtocol &&
+		(protocol.ID == constant.ProtocolVertexAI || protocol.ID == constant.ProtocolTaskVertex) {
 		channelMeta.ApiVersion = c.GetString("region")
+	}
+	if apiVersion := channelMeta.ProtocolOptions["api_version"]; apiVersion != "" {
+		channelMeta.ApiVersion = apiVersion
+	}
+	if region := channelMeta.ProtocolOptions["region"]; region != "" {
+		channelMeta.ApiVersion = region
 	}
 
 	channelSetting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
@@ -214,9 +240,7 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		channelMeta.ChannelOtherSettings = channelOtherSettings
 	}
 
-	if streamSupportedChannels[channelMeta.ChannelType] {
-		channelMeta.SupportStreamOptions = true
-	}
+	channelMeta.SupportStreamOptions = hasProtocol && protocol.SupportsStreamOptions
 
 	info.ChannelMeta = channelMeta
 
@@ -276,8 +300,8 @@ func (info *RelayInfo) ToString() string {
 	// Channel metadata (mask ApiKey)
 	if info.ChannelMeta != nil {
 		cm := info.ChannelMeta
-		fmt.Fprintf(b, "ChannelMeta{ Type: %d, Id: %d, IsMultiKey: %t, MultiKeyIndex: %d, BaseURL: %q, ApiType: %d, ApiVersion: %q, Organization: %q, CreateTime: %d, UpstreamModelName: %q, IsModelMapped: %t, SupportStreamOptions: %t, ApiKey: ***masked*** }, ",
-			cm.ChannelType, cm.ChannelId, cm.ChannelIsMultiKey, cm.ChannelMultiKeyIndex, cm.ChannelBaseUrl, cm.ApiType, cm.ApiVersion, cm.Organization, cm.ChannelCreateTime, cm.UpstreamModelName, cm.IsModelMapped, cm.SupportStreamOptions)
+		fmt.Fprintf(b, "ChannelMeta{ Type: %d, Id: %d, IsMultiKey: %t, MultiKeyIndex: %d, BaseURL: %q, Protocol: %q, Transport: %q, ApiType: %d, ApiVersion: %q, Organization: %q, CreateTime: %d, UpstreamModelName: %q, IsModelMapped: %t, SupportStreamOptions: %t, ApiKey: ***masked*** }, ",
+			cm.ChannelType, cm.ChannelId, cm.ChannelIsMultiKey, cm.ChannelMultiKeyIndex, cm.ChannelBaseUrl, cm.ProtocolID, cm.ProtocolTransport, cm.ApiType, cm.ApiVersion, cm.Organization, cm.ChannelCreateTime, cm.UpstreamModelName, cm.IsModelMapped, cm.SupportStreamOptions)
 	}
 
 	// Responses usage info (non-sensitive)
@@ -300,29 +324,6 @@ func (info *RelayInfo) ToString() string {
 
 	fmt.Fprintf(b, "}")
 	return b.String()
-}
-
-// 定义支持流式选项的通道类型
-var streamSupportedChannels = map[int]bool{
-	constant.ChannelTypeOpenAI:      true,
-	constant.ChannelTypeAnthropic:   true,
-	constant.ChannelTypeAws:         true,
-	constant.ChannelTypeGemini:      true,
-	constant.ChannelCloudflare:      true,
-	constant.ChannelTypeAzure:       true,
-	constant.ChannelTypeVolcEngine:  true,
-	constant.ChannelTypeOllama:      true,
-	constant.ChannelTypeXai:         true,
-	constant.ChannelTypeDeepSeek:    true,
-	constant.ChannelTypeBaiduV2:     true,
-	constant.ChannelTypeZhipu_v4:    true,
-	constant.ChannelTypeAli:         true,
-	constant.ChannelTypeSubmodel:    true,
-	constant.ChannelTypeCodex:       true,
-	constant.ChannelTypeMoonshot:    true,
-	constant.ChannelTypeMiniMax:     true,
-	constant.ChannelTypeSiliconFlow: true,
-	constant.ChannelTypeApimart:     true,
 }
 
 func GenRelayInfoWs(c *gin.Context, ws *websocket.Conn) *RelayInfo {
@@ -459,10 +460,11 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 
 		OriginModelName: common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
 
-		TokenId:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
-		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),
-		TokenUnlimited: common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
-		TokenGroup:     tokenGroup,
+		TokenId:           common.GetContextKeyInt(c, constant.ContextKeyTokenId),
+		TokenKey:          common.GetContextKeyString(c, constant.ContextKeyTokenKey),
+		TokenUnlimited:    common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
+		TokenGroup:        tokenGroup,
+		TokenDisplayRatio: c.GetFloat64("token_display_ratio"),
 
 		isFirstResponse: true,
 		RelayMode:       relayconstant.Path2RelayMode(c.Request.URL.Path),
@@ -780,6 +782,10 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	InputSeconds     int    `json:"input_seconds,omitempty"`     // 参考视频实际计费秒数
+	OutputSeconds    int    `json:"output_seconds,omitempty"`    // 实际输出视频秒数
+	InputImageCount  int    `json:"input_image_count,omitempty"` // 实际输入图片数量
+	Resolution       string `json:"resolution,omitempty"`        // 实际输出分辨率
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

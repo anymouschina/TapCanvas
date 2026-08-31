@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
@@ -24,6 +25,7 @@ import (
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *types.NewAPIError) {
 
 	info.InitChannelMeta(c)
+	upsertOriginalRequestTrace(c, info)
 
 	claudeReq, ok := info.Request.(*dto.ClaudeRequest)
 
@@ -38,11 +40,17 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
+		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+			ErrorMessage: err.Error(),
+		})
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
+		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+			ErrorMessage: fmt.Sprintf("invalid api type: %d", info.ApiType),
+		})
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
@@ -130,7 +138,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 
 	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
-		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
+		(service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) ||
+			service.ShouldChatCompletionsUseResponsesForUpstream(info.ProtocolID, info.UpstreamModelName)) {
 		openAIRequest, convErr := service.ClaudeToOpenAIRequest(*request, info)
 		if convErr != nil {
 			return types.NewError(convErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -146,20 +155,33 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 	}
 
 	var requestBody io.Reader
+	var upstreamRequestBody string
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
+			upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+				ErrorMessage: err.Error(),
+			})
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if bodyBytes, readErr := storage.Bytes(); readErr == nil {
+			upstreamRequestBody = string(bodyBytes)
 		}
 		requestBody = common.ReaderOnly(storage)
 	} else {
 		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
 		if err != nil {
+			upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+				ErrorMessage: err.Error(),
+			})
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 		jsonData, err := common.Marshal(convertedRequest)
 		if err != nil {
+			upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+				ErrorMessage: err.Error(),
+			})
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
@@ -173,6 +195,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 		if len(info.ParamOverride) > 0 {
 			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 			if err != nil {
+				upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+					ErrorMessage: err.Error(),
+				})
 				return NewAPIErrorFromParamOverride(err)
 			}
 		}
@@ -180,21 +205,47 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 		if common.DebugEnabled {
 			println("requestBody: ", string(jsonData))
 		}
+		upstreamRequestBody = string(jsonData)
 		requestBody = bytes.NewBuffer(jsonData)
 	}
+
+	upstreamURL, _ := adaptor.GetRequestURL(info)
+	upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+		UpstreamURL:         upstreamURL,
+		UpstreamRequestBody: upstreamRequestBody,
+	})
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+			UpstreamURL:         upstreamURL,
+			UpstreamRequestBody: upstreamRequestBody,
+			ErrorMessage:        err.Error(),
+		})
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 
+	var responseRecorder *responseTraceRecorder
 	if resp != nil {
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+		if !info.IsStream {
+			httpResp, responseRecorder = attachResponseTraceRecorder(httpResp)
+		}
 		if httpResp.StatusCode != http.StatusOK {
 			NewAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+			responseBody := ""
+			if responseRecorder != nil {
+				responseBody = string(responseRecorder.data)
+			}
+			upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+				UpstreamURL:          upstreamURL,
+				UpstreamRequestBody:  upstreamRequestBody,
+				UpstreamResponseBody: responseBody,
+				ErrorMessage:         NewAPIError.Error(),
+			})
 			// reset status code 重置状态码
 			service.ResetStatusCode(NewAPIError, statusCodeMappingStr)
 			return NewAPIError
@@ -204,9 +255,26 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 	usage, NewAPIError := adaptor.DoResponse(c, httpResp, info)
 	//log.Printf("usage: %v", usage)
 	if NewAPIError != nil {
+		responseBody := ""
+		if responseRecorder != nil {
+			responseBody = string(responseRecorder.data)
+		}
+		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+			UpstreamURL:          upstreamURL,
+			UpstreamRequestBody:  upstreamRequestBody,
+			UpstreamResponseBody: responseBody,
+			ErrorMessage:         NewAPIError.Error(),
+		})
 		// reset status code 重置状态码
 		service.ResetStatusCode(NewAPIError, statusCodeMappingStr)
 		return NewAPIError
+	}
+	if responseRecorder != nil {
+		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+			UpstreamURL:          upstreamURL,
+			UpstreamRequestBody:  upstreamRequestBody,
+			UpstreamResponseBody: string(responseRecorder.data),
+		})
 	}
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)

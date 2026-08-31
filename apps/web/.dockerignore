@@ -1,0 +1,25 @@
+# web 镜像只需 dist + nginx.conf（见 Dockerfile）。把源码/依赖/密钥挡在 build context 外：
+# 既加速 context 上传，也避免 .env 等敏感文件进入构建上下文。
+node_modules
+src
+public
+.turbo
+.cache
+coverage
+# 源码/配置（镜像里不需要，dist 已是构建产物）
+*.ts
+*.tsx
+tsconfig*.json
+package.json
+pnpm-lock.yaml
+index.html
+vite.config.*
+postcss.config.*
+tailwind.config.*
+# 密钥：VITE_ 变量已在宿主 build 时注入进 dist，原始 .env 不该进 context
+.env
+.env.*
+# 杂项
+.DS_Store
+*.log
+README*

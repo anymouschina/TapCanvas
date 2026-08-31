@@ -210,6 +210,25 @@ func ClearChannelAffinityCacheAll() int {
 	return len(keys)
 }
 
+// InvalidateCurrentChannelAffinity removes the binding selected for this request.
+// A cached channel that is no longer enabled is stale state, not a request failure;
+// callers must evict it before selecting another available channel.
+func InvalidateCurrentChannelAffinity(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	meta, ok := getChannelAffinityMeta(c)
+	if !ok || strings.TrimSpace(meta.CacheKey) == "" {
+		return false
+	}
+	deleted, err := getChannelAffinityCache().DeleteMany([]string{meta.CacheKey})
+	if err != nil {
+		common.SysError(fmt.Sprintf("channel affinity stale binding delete failed: key=%s err=%v", meta.CacheKey, err))
+		return false
+	}
+	return deleted[meta.CacheKey]
+}
+
 func ClearChannelAffinityCacheByRuleName(ruleName string) (int, error) {
 	ruleName = strings.TrimSpace(ruleName)
 	if ruleName == "" {

@@ -1,34 +1,44 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
 import { honoErrorHandler } from "./middleware/error";
 import { httpDebugLoggerMiddleware } from "./middleware/httpDebugLogger";
 import { requestTraceMiddleware } from "./middleware/requestTrace";
 import { authRouter } from "./modules/auth/auth.routes";
 import { projectRouter } from "./modules/project/project.routes";
+import { communityRouter } from "./modules/community/community.routes";
 import { chapterRouter } from "./modules/chapter/chapter.routes";
 import { flowRouter } from "./modules/flow/flow.routes";
 import { modelRouter } from "./modules/model/model.routes";
 import { modelCatalogRouter } from "./modules/model-catalog/model-catalog.routes";
+import { newApiModelsRouter } from "./modules/new-api-models/new-api-models.routes";
 import { aiRouter, adminAiRouter } from "./modules/ai/ai.routes";
 import { agentsRouter, adminAgentsRouter } from "./modules/agents/agents.routes";
+import { knowledgeAdminRouter } from "./modules/knowledge-admin/knowledge-admin.routes";
 import { draftRouter } from "./modules/draft/draft.routes";
 import { assetRouter } from "./modules/asset/asset.routes";
+import { projectDirectoryRouter } from "./modules/project-directory/project-directory.routes";
+import { resolveRouter } from "./modules/asset/resolve.routes";
 import { taskRouter } from "./modules/task/task.routes";
 import { statsRouter } from "./modules/stats/stats.routes";
-import { executionRouter } from "./modules/execution/execution.routes";
+import { executionRouter, workflowTriggerRouter } from "./modules/execution/execution.routes";
 import { apiKeyRouter, publicApiRouter } from "./modules/apiKey/apiKey.routes";
 import { teamRouter } from "./modules/team/team.routes";
+import {
+	referralRouter,
+	adminReferralRouter,
+} from "./modules/referral/referral.routes";
 import { billingRouter } from "./modules/billing/billing.routes";
 import { userAdminRouter } from "./modules/user-admin/user-admin.routes";
 import { projectAdminRouter } from "./modules/project-admin/project-admin.routes";
 import { productRouter } from "./modules/product/product.routes";
-import { orderRouter } from "./modules/order/order.routes";
-import { wechatPayRouter } from "./modules/wechat-pay/wechat-pay.routes";
 import { commerceRouter } from "./modules/commerce/commerce.routes";
 import { materialRouter } from "./modules/material/material.routes";
 import { memoryRouter } from "./modules/memory/memory.routes";
 import { dreaminaRouter } from "./modules/dreamina/dreamina.routes";
-import type { AppEnv } from "./types";
+import { larkRouter } from "./modules/lark/lark.routes";
+import type { AppContext, AppEnv } from "./types";
+import { browserOriginGuard, resolveAllowedCorsOrigin } from "./middleware/http-security";
 import { registerDemoTasksOpenApi } from "./openapi/demoTasks.openapi";
 import {
 	API_DOCS_ZH_MD,
@@ -37,7 +47,17 @@ import {
 } from "./openapi/docs.zh";
 import { installDomParserIfNeeded } from "./polyfills/domparser";
 import { internalRouter } from "./modules/internal/internal.routes";
-import { newApiModelsRouter } from "./modules/new-api-models/new-api-models.routes";
+import { registerConsultRoute } from "./modules/consult/consult.routes";
+import { accountAdminRouter, accountRouter } from "./modules/account/account.routes";
+import { getRuntimeLifecycleStatus } from "./platform/node/runtime-lifecycle";
+import {
+	codexPairingPublicRouter,
+	codexRouter,
+} from "./modules/codex/codex.routes";
+import {
+	promptLibraryAdminRouter,
+	promptLibraryRouter,
+} from "./modules/prompt-library/prompt-library.routes";
 
 const API_BOOT_TIME_ISO = new Date().toISOString();
 
@@ -91,13 +111,29 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 	// Global HTTP debug logger (local-only; enable via DEBUG_HTTP_LOG=1)
 	app.use("*", httpDebugLoggerMiddleware);
 
+	app.use("*", secureHeaders({
+		crossOriginResourcePolicy: "cross-origin",
+		strictTransportSecurity: "max-age=31536000; includeSubDomains",
+		referrerPolicy: "strict-origin-when-cross-origin",
+		xFrameOptions: "DENY",
+		xContentTypeOptions: "nosniff",
+		permissionsPolicy: {
+			camera: [],
+			geolocation: [],
+			microphone: ["self"],
+		},
+	}));
+	app.use("*", browserOriginGuard);
+
 	// Global CORS
 	app.use(
 		"*",
 		cors({
-			origin: (origin) => origin || "*",
+			origin: (origin, context) => resolveAllowedCorsOrigin(origin, context as AppContext),
 			allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 				// Keep in sync with frontend requests (e.g. /assets/upload sends X-File-Name/X-File-Size).
+				// Keep in sync with frontend requests.
+				// X-Trace-ID / X-Request-ID carry the frontend-generated trace ID.
 				allowHeaders: [
 					"Content-Type",
 					"Authorization",
@@ -112,8 +148,17 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 					"X-TapCanvas-Source",
 					"x-tapcanvas-referrer-path",
 					"x-tapcanvas-page-path",
+					"x-tapcanvas-ref-code",
+					"x-tapcanvas-conversation-id",
+					"X-Trace-ID",
+					"X-Request-ID",
+					"X-Team-Id",
+					"X-Canvas-Conn-Id",
 				],
+				// Expose the echo-back header so browser JS can read it
+				exposeHeaders: ["X-Trace-ID"],
 				credentials: true,
+				maxAge: 600,
 			}),
 		);
 
@@ -163,6 +208,17 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 			pid: meta.pid,
 			uptimeMs,
 		});
+	});
+	app.get("/health/ready", (c) => {
+		const lifecycle = getRuntimeLifecycleStatus();
+		return c.json(
+			{
+				ok: lifecycle.ready,
+				service: "tapcanvas-hono-api",
+				lifecycle,
+			},
+			lifecycle.ready ? 200 : 503,
+		);
 	});
 
 	// Demo Tasks OpenAPI endpoints
@@ -266,15 +322,26 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 
 	// Auth routes
 	app.route("/auth", authRouter);
+	app.route("/account", accountRouter);
+	app.route("/admin/account", accountAdminRouter);
+
+	// Public consult API (no auth — for external business Q&A)
+	registerConsultRoute(app);
 
 	// External API keys & public endpoints
 	app.route("/api-keys", apiKeyRouter);
+	// One-time bootstrap route precedes the API-key-protected /public router.
+	app.route("/public/codex/pairings", codexPairingPublicRouter);
 	app.route("/public", publicApiRouter);
 
 	// Project & Flow routes
 	app.route("/projects", projectRouter);
 	app.route("/chapters", chapterRouter);
 	app.route("/flows", flowRouter);
+
+	// Community (public projects + social)
+	app.route("/community", communityRouter);
+	app.route("/prompt-library", promptLibraryRouter);
 
 	// Sora routes
 
@@ -283,8 +350,6 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 
 	// Model catalog (admin-configurable)
 	app.route("/model-catalog", modelCatalogRouter);
-
-	// New API models
 	app.route("/new-api-models", newApiModelsRouter);
 
 	// AI helper routes (prompt samples)
@@ -294,18 +359,25 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 	// Agents: skills & presets
 	app.route("/agents", agentsRouter);
 	app.route("/admin/agents", adminAgentsRouter);
+	app.route("/admin/knowledge", knowledgeAdminRouter);
 
 	// Draft suggestion routes
 	app.route("/drafts", draftRouter);
 
 	// Assets routes
 	app.route("/assets", assetRouter);
+	app.route("/project-directory", projectDirectoryRouter);
+	app.route("/resolve", resolveRouter);
 
 	// Stats routes
 	app.route("/stats", statsRouter);
 
 	// Team / enterprise routes
 	app.route("/teams", teamRouter);
+
+	// Referral campaign (popup ad + referrer bonus)
+	app.route("/api/referral", referralRouter);
+	app.route("/admin/referral", adminReferralRouter);
 
 	// Billing / plans (admin only)
 	app.route("/billing", billingRouter);
@@ -315,21 +387,24 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 
 	// Project management (admin only)
 	app.route("/admin/projects", projectAdminRouter);
+	app.route("/admin/prompt-library", promptLibraryAdminRouter);
 
 	// Unified task routes
 	app.route("/tasks", taskRouter);
+	// Host-side Codex control plane. The worker itself polls /public/codex/*.
+	app.route("/codex", codexRouter);
 
 	// Workflow execution routes (n8n-like)
 	app.route("/executions", executionRouter);
+	app.route("/workflow-triggers", workflowTriggerRouter);
 
 	// Commerce routes
 	app.route("/products", productRouter);
-	app.route("/orders", orderRouter);
-	app.route("/wechat-pay", wechatPayRouter);
 	app.route("/commerce", commerceRouter);
 	app.route("/materials", materialRouter);
 	app.route("/memory", memoryRouter);
 	app.route("/dreamina", dreaminaRouter);
+	app.route("/lark", larkRouter);
 	// Internal ops endpoints (token protected; not in OpenAPI docs)
 	app.route("/internal", internalRouter);
 

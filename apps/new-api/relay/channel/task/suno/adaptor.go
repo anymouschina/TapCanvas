@@ -20,7 +20,6 @@ import (
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	ChannelType int
 }
 
 // ParseTaskResult is not used for Suno tasks.
@@ -31,9 +30,7 @@ func (a *TaskAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
 	return nil, fmt.Errorf("suno uses batch polling via UpdateSunoTasks, ParseTaskResult is not applicable")
 }
 
-func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
-	a.ChannelType = info.ChannelType
-}
+func (a *TaskAdaptor) Init(_ *relaycommon.RelayInfo) {}
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	action := strings.ToUpper(c.Param("action"))

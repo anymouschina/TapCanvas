@@ -88,7 +88,8 @@ export async function listProducts(
 		ownerId?: string;
 		keyword?: string;
 		status?: string;
-		entitlementType?: "points_topup" | "monthly_quota" | "openclaw_subscription";
+		entitlementType?: "membership" | "team_plan" | "skill_license";
+		excludedCurrency?: string;
 		limit: number;
 		offset: number;
 	},
@@ -99,6 +100,7 @@ export async function listProducts(
 		where: {
 			...(input.ownerId ? { owner_id: input.ownerId } : {}),
 			...(input.status ? { status: input.status } : {}),
+			...(input.excludedCurrency ? { currency: { not: input.excludedCurrency } } : {}),
 			...(input.entitlementType
 				? {
 					product_entitlements: {
@@ -129,7 +131,8 @@ export async function countProducts(
 		ownerId?: string;
 		keyword?: string;
 		status?: string;
-		entitlementType?: "points_topup" | "monthly_quota" | "openclaw_subscription";
+		entitlementType?: "membership" | "team_plan" | "skill_license";
+		excludedCurrency?: string;
 	},
 ): Promise<number> {
 	void db;
@@ -138,6 +141,7 @@ export async function countProducts(
 		where: {
 			...(input.ownerId ? { owner_id: input.ownerId } : {}),
 			...(input.status ? { status: input.status } : {}),
+			...(input.excludedCurrency ? { currency: { not: input.excludedCurrency } } : {}),
 			...(input.entitlementType
 				? {
 					product_entitlements: {

@@ -792,58 +792,6 @@ export const useLogsData = () => {
           value: localCountMode,
         });
       }
-      if (isAdminUser && logs[i].type === 1) {
-        const adminInfo = other?.admin_info;
-        if (adminInfo) {
-          if (adminInfo.payment_method) {
-            expandDataLocal.push({
-              key: t('订单支付方式'),
-              value: adminInfo.payment_method,
-            });
-          }
-          if (adminInfo.callback_payment_method) {
-            expandDataLocal.push({
-              key: t('回调支付方式'),
-              value: adminInfo.callback_payment_method,
-            });
-          }
-          if (adminInfo.caller_ip) {
-            expandDataLocal.push({
-              key: t('回调调用者IP'),
-              value: adminInfo.caller_ip,
-            });
-          }
-          if (adminInfo.server_ip) {
-            expandDataLocal.push({
-              key: t('服务器IP'),
-              value: adminInfo.server_ip,
-            });
-          }
-          if (adminInfo.node_name) {
-            expandDataLocal.push({
-              key: t('节点名称'),
-              value: adminInfo.node_name,
-            });
-          }
-          if (adminInfo.version) {
-            expandDataLocal.push({
-              key: t('系统版本'),
-              value: adminInfo.version,
-            });
-          }
-        } else {
-          expandDataLocal.push({
-            key: t('审计信息'),
-            value: (
-              <span style={{ color: 'var(--semi-color-warning)' }}>
-                {t(
-                  '该记录由旧版本实例写入，缺少审计信息，建议将实例升级至最新版本以便记录服务器IP、回调IP、支付方式与系统版本等审计字段。',
-                )}
-              </span>
-            ),
-          });
-        }
-      }
       if (isAdminUser && logs[i].type === 3 && other?.admin_info) {
         const adminInfo = other.admin_info;
         const hasUsername =
@@ -889,6 +837,29 @@ export const useLogsData = () => {
         const rep = groupedResult.find(g => g.conversation_id === log.conversation_id);
         if (rep) rep._siblings.push(log);
       }
+    }
+    // 聚合行数据：代表行显示会话内（当前页范围）全部调用的合计，
+    // 而不是单次调用的数据 —— 花费/输入/输出/缓存读写求和，标注调用次数。
+    const parseOther = (raw) => {
+      if (!raw) return {};
+      try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return {}; }
+    };
+    for (const rep of groupedResult) {
+      if (!rep._siblings || rep._siblings.length === 0) continue;
+      const all = [rep, ...rep._siblings];
+      const sumField = (pick) => all.reduce((acc, l) => acc + (Number(pick(l)) || 0), 0);
+      const others = all.map((l) => parseOther(l.other));
+      rep._agg = {
+        count: all.length,
+        quota: sumField((l) => l.quota),
+        prompt_tokens: sumField((l) => l.prompt_tokens),
+        completion_tokens: sumField((l) => l.completion_tokens),
+        cache_read_tokens: others.reduce((acc, o) => acc + (Number(o.cache_tokens) || 0), 0),
+        cache_write_tokens: others.reduce((acc, o) => {
+          const split = (Number(o.cache_creation_tokens_5m) || 0) + (Number(o.cache_creation_tokens_1h) || 0);
+          return acc + (split > 0 ? split : Number(o.cache_creation_tokens) || 0);
+        }, 0),
+      };
     }
     setGroupedLogs(groupedResult);
   };

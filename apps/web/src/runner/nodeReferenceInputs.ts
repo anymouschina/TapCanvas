@@ -56,6 +56,7 @@ export function collectNodeReferenceImageUrls(nodeData: unknown, limit = 8): str
   if (!isRecord(nodeData)) return []
   return uniqueUrls(
     [
+      ...normalizeReferenceImageUrls(nodeData.styleImages, limit),
       ...normalizeReferenceImageUrls(nodeData.referenceImages, limit),
       ...collectPublicFlowAnchorBindingImageUrls(nodeData.anchorBindings, limit),
       ...normalizeReferenceImageUrls(nodeData.roleCardReferenceImages, limit),

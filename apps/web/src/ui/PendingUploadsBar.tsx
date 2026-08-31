@@ -28,9 +28,13 @@ export default function PendingUploadsBar(): JSX.Element | null {
       className="pending-uploads-bar-shell"
       style={{
         position: 'fixed',
-        left: '50%',
+        // Center in the space between the left asset drawer and the right AI chat panel (same channel
+        // as FloatingNav), so the bar re-centers when either side panel is open instead of staying
+        // pinned to the full-viewport center.
+        left: 'calc(50% + var(--tc-asset-drawer-width, 0px) / 2 - var(--tc-ai-chat-reserved-width, 0px) / 2)',
         bottom: 18,
         transform: 'translateX(-50%)',
+        transition: 'left 220ms ease',
         zIndex: 1200,
         pointerEvents: 'none',
       }}
@@ -43,8 +47,8 @@ export default function PendingUploadsBar(): JSX.Element | null {
         style={{
           minWidth: 320,
           maxWidth: 'min(720px, calc(100vw - 32px))',
-          background: 'rgba(15, 23, 42, 0.92)',
-          border: '1px solid rgba(96, 165, 250, 0.28)',
+          background: 'rgba(17, 18, 21, 0.92)',
+          border: '1px solid rgba(152, 158, 168, 0.28)',
           backdropFilter: 'blur(16px)',
           pointerEvents: 'auto',
         }}
@@ -57,7 +61,7 @@ export default function PendingUploadsBar(): JSX.Element | null {
             gap: 12,
           }}
         >
-          <Loader className="pending-uploads-bar-spinner" size="sm" color="blue" />
+          <Loader className="pending-uploads-bar-spinner" size="sm" color="gray" />
           <div
             className="pending-uploads-bar-copy"
             style={{
@@ -70,7 +74,7 @@ export default function PendingUploadsBar(): JSX.Element | null {
             <Text className="pending-uploads-bar-title" size="sm" fw={600} c="#eff6ff">
               {`正在上传 ${pendingUploads.length} 个本地文件`}
             </Text>
-            <Text className="pending-uploads-bar-detail" size="xs" c="rgba(226, 232, 240, 0.92)" lineClamp={2}>
+            <Text className="pending-uploads-bar-detail" size="xs" c="rgba(212, 215, 220, 0.92)" lineClamp={2}>
               {`${summary} 正在上传中。现在刷新、关闭页面或切换项目，图片可能暂时不会出现在当前画布里。`}
             </Text>
           </div>

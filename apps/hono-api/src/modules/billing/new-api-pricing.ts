@@ -5,10 +5,6 @@ import { normalizeBillingModelKey } from "./billing.models";
 
 type UnknownRecord = Record<string, unknown>;
 
-type NewApiStatusResponse = {
-	usdExchangeRate: number;
-};
-
 // Assumed input-token budget (in thousands) used to convert a per-token ratio
 // into a fixed per-call credit cost for chat / completion models.
 const CHAT_TOKEN_BUDGET_K = 5;
@@ -26,10 +22,12 @@ type NewApiPricingRow = {
 	modelName: string;
 	quotaType: number;
 	modelPrice: number;
+	supportedEndpointTypes: string[];
 	// present for quotaType === 0 (token-based) models
 	modelRatio?: number;
 	// present for param_pricing (e.g. per-second video billing)
 	paramPricingSpecs?: ParamPricingSpec[];
+	referenceImagePriceCny?: number;
 };
 
 export type NewApiPricingSnapshot = {
@@ -38,8 +36,14 @@ export type NewApiPricingSnapshot = {
 	usdExchangeRate: number;
 	creditsByModelKey: Map<string, number>;
 	directCreditsByModelKey: Map<string, number>;
+	// Runtime endpoints published only by enabled channels whose explicit
+	// protocol binding is valid. An empty/missing entry means the model is not
+	// currently executable even if metadata and ratio rows still exist.
+	supportedEndpointTypesByModelKey: Map<string, string[]>;
 	// spec-level credits for param_pricing models; key = "modelKey:specKey"
 	specCreditsByModelSpecKey: Map<string, number>;
+	// Additive per-reference-image credits published by new-api param_pricing.
+	referenceImageCreditsByModelKey: Map<string, number>;
 };
 
 type CachedPricingSnapshot = {
@@ -50,18 +54,37 @@ type CachedPricingSnapshot = {
 const PRICING_CACHE_TTL_MS = 5 * 60_000;
 
 let cachedPricingSnapshot: CachedPricingSnapshot | null = null;
-let pricingSnapshotRefreshing = false;
+let pricingSnapshotRefreshPromise: Promise<NewApiPricingSnapshot> | null = null;
 
 function isRecord(value: unknown): value is UnknownRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readString(env: WorkerEnv, key: "NEW_API_INTERNAL_BASE_URL" | "NEW_API_INTERNAL_TOKEN"): string {
+function readString(
+	env: WorkerEnv,
+	key:
+		| "NEW_API_INTERNAL_BASE_URL"
+		| "NEW_API_INTERNAL_TOKEN"
+		| "NEW_API_USD_EXCHANGE_RATE",
+): string {
 	const processEnv = globalThis.process?.env;
 	const envValue = env[key];
 	const processValue = processEnv?.[key];
 	const raw = typeof envValue === "string" ? envValue : typeof processValue === "string" ? processValue : "";
 	return raw.trim();
+}
+
+function requireUsdExchangeRate(env: WorkerEnv): number {
+	const rawValue = readString(env, "NEW_API_USD_EXCHANGE_RATE");
+	const numeric = Number(rawValue);
+	if (!Number.isFinite(numeric) || numeric <= 0) {
+		throw new AppError("NEW_API_USD_EXCHANGE_RATE 未配置或无效", {
+			status: 500,
+			code: "new_api_usd_exchange_rate_invalid",
+			details: { configured: rawValue.length > 0 },
+		});
+	}
+	return numeric;
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -80,7 +103,7 @@ function resolveCreditsPerCny(env: WorkerEnv): number {
 	if (Number.isFinite(numeric) && numeric > 0) {
 		return numeric;
 	}
-	return 10;
+	return 100;
 }
 
 function requireRelayConfig(env: WorkerEnv): { baseUrl: string; token: string } {
@@ -96,18 +119,31 @@ function requireRelayConfig(env: WorkerEnv): { baseUrl: string; token: string } 
 }
 
 async function fetchJson(env: WorkerEnv, url: string, token: string): Promise<unknown> {
-	const response = await fetchWithHttpDebugLog(
-		{ env } as never,
-		url,
-		{
-			method: "GET",
-			headers: {
-				Authorization: `Bearer ${token}`,
-				Accept: "application/json",
+	let response: Response;
+	try {
+		response = await fetchWithHttpDebugLog(
+			{ env } as never,
+			url,
+			{
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					Accept: "application/json",
+				},
 			},
-		},
-		{ tag: "new-api-pricing" },
-	);
+			{ tag: "new-api-pricing" },
+		);
+	} catch (error) {
+		throw new AppError("new-api pricing network request failed", {
+			status: 502,
+			code: "new_api_pricing_request_failed",
+			details: {
+				reason: "network_error",
+				url,
+				message: error instanceof Error ? error.message : String(error),
+			},
+		});
+	}
 	if (!response.ok) {
 		const text = await response.text().catch(() => "");
 		throw new AppError("new-api pricing request failed", {
@@ -121,27 +157,6 @@ async function fetchJson(env: WorkerEnv, url: string, token: string): Promise<un
 		});
 	}
 	return response.json().catch(() => null);
-}
-
-function parseNewApiStatusResponse(payload: unknown): NewApiStatusResponse {
-	if (!isRecord(payload)) {
-		throw new AppError("new-api status response invalid", {
-			status: 502,
-			code: "new_api_status_invalid",
-		});
-	}
-	const data = isRecord(payload.data) ? payload.data : null;
-	const usdExchangeRate = Number(
-		payload.usd_exchange_rate ?? data?.usd_exchange_rate ?? 0,
-	);
-	if (!Number.isFinite(usdExchangeRate) || usdExchangeRate <= 0) {
-		throw new AppError("new-api status missing usd_exchange_rate", {
-			status: 502,
-			code: "new_api_status_invalid",
-			details: { usdExchangeRate: payload.usd_exchange_rate ?? null },
-		});
-	}
-	return { usdExchangeRate };
 }
 
 function parseParamPricingSpecs(raw: unknown): ParamPricingSpec[] {
@@ -161,6 +176,20 @@ function parseParamPricingSpecs(raw: unknown): ParamPricingSpec[] {
 		}
 	}
 	return out;
+}
+
+function parseSupportedEndpointTypes(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	const seen = new Set<string>();
+	const endpoints: string[] = [];
+	for (const value of raw) {
+		if (typeof value !== "string") continue;
+		const endpoint = value.trim();
+		if (!endpoint || seen.has(endpoint)) continue;
+		seen.add(endpoint);
+		endpoints.push(endpoint);
+	}
+	return endpoints;
 }
 
 function parseNewApiPricingRows(payload: unknown): {
@@ -195,15 +224,43 @@ function parseNewApiPricingRows(payload: unknown): {
 		if (!Number.isFinite(quotaType) || !Number.isFinite(modelPrice)) continue;
 		const modelRatio = Number(item.model_ratio ?? NaN);
 		const paramPricingSpecs = parseParamPricingSpecs(item.param_pricing);
+		const paramPricing = isRecord(item.param_pricing) ? item.param_pricing : null;
+		const referenceImagePriceCny = Number(
+			paramPricing?.reference_image_price_cny ?? NaN,
+		);
 		rows.push({
 			modelName,
 			quotaType: Math.trunc(quotaType),
 			modelPrice,
+			supportedEndpointTypes: parseSupportedEndpointTypes(item.supported_endpoint_types),
 			modelRatio: Number.isFinite(modelRatio) && modelRatio > 0 ? modelRatio : undefined,
 			paramPricingSpecs: paramPricingSpecs.length > 0 ? paramPricingSpecs : undefined,
+			referenceImagePriceCny:
+				Number.isFinite(referenceImagePriceCny) && referenceImagePriceCny > 0
+					? referenceImagePriceCny
+					: undefined,
 		});
 	}
 	return { pricingVersion, rows };
+}
+
+function buildSupportedEndpointTypesByModelKey(
+	rows: NewApiPricingRow[],
+): Map<string, string[]> {
+	const endpointSetsByModelKey = new Map<string, Set<string>>();
+	for (const row of rows) {
+		const normalizedModelKey = normalizeBillingModelKey(row.modelName);
+		if (!normalizedModelKey || row.supportedEndpointTypes.length === 0) continue;
+		const endpointSet = endpointSetsByModelKey.get(normalizedModelKey) ?? new Set<string>();
+		for (const endpoint of row.supportedEndpointTypes) endpointSet.add(endpoint);
+		endpointSetsByModelKey.set(normalizedModelKey, endpointSet);
+	}
+	return new Map(
+		Array.from(endpointSetsByModelKey, ([modelKey, endpoints]) => [
+			modelKey,
+			Array.from(endpoints),
+		]),
+	);
 }
 
 function cnyToCredits(priceCny: number, creditsPerCny: number): number | null {
@@ -285,60 +342,86 @@ function buildDirectCreditsByModelKey(input: {
 	return directCreditsByModelKey;
 }
 
+function buildReferenceImageCreditsByModelKey(input: {
+	creditsPerCny: number;
+	rows: NewApiPricingRow[];
+}): Map<string, number> {
+	const map = new Map<string, number>();
+	for (const row of input.rows) {
+		if (row.referenceImagePriceCny === undefined) continue;
+		const normalizedModelKey = normalizeBillingModelKey(row.modelName);
+		if (!normalizedModelKey) continue;
+		const credits = cnyToCredits(row.referenceImagePriceCny, input.creditsPerCny);
+		if (credits !== null) map.set(normalizedModelKey, credits);
+	}
+	return map;
+}
+
 async function doFetchPricingSnapshot(env: WorkerEnv): Promise<NewApiPricingSnapshot> {
 	const relay = requireRelayConfig(env);
-	const [statusPayload, pricingPayload] = await Promise.all([
-		fetchJson(env, `${relay.baseUrl}/api/status`, relay.token),
-		fetchJson(env, `${relay.baseUrl}/api/pricing`, relay.token),
-	]);
-
-	const status = parseNewApiStatusResponse(statusPayload);
+	const usdExchangeRate = requireUsdExchangeRate(env);
+	const pricingPayload = await fetchJson(
+		env,
+		`${relay.baseUrl}/api/pricing`,
+		relay.token,
+	);
 	const pricing = parseNewApiPricingRows(pricingPayload);
 	const creditsPerCny = resolveCreditsPerCny(env);
 	return {
 		creditsPerCny,
 		pricingVersion: pricing.pricingVersion,
-		usdExchangeRate: status.usdExchangeRate,
+		usdExchangeRate,
 		creditsByModelKey: buildCreditsByModelKey({
 			creditsPerCny,
 			rows: pricing.rows,
-			usdExchangeRate: status.usdExchangeRate,
+			usdExchangeRate,
 		}),
 		directCreditsByModelKey: buildDirectCreditsByModelKey({
 			creditsPerCny,
 			rows: pricing.rows,
 		}),
+		supportedEndpointTypesByModelKey: buildSupportedEndpointTypesByModelKey(
+			pricing.rows,
+		),
 		specCreditsByModelSpecKey: buildSpecCreditsByModelSpecKey({
 			creditsPerCny,
 			rows: pricing.rows,
-			usdExchangeRate: status.usdExchangeRate,
+			usdExchangeRate,
+		}),
+		referenceImageCreditsByModelKey: buildReferenceImageCreditsByModelKey({
+			creditsPerCny,
+			rows: pricing.rows,
 		}),
 	};
 }
 
+async function refreshNewApiPricingSnapshot(env: WorkerEnv): Promise<NewApiPricingSnapshot> {
+	if (pricingSnapshotRefreshPromise) return pricingSnapshotRefreshPromise;
+
+	pricingSnapshotRefreshPromise = doFetchPricingSnapshot(env)
+		.then((snapshot) => {
+			cachedPricingSnapshot = { expiresAt: Date.now() + PRICING_CACHE_TTL_MS, snapshot };
+			return snapshot;
+		})
+		.finally(() => {
+			pricingSnapshotRefreshPromise = null;
+		});
+	return pricingSnapshotRefreshPromise;
+}
+
 export async function getNewApiPricingSnapshot(
 	env: WorkerEnv,
+	options?: { fresh?: boolean },
 ): Promise<NewApiPricingSnapshot> {
+	if (options?.fresh === true) {
+		return refreshNewApiPricingSnapshot(env);
+	}
 	const now = Date.now();
 	// Cache still fresh — return immediately.
 	if (cachedPricingSnapshot && cachedPricingSnapshot.expiresAt > now) {
 		return cachedPricingSnapshot.snapshot;
 	}
-	// Stale-while-revalidate: return existing stale data and refresh in background.
-	if (cachedPricingSnapshot && !pricingSnapshotRefreshing) {
-		pricingSnapshotRefreshing = true;
-		doFetchPricingSnapshot(env)
-			.then((snapshot) => {
-				cachedPricingSnapshot = { expiresAt: Date.now() + PRICING_CACHE_TTL_MS, snapshot };
-			})
-			.catch(() => {})
-			.finally(() => {
-				pricingSnapshotRefreshing = false;
-			});
-		return cachedPricingSnapshot.snapshot;
-	}
-	// Cold start or concurrent refresh already in flight — wait for fresh data.
-	const snapshot = await doFetchPricingSnapshot(env);
-	cachedPricingSnapshot = { expiresAt: Date.now() + PRICING_CACHE_TTL_MS, snapshot };
-	return snapshot;
+	// Cold or expired pricing must wait for a successful refresh. Model catalog
+	// responses must never combine fresh models with silently stale pricing.
+	return refreshNewApiPricingSnapshot(env);
 }

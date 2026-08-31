@@ -42,6 +42,12 @@ func ExtractReferenceImages(request *dto.ImageRequest) []string {
 	}
 
 	appendFromRaw(request.Image)
+	for _, image := range request.Images {
+		imageURL := strings.TrimSpace(image.ImageURL)
+		if imageURL != "" {
+			out = append(out, imageURL)
+		}
+	}
 	for _, key := range []string{"images", "urls", "image_urls", "input_reference"} {
 		if raw, ok := request.Extra[key]; ok {
 			appendFromRaw(raw)
@@ -50,13 +56,13 @@ func ExtractReferenceImages(request *dto.ImageRequest) []string {
 	return out
 }
 
-// ExtractRequestedImageSize returns the vendor-specific image_size hint from
-// extra fields when present.
+// ExtractRequestedImageSize returns the requested output resolution from the
+// supported OpenAI-compatible aliases in extra fields.
 func ExtractRequestedImageSize(request *dto.ImageRequest) string {
 	if request == nil {
 		return ""
 	}
-	for _, key := range []string{"image_size", "imageSize"} {
+	for _, key := range []string{"resolution", "image_size", "imageSize"} {
 		raw, ok := request.Extra[key]
 		if !ok || len(raw) == 0 {
 			continue

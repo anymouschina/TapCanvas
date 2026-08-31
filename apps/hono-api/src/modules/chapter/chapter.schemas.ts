@@ -44,7 +44,29 @@ export const CreateChapterSchema = z
 		title: z.string().trim().min(1).max(200),
 		summary: z.string().trim().max(5000).optional(),
 	})
+		.strict();
+
+export const ChapterStyleProfileOverrideSchema = z
+	.object({
+		styleId: z.string().trim().max(240).optional(),
+		styleName: z.string().trim().max(240).optional(),
+		stylePrompt: z.string().max(120000).optional(),
+		category: z.string().trim().max(120).optional(),
+		referenceImages: z.array(z.string()).max(16).optional(),
+		directorPersona: z
+			.object({
+				personaId: z.string().trim().min(1).max(240),
+				personaName: z.string().trim().max(240),
+				source: z.enum(["catalog", "custom"]).optional(),
+				prompt: z.string().max(120000).optional(),
+			})
+			.strict()
+			.nullable()
+			.optional(),
+	})
 	.strict();
+
+export type ChapterStyleProfileOverride = z.infer<typeof ChapterStyleProfileOverrideSchema>;
 
 export const UpdateChapterSchema = z
 	.object({
@@ -54,6 +76,7 @@ export const UpdateChapterSchema = z
 		sortOrder: z.number().int().optional(),
 		sourceBookId: z.string().trim().min(1).nullable().optional(),
 		sourceBookChapter: z.number().int().min(1).nullable().optional(),
+		styleProfileOverride: ChapterStyleProfileOverrideSchema.nullable().optional(),
 	})
 	.strict()
 	.refine((value) => Object.keys(value).length > 0, {
@@ -110,6 +133,7 @@ export const ChapterWorkbenchSchema = z
 		project: z.object({
 			id: z.string(),
 			name: z.string(),
+			teamId: z.string().nullable(),
 		}),
 		chapter: ChapterSchema,
 		shots: z.array(ChapterWorkbenchShotSchema),

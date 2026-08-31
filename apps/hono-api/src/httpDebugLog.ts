@@ -2,7 +2,7 @@ import type { AppContext } from "./types";
 
 type MaybeRecord = Record<string, unknown>;
 
-const ENABLE_VALUES = new Set(["1", "true", "yes", "on"]);
+const DISABLE_VALUES = new Set(["0", "false", "no", "off"]);
 
 const DEFAULT_BODY_LIMIT_BYTES = 16_384;
 const MAX_BODY_LIMIT_BYTES = 512_000;
@@ -32,26 +32,72 @@ const SENSITIVE_JSON_KEYS = new Set([
 	"authorization",
 	"cookie",
 	"set-cookie",
-	"secretToken",
+	"secrettoken",
+	"pairingcode",
+	"environment",
+	"sealedspec",
+	"uploadurl",
+	"sourceurl",
+	"downloadurl",
+	"videourl",
+	"video_url",
 ]);
 
-function boolFromEnv(val: unknown): boolean {
-	const normalized = String(val ?? "")
-		.trim()
-		.toLowerCase();
-	return ENABLE_VALUES.has(normalized);
+const SENSITIVE_HEADER_KEYS = new Set([
+	"cookie",
+	"set-cookie",
+	"x-api-key",
+	"x-internal-token",
+	"x-agent-token",
+	"x-auth-token",
+	"x-access-token",
+	"x-refresh-token",
+	"proxy-authorization",
+]);
+
+function isExplicitlyDisabled(val: unknown): boolean {
+	return DISABLE_VALUES.has(String(val ?? "").trim().toLowerCase());
 }
 
+function readDebugEnv(
+	c: AppContext | null | undefined,
+	key: "DEBUG_HTTP_LOG" | "DEBUG_HTTP_LOG_UNSAFE" | "DEBUG_HTTP_LOG_BODY_LIMIT",
+): unknown {
+	if (c && typeof c === "object" && "env" in c) {
+		const env = (c as { env?: Record<string, unknown> }).env;
+		if (env && typeof env === "object" && key in env) {
+			return env[key];
+		}
+	}
+	if (
+		typeof globalThis === "object" &&
+		globalThis &&
+		"process" in globalThis &&
+		globalThis.process &&
+		typeof globalThis.process === "object" &&
+		"env" in globalThis.process
+	) {
+		const processEnv = (globalThis.process as { env?: Record<string, unknown> }).env;
+		if (processEnv && typeof processEnv === "object" && key in processEnv) {
+			return processEnv[key];
+		}
+	}
+	return undefined;
+}
+
+// Enabled by default in all environments; set DEBUG_HTTP_LOG=0 to disable.
 export function isHttpDebugLogEnabled(c: AppContext): boolean {
-	return boolFromEnv((c.env as any).DEBUG_HTTP_LOG);
+	return !isExplicitlyDisabled(readDebugEnv(c, "DEBUG_HTTP_LOG"));
 }
 
+// Unsafe mode (no redaction) must be explicitly opted in; never defaults on.
 export function isHttpDebugLogUnsafeEnabled(c: AppContext): boolean {
-	return boolFromEnv((c.env as any).DEBUG_HTTP_LOG_UNSAFE);
+	const ENABLE_VALUES = new Set(["1", "true", "yes", "on"]);
+	return ENABLE_VALUES.has(String(readDebugEnv(c, "DEBUG_HTTP_LOG_UNSAFE") ?? "").trim().toLowerCase());
 }
 
 export function getHttpDebugLogBodyLimit(c: AppContext): number {
-	const raw = Number((c.env as any).DEBUG_HTTP_LOG_BODY_LIMIT);
+	const raw = Number(readDebugEnv(c, "DEBUG_HTTP_LOG_BODY_LIMIT"));
 	if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_BODY_LIMIT_BYTES;
 	return Math.max(0, Math.min(Math.floor(raw), MAX_BODY_LIMIT_BYTES));
 }
@@ -100,7 +146,7 @@ function safeJsonForLog(c: AppContext | null, value: unknown): unknown {
 	return walk(value);
 }
 
-function safeHeadersForLog(c: AppContext | null, headers: Headers): Record<string, string> {
+export function safeHeadersForLog(c: AppContext | null, headers: Headers): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const [k, v] of headers.entries()) {
 		const lower = k.toLowerCase();
@@ -112,7 +158,7 @@ function safeHeadersForLog(c: AppContext | null, headers: Headers): Record<strin
 			out[k] = redactAuthorization(v);
 			continue;
 		}
-		if (lower === "cookie" || lower === "set-cookie" || lower === "x-api-key") {
+		if (SENSITIVE_HEADER_KEYS.has(lower)) {
 			out[k] = "***";
 			continue;
 		}
@@ -126,13 +172,17 @@ async function readStreamTextSnippet(
 	limitBytes: number,
 ): Promise<{ text: string; truncated: boolean } | null> {
 	if (!stream || limitBytes <= 0) return null;
-	const reader = stream.getReader();
-	const decoder = new TextDecoder();
-	let truncated = false;
-	let total = 0;
-	let text = "";
-
+	// reader.cancel() on a tee'd ReadableStream deadlocks in Node.js v22 — the cancel promise
+	// never resolves when the sibling branch has unconsumed buffered data.
+	// Use releaseLock() instead: it is synchronous and does not block.
+	let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 	try {
+		reader = stream.getReader();
+		const decoder = new TextDecoder();
+		let truncated = false;
+		let total = 0;
+		let text = "";
+
 		while (true) {
 			const { value, done } = await reader.read();
 			if (done) break;
@@ -141,9 +191,6 @@ async function readStreamTextSnippet(
 			const remaining = limitBytes - total;
 			if (remaining <= 0) {
 				truncated = true;
-				try {
-					await reader.cancel();
-				} catch {}
 				break;
 			}
 
@@ -154,9 +201,6 @@ async function readStreamTextSnippet(
 
 			if (value.byteLength > remaining) {
 				truncated = true;
-				try {
-					await reader.cancel();
-				} catch {}
 				break;
 			}
 		}
@@ -164,6 +208,10 @@ async function readStreamTextSnippet(
 		return { text, truncated };
 	} catch {
 		return null;
+	} finally {
+		try {
+			reader?.releaseLock();
+		} catch {}
 	}
 }
 
@@ -227,13 +275,20 @@ export async function readBodySnippetForLog(
 }
 
 function getOrCreateRequestId(c: AppContext): string {
-	const existing = c.get("requestId") as string | undefined;
-	if (existing && existing.trim()) return existing.trim();
-	const id = crypto.randomUUID
-		? crypto.randomUUID()
-		: `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-	c.set("requestId", id);
-	return id;
+	// Some callers pass a synthetic context ({ env } as never) that lacks .get/.set
+	try {
+		const existing = typeof c.get === "function"
+			? (c.get("requestId") as string | undefined)
+			: undefined;
+		if (existing && existing.trim()) return existing.trim();
+		const id = crypto.randomUUID
+			? crypto.randomUUID()
+			: `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+		if (typeof c.set === "function") c.set("requestId", id);
+		return id;
+	} catch {
+		return `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+	}
 }
 
 function emitLog(line: unknown) {
@@ -257,11 +312,10 @@ export async function logDownstreamHttpTransaction(options: {
 	const req = c.req.raw;
 	const res = c.res;
 
-	const limit = getHttpDebugLogBodyLimit(c);
-	const responseBody = res
-		? await readBodySnippetForLog(c, res, limit).catch(() => null)
-		: null;
-
+	// Do NOT read c.res.body here. In @hono/node-server the node HTTP adapter owns that
+	// ReadableStream and is already piping it to the socket. Calling clone() tee()s the stream,
+	// which blocks both sides until both readers drain — deadlocking the request.
+	// Response status + headers are sufficient for downstream logging.
 	emitLog({
 		ts: new Date().toISOString(),
 		type: "http_debug",
@@ -279,9 +333,9 @@ export async function logDownstreamHttpTransaction(options: {
 		},
 		response: {
 			headers: res ? safeHeadersForLog(c, res.headers) : {},
-			body: responseBody?.body ?? null,
-			bodyTruncated: responseBody?.truncated ?? false,
-			contentType: responseBody?.contentType ?? (res ? res.headers.get("content-type") : null),
+			body: null,
+			bodyTruncated: false,
+			contentType: res ? res.headers.get("content-type") : null,
 		},
 	});
 }
@@ -315,7 +369,9 @@ export async function fetchWithHttpDebugLog(
 		res = await fetch(req);
 	} catch (err: any) {
 		error = err;
-		res = new Response(null, { status: 0 });
+		// status: 0 is rejected by Node.js (must be 200-599); use 502 as a placeholder for logging.
+		// The real error is re-thrown at the bottom of this function.
+		res = new Response(null, { status: 502 });
 	}
 
 	const durationMs = Date.now() - startedAt;

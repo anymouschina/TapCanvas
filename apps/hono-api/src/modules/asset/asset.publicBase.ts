@@ -1,24 +1,47 @@
 import type { AppContext } from "../../types";
-import { resolveRustfsConfig } from "./rustfs.client";
+import { resolveRequestOrigin } from "../../middleware/http-security";
+import {
+	resolveLocalAssetPublicBase,
+	resolveLocalAssetStorageConfig,
+} from "./local-asset-storage";
+import { resolveObjectStorageConfig } from "./rustfs.client";
+
+function resolveConfiguredLocalAssetPublicBase(
+	env: Pick<AppContext, "env">["env"],
+): string | null {
+	const raw = typeof env.LOCAL_ASSET_PUBLIC_BASE_URL === "string"
+		? env.LOCAL_ASSET_PUBLIC_BASE_URL.trim()
+		: "";
+	if (!raw) return null;
+
+	let url: URL;
+	try {
+		url = new URL(raw);
+	} catch {
+		throw new Error("LOCAL_ASSET_PUBLIC_BASE_URL must be a valid URL");
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:") {
+		throw new Error("LOCAL_ASSET_PUBLIC_BASE_URL must use http or https");
+	}
+	if (url.search || url.hash) {
+		throw new Error("LOCAL_ASSET_PUBLIC_BASE_URL must not contain query or hash");
+	}
+	return url.toString().replace(/\/+$/, "");
+}
 
 /**
  * Resolve the publicly-accessible base URL for hosted assets.
  *
- * Priority:
- * 1) Explicit storage public base derived from `R2_PUBLIC_BASE_URL` / `RUSTFS_PUBLIC_BASE_URL`.
- * 2) If storage is configured but no direct public base exists, proxy via this API's `/assets/r2`.
+ * The selected provider contract always includes one canonical public origin.
  */
 export function resolvePublicAssetBaseUrl(
 	c: Pick<AppContext, "env" | "req">,
 ): string {
-	const storage = resolveRustfsConfig(c.env);
-	if (!storage) return "";
-	if (storage.publicBase) return storage.publicBase;
-	try {
-		const requestUrl = new URL(c.req.url);
-		return `${requestUrl.origin}/assets/r2`;
-	} catch {
-		// ignore invalid request urls
-	}
-	return "";
+	const storage = resolveObjectStorageConfig(c.env);
+	if (storage) return storage.publicBase;
+	if (!resolveLocalAssetStorageConfig()) return "";
+	const configuredLocalBase = resolveConfiguredLocalAssetPublicBase(c.env);
+	if (configuredLocalBase) return configuredLocalBase;
+	const requestOrigin = resolveRequestOrigin(c);
+	return requestOrigin ? resolveLocalAssetPublicBase(requestOrigin) : "";
 }

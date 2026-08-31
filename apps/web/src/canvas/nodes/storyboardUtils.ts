@@ -48,12 +48,15 @@ export const createScene = (partial?: Partial<StoryboardScene>): StoryboardScene
   movement: partial?.movement,
 })
 
-export const enforceStoryboardTotalLimit = (scenes: StoryboardScene[]): StoryboardScene[] => {
+export const enforceStoryboardTotalLimit = (
+  scenes: StoryboardScene[],
+  maxDuration = STORYBOARD_MAX_TOTAL_DURATION,
+): StoryboardScene[] => {
   const next: StoryboardScene[] = []
   let used = 0
   for (const scene of scenes) {
-    if (used >= STORYBOARD_MAX_TOTAL_DURATION) break
-    const remaining = STORYBOARD_MAX_TOTAL_DURATION - used
+    if (used >= maxDuration) break
+    const remaining = maxDuration - used
     const duration = Math.max(0, Math.min(scene.duration, remaining))
     if (duration <= 0) break
     next.push({ ...scene, duration })
@@ -62,7 +65,7 @@ export const enforceStoryboardTotalLimit = (scenes: StoryboardScene[]): Storyboa
   if (next.length === 0) {
     next.push(
       createScene({
-        duration: Math.min(STORYBOARD_DEFAULT_DURATION, STORYBOARD_MAX_TOTAL_DURATION),
+        duration: Math.min(STORYBOARD_DEFAULT_DURATION, maxDuration),
       }),
     )
   }

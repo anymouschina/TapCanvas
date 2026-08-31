@@ -21,6 +21,8 @@ import React, { useState, useEffect } from 'react';
 import { Modal, Button, Typography, Spin } from '@douyinfe/semi-ui';
 import { IconExternalOpen, IconCopy } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
+import { extractMediaUrls, hasPreviewableMedia } from '../../../../helpers';
+import MediaPreviewStrip from '../../../common/media/MediaPreviewStrip';
 
 const { Text } = Typography;
 
@@ -170,7 +172,17 @@ const ContentModal = ({
       {isVideo ? (
         renderVideoContent()
       ) : (
-        <p style={{ whiteSpace: 'pre-line' }}>{modalContent}</p>
+        (() => {
+          const media = extractMediaUrls(modalContent);
+          return (
+            <>
+              {hasPreviewableMedia(media) ? (
+                <MediaPreviewStrip media={media} title={t('媒体预览')} />
+              ) : null}
+              <p style={{ whiteSpace: 'pre-line' }}>{modalContent}</p>
+            </>
+          );
+        })()
       )}
     </Modal>
   );

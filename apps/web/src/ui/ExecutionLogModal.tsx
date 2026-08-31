@@ -1,8 +1,16 @@
 import React from 'react'
 import { Modal, Stack, Group, Text, Badge, ScrollArea, Button, Table, Divider, ActionIcon, Tooltip } from '@mantine/core'
-import { IconCopy, IconFilter, IconX } from '@tabler/icons-react'
-import { API_BASE, getWorkflowExecution, listWorkflowNodeRuns, type WorkflowExecutionDto, type WorkflowExecutionEventDto, type WorkflowNodeRunDto } from '../api/server'
-import { getAuthToken, getAuthTokenFromCookie } from '../auth/store'
+import { IconCopy, IconFilter, IconPlayerStop, IconX } from '@tabler/icons-react'
+import { notifications } from '@mantine/notifications'
+import { API_BASE, cancelWorkflowExecution, getWorkflowExecution, getWorkflowExecutionContext, getWorkflowExecutionSnapshot, listWorkflowNodeRuns, type WorkflowExecutionContextDto, type WorkflowExecutionDto, type WorkflowExecutionEventDto, type WorkflowNodeRunDto } from '../api/server'
+import {
+  resolveWorkflowExecutionFocusNode,
+  workflowExecutionStatusLabel,
+  workflowFocusNodePrefix,
+  workflowNodeRunStatusLabel,
+} from './workflowExecutionHistory'
+import './ExecutionLogModal.css'
+import { buildWorkflowExecutionSnapshotGraph } from './workflowExecutionSnapshotGraph'
 
 function parseSseChunk(buffer: string) {
   const parts = buffer.split('\n\n')
@@ -27,10 +35,9 @@ export function ExecutionLogModal(props: {
   opened: boolean
   executionId: string | null
   onClose: () => void
-  nodeLabelById?: Record<string, string>
   className?: string
 }) {
-  const { opened, executionId, onClose, nodeLabelById, className } = props
+  const { opened, executionId, onClose, className } = props
   const [events, setEvents] = React.useState<WorkflowExecutionEventDto[]>([])
   const [nodeRuns, setNodeRuns] = React.useState<WorkflowNodeRunDto[]>([])
   const [statusLine, setStatusLine] = React.useState<string>('connecting')
@@ -38,6 +45,10 @@ export function ExecutionLogModal(props: {
   const [onlyIssues, setOnlyIssues] = React.useState(false)
   const [filterNodeId, setFilterNodeId] = React.useState<string | null>(null)
   const [execution, setExecution] = React.useState<WorkflowExecutionDto | null>(null)
+  const [canceling, setCanceling] = React.useState(false)
+  const [snapshotNodeLabelById, setSnapshotNodeLabelById] = React.useState<Readonly<Record<string, string>>>({})
+  const [snapshotError, setSnapshotError] = React.useState<string | null>(null)
+  const [runtimeContext, setRuntimeContext] = React.useState<WorkflowExecutionContextDto | null>(null)
 
   React.useEffect(() => {
     if (!opened) return
@@ -48,7 +59,31 @@ export function ExecutionLogModal(props: {
     setOnlyIssues(false)
     setFilterNodeId(null)
     setExecution(null)
+    setCanceling(false)
+    setSnapshotNodeLabelById({})
+    setSnapshotError(null)
+    setRuntimeContext(null)
   }, [opened, executionId])
+
+  React.useEffect(() => {
+    if (!opened || !executionId) return
+    let active = true
+    void Promise.all([getWorkflowExecutionSnapshot(executionId), getWorkflowExecutionContext(executionId)])
+      .then(([snapshot, context]) => {
+        if (!active) return
+        const graph = buildWorkflowExecutionSnapshotGraph(snapshot, [])
+        setSnapshotNodeLabelById(Object.fromEntries(graph.nodes.map((node) => [node.id, node.data.label])))
+        setRuntimeContext(context)
+        setSnapshotError(null)
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return
+        setSnapshotNodeLabelById({})
+        setRuntimeContext(null)
+        setSnapshotError(loadError instanceof Error ? loadError.message : '执行时节点名称读取失败')
+      })
+    return () => { active = false }
+  }, [executionId, opened])
 
   React.useEffect(() => {
     if (!opened) return
@@ -56,12 +91,17 @@ export function ExecutionLogModal(props: {
     let stopped = false
     const poll = async () => {
       try {
-        const dto = await getWorkflowExecution(executionId)
+        const [dto, runs] = await Promise.all([
+          getWorkflowExecution(executionId),
+          listWorkflowNodeRuns(executionId),
+        ])
         if (stopped) return
         setExecution(dto)
+        setNodeRuns(runs)
         if (dto.status === 'success' || dto.status === 'failed' || dto.status === 'canceled') return
-      } catch {
+      } catch (pollError: unknown) {
         if (stopped) return
+        setStatusLine(pollError instanceof Error ? pollError.message : '运行状态读取失败')
       }
       setTimeout(() => {
         if (!stopped) void poll()
@@ -76,22 +116,8 @@ export function ExecutionLogModal(props: {
   React.useEffect(() => {
     if (!opened) return
     if (!executionId) return
-    void (async () => {
-      try {
-        const rows = await listWorkflowNodeRuns(executionId)
-        setNodeRuns(Array.isArray(rows) ? rows : [])
-      } catch {
-        setNodeRuns([])
-      }
-    })()
-  }, [opened, executionId])
-
-  React.useEffect(() => {
-    if (!opened) return
-    if (!executionId) return
 
     const abort = new AbortController()
-    const t = getAuthToken() || getAuthTokenFromCookie()
     const url = `${API_BASE}/executions/${encodeURIComponent(executionId)}/events?after=${encodeURIComponent(String(lastSeq || 0))}`
 
     void (async () => {
@@ -99,7 +125,6 @@ export function ExecutionLogModal(props: {
         setStatusLine('connecting')
         const resp = await fetch(url, {
           method: 'GET',
-          headers: { ...(t ? { Authorization: `Bearer ${t}` } : {}) },
           credentials: 'include',
           signal: abort.signal,
         })
@@ -126,14 +151,14 @@ export function ExecutionLogModal(props: {
                 setLastSeq((prev) => (dto.seq > prev ? dto.seq : prev))
               }
               setEvents((prev) => [...prev, dto])
-            } catch {
-              // ignore
+            } catch (parseError: unknown) {
+              setStatusLine(parseError instanceof Error ? `日志事件解析失败：${parseError.message}` : '日志事件解析失败')
             }
           }
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (abort.signal.aborted) return
-        setStatusLine(err?.message || 'disconnected')
+        setStatusLine(err instanceof Error ? err.message : '日志连接中断')
       }
     })()
 
@@ -158,12 +183,8 @@ export function ExecutionLogModal(props: {
   }, [nodeRuns])
 
   const focusNode = React.useCallback((nodeId: string) => {
-    try {
-      const fn = (window as any).__tcFocusNode as undefined | ((id: string) => void)
-      fn?.(nodeId)
-    } catch {
-      // ignore
-    }
+    const target = window as unknown as { __tcFocusNode?: (id: string) => void }
+    target.__tcFocusNode?.(nodeId)
   }, [])
 
   const writeClipboard = React.useCallback(async (text: string) => {
@@ -200,9 +221,36 @@ export function ExecutionLogModal(props: {
   }, [events, onlyIssues, filterNodeId])
 
   const modalClassName = ['execution-log-modal', className].filter(Boolean).join(' ')
+  const canCancel = execution?.status === 'queued' || execution?.status === 'running'
+  const focusRun = React.useMemo(() => resolveWorkflowExecutionFocusNode(nodeRuns), [nodeRuns])
+
+  const cancelExecution = React.useCallback(async (): Promise<void> => {
+    if (!executionId || !canCancel || canceling) return
+    setCanceling(true)
+    try {
+      const result = await cancelWorkflowExecution(executionId)
+      setExecution(result.execution)
+      setNodeRuns(await listWorkflowNodeRuns(executionId))
+      notifications.show({
+        title: result.execution.status === 'canceled' ? '运行已中断' : '运行无需中断',
+        message: result.execution.status === 'canceled'
+          ? `已停止后续调度，并向 ${result.localAbortedJobs} 个本地在飞执行器发送中断信号。`
+          : `当前运行状态为 ${result.execution.status}。`,
+        color: result.execution.status === 'canceled' ? 'yellow' : 'gray',
+      })
+    } catch (error: unknown) {
+      notifications.show({
+        title: '中断失败',
+        message: error instanceof Error ? error.message : '无法中断工作流执行',
+        color: 'red',
+      })
+    } finally {
+      setCanceling(false)
+    }
+  }, [canceling, canCancel, executionId])
 
   return (
-    <Modal className={modalClassName} opened={opened} onClose={onClose} title="运行日志" centered size="lg">
+    <Modal className={modalClassName} opened={opened} onClose={onClose} title="运行日志" centered size="lg" zIndex={10200}>
       <Stack className="execution-log-body" gap="sm">
         <Group className="execution-log-header" justify="space-between">
           <Group className="execution-log-meta" gap="xs">
@@ -219,11 +267,25 @@ export function ExecutionLogModal(props: {
                 variant="light"
                 color={execution.status === 'failed' ? 'red' : execution.status === 'success' ? 'teal' : execution.status === 'running' ? 'blue' : 'gray'}
               >
-                {execution.status}
+                {workflowExecutionStatusLabel(execution.status)}
               </Badge>
             )}
           </Group>
           <Group className="execution-log-controls" gap="xs" wrap="nowrap">
+            <Tooltip className="execution-log-cancel-tooltip" label="中断本次运行；已完成产物会保留">
+              <ActionIcon
+                className="execution-log-cancel-action"
+                size="sm"
+                variant="subtle"
+                color="red"
+                aria-label="中断本次工作流运行"
+                disabled={!canCancel}
+                loading={canceling}
+                onClick={() => void cancelExecution()}
+              >
+                <IconPlayerStop className="execution-log-cancel-icon" size={14} />
+              </ActionIcon>
+            </Tooltip>
             <Tooltip className="execution-log-filter-tooltip" label={onlyIssues ? '只看告警/错误（已开启）' : '只看告警/错误'}>
               <ActionIcon
                 className="execution-log-filter-action"
@@ -251,6 +313,25 @@ export function ExecutionLogModal(props: {
           </Group>
         </Group>
 
+        {snapshotError ? (
+          <Text className="execution-log-snapshot-error" size="xs" c="red">
+            执行快照读取失败：{snapshotError}。日志仍按持久节点 ID 展示。
+          </Text>
+        ) : null}
+
+        {runtimeContext ? (
+          <details className="execution-log-project-context">
+            <summary>
+              运行时项目资产 · {runtimeContext.assetSnapshot.length} 项
+              {runtimeContext.usesProjectAssets ? ' · 已使用项目资产' : ' · 未检测到资产消费'}
+            </summary>
+            <Text size="xs" c="dimmed">
+              项目 {runtimeContext.projectId || '—'} · 画布 {runtimeContext.canvasId || '—'}。这里显示本次运行开始时可见的资产快照，可用于区分“未注入”与“Agent 未使用”。
+            </Text>
+            <pre>{JSON.stringify({ projectContext: runtimeContext.projectContext, assetSnapshot: runtimeContext.assetSnapshot }, null, 2)}</pre>
+          </details>
+        ) : null}
+
         {!!nodeRuns.length && (
           <>
             <Group className="execution-log-summary" justify="space-between">
@@ -269,7 +350,7 @@ export function ExecutionLogModal(props: {
                     variant="light"
                     color={k === 'failed' ? 'red' : k === 'success' ? 'teal' : k === 'running' ? 'blue' : 'gray'}
                   >
-                    {k}:{v}
+                    {workflowNodeRunStatusLabel(k as WorkflowNodeRunDto['status'])}:{v}
                   </Badge>
                 ))}
               </Group>
@@ -277,13 +358,10 @@ export function ExecutionLogModal(props: {
                 className="execution-log-summary-focus"
                 size="xs"
                 variant="subtle"
-                onClick={() => {
-                  const failed = nodeRuns.find((r) => r.status === 'failed')
-                  if (failed) focusNode(failed.nodeId)
-                }}
-                disabled={!nodeRuns.some((r) => r.status === 'failed')}
+                onClick={() => { if (focusRun) focusNode(focusRun.nodeId) }}
+                disabled={!focusRun}
               >
-                定位失败节点
+                {focusRun ? `${workflowFocusNodePrefix(focusRun.status)} ${snapshotNodeLabelById[focusRun.nodeId] || focusRun.nodeId}` : '没有停留节点'}
               </Button>
             </Group>
 
@@ -298,7 +376,7 @@ export function ExecutionLogModal(props: {
                 </Table.Thead>
                 <Table.Tbody className="execution-log-runs-body">
                   {nodeRuns.map((r) => {
-                    const label = nodeLabelById?.[r.nodeId]
+                    const label = snapshotNodeLabelById[r.nodeId]
                     const nodeDisplay = label || `${r.nodeId.slice(0, 8)}…`
                     const color = r.status === 'failed' ? 'red' : r.status === 'success' ? 'teal' : r.status === 'running' ? 'blue' : 'gray'
                     return (
@@ -317,13 +395,13 @@ export function ExecutionLogModal(props: {
                           </Text>
                         </Table.Td>
                         <Table.Td className="execution-log-runs-cell">
-                          <Badge className="execution-log-runs-status" size="xs" variant="light" color={color as any}>
-                            {r.status}
+                          <Badge className="execution-log-runs-status" size="xs" variant="light" color={color}>
+                            {workflowNodeRunStatusLabel(r.status, r.outputRefs)}
                           </Badge>
                         </Table.Td>
                         <Table.Td className="execution-log-runs-cell">
                           <Text className="execution-log-runs-message" size="xs" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 300 }}>
-                            {r.errorMessage || '—'}
+                            {[r.errorCode, r.failureStage, r.retryCount ? `重试 ${r.retryCount}` : '', r.toolName, r.modelKey, r.errorMessage].filter(Boolean).join(' · ') || '—'}
                           </Text>
                         </Table.Td>
                       </Table.Tr>
@@ -351,7 +429,7 @@ export function ExecutionLogModal(props: {
             </Table.Thead>
             <Table.Tbody className="execution-log-events-body">
               {visibleEvents.map((e) => {
-                const nodeLabel = e.nodeId ? nodeLabelById?.[e.nodeId] : null
+                const nodeLabel = e.nodeId ? snapshotNodeLabelById[e.nodeId] : null
                 const nodeDisplay = nodeLabel || (e.nodeId ? `${e.nodeId.slice(0, 8)}…` : '--')
                 const levelColor = e.level === 'error' ? 'red' : e.level === 'warn' ? 'yellow' : e.level === 'info' ? 'teal' : 'gray'
                 const clip = [
@@ -360,6 +438,7 @@ export function ExecutionLogModal(props: {
                   e.eventType,
                   e.nodeId ? (nodeLabel || e.nodeId) : '',
                   e.message || '',
+                  e.data === undefined ? '' : JSON.stringify(e.data),
                 ]
                   .filter(Boolean)
                   .join(' · ')
@@ -398,9 +477,17 @@ export function ExecutionLogModal(props: {
                       <Text className="execution-log-events-type" size="xs">{e.eventType}</Text>
                     </Table.Td>
                     <Table.Td className="execution-log-events-cell">
-                      <Text className="execution-log-events-message" size="xs" style={{ whiteSpace: 'pre-wrap' }}>
-                        {e.message || ''}
-                      </Text>
+                      <div className="execution-log-events-message-wrap">
+                        <Text className="execution-log-events-message" size="xs" style={{ whiteSpace: 'pre-wrap' }}>
+                          {e.message || ''}
+                        </Text>
+                        {e.data !== undefined ? (
+                          <details className="execution-log-events-data">
+                            <summary className="execution-log-events-data-summary">事件数据</summary>
+                            <pre className="execution-log-events-data-value">{JSON.stringify(e.data, null, 2)}</pre>
+                          </details>
+                        ) : null}
+                      </div>
                     </Table.Td>
                     <Table.Td className="execution-log-events-cell">
                       <Tooltip className="execution-log-events-copy-tooltip" label="复制">

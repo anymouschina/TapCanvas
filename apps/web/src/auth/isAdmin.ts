@@ -1,6 +1,6 @@
 import { useAuth } from './store'
 
-const viteEnv = ((import.meta as any).env || {}) as Record<string, any>
+const viteEnv: Readonly<{ VITE_DEV_ALL_ADMIN?: string; DEV?: boolean }> = import.meta.env
 
 export function isDevAllAdminEnabled(): boolean {
   const raw = viteEnv.VITE_DEV_ALL_ADMIN
@@ -8,8 +8,6 @@ export function isDevAllAdminEnabled(): boolean {
     const v = raw.trim().toLowerCase()
     return v === '1' || v === 'true' || v === 'yes' || v === 'on'
   }
-  if (typeof raw === 'number') return raw === 1
-  if (typeof raw === 'boolean') return raw
   return Boolean(viteEnv.DEV)
 }
 
@@ -18,3 +16,6 @@ export function useIsAdmin(): boolean {
   return isDevAllAdminEnabled() || role === 'admin'
 }
 
+export function isCurrentUserAdmin(): boolean {
+  return isDevAllAdminEnabled() || useAuth.getState().user?.role === 'admin'
+}

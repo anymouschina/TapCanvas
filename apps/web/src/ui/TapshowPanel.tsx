@@ -7,7 +7,6 @@ import {
   Stack,
   Text,
   ActionIcon,
-  Image,
   Loader,
   Center,
   Badge,
@@ -19,13 +18,14 @@ import {
 import { IconPlayerPlay, IconPhoto, IconCopy, IconRefresh, IconPlus, IconExternalLink, IconMessage2 } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import { calculateSafeMaxHeight } from './utils/panelPosition'
-import { listPublicAssets, type PublicAssetDto } from '../api/server'
+import { listPublicAssets, listPublicProjects, type ProjectDto, type PublicAssetDto } from '../api/server'
 import { toast } from './toast'
 import { PanelCard } from './PanelCard'
 import { setTapImageDragData } from '../canvas/dnd/setTapImageDragData'
 import { useRFStore } from '../canvas/store'
 import { useAuth } from '../auth/store'
 import { stopPanelWheelPropagation } from './utils/panelWheel'
+import { ManagedImage } from '../domain/resource-runtime/components/ManagedImage'
 
 function formatDate(ts: string) {
   const date = new Date(ts)
@@ -56,22 +56,15 @@ export default function TapshowPanel(): JSX.Element | null {
   const [visibleCount, setVisibleCount] = React.useState(10)
   const [promptModalOpen, setPromptModalOpen] = React.useState(false)
   const [activePrompt, setActivePrompt] = React.useState<{ title: string; prompt: string } | null>(null)
+  const [tab, setTab] = React.useState<'assets' | 'projects'>('assets')
+  const [publicProjects, setPublicProjects] = React.useState<ProjectDto[]>([])
+  const [projectsLoading, setProjectsLoading] = React.useState(false)
 
   const webcutUrl = React.useMemo(() => {
     const raw = import.meta.env.VITE_WEBCUT_URL
     const base = typeof raw === 'string' && raw.trim() ? raw.trim() : null
-    if (!base) return null
-    if (!token) return base
-    try {
-      const url = new URL(base, typeof window !== 'undefined' ? window.location.origin : undefined)
-      url.searchParams.set('tap_token', token)
-      return url.toString()
-    } catch {
-      const [path, hash] = base.split('#')
-      const sep = path.includes('?') ? '&' : '?'
-      return `${path}${sep}tap_token=${encodeURIComponent(token)}${hash ? `#${hash}` : ''}`
-    }
-  }, [token])
+    return base
+  }, [])
 
   const maxHeight = calculateSafeMaxHeight(anchorY, 150)
 
@@ -97,6 +90,15 @@ export default function TapshowPanel(): JSX.Element | null {
     if (!mounted) return
     reloadAssets().catch(() => {})
   }, [mounted, reloadAssets])
+
+  React.useEffect(() => {
+    if (!mounted || tab !== 'projects') return
+    setProjectsLoading(true)
+    listPublicProjects()
+      .then((data) => setPublicProjects(data || []))
+      .catch(() => setPublicProjects([]))
+      .finally(() => setProjectsLoading(false))
+  }, [mounted, tab])
 
   const hostedAssets = assets
   const filteredAssets = React.useMemo(() => {
@@ -213,12 +215,12 @@ export default function TapshowPanel(): JSX.Element | null {
                       onClick={() => {
                         try {
                           const url = new URL(window.location.href)
-                          url.pathname = '/tapshow'
+                          url.pathname = '/'
                           url.search = ''
                           url.hash = ''
                           window.open(url.toString(), '_blank', 'noopener,noreferrer')
                         } catch {
-                          window.open('/tapshow', '_blank', 'noopener,noreferrer')
+                          window.open('/', '_blank', 'noopener,noreferrer')
                         }
                       }}
                     >
@@ -257,8 +259,54 @@ export default function TapshowPanel(): JSX.Element | null {
                 </Group>
               </Group>
 
-              <div className="tapshow-panel-body" style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }} onScroll={handleScroll}>
-                {loading && !hostedAssets.length ? (
+              <SegmentedControl
+                className="tapshow-panel-tab"
+                size="xs"
+                radius="md"
+                variant="filled"
+                color={isDark ? 'blue' : 'dark'}
+                value={tab}
+                onChange={(v) => setTab(v as 'assets' | 'projects')}
+                mb={8}
+                data={[
+                  { value: 'assets', label: '公开作品' },
+                  { value: 'projects', label: '公开项目' },
+                ]}
+              />
+
+              <div className="tapshow-panel-body" style={{ flex: 1, overflowY: 'auto', paddingRight: 4, minHeight: 0 }} onScroll={tab === 'assets' ? handleScroll : undefined}>
+                {tab === 'projects' ? (
+                  projectsLoading ? (
+                    <Center py="md"><Group gap="xs"><Loader size="sm" /><Text size="xs" c="dimmed">加载中…</Text></Group></Center>
+                  ) : publicProjects.length === 0 ? (
+                    <Text size="xs" c="dimmed">暂无公开项目。</Text>
+                  ) : (
+                    <Stack gap="xs">
+                      {publicProjects.map((p) => (
+                        <PanelCard className="tapshow-panel-project-card" key={p.id} padding="compact">
+                          <Group justify="space-between" align="center" gap="xs">
+                            <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                              <Text size="sm" fw={600} lineClamp={1}>{p.name || '未命名项目'}</Text>
+                              {p.ownerName && <Text size="xs" c="dimmed">{p.ownerName}</Text>}
+                            </Stack>
+                            <Tooltip label="查看分享页" withArrow>
+                              <ActionIcon
+                                size="sm"
+                                variant="light"
+                                component="a"
+                                href={`/share?projectId=${encodeURIComponent(p.id)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <IconExternalLink size={14} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </Group>
+                        </PanelCard>
+                      ))}
+                    </Stack>
+                  )
+                ) : loading && !hostedAssets.length ? (
                   <Center className="tapshow-panel-loading" py="md">
                     <Group className="tapshow-panel-loading-group" gap="xs">
                       <Loader className="tapshow-panel-loading-icon" size="sm" />
@@ -314,7 +362,9 @@ export default function TapshowPanel(): JSX.Element | null {
                           <Stack className="tapshow-panel-grid-column" key={`tapshow-column-${columnIndex}`} gap="sm">
                             {columnAssets.map((asset) => {
                           const isVideo = asset.type === 'video'
-                          const cover = asset.thumbnailUrl || asset.url
+                          // 视频的 poster 只认真缩略图：把 mp4 URL 塞进 poster 属性会让浏览器把
+                          // 整个视频当图片下载（解码还必然失败），纯浪费流量。
+                          const cover = isVideo ? asset.thumbnailUrl : asset.thumbnailUrl || asset.url
                           const label = asset.name || (isVideo ? '视频资产' : '图片资产')
                           return (
                             <PanelCard
@@ -336,6 +386,10 @@ export default function TapshowPanel(): JSX.Element | null {
                                       className="tapshow-panel-card-video"
                                       src={asset.url}
                                       poster={cover || undefined}
+                                      // 不设 preload 时 Chrome 默认 metadata：打开面板即为每张卡
+                                      // 拉一轮 mp4 range。none = 点播放才碰视频字节。
+                                      preload="none"
+                                      crossOrigin="anonymous"
                                       style={{
                                         width: '100%',
                                         height: '100%',
@@ -356,15 +410,12 @@ export default function TapshowPanel(): JSX.Element | null {
                                   />
                                 )
                               ) : cover ? (
-                                <Image
+                                <ManagedImage
                                   className="tapshow-panel-card-image"
                                   src={cover}
                                   alt={label}
-                                  radius="sm"
-                                  height={160}
-                                  fit="cover"
                                   draggable
-                                  onDragStart={(evt) => setTapImageDragData(evt as any, cover)}
+                                  onDragStart={(evt) => setTapImageDragData(evt, cover)}
                                 />
                               ) : (
                                 <div

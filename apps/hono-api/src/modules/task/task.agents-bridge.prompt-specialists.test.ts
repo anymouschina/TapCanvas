@@ -6,22 +6,39 @@ import type { AppContext } from "../../types";
 
 const {
 	buildUserMemoryContext,
-	writeUserExecutionTrace,
 	listAssetsForUser,
 	getFlowForOwner,
+	getLarkAppCredentials,
 	listFlowsByOwner,
+	createFlow,
+	createFlowVersion,
+	findChapterScope,
+	listUserContextAssets,
+	loadPublicChatEnabledModelCatalogSummary,
+	listEquippedWorkflowCapabilities,
+	listDisabledSkillKeys,
+	listReplacedSkillKeys,
+	getBuiltInCapabilityAvailability,
 } = vi.hoisted(() => ({
 	buildUserMemoryContext: vi.fn(),
-	writeUserExecutionTrace: vi.fn(),
 	listAssetsForUser: vi.fn(),
 	getFlowForOwner: vi.fn(),
+	getLarkAppCredentials: vi.fn(),
 	listFlowsByOwner: vi.fn(),
+	createFlow: vi.fn(),
+	createFlowVersion: vi.fn(),
+	findChapterScope: vi.fn(),
+	listUserContextAssets: vi.fn(),
+	loadPublicChatEnabledModelCatalogSummary: vi.fn(),
+	listEquippedWorkflowCapabilities: vi.fn(),
+	listDisabledSkillKeys: vi.fn(),
+	listReplacedSkillKeys: vi.fn(),
+	getBuiltInCapabilityAvailability: vi.fn(),
 }));
 
 vi.mock("../memory/memory.service", () => ({
 	buildUserMemoryContext,
 	formatMemoryContextForPrompt: () => "",
-	writeUserExecutionTrace,
 }));
 
 vi.mock("../asset/asset.repo", () => ({
@@ -31,21 +48,42 @@ vi.mock("../asset/asset.repo", () => ({
 vi.mock("../flow/flow.repo", () => ({
 	getFlowForOwner,
 	listFlowsByOwner,
+	createFlow,
+	createFlowVersion,
+}));
+
+vi.mock("../agents/user-context-assets.service", () => ({
+	listUserContextAssets,
+}));
+
+vi.mock("../lark/lark.service", () => ({
+	getLarkAppCredentials,
+}));
+
+vi.mock("../model-catalog/model-catalog.public-chat-summary", () => ({
+	loadPublicChatEnabledModelCatalogSummary,
+}));
+
+vi.mock("../agents/capability-bay.service", () => ({
+	listEquippedWorkflowCapabilities,
+	listDisabledSkillKeys,
+	listReplacedSkillKeys,
+	getBuiltInCapabilityAvailability,
+}));
+
+vi.mock("../../platform/node/prisma", () => ({
+	getPrismaClient: () => ({
+		users: {
+			findUnique: vi.fn().mockResolvedValue(null),
+		},
+	}),
 }));
 
 import { runAgentsBridgeChatTask } from "./task.agents-bridge";
-
-type ExecutionTraceInput = {
-	scopeType: string;
-	scopeId: string;
-	taskId: string;
-	requestKind: string;
-	inputSummary: string;
-	decisionLog: string[];
-	toolCalls: Array<Record<string, unknown>>;
-	meta: Record<string, unknown> | null;
-	resultSummary: string | null;
-};
+import {
+	buildCanonicalAgentsBridgeFailure,
+	stringifyCanonicalAgentsBridgeSuccess,
+} from "./task.agents-bridge.test-fixtures";
 
 type VideoPromptBeat = {
 	summary: string;
@@ -189,7 +227,9 @@ function createContext(): AppContext {
 
 	return {
 		env: {
-			DB: {},
+			DB: {
+				chapters: { findFirst: findChapterScope },
+			},
 			AGENTS_BRIDGE_BASE_URL: "http://agents.test",
 			AGENTS_BRIDGE_TIMEOUT_MS: "5000",
 			TAPCANVAS_API_BASE_URL: "https://api.tapcanvas.test",
@@ -205,9 +245,17 @@ function createContext(): AppContext {
 	} as unknown as AppContext;
 }
 
-describe("runAgentsBridgeChatTask prompt specialists", () => {
+function createFileNotFoundError(targetPath: string): NodeJS.ErrnoException {
+	const error = new Error(`file not found: ${targetPath}`) as NodeJS.ErrnoException;
+	error.code = "ENOENT";
+	error.path = targetPath;
+	return error;
+}
+
+	describe("runAgentsBridgeChatTask prompt specialists", () => {
 	beforeEach(() => {
 		vi.restoreAllMocks();
+		vi.clearAllMocks();
 		buildUserMemoryContext.mockResolvedValue({
 			rollups: { session: [], chapter: [], book: [], project: [] },
 			userPreferences: [],
@@ -217,7 +265,6 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			artifactRefs: [],
 			recentConversation: [],
 		});
-		writeUserExecutionTrace.mockResolvedValue(undefined);
 		listAssetsForUser.mockResolvedValue([]);
 		listFlowsByOwner.mockResolvedValue([
 			{
@@ -229,12 +276,97 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			id: "flow-1",
 			project_id: "project-1",
 		});
+		getLarkAppCredentials.mockResolvedValue(null);
+		findChapterScope.mockResolvedValue({ source_book_id: null });
+		loadPublicChatEnabledModelCatalogSummary.mockResolvedValue({
+			summary: null,
+			error: null,
+		});
+		listEquippedWorkflowCapabilities.mockResolvedValue([]);
+		listDisabledSkillKeys.mockResolvedValue([]);
+		listReplacedSkillKeys.mockResolvedValue([]);
+		getBuiltInCapabilityAvailability.mockResolvedValue({
+			systemDisabledKeys: [],
+			userDisabledKeys: [],
+			disabledKeys: [],
+		});
+	});
+
+	it("keeps equipped workflows direct and forwards their semantic facts on an empty public chat", async () => {
+		listEquippedWorkflowCapabilities.mockResolvedValue([{
+			id: "system-greeting-attachment",
+			descriptor: {
+				name: "简短问候固定回复",
+				summary: "仅处理用户不带其他任务的简短打招呼；执行后原样回复固定文本。",
+				invocation: { sourceMode: "none", requiredTriggerPayloadFields: [] },
+			},
+			primaryForCapabilities: [],
+		}]);
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			const requestBody = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+			const logicalTaskId = String(requestBody.logicalTaskId ?? requestBody.publicTurnId ?? "");
+			return new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-equipped-workflow-facts",
+					text: "工作流能力已进入本轮合同。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+						runtime: {
+							terminalAuthority: "user_delivery",
+							physicalRunExit: {
+								version: 1,
+								kind: "logical_terminal",
+								logicalTaskId,
+								taskNodeId: "root",
+								taskRevision: 0,
+								taskStatus: "satisfied",
+								reasonCode: "response_delivered",
+								exitedAt: "2026-08-31T08:00:00.000Z",
+								continuationTicket: null,
+							},
+						},
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(runAgentsBridgeChatTask(createContext(), "new-user", {
+			kind: "chat",
+			prompt: "一条无额外上下文的用户消息",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "flow-1",
+			},
+		})).rejects.toMatchObject({ code: "agents_bridge_logical_task_state_invalid" });
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		const directNames = (requestBody.remoteTools as Array<Record<string, unknown>>)
+			.map((tool) => tool.name);
+		const catalogNames = (requestBody.remoteToolCatalog as Array<Record<string, unknown>>)
+			.map((tool) => tool.name);
+		expect(directNames).toContain("tapcanvas_equipped_workflow_run");
+		expect(directNames).toContain("tapcanvas_workflow_execution_inspect");
+		expect(catalogNames).not.toContain("tapcanvas_equipped_workflow_run");
+		expect(catalogNames).not.toContain("tapcanvas_workflow_execution_inspect");
+		expect(requestBody.equippedWorkflowCapabilities).toEqual([{
+			attachmentId: "system-greeting-attachment",
+			name: "简短问候固定回复",
+			summary: "仅处理用户不带其他任务的简短打招呼；执行后原样回复固定文本。",
+			invocation: { sourceMode: "none", requiredTriggerPayloadFields: [] },
+			primaryForCapabilities: [],
+		}]);
 	});
 
 	it("sends only prompt-specialist subagents and preserves their outputs in execution trace", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-1",
 					text: "以下为规划，尚未执行。提示词由专门子代理生成，视频节奏已审查。",
 					trace: {
@@ -378,25 +510,10 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			expect(requestBody.allowedSubagentTypes).toBeUndefined();
 			expect(String(requestBody.systemPrompt || "")).not.toContain("Prompt Specialist 结果约束");
 			expect(String(requestBody.systemPrompt || "")).not.toContain("Task(agent_type=image_prompt_specialist)");
-			expect(String(requestBody.prompt || "")).toContain("【角色参考一致性约束】");
-			expect(requestBody.diagnosticContext).toMatchObject({
-				promptPipeline: {
-					target: "visual_generation",
-					precheck: {
-						status: "completed",
-						reason: "bridge_context_collected",
-					},
-					promptGeneration: {
-						status: "pending",
-						reason: "awaiting_agents_execution",
-					},
-					precheckSnapshot: {
-						autoReferenceImageCount: 1,
-						directGenerationReady: true,
-						generationGateReason: "visual_anchors_present",
-					},
-				},
-			});
+			expect(String(requestBody.prompt || "")).toContain("【引用事实边界】");
+			expect(String(requestBody.prompt || "")).toContain("role=character");
+			expect(String(requestBody.prompt || "")).not.toContain("【角色参考一致性约束】");
+			expect(requestBody.diagnosticContext).not.toHaveProperty("promptPipeline");
 
 		expect(result.status).toBe("succeeded");
 		expect(result.raw).toMatchObject({
@@ -416,79 +533,15 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			readStoryboardContinuity: true,
 			generatedAssets: false,
 		});
-		expect(rawMeta.promptPipeline).toMatchObject({
-			target: "visual_generation",
-			precheck: {
-				status: "completed",
-				reason: "project_or_storyboard_evidence_read",
-			},
-			prerequisiteGeneration: {
-				status: "not_needed",
-				reason: "no_prerequisite_assets_required",
-			},
-			promptGeneration: {
-				status: "completed",
-				reason: "prompt_or_canvas_result_delivered",
-			},
-			precheckSnapshot: {
-				autoReferenceImageCount: 1,
-				directGenerationReady: true,
-				generationGateReason: "visual_anchors_present",
-			},
-		});
+		expect(rawMeta).not.toHaveProperty("promptPipeline");
 		expect(rawMeta.diagnosticFlags).toEqual([]);
 		expect(rawMeta.turnVerdict).toEqual({
 			status: "satisfied",
 			reasons: ["validated_result"],
 		});
-
-		expect(writeUserExecutionTrace).toHaveBeenCalledTimes(1);
-		const traceInput = writeUserExecutionTrace.mock.calls[0]?.[2] as ExecutionTraceInput;
-		expect(traceInput.requestKind).toBe("agents_bridge:chat");
-		expect(traceInput.toolCalls).toHaveLength(5);
-		expect(traceInput.decisionLog).toEqual(
-			expect.arrayContaining([
-				"promptPipelineTarget=visual_generation",
-				"promptPipelinePrecheck=completed:project_or_storyboard_evidence_read",
-				"promptPipelinePrerequisite=not_needed:no_prerequisite_assets_required",
-				"promptPipelineGeneration=completed:prompt_or_canvas_result_delivered",
-			]),
-		);
-		const specialistOutputs = traceInput.toolCalls
-			.map((toolCall) => {
-				const outputPreview = toolCall.outputPreview;
-				if (typeof outputPreview !== "string") return null;
-				try {
-					return JSON.parse(outputPreview) as Record<string, unknown>;
-				} catch {
-					return null;
-				}
-			})
-			.filter((item): item is Record<string, unknown> => item !== null && item.agentType !== undefined);
-
-		expect(specialistOutputs).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					agentType: "image_prompt_specialist",
-					imagePrompt: expect.stringContaining("山巅围杀静压起始帧"),
-				}),
-				expect.objectContaining({
-					agentType: "pacing_reviewer",
-					compressionRisk: "low",
-					splitRecommendation: "keep_single_clip",
-				}),
-			]),
-		);
-		expect(
-			traceInput.toolCalls.some((toolCall) => {
-				const preview = typeof toolCall.outputPreview === "string" ? toolCall.outputPreview : "";
-				const head = typeof toolCall.outputHead === "string" ? toolCall.outputHead : "";
-				return `${preview}\n${head}`.includes("video_prompt_specialist");
-			}),
-		).toBe(true);
 	});
 
-	it("resolves @assetRefId from current canvas flow assets before role-card fallback", async () => {
+	it("does not resolve prompt asset mentions in Hono", async () => {
 		getFlowForOwner.mockResolvedValue({
 			id: "flow-1",
 			project_id: "project-1",
@@ -516,7 +569,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-asset-mention",
 					text: "已根据绑定资产组织请求。",
 					trace: {
@@ -554,23 +607,13 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect(result.status).toBe("succeeded");
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
-		expect(requestBody.assetInputs).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					assetId: "asset-img-1",
-					assetRefId: "fangyuan_main",
-					role: "reference",
-					url: "https://example.com/fangyuan-main.png",
-					name: "方源主参考",
-				}),
-			]),
-		);
-		expect(requestBody.referenceImages).toEqual(
-			expect.arrayContaining(["https://example.com/fangyuan-main.png"]),
-		);
+		expect(requestBody.assetInputs).toBeUndefined();
+		expect(requestBody.referenceImages).toBeUndefined();
+		expect(String(requestBody.prompt || "")).toContain("@fangyuan_main");
+		expect(listAssetsForUser).not.toHaveBeenCalled();
 	});
 
-	it("resolves @角色名-状态 to the matching role card asset", async () => {
+	it("does not resolve role-state prompt mentions in Hono", async () => {
 		listAssetsForUser.mockImplementation(
 			async (_db: unknown, _userId: string, input?: { kind?: string }) => {
 				if (input?.kind === "generation") return [];
@@ -615,7 +658,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		);
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-role-state-mention",
 					text: "已根据角色卡状态锚点组织请求。",
 					trace: {
@@ -653,27 +696,10 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect(result.status).toBe("succeeded");
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
-		expect(requestBody.assetInputs).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					assetId: "asset-fangyuan-young",
-					assetRefId: "role-fangyuan_少年",
-					role: "character",
-					url: "https://example.com/fangyuan-young.png",
-					name: "方源",
-				}),
-			]),
-		);
-		expect(requestBody.referenceImages).toEqual(
-			expect.arrayContaining(["https://example.com/fangyuan-young.png"]),
-		);
-		expect(requestBody.assetInputs).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					url: "https://example.com/fangyuan-adult.png",
-				}),
-			]),
-		);
+		expect(requestBody.assetInputs).toBeUndefined();
+		expect(requestBody.referenceImages).toBeUndefined();
+		expect(String(requestBody.prompt || "")).toContain("@方源-少年");
+		expect(listAssetsForUser).not.toHaveBeenCalled();
 	});
 
 	it("does not fuzzy-match @角色名-状态 by substring when no exact normalized state key exists", async () => {
@@ -705,7 +731,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		);
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-role-state-no-fuzzy-match",
 					text: "已按显式状态键组织请求。",
 					trace: {
@@ -748,12 +774,13 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 				}),
 			]),
 		);
+		expect(listAssetsForUser).not.toHaveBeenCalled();
 	});
 
 	it("ignores specialist-only video prompt drafts when no final executable payload was returned", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-video-governance-missing",
 					text: "以下为规划，尚未执行。视频提示词已整理。",
 					trace: {
@@ -817,7 +844,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("accepts final text video prompt payloads when prompt exists", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-video-governance-missing-text",
 					text: JSON.stringify({
 						storyBeatPlan: [{ summary: "开场对峙" }],
@@ -874,7 +901,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("allows final prompt payloads even when prompt-specialist Task calls are bypassed", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-2",
 					text: JSON.stringify({
 						imagePrompt: "山巅对峙关键帧，保持角色一致。",
@@ -937,1823 +964,17 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect((result.raw as { meta: { diagnosticFlags: unknown[] } }).meta.diagnosticFlags).toEqual([]);
 	});
 
-	it("fails chapter-grounded image prompt turns when imagePromptSpecV2 is missing", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-image-spec-missing",
-					text: JSON.stringify({
-						imagePrompt: "山巅对峙关键帧，黄昏压迫感，中景低机位。",
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "山巅对峙关键帧，黄昏压迫感，中景低机位。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第二章关键帧的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "image_prompt_spec_v2_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "failed",
-			reasons: expect.arrayContaining(["image_prompt_spec_v2_missing"]),
-		});
-	});
-
-	it("accepts chapter-grounded image prompt turns when imagePromptSpecV2 is present", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-image-spec-present",
-					text: JSON.stringify({
-						imagePrompt: "画面目标：山巅对峙关键帧。\n空间布局：前景碎石，中景方源与群雄，背景黄昏山谷。",
-						imagePromptSpecV2: buildImagePromptSpecV2Payload(),
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "imagePromptSpecV2",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第二章关键帧的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: unknown[]; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual([]);
-	expect(rawMeta.turnVerdict).toEqual({
-		status: "satisfied",
-		reasons: ["validated_result"],
-	});
-	});
-
-	it("fails chapter-grounded image prompts when role age/state evidence exists but continuityConstraints is empty", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const specWithoutContinuity = buildImagePromptSpecV2Payload();
-		specWithoutContinuity.continuityConstraints = [];
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-image-spec-character-continuity-missing",
-					text: JSON.stringify({
-						imagePrompt: "山巅对峙关键帧",
-						imagePromptSpecV2: specWithoutContinuity,
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "imagePromptSpecV2",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-					chapters: [{ chapter: 2, characters: [{ name: "方源" }] }],
-					assets: {
-						roleCards: [
-							{
-								cardId: "role-fangyuan",
-								roleName: "方源",
-								roleId: "fangyuan",
-								imageUrl: "https://example.com/fangyuan-role-card.png",
-								threeViewImageUrl: "https://example.com/fangyuan-three-view.png",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								chapterSpan: [2],
-								ageDescription: "十五岁",
-								stateDescription: "重伤濒死，血袍破损。",
-								stateKey: "near_death",
-							},
-						],
-						storyboardChunks: [
-							{
-								chapter: 2,
-								updatedAt: "2026-03-30T02:05:00.000Z",
-								tailFrameUrl: "https://example.com/chapter2-tail-frame.png",
-							},
-						],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第二章关键帧的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "image_prompt_spec_v2_character_continuity_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "failed",
-			reasons: expect.arrayContaining(["image_prompt_spec_v2_character_continuity_missing"]),
-		});
-	});
-
-	it("fails chapter-grounded image prompts when structuredPrompt omits reference/identity/environment fields under anchor inputs", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const specMissingBindings = {
-			version: "v2",
-			shotIntent: "山巅对峙关键帧",
-			spatialLayout: ["前景碎石", "中景方源与群雄", "背景黄昏山谷"],
-			cameraPlan: ["中景低机位"],
-			lightingPlan: ["黄昏侧逆光"],
-			continuityConstraints: ["保持方源年龄与重伤状态连续"],
-			negativeConstraints: ["禁止切换到其他场景"],
-		};
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-image-spec-bindings-missing",
-					text: JSON.stringify({
-						imagePrompt: "山巅对峙关键帧",
-						imagePromptSpecV2: specMissingBindings,
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "imagePromptSpecV2",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-					chapters: [{ chapter: 2, characters: [{ name: "方源" }] }],
-					assets: {
-						roleCards: [
-							{
-								cardId: "role-fangyuan",
-								roleName: "方源",
-								roleId: "fangyuan",
-								imageUrl: "https://example.com/fangyuan-role-card.png",
-								threeViewImageUrl: "https://example.com/fangyuan-three-view.png",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								chapterSpan: [2],
-								ageDescription: "十五岁",
-								stateDescription: "重伤濒死，血袍破损。",
-								stateKey: "near_death",
-							},
-						],
-						storyboardChunks: [
-							{
-								chapter: 2,
-								updatedAt: "2026-03-30T02:05:00.000Z",
-								tailFrameUrl: "https://example.com/chapter2-tail-frame.png",
-							},
-						],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第二章关键帧的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "image_prompt_spec_v2_reference_bindings_missing",
-				}),
-				expect.objectContaining({
-					code: "image_prompt_spec_v2_identity_constraints_missing",
-				}),
-				expect.objectContaining({
-					code: "image_prompt_spec_v2_environment_objects_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "failed",
-			reasons: expect.arrayContaining([
-				"image_prompt_spec_v2_reference_bindings_missing",
-				"image_prompt_spec_v2_identity_constraints_missing",
-				"image_prompt_spec_v2_environment_objects_missing",
-			]),
-		});
-	});
-
-	it("fails chapter-grounded image prompts when chapter角色缺少年龄/状态锚点", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-role-state-missing",
-					text: JSON.stringify({
-						imagePrompt: "山巅对峙关键帧",
-						imagePromptSpecV2: buildImagePromptSpecV2Payload(),
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "imagePromptSpecV2",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-					chapters: [{ chapter: 2, characters: [{ name: "方源" }] }],
-					assets: {
-						roleCards: [
-							{
-								cardId: "role-fangyuan",
-								roleName: "方源",
-								roleId: "fangyuan",
-								imageUrl: "https://example.com/fangyuan-role-card.png",
-								threeViewImageUrl: "https://example.com/fangyuan-three-view.png",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								chapterSpan: [2],
-							},
-						],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第二章关键帧的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_character_state_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "failed",
-			reasons: expect.arrayContaining(["chapter_grounded_character_state_missing"]),
-		});
-	});
-
-	it("accepts chapter-grounded image prompts when previous semanticAssets carry the latest state and scene continuity", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-semantic-assets-continuity",
-					text: JSON.stringify({
-						imagePrompt: "第二章学堂回望关键帧",
-						imagePromptSpecV2: buildImagePromptSpecV2Payload(),
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "imagePromptSpecV2",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-					chapters: [
-						{
-							chapter: 2,
-							characters: [{ name: "方源" }],
-							scenes: [{ name: "学堂" }],
-						},
-					],
-					assets: {
-						roleCards: [
-							{
-								cardId: "role-fangyuan",
-								roleName: "方源",
-								roleId: "fangyuan",
-								imageUrl: "https://example.com/fangyuan-role-card.png",
-								threeViewImageUrl: "https://example.com/fangyuan-three-view.png",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-							},
-						],
-						semanticAssets: [
-							{
-								semanticId: "shot-1",
-								mediaKind: "image",
-								status: "generated",
-								imageUrl: "https://example.com/fangyuan-broken-arm-shot.png",
-								chapter: 1,
-								stateDescription: "方源右臂已断，袖口被鲜血浸透",
-								anchorBindings: [
-									{
-										kind: "character",
-										refId: "fangyuan",
-										label: "方源",
-										note: "state=方源右臂已断，袖口被鲜血浸透 | stateKey=broken_arm",
-									},
-									{
-										kind: "scene",
-										refId: "school",
-										label: "学堂",
-									},
-								],
-								confirmationMode: "auto",
-								confirmedAt: "2026-03-31T08:00:00.000Z",
-								updatedAt: "2026-03-31T08:00:00.000Z",
-							},
-						],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第二章学堂回望方源的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_character_state_missing",
-				}),
-				expect.objectContaining({
-					code: "chapter_grounded_scene_prop_reference_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "satisfied",
-			reasons: ["validated_result"],
-		});
-	});
-
-	it("does not fail chapter script persistence runs on missing visual anchors once the plan is written back", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-chapter-script-persistence",
-					text: "已完成第5章章节剧本与分镜计划写回。",
-					trace: {
-						toolCalls: [
-							{ name: "tapcanvas_books_list", status: "succeeded" },
-							{ name: "tapcanvas_book_index_get", status: "succeeded" },
-							{ name: "tapcanvas_book_chapter_get", status: "succeeded" },
-							{ name: "TodoWrite", status: "succeeded" },
-							{ name: "tapcanvas_book_storyboard_plan_upsert", status: "succeeded" },
-						],
-						summary: {
-							totalToolCalls: 5,
-							succeededToolCalls: 5,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 90,
-						},
-						output: {
-							head: "已完成第5章章节剧本与分镜计划写回。",
-							tail: "已完成第5章章节剧本与分镜计划写回。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 5,
-					chapters: [
-						{
-							chapter: 5,
-							characters: [{ name: "方源" }, { name: "学堂家老" }],
-							scenes: [{ name: "地下溶洞" }],
-							props: [{ name: "月兰花" }],
-						},
-					],
-					assets: {
-						roleCards: [],
-						visualRefs: [],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "只生成第5章的章节剧本与分镜计划。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "5",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					workspaceAction: "chapter_script_generation",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				diagnosticFlags: Array<{ code: string }>;
-				turnVerdict: { status: string; reasons: string[] };
-			};
-		}).meta;
-		expect(rawMeta.diagnosticFlags).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ code: "chapter_grounded_character_reference_missing" }),
-				expect.objectContaining({ code: "chapter_grounded_character_state_missing" }),
-				expect.objectContaining({ code: "chapter_grounded_character_three_view_missing" }),
-				expect.objectContaining({ code: "chapter_grounded_scene_prop_reference_missing" }),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "satisfied",
-			reasons: ["validated_result"],
-		});
-	});
-
-	it("fails chapter-grounded image prompts when repeated角色 only has generic role cards without three-view assets", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-role-three-view-missing",
-					text: JSON.stringify({
-						imagePrompt: "方源在学堂窗前醒来的关键帧",
-						imagePromptSpecV2: buildImagePromptSpecV2Payload(),
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "imagePromptSpecV2",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 3,
-					chapters: [
-						{
-							chapter: 3,
-							characters: [{ name: "方源" }],
-							scenes: [{ name: "古月寨学堂" }],
-							props: [{ name: "春秋蝉木盒" }],
-						},
-					],
-					assets: {
-						roleCards: [
-							{
-								cardId: "role-fangyuan",
-								roleName: "方源",
-								roleId: "fangyuan",
-								imageUrl: "https://example.com/fangyuan-role-card.png",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								chapterSpan: [3],
-								ageDescription: "十五岁",
-								stateDescription: "少年方源，黑发，神情冷静。",
-							},
-						],
-						visualRefs: [
-							{
-								refId: "scene_gu_yue_school",
-								category: "scene_prop",
-								name: "古月寨学堂",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								imageUrl: "https://example.com/gu-yue-school.png",
-								chapterSpan: [3],
-							},
-							{
-								refId: "prop_chun_qiu_chan_box",
-								category: "scene_prop",
-								name: "春秋蝉木盒",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								imageUrl: "https://example.com/chun-qiu-chan-box.png",
-								chapterSpan: [3],
-							},
-						],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第三章学堂场景的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "3",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_character_three_view_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "failed",
-			reasons: expect.arrayContaining(["chapter_grounded_character_three_view_missing"]),
-		});
-	});
-
-	it("fails chapter-grounded image prompts when chapter scenes or props have no visual reference assets", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-scene-prop-missing",
-					text: JSON.stringify({
-						imagePrompt: "方源在学堂窗前醒来的关键帧",
-						imagePromptSpecV2: buildImagePromptSpecV2Payload(),
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "imagePromptSpecV2",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 3,
-					chapters: [
-						{
-							chapter: 3,
-							characters: [{ name: "方源" }],
-							scenes: [{ name: "古月寨学堂" }],
-							props: [{ name: "春秋蝉木盒" }],
-						},
-					],
-					assets: {
-						roleCards: [
-							{
-								cardId: "role-fangyuan",
-								roleName: "方源",
-								roleId: "fangyuan",
-								imageUrl: "https://example.com/fangyuan-role-card.png",
-								threeViewImageUrl: "https://example.com/fangyuan-three-view.png",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								chapterSpan: [3],
-								ageDescription: "十五岁",
-								stateDescription: "少年方源，黑发，神情冷静。",
-							},
-						],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第三章学堂场景的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "3",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_scene_prop_reference_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "failed",
-			reasons: expect.arrayContaining(["chapter_grounded_scene_prop_reference_missing"]),
-		});
-	});
-
-	it("accepts chapter-grounded image prompts when three-view角色与场景道具参考都已齐备", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBooksRoot = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-		);
-		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-scene-prop-ready",
-					text: JSON.stringify({
-						imagePrompt: "第三章学堂场景最终图像提示词",
-						imagePromptSpecV2: buildImagePromptSpecV2Payload(),
-					}),
-					trace: {
-						toolCalls: [],
-						summary: {
-							totalToolCalls: 0,
-							succeededToolCalls: 0,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "imagePrompt",
-							tail: "imagePromptSpecV2",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as unknown as Awaited<
-					ReturnType<typeof fs.readdir>
-				>;
-			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
-		});
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 3,
-					chapters: [
-						{
-							chapter: 3,
-							characters: [{ name: "方源" }],
-							scenes: [{ name: "古月寨学堂" }],
-							props: [{ name: "春秋蝉木盒" }],
-						},
-					],
-					assets: {
-						roleCards: [
-							{
-								cardId: "role-fangyuan",
-								roleName: "方源",
-								roleId: "fangyuan",
-								imageUrl: "https://example.com/fangyuan-role-card.png",
-								threeViewImageUrl: "https://example.com/fangyuan-three-view.png",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								chapterSpan: [3],
-								ageDescription: "十五岁",
-								stateDescription: "少年方源，黑发，神情冷静。",
-							},
-						],
-						visualRefs: [
-							{
-								refId: "scene_gu_yue_school",
-								category: "scene_prop",
-								name: "古月寨学堂",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								imageUrl: "https://example.com/gu-yue-school.png",
-								chapterSpan: [3],
-							},
-							{
-								refId: "prop_chun_qiu_chan_box",
-								category: "scene_prop",
-								name: "春秋蝉木盒",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								imageUrl: "https://example.com/chun-qiu-chan-box.png",
-								chapterSpan: [3],
-							},
-						],
-						storyboardChunks: [
-							{
-								chapter: 3,
-								updatedAt: "2026-03-30T02:05:00.000Z",
-								tailFrameUrl: "https://example.com/chapter3-tail-frame.png",
-							},
-						],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "给我第三章学堂场景的最终图片提示词。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "3",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_character_three_view_missing",
-				}),
-				expect.objectContaining({
-					code: "chapter_grounded_scene_prop_reference_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "satisfied",
-			reasons: ["validated_result"],
-		});
-	});
-
-	it("accepts chapter-grounded flow_patch final state when structuredPrompt is supplied by a later patch", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBookDir = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-			"book-1",
-		);
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-final-state-repaired",
-					text: "已在同轮修正第三章单张权威基底帧的结构化提示词。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									createNodes: [
-										{
-											id: "chapter3-baseframe-01",
-											type: "taskNode",
-											position: { x: 0, y: 0 },
-											data: {
-												kind: "image",
-												label: "第三章-权威基底帧",
-												prompt: "第三章权威基底帧",
-												productionMetadata: buildChapterGroundedProductionMetadata("planned"),
-											},
-										},
-									],
-								},
-							},
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									patchNodeData: [
-										{
-											id: "chapter3-baseframe-01",
-											data: {
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-											},
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 2,
-							succeededToolCalls: 2,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 42,
-						},
-						output: {
-							head: "已在同轮修正第三章单张权威基底帧的结构化提示词。",
-							tail: "已在同轮修正第三章单张权威基底帧的结构化提示词。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 3,
-					assets: {},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "继续完成第三章的横屏短剧资产及分镜静态帧。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "3",
-				referenceImages: ["https://cdn.tapcanvas.test/c3-anchor.png"],
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "image_prompt_spec_v2_missing",
-				}),
-				expect.objectContaining({
-					code: "image_prompt_spec_v2_invalid",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "satisfied",
-			reasons: ["validated_result"],
-		});
-	});
-
-	it("fails chapter-grounded visual batches without stable visual anchors when the turn writes multiple static frames", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBookDir = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-			"book-1",
-		);
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-missing-visual-anchors",
-					text: "已写入第二章三张静态帧节点。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									createNodes: [
-										{
-											id: "chapter2-baseframe-01",
-											type: "taskNode",
-											position: { x: 0, y: 0 },
-											data: {
-												kind: "image",
-												label: "第二章-静态帧1",
-												prompt: "第一张静态帧",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionMetadata: buildChapterGroundedProductionMetadata("confirmed"),
-											},
-										},
-										{
-											id: "chapter2-baseframe-02",
-											type: "taskNode",
-											position: { x: 240, y: 0 },
-											data: {
-												kind: "image",
-												label: "第二章-静态帧2",
-												prompt: "第二张静态帧",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionMetadata: buildChapterGroundedProductionMetadata("confirmed"),
-											},
-										},
-										{
-											id: "chapter2-baseframe-03",
-											type: "taskNode",
-											position: { x: 480, y: 0 },
-											data: {
-												kind: "image",
-												label: "第二章-静态帧3",
-												prompt: "第三张静态帧",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionMetadata: buildChapterGroundedProductionMetadata("confirmed"),
-											},
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 45,
-						},
-						output: {
-							head: "已写入第二章三张静态帧节点。",
-							tail: "已写入第二章三张静态帧节点。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-					assets: {},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "继续生成第二章静态帧图片。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_visual_anchor_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "failed",
-			reasons: expect.arrayContaining(["chapter_grounded_visual_anchor_missing"]),
-		});
-	});
-
-	it("allows a single planned authority base frame when chapter-grounded visual anchors are still missing", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBookDir = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-			"book-1",
-		);
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-planned-baseframe-only",
-					text: "已先写入单张权威基底帧占位节点。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									createNodes: [
-										{
-											id: "chapter2-authority-baseframe",
-											type: "taskNode",
-											position: { x: 0, y: 0 },
-											data: {
-												kind: "image",
-												label: "第二章-权威基底帧",
-												prompt: "单张权威基底帧",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionMetadata: buildChapterGroundedProductionMetadata("planned"),
-											},
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 35,
-						},
-						output: {
-							head: "已先写入单张权威基底帧占位节点。",
-							tail: "已先写入单张权威基底帧占位节点。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-					assets: {},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "先给我建立第二章单张权威基底帧。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_visual_anchor_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "satisfied",
-			reasons: ["validated_result"],
-		});
-	});
-
-	it("accepts chapter-grounded visual batches once role cards or continuity tail frames supply visual anchors", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBookDir = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-			"book-1",
-		);
-		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-visual-anchors-injected",
-					text: "已在角色卡和尾帧锚点基础上写入第二章静态帧节点。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									createNodes: [
-										{
-											id: "chapter2-baseframe-01",
-											type: "taskNode",
-											position: { x: 0, y: 0 },
-											data: {
-												kind: "image",
-												label: "第二章-静态帧1",
-												prompt: "第一张静态帧",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionMetadata: buildChapterGroundedProductionMetadata("confirmed"),
-											},
-										},
-										{
-											id: "chapter2-baseframe-02",
-											type: "taskNode",
-											position: { x: 240, y: 0 },
-											data: {
-												kind: "image",
-												label: "第二章-静态帧2",
-												prompt: "第二张静态帧",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionMetadata: buildChapterGroundedProductionMetadata("confirmed"),
-											},
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 40,
-						},
-						output: {
-							head: "已在角色卡和尾帧锚点基础上写入第二章静态帧节点。",
-							tail: "已在角色卡和尾帧锚点基础上写入第二章静态帧节点。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 2,
-					chapters: [
-						{
-							chapter: 2,
-							characters: [{ name: "方源" }],
-						},
-					],
-					assets: {
-						roleCards: [
-							{
-								cardId: "role-fangyuan",
-								roleName: "方源",
-								roleId: "fangyuan",
-								imageUrl: "https://example.com/fangyuan-role-card.png",
-								threeViewImageUrl: "https://example.com/fangyuan-three-view.png",
-								status: "generated",
-								confirmedAt: "2026-03-30T02:00:00.000Z",
-								updatedAt: "2026-03-30T02:00:00.000Z",
-								chapterSpan: [2],
-								ageDescription: "十五岁",
-								stateDescription: "十五岁，黑发，神情冷静。",
-							},
-						],
-						storyboardChunks: [
-							{
-								chapter: 2,
-								updatedAt: "2026-03-30T02:05:00.000Z",
-								tailFrameUrl: "https://example.com/chapter2-tail-frame.png",
-							},
-						],
-					},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "继续生成第二章静态帧图片。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				bookId: "book-1",
-				chapterId: "2",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
-		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
-		expect(requestBody.referenceImages).toEqual(
-			expect.arrayContaining([
-				"https://example.com/fangyuan-three-view.png",
-				"https://example.com/chapter2-tail-frame.png",
-			]),
-		);
-		expect(requestBody.assetInputs).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					role: "character",
-					url: "https://example.com/fangyuan-three-view.png",
-				}),
-				expect.objectContaining({
-					role: "context",
-					url: "https://example.com/chapter2-tail-frame.png",
-				}),
-			]),
-		);
-		expect(String(requestBody.prompt || "")).toContain("【角色年龄与状态连续性约束】");
-		expect(String(requestBody.prompt || "")).toContain("age=十五岁");
-		expect(String(requestBody.prompt || "")).toContain("state=十五岁，黑发，神情冷静。");
-		const rawMeta = (result.raw as {
-			meta: { diagnosticFlags: Array<{ code: string }>; turnVerdict: { status: string; reasons: string[] } };
-		}).meta;
-		expect(rawMeta.diagnosticFlags).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_visual_anchor_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "satisfied",
-			reasons: ["validated_result"],
-		});
-	});
-
 	it("marks the turn as failed when canvas plan payload is structurally invalid", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-invalid-plan",
 					text: [
 						"以下为规划，尚未执行。",
 						'<tapcanvas_canvas_plan>{"action":"create_canvas_workflow","summary":"broken","reason":"broken","nodes":[],"edges":[]}</tapcanvas_canvas_plan>',
 					].join("\n\n"),
 					trace: {
+						...buildCanonicalAgentsBridgeFailure("invalid_canvas_plan"),
 						toolCalls: [],
 						summary: {
 							totalToolCalls: 0,
@@ -2788,20 +1009,21 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		});
 
-		expect(result.status).toBe("succeeded");
+		expect(result.status).toBe("failed");
 		expect((result.raw as { meta: { turnVerdict: { status: string; reasons: string[] } } }).meta.turnVerdict).toEqual({
 			status: "failed",
 			reasons: ["invalid_canvas_plan"],
 		});
 	});
 
-	it("marks the turn as partial when tool execution had failures but a usable result still exists", async () => {
+	it("keeps failed tool execution evidence when agents-cli returns a canonical failure", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-partial",
 					text: "下面是基于已读取信息整理的镜头建议。",
 					trace: {
+						...buildCanonicalAgentsBridgeFailure("tool_execution_issues"),
 						toolCalls: [
 							{ name: "tapcanvas_project_flows_list", status: "succeeded" },
 							{ name: "tapcanvas_book_chapter_get", status: "failed", outputPreview: "chapter read failed" },
@@ -2838,17 +1060,17 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		});
 
-		expect(result.status).toBe("succeeded");
+		expect(result.status).toBe("failed");
 		expect((result.raw as { meta: { turnVerdict: { status: string; reasons: string[] } } }).meta.turnVerdict).toEqual({
-			status: "partial",
-			reasons: ["tool_execution_issues", "diagnostic_flags_present"],
+			status: "failed",
+			reasons: ["tool_execution_issues"],
 		});
 	});
 
 	it("does not downgrade coordination-only blocked tool calls to execution issues", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-coordination-blocked-only",
 					text: "已完成第一章关键帧并写入当前 flow。",
 					trace: {
@@ -2909,10 +1131,11 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("keeps non-coordination blocked tool calls as execution issues", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-real-blocked",
 					text: "图片生成被阻塞，我先返回已确认的分析结果。",
 					trace: {
+						...buildCanonicalAgentsBridgeFailure("tool_execution_issues"),
 						toolCalls: [
 							{ name: "tapcanvas_project_context_get", status: "succeeded" },
 							{
@@ -2950,20 +1173,21 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		});
 
-		expect(result.status).toBe("succeeded");
+		expect(result.status).toBe("failed");
 		expect((result.raw as { meta: { turnVerdict: { status: string; reasons: string[] } } }).meta.turnVerdict).toEqual({
-			status: "partial",
-			reasons: ["tool_execution_issues", "diagnostic_flags_present"],
+			status: "failed",
+			reasons: ["tool_execution_issues"],
 		});
 	});
 
 	it("prefers runtime completion explicit failure over text-only satisfied heuristics", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-runtime-explicit-failure",
 					text: "子代理超时未终态，本轮显式失败。",
 					trace: {
+						...buildCanonicalAgentsBridgeFailure("runtime_completion_explicit_failure"),
 						toolCalls: [
 							{ name: "spawn_agent", status: "succeeded" },
 							{ name: "agents_team_runtime_wait", status: "failed" },
@@ -2975,16 +1199,6 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 							deniedToolCalls: 0,
 							blockedToolCalls: 0,
 							runMs: 44,
-						},
-						completion: {
-							source: "deterministic",
-							terminal: "explicit_failure",
-							allowFinish: true,
-							failureReason: null,
-							rationale: "runtime 已确认显式失败可直接收口。",
-							successCriteria: ["显式报告失败"],
-							missingCriteria: [],
-							requiredActions: [],
 						},
 						output: {
 							head: "子代理超时未终态，本轮显式失败。",
@@ -3007,7 +1221,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		});
 
-		expect(result.status).toBe("succeeded");
+		expect(result.status).toBe("failed");
 		const turnVerdict = (result.raw as { meta: { turnVerdict: { status: string; reasons: string[] } } }).meta.turnVerdict;
 		expect(turnVerdict.status).toBe("failed");
 		expect(turnVerdict.reasons).toEqual(expect.arrayContaining(["runtime_completion_explicit_failure"]));
@@ -3016,7 +1230,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("propagates structured todoList trace into bridge meta", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-todo-trace",
 					text: "我会按清单继续推进。",
 					trace: {
@@ -3109,13 +1323,14 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		]);
 	});
 
-	it("downgrades execution-intent turn to partial when todo checklist is incomplete", async () => {
+	it("preserves an explicit agents-cli failure when its todo checklist is incomplete", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-todo-incomplete",
 					text: "已完成本轮结构搭建。",
 					trace: {
+						...buildCanonicalAgentsBridgeFailure("todo_checklist_incomplete"),
 						toolCalls: [
 							{
 								name: "task_interrogation",
@@ -3126,6 +1341,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 									taskKind: "chapter_storyboard",
 									recommendedNextStage: "execute_storyboard_delivery",
 									mustStop: false,
+									requiresExecutionDelivery: true,
 									blockingGaps: [],
 									successCriteria: ["分镜图与资产绑定完成"],
 								},
@@ -3174,232 +1390,24 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		});
 
-		expect(result.status).toBe("succeeded");
+		expect(result.status).toBe("failed");
 		const rawMeta = (result.raw as {
 			meta: {
 				diagnosticFlags: Array<{ code: string }>;
 				turnVerdict: { status: string; reasons: string[] };
 			};
 		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ code: "todo_checklist_incomplete" }),
-			]),
-		);
-		expect(rawMeta.turnVerdict.status).toBe("partial");
-		expect(rawMeta.turnVerdict.reasons).toEqual(
-			expect.arrayContaining(["todo_checklist_incomplete", "diagnostic_flags_present"]),
-		);
-	});
-
-	it("fails unmet forceAssetGeneration when the turn only returned text", async () => {
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-force-asset-partial",
-					text: "第二个关键帧建议先把人物关系和动作起势钉住，再决定是否进入冲突。",
-					trace: {
-						toolCalls: [
-							{ name: "tapcanvas_project_context_get", status: "succeeded" },
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 42,
-						},
-						output: {
-							head: "第二个关键帧建议先把人物关系和动作起势钉住",
-							tail: "再决定是否进入冲突。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "第二个关键帧打算做什么样的",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				forceAssetGeneration: true,
-				chatContext: {
-					currentProjectName: "蛊真人",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const turnVerdict = (result.raw as { meta: { turnVerdict: { status: string; reasons: string[] } } }).meta.turnVerdict;
-		expect(turnVerdict.status).toBe("failed");
-		expect(turnVerdict.reasons).toEqual(
-			expect.arrayContaining(["force_asset_generation_unmet"]),
-		);
-	});
-
-	it("treats forceAssetGeneration as deferred when an empty project returns an executable canvas plan", async () => {
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-empty-project-plan",
-					text: [
-						"先在空项目里落一套可执行角色图工作流。",
-						`<tapcanvas_canvas_plan>${JSON.stringify({
-							action: "create_canvas_workflow",
-							summary: "为李长安角色三视图创建首批图片节点",
-							reason: "当前项目还没有服务器 flow，先把可执行节点落到本地画布，后续由前端首存并自动执行。",
-							nodes: [
-								{
-									clientId: "n1",
-									kind: "image",
-									label: "李长安角色三视图",
-									position: { x: 0, y: 0 },
-									config: {
-										prompt:
-											"3D CG国漫风，李长安年轻道士角色三视图设定，正面/侧面/背面统一头身比、道袍结构与腰间法器，角色设定图。",
-									},
-								},
-							],
-							edges: [],
-						})}</tapcanvas_canvas_plan>`,
-					].join("\n\n"),
-					trace: {
-						toolCalls: [
-							{ name: "tapcanvas_books_list", status: "succeeded" },
-							{ name: "tapcanvas_book_chapter_get", status: "succeeded" },
-							{ name: "tapcanvas_project_flows_list", status: "succeeded" },
-						],
-						summary: {
-							totalToolCalls: 3,
-							succeededToolCalls: 3,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 90,
-						},
-						output: {
-							head: "先在空项目里落一套可执行角色图工作流。",
-							tail: "后续由前端首存并自动执行。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "完成李长安的角色三视图设计并出图",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: null,
-				forceAssetGeneration: true,
-				chatContext: {
-					currentProjectName: "地煞七十二变",
-					creationMode: "scene",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		expect((result.raw as { meta: { turnVerdict: { status: string; reasons: string[] } } }).meta.turnVerdict).toEqual({
-			status: "partial",
-			reasons: ["force_asset_generation_deferred_to_canvas_plan"],
-		});
-	});
-
-	it("fails semantic execution tasks that stop at task-interrogation JSON without canvas write, plan, or assets", async () => {
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-semantic-execution-unmet",
-					text: JSON.stringify({
-						taskGoal: "重新完成第4章漫剧创作，按最佳实践先做预生产必要图片，再生成分镜图片。",
-						requestedOutput: "第4章预生产图片节点与分镜图片节点",
-						taskKind: "chapter_grounded_storyboard_regeneration_with_preproduction",
-						successCriteria: [
-							"先建立可执行的预生产锚点，再创建第4章分镜图片节点",
-							"节点元数据完整，包含 production metadata",
-						],
-						blockingGaps: [],
-						softGaps: ["缺少沈翠正式角色卡，只能先做本章临时预生产锚点"],
-						mustStop: false,
-						recommendedNextStage:
-							"先创建第4章预生产节点（方源清晨状态锚点、沈翠角色锚点、吊脚楼清晨场景锚点），再创建第4章 storyboard/image 分镜节点。",
-					}),
-					trace: {
-						toolCalls: [
-							{ name: "tapcanvas_book_chapter_get", status: "succeeded" },
-							{ name: "tapcanvas_storyboard_source_bundle_get", status: "succeeded" },
-						],
-						summary: {
-							totalToolCalls: 2,
-							succeededToolCalls: 2,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 80,
-						},
-						output: {
-							head: "taskGoal",
-							tail: "recommendedNextStage",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "重新完成第四章的漫剧创作，按照最佳实践，先预生产必要图片，然后生成分镜图片",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					currentBookId: "book-1",
-					currentChapterId: "4",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				semanticExecutionIntent: {
-					detected: boolean;
-					taskKind: string | null;
-					requiresExecutionDelivery: boolean;
-				};
-				turnVerdict: { status: string; reasons: string[] };
-			};
-		}).meta;
-		expect(rawMeta.semanticExecutionIntent).toMatchObject({
-			detected: true,
-			taskKind: "chapter_grounded_storyboard_regeneration_with_preproduction",
-			requiresExecutionDelivery: true,
-		});
+		expect(rawMeta.diagnosticFlags).toEqual([]);
 		expect(rawMeta.turnVerdict).toEqual({
 			status: "failed",
-			reasons: ["semantic_execution_delivery_unmet"],
+			reasons: ["todo_checklist_incomplete"],
 		});
 	});
 
 	it("allows outputs when Task calls use writer instead of the specialist agent_type", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-3",
 					text: [
 						"imagePrompt:",
@@ -3482,7 +1490,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("allows final prompt payloads when specialist Task calls returned validation errors", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-4",
 					text: JSON.stringify({
 						imagePrompt: "山巅对峙关键帧，保持角色一致。",
@@ -3565,7 +1573,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("allows canvas plans when video specialists returned validation errors", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-5",
 					text: [
 						"以下为规划，尚未执行。",
@@ -3647,7 +1655,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	});
 
 	it("resolves a project book title to the real bookId before dispatching to agents bridge", async () => {
-		const accessSpy = vi.spyOn(fs, "access").mockImplementation(async (inputPath) => {
+		vi.spyOn(fs, "access").mockImplementation(async (inputPath) => {
 			const pathText = String(inputPath || "");
 			if (pathText.includes("/books/__________sosdbot-1773463170328/index.json")) return undefined;
 			throw new Error("not found");
@@ -3662,15 +1670,17 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			const pathText = String(inputPath || "");
 			if (pathText.includes("/books/__________sosdbot-1773463170328/index.json")) {
 				return JSON.stringify({
+					projectId: "project-1",
+					bookId: "__________sosdbot-1773463170328",
 					title: "蛊真人",
 					chapters: [{ chapter: 2 }],
 				});
 			}
-			throw new Error(`unexpected path: ${pathText}`);
+			throw createFileNotFoundError(pathText);
 		});
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-book-resolve",
 					text: "以下为规划，尚未执行。",
 					trace: {
@@ -3707,7 +1717,6 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		});
 
-		expect(accessSpy).toHaveBeenCalled();
 		expect(readdirSpy).toHaveBeenCalled();
 		expect(readFileSpy).toHaveBeenCalled();
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
@@ -3716,9 +1725,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			bookId: "__________sosdbot-1773463170328",
 			chapterId: "2",
 		});
-		expect(String(requestBody.systemPrompt || "")).toContain(
-			"selectedReference.bookId: __________sosdbot-1773463170328",
-		);
+		expect(String(requestBody.systemPrompt || "")).toContain("<tapcanvas_context>");
 	});
 
 	it("auto-detects the sole project book for single_video novel mode when the user did not specify book progress", async () => {
@@ -3745,7 +1752,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-single-video-auto-book",
 					text: "以下为规划，尚未执行。",
 					trace: {
@@ -3798,7 +1805,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("treats selected reference image as a valid visual anchor for generation gate", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-selected-anchor",
 					text: "以下为规划，尚未执行。",
 					trace: {
@@ -3846,13 +1853,13 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(requestBody.allowedTools).toBeUndefined();
-		expect(requestBody.privilegedLocalAccess).toBe(true);
+		expect(requestBody.privilegedLocalAccess).toBeUndefined();
 	});
 
 	it("keeps generation tools available even when visual anchors are not present yet", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-no-visual-anchor-yet",
 					text: "以下为规划，尚未执行。",
 					trace: {
@@ -3890,13 +1897,13 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(requestBody.allowedTools).toBeUndefined();
-		expect(requestBody.privilegedLocalAccess).toBe(true);
+		expect(requestBody.privilegedLocalAccess).toBeUndefined();
 	});
 
 	it("keeps canvas write and generation tools available for planOnly bridge chats", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-plan-only-tools",
 					text: "以下为规划，尚未执行。",
 					trace: {
@@ -3931,14 +1938,14 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(requestBody.allowedTools).toBeUndefined();
-		expect(requestBody.privilegedLocalAccess).toBe(true);
+		expect(requestBody.privilegedLocalAccess).toBeUndefined();
 		expect(String(requestBody.systemPrompt || "")).not.toContain("data.productionMetadata");
 	});
 
 	it("keeps tools available when agents chat forwards requiredSkills", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-required-skills-tools",
 					text: "已收到 skill 要求。",
 					trace: {
@@ -3974,7 +1981,141 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(requestBody.requiredSkills).toEqual(["tapcanvas-storyboard-expert"]);
 		expect(requestBody.allowedTools).toBeUndefined();
-		expect(requestBody.maxTurns).toBe(36);
+		expect(requestBody.maxTurns).toBeUndefined();
+	});
+
+	it("keeps story-preview semantics in agents-cli while exposing the real image tools", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+			return new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-implicit-story-preview",
+					text: "预览图已受理。",
+					trace: {
+						toolCalls: [],
+						summary: {
+							totalToolCalls: 0,
+							succeededToolCalls: 0,
+							failedToolCalls: 0,
+							deniedToolCalls: 0,
+							blockedToolCalls: 0,
+							runMs: 10,
+						},
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "让我预览一下完整剧情",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "chapter-1",
+				chapterId: "chapter-1",
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.requiredSkills).toBeUndefined();
+		expect(String(requestBody.systemPrompt || "")).not.toContain("chapter_story_preview_delivery");
+		const remoteToolCatalog = (requestBody.remoteToolCatalog || []) as Array<Record<string, unknown>>;
+		const previewTool = remoteToolCatalog.find(
+			(tool) => tool.name === "tapcanvas_story_preview_orchestrate",
+		);
+		expect(previewTool).toBeDefined();
+		expect(remoteToolCatalog.map((tool) => tool.name)).toContain(
+			"tapcanvas_image_generate_to_canvas",
+		);
+		expect(previewTool?.schemaDeferred).toBe(true);
+	});
+
+	it("allows an explicitly required replaced storyboard skill to run", async () => {
+		listDisabledSkillKeys.mockResolvedValue(["tapcanvas-storyboard-expert", "explicitly-disabled-skill"]);
+		listReplacedSkillKeys.mockResolvedValue(["tapcanvas-storyboard-expert"]);
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+			return new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-replaced-story-preview",
+					text: "预览图已受理。",
+					trace: {
+						toolCalls: [],
+						summary: {
+							totalToolCalls: 0,
+							succeededToolCalls: 0,
+							failedToolCalls: 0,
+							deniedToolCalls: 0,
+							blockedToolCalls: 0,
+							runMs: 10,
+						},
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "让我预览一下完整剧情",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "chapter-1",
+				chapterId: "chapter-1",
+				requiredSkills: ["tapcanvas-storyboard-expert"],
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.requiredSkills).toEqual(["tapcanvas-storyboard-expert"]);
+		expect(requestBody.disabledSkills).toEqual(["explicitly-disabled-skill"]);
+	});
+
+	it("mounts a frozen Workflow dependency for direct execution without mutating other disabled skills", async () => {
+		listDisabledSkillKeys.mockResolvedValue(["tapcanvas-dramatic-adapter", "explicitly-disabled-skill"]);
+		listReplacedSkillKeys.mockResolvedValue([]);
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+			return new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-direct-workflow-dependency",
+					text: '{"beats":[]}',
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "执行冻结的章级改编节点。",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "chapter-1",
+				forcedAgentRole: "writer",
+				requiredSkills: ["tapcanvas-dramatic-adapter"],
+			},
+		}, {
+			directForcedAgentExecution: true,
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.requiredSkills).toEqual(["tapcanvas-dramatic-adapter"]);
+		expect(requestBody.disabledSkills).toEqual(["explicitly-disabled-skill"]);
+		expect(requestBody.executeForcedAgentDirectly).toBe(true);
 	});
 
 	it("keeps chapter-grounded scope facts without auto-injecting storyboard team constraints", async () => {
@@ -3993,6 +2134,8 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			const pathText = String(inputPath || "");
 			if (pathText.includes("/books/book-1/index.json")) {
 				return JSON.stringify({
+					projectId: "project-1",
+					bookId: "book-1",
 					title: "七十二变",
 					chapters: [{ chapter: 3 }],
 				});
@@ -4000,11 +2143,11 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			if (pathText.includes("/skills/tapcanvas-demo-patterns/SKILL.md")) {
 				return nodeFs.readFileSync(pathText, "utf8");
 			}
-			throw new Error(`unexpected path: ${pathText}`);
+			throw createFileNotFoundError(pathText);
 		});
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-chapter-grounded-team",
 					text: "已收到章节分镜团队约束。",
 					trace: {
@@ -4051,25 +2194,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect(String(requestBody.systemPrompt || "")).not.toContain("【章节分镜生产硬约束】");
 		const diagnosticContext = requestBody.diagnosticContext as Record<string, unknown>;
 		expect(diagnosticContext.chapterGroundedStoryboardScope).toBe(true);
-		expect(diagnosticContext.promptPipeline).toMatchObject({
-			target: "general_chat",
-			precheck: {
-				status: "not_needed",
-				reason: "general_chat_without_project_precheck",
-			},
-			prerequisiteGeneration: {
-				status: "not_needed",
-				reason: "no_prerequisite_assets_required",
-			},
-			promptGeneration: {
-				status: "not_needed",
-				reason: "general_chat_without_visual_prompt_pipeline",
-			},
-			precheckSnapshot: {
-				directGenerationReady: false,
-				generationGateReason: "missing_visual_anchors_for_book_context",
-			},
-		});
+		expect(diagnosticContext.promptPipeline).toBeUndefined();
 	});
 
 	it("keeps single_video text-evidence turns free of implicit storyboard team constraints", async () => {
@@ -4088,6 +2213,8 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			const pathText = String(inputPath || "");
 			if (pathText.includes("/books/book-1/index.json")) {
 				return JSON.stringify({
+					projectId: "project-1",
+					bookId: "book-1",
 					title: "七十二变",
 					chapters: [{ chapter: 3 }],
 				});
@@ -4095,11 +2222,11 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			if (pathText.includes("/skills/tapcanvas-demo-patterns/SKILL.md")) {
 				return nodeFs.readFileSync(pathText, "utf8");
 			}
-			throw new Error(`unexpected path: ${pathText}`);
+			throw createFileNotFoundError(pathText);
 		});
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-chapter-grounded-single-video-team",
 					text: "已收到 single_video 的章节分镜团队约束。",
 					trace: {
@@ -4174,7 +2301,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-chapter-grounded-selected-node",
 					text: "已收到章节分镜团队约束。",
 					trace: {
@@ -4231,10 +2358,10 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect(diagnosticContext.chapterId).toBeUndefined();
 	});
 
-	it("injects auto mode team skill and success criteria into the forwarded bridge request", async () => {
+	it("forwards auto mode skill requirements without widening the public tool surface", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-auto-mode",
 					text: "已收到 AUTO 模式约束。",
 					trace: {
@@ -4264,7 +2391,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 				canvasFlowId: "flow-1",
 				mode: "auto",
 				forceAssetGeneration: true,
-					requiredSkills: ["tapcanvas-storyboard-expert"],
+				requiredSkills: ["tapcanvas-storyboard-expert"],
 			},
 		});
 
@@ -4272,32 +2399,19 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(requestBody.requiredSkills).toEqual(["tapcanvas-storyboard-expert"]);
 		expect(requestBody.requireAgentsTeamExecution).toBeUndefined();
-		expect(requestBody.maxTurns).toBe(36);
+		expect(requestBody.allowedTools).toBeUndefined();
+		expect(requestBody.maxTurns).toBeUndefined();
 		expect(String(requestBody.systemPrompt || "")).not.toContain("【结果透明要求】");
-		expect(String(requestBody.systemPrompt || "")).toContain("本轮请求显式要求真实资产交付。");
+		expect(String(requestBody.systemPrompt || "")).not.toContain("本轮请求显式要求真实资产交付。");
 		expect(String(requestBody.prompt || "")).not.toContain("【AUTO 模式成功标准】");
 		const diagnosticContext = requestBody.diagnosticContext as Record<string, unknown>;
-		expect(diagnosticContext.promptPipeline).toMatchObject({
-			target: "general_chat",
-			precheck: {
-				status: "not_needed",
-				reason: "general_chat_without_project_precheck",
-			},
-			prerequisiteGeneration: {
-				status: "not_needed",
-				reason: "no_prerequisite_assets_required",
-			},
-			promptGeneration: {
-				status: "not_needed",
-				reason: "general_chat_without_visual_prompt_pipeline",
-			},
-		});
+		expect(diagnosticContext.promptPipeline).toBeUndefined();
 	});
 
 	it("does not fail non-chapter-grounded auto mode solely because no real agents-team execution evidence was recorded", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-auto-without-team-evidence",
 					text: "已完成第一章三个关键帧并落到画布。",
 					trace: {
@@ -4352,7 +2466,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("does not add team-execution diagnostics for non-chapter-grounded auto mode under general profile", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-auto-general-profile",
 					text: "我已完成。",
 					trace: {
@@ -4397,36 +2511,24 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 
 		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				diagnosticFlags: Array<{ code: string }>;
-			};
-		}).meta;
+		const rawMeta = (result.raw as { meta: Record<string, unknown> }).meta;
 		expect(rawMeta.diagnosticFlags).not.toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ code: "auto_mode_agents_team_execution_missing" }),
 				expect.objectContaining({ code: "agents_runtime_general_profile" }),
 			]),
 		);
-		expect(writeUserExecutionTrace).toHaveBeenCalledTimes(1);
-		const traceInput = writeUserExecutionTrace.mock.calls[0]?.[2] as ExecutionTraceInput;
-		expect((traceInput.meta?.requestContext as Record<string, unknown> | undefined)).toMatchObject({
-			runtimeProfile: "general",
-			runtimeRegisteredTeamToolNames: [],
-			runtimeRequireAgentsTeamExecution: false,
-		});
-		expect((traceInput.meta?.responseTrace as Record<string, unknown> | undefined)).toMatchObject({
-			runtime: expect.objectContaining({
-				profile: "general",
-				registeredTeamToolNames: [],
-			}),
+		expect(rawMeta.runtime).toMatchObject({
+			profile: "general",
+			registeredTeamToolNames: [],
+			requireAgentsTeamExecution: false,
 		});
 	});
 
-	it("surfaces runtime context truncation and policy gating as bridge diagnostics", async () => {
+	it("preserves runtime context truncation and policy facts without a Hono diagnostic pass", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-runtime-policy-context",
 					text: "需要进一步授权后才能继续。",
 					trace: {
@@ -4501,25 +2603,15 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 
 		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				diagnosticFlags: Array<{ code: string }>;
-			};
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ code: "agents_runtime_context_truncated" }),
-				expect.objectContaining({ code: "agents_runtime_requires_approval" }),
-				expect.objectContaining({ code: "agents_runtime_policy_denials_present" }),
-			]),
-		);
-
-		const traceInput = writeUserExecutionTrace.mock.calls[0]?.[2] as ExecutionTraceInput;
-		expect((traceInput.meta?.requestContext as Record<string, unknown> | undefined)).toMatchObject({
-			runtimeContextTotalChars: 8000,
-			runtimeContextTotalBudgetChars: 12000,
-			runtimeContextTruncatedSourceIds: ["runtime_diagnostics"],
-			runtimePolicySummary: {
+		const rawMeta = (result.raw as { meta: Record<string, unknown> }).meta;
+		expect(rawMeta.diagnosticFlags).toEqual([]);
+		expect(rawMeta.runtime).toMatchObject({
+			contextDiagnostics: {
+				totalChars: 8000,
+				totalBudgetChars: 12000,
+				sources: [expect.objectContaining({ id: "runtime_diagnostics", truncated: true })],
+			},
+			policySummary: {
 				totalDecisions: 2,
 				denyCount: 1,
 				requiresApprovalCount: 1,
@@ -4530,7 +2622,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("accepts auto mode when real agents-team execution evidence exists", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-auto-with-team-evidence",
 					text: "已完成第一章三个关键帧并落到画布。",
 					trace: {
@@ -4592,7 +2684,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("does not treat preview-only Task json as agents-team execution evidence in auto mode", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-auto-preview-only-task-json",
 					text: "我已完成。",
 					trace: {
@@ -4646,10 +2738,10 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		);
 	});
 
-	it("prefers forced local bash guard over generic privileged local access copy", async () => {
+	it("rejects forced local workspace access on the public agents surface", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-force-bash-guard",
 					text: "已收到本地取证约束。",
 					trace: {
@@ -4671,7 +2763,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		await runAgentsBridgeChatTask(createContext(), "user-1", {
+		await expect(runAgentsBridgeChatTask(createContext(), "user-1", {
 			kind: "chat",
 			prompt: "读取这本书第一章正文并告诉我讲了什么。",
 			extras: {
@@ -4680,19 +2772,14 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 				forceLocalResourceViaBash: true,
 				localResourcePaths: ["/app/project-data/users/user-1/projects/project-1/books/book-1"],
 			},
+		})).rejects.toMatchObject({
+			code: "public_agents_local_resource_access_forbidden",
+			status: 403,
 		});
-
-		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
-		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
-		expect(requestBody.forceLocalResourceViaBash).toBe(true);
-		expect(requestBody.localResourcePaths).toEqual([
-			"/app/project-data/users/user-1/projects/project-1/books/book-1",
-		]);
-		expect(String(requestBody.systemPrompt || "")).not.toContain("硬性要求：必须先使用 bash 工具读取本地资源");
-		expect(String(requestBody.systemPrompt || "")).not.toContain("特权模式：已授权访问本地资源");
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it("auto-forces scoped local bash evidence for plain project book chats when exactly one book is present", async () => {
+	it("does not inspect or expose local project paths for ordinary project chat", async () => {
 		const repoRoot = path.resolve(process.cwd(), "..", "..");
 		const scopedBooksRoot = path.join(
 			repoRoot,
@@ -4706,7 +2793,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-auto-force-book-bash",
 					text: "已收到单书本地取证约束。",
 					trace: {
@@ -4736,9 +2823,11 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
 			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
 				return JSON.stringify({
+					projectId: "project-1",
 					bookId: "book-1",
 					title: "地煞七十二变",
 					chapterCount: 1,
+					chapters: [],
 				});
 			}
 			throw new Error(`unexpected readFile: ${String(targetPath)}`);
@@ -4763,11 +2852,15 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(requestBody.forceLocalResourceViaBash).toBeUndefined();
 		expect(requestBody.localResourcePaths).toBeUndefined();
+		expect(requestBody.privilegedLocalAccess).toBeUndefined();
+		expect(fs.readdir).not.toHaveBeenCalled();
+		expect(fs.readFile).not.toHaveBeenCalled();
+		expect(fs.access).not.toHaveBeenCalled();
 		expect(String(requestBody.systemPrompt || "")).not.toContain("硬性要求：必须先使用 bash 工具读取本地资源");
 		expect(String(requestBody.systemPrompt || "")).not.toContain("先读取该目录下的 index.json");
 	});
 
-	it("auto-forces scoped local bash evidence for scene creation chats even when visual refs are present", async () => {
+	it("does not inspect or expose local paths for ordinary visual-reference chat", async () => {
 		const repoRoot = path.resolve(process.cwd(), "..", "..");
 		const scopedBooksRoot = path.join(
 			repoRoot,
@@ -4781,7 +2874,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const scopedBookDir = path.join(scopedBooksRoot, "book-1");
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-auto-force-book-bash-scene-with-refs",
 					text: "已收到场景创作取证约束。",
 					trace: {
@@ -4811,9 +2904,11 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
 			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
 				return JSON.stringify({
+					projectId: "project-1",
 					bookId: "book-1",
 					title: "地煞七十二变",
 					chapterCount: 1,
+					chapters: [],
 				});
 			}
 			throw new Error(`unexpected readFile: ${String(targetPath)}`);
@@ -4848,6 +2943,10 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(requestBody.forceLocalResourceViaBash).toBeUndefined();
 		expect(requestBody.localResourcePaths).toBeUndefined();
+		expect(requestBody.privilegedLocalAccess).toBeUndefined();
+		expect(fs.readdir).not.toHaveBeenCalled();
+		expect(fs.readFile).not.toHaveBeenCalled();
+		expect(fs.access).not.toHaveBeenCalled();
 		expect(String(requestBody.systemPrompt || "")).not.toContain("硬性要求：必须先使用 bash 工具读取本地资源");
 		expect(String(requestBody.systemPrompt || "")).not.toContain("先读取该目录下的 index.json");
 	});
@@ -4855,7 +2954,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("does not extract chapter number from prompt into bridge request metadata when chapterId was not provided", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-explicit-chapter-from-prompt",
 					text: "已解析章节。",
 					trace: {
@@ -4894,20 +2993,134 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		expect((requestBody.diagnosticContext as Record<string, unknown>).chapterId).toBeUndefined();
 
-		expect(writeUserExecutionTrace).toHaveBeenCalledTimes(1);
-		const traceInput = writeUserExecutionTrace.mock.calls[0]?.[2] as ExecutionTraceInput;
-		expect(traceInput.inputSummary).not.toContain("chapter=1");
-		const traceMeta = traceInput.meta || {};
-		expect((traceMeta as Record<string, unknown>).chapterId).toBeUndefined();
-		expect((traceMeta.requestContext as Record<string, unknown> | undefined)?.promptChars).toBe(
-			"小说第一章内容讲了什么？".length,
+	});
+
+	it("persists agents runtime execution provenance into diagnostics metadata", async () => {
+		const executionProvenance = {
+			version: 1,
+			executionId: "execution-persisted-provenance",
+			agentId: "root-agent",
+			depth: 0,
+			model: "gpt-5.6",
+			apiStyle: "responses",
+			requiredSkills: ["tapcanvas-dramatic-adapter"],
+			loadedSkills: ["tapcanvas-dramatic-adapter"],
+			startedAt: "2026-07-24T08:00:00.000Z",
+		};
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+			return new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-persisted-provenance",
+					text: "已完成诊断。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: { textChars: 7 },
+						turns: [],
+						runtime: {
+							profile: "code",
+							registeredToolNames: ["Skill"],
+							registeredTeamToolNames: [],
+							requiredSkills: ["tapcanvas-dramatic-adapter"],
+							loadedSkills: ["tapcanvas-dramatic-adapter"],
+							allowedSubagentTypes: [],
+							requireAgentsTeamExecution: false,
+							executionProvenance,
+						},
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "分析这一章的戏剧结构。",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "flow-1",
+			},
+		});
+
+		const responseMeta = (result.raw as { meta: Record<string, unknown> }).meta;
+		expect(responseMeta.executionProvenance).toEqual(executionProvenance);
+		expect(responseMeta.runtime).toMatchObject({ executionProvenance });
+	});
+
+	it("leaves chapter asset goal planning to agents-cli", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+			return new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-goal",
+					text: "已建立章节资产目标。",
+					trace: {
+						toolCalls: [],
+						output: { textChars: 9 },
+						summary: { totalToolCalls: 0 },
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "补齐章节资产",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "flow-1",
+				chapterId: "chapter-2",
+				chatContext: {
+					workspaceAction: "chapter_asset_generation",
+				},
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.allowedTools).toBeUndefined();
+		expect(requestBody.diagnosticContext).not.toHaveProperty("goalSuggested");
+		expect(requestBody.diagnosticContext).not.toHaveProperty("goalSuggestion");
+	});
+
+	it("does not forward the retired autoApprove gate for an explicitly requested chapter video", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-one-click-video",
+					text: "BeatSheet 已提交。",
+					trace: { toolCalls: [], output: { textChars: 12 }, summary: { totalToolCalls: 0 }, turns: [] },
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
 		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "把这一章做成视频成片",
+			extras: {
+				canvasProjectId: "project-1",
+				chapterId: "chapter-1",
+				autoApprove: true,
+				requiredSkills: ["tapcanvas-video-workflow"],
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.autoApprove).toBeUndefined();
+		expect(requestBody.diagnosticContext).not.toHaveProperty("goalSuggested");
+		expect(requestBody.diagnosticContext).not.toHaveProperty("goalSuggestion");
 	});
 
 	it("forwards project-scoped remote canvas tools to agents-cli", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-remote-tools",
 					text: "已收到远程工具。",
 					trace: {
@@ -4953,9 +3166,8 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect((requestBody.diagnosticContext as Record<string, unknown> | undefined)?.selectedNodeKind).toBe(
 			"image",
 		);
-		expect(String(requestBody.systemPrompt || "")).toContain("selectedNodeKind: image");
-		expect(String(requestBody.systemPrompt || "")).toContain("selectedReference.kind: image");
-		expect(String(requestBody.systemPrompt || "")).not.toContain("selectedNodeKind: storyboard");
+		expect(String(requestBody.systemPrompt || "")).toContain("<tapcanvas_context>");
+		expect(String(requestBody.systemPrompt || "")).not.toContain("docs/");
 		expect(requestBody.remoteToolConfig).toMatchObject({
 			endpoint: "https://api.tapcanvas.test/public/agents/tools/execute",
 			projectId: "project-1",
@@ -4963,167 +3175,54 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		expect(Array.isArray(requestBody.remoteTools)).toBe(true);
 		const remoteTools = requestBody.remoteTools as Array<Record<string, unknown>>;
-		const canvasCapabilityManifest = requestBody.canvasCapabilityManifest as Record<string, unknown>;
-		expect(remoteTools.map((tool) => tool.name)).toEqual([
-			"tapcanvas_project_flows_list",
+		const remoteToolCatalog = requestBody.remoteToolCatalog as Array<Record<string, unknown>>;
+		expect(requestBody.canvasCapabilityManifest).toBeUndefined();
+		expect(remoteTools).toEqual([]);
+		expect(remoteToolCatalog.map((tool) => tool.name)).toEqual(expect.arrayContaining([
 			"tapcanvas_project_context_get",
+			"tapcanvas_project_chapters_list",
+			"tapcanvas_project_chapter_get",
 			"tapcanvas_books_list",
-			"tapcanvas_book_index_get",
-			"tapcanvas_book_chapter_get",
-			"tapcanvas_book_storyboard_plan_get",
-			"tapcanvas_book_storyboard_plan_upsert",
-			"tapcanvas_storyboard_continuity_get",
+			"tapcanvas_material_assets_list",
+			"tapcanvas_material_asset_versions_get",
+			"tapcanvas_storyboard_anchor_candidates",
 			"tapcanvas_pipeline_runs_list",
 			"tapcanvas_pipeline_run_get",
-			"tapcanvas_storyboard_source_bundle_get",
-			"tapcanvas_node_context_bundle_get",
-			"tapcanvas_video_review_bundle_get",
 			"tapcanvas_executions_list",
 			"tapcanvas_execution_get",
 			"tapcanvas_execution_node_runs_get",
 			"tapcanvas_execution_events_list",
+			"tapcanvas_workflow_execution_inspect",
+			"tapcanvas_image_refs_get",
 			"tapcanvas_flow_get",
+			"tapcanvas_flow_search",
 			"tapcanvas_flow_patch",
-		]);
-		expect(canvasCapabilityManifest.version).toBe("2026-04-03");
-		expect(Array.isArray(canvasCapabilityManifest.localCanvasTools)).toBe(true);
-		expect(Array.isArray(canvasCapabilityManifest.remoteTools)).toBe(true);
-		expect(
-			(canvasCapabilityManifest.remoteTools as Array<Record<string, unknown>>).map((tool) => tool.name),
-		).toEqual(remoteTools.map((tool) => tool.name));
-		expect(canvasCapabilityManifest.nodeSpecs).toMatchObject({
-			text: expect.objectContaining({ label: "文本" }),
-			video: expect.objectContaining({ label: "图生/文生视频" }),
-		});
-		expect(canvasCapabilityManifest.nodeSpecs).not.toHaveProperty("storyboard");
-		expect(canvasCapabilityManifest.protocols).toMatchObject({
-			flowPatch: expect.objectContaining({
-				supportedCreateNodeTypes: ["taskNode", "groupNode"],
-			}),
-		});
-		const flowPatchTool = remoteTools.find((tool) => tool.name === "tapcanvas_flow_patch");
+		]));
+		expect(remoteToolCatalog.map((tool) => tool.name)).toContain("tapcanvas_image_generate_to_canvas");
+		expect(remoteToolCatalog.map((tool) => tool.name)).not.toContain("tapcanvas_video_orchestrate");
+		for (const unavailableName of [
+			"tapcanvas_project_flows_list",
+			"tapcanvas_story_facts_commit",
+			"tapcanvas_book_storyboard_plan_upsert",
+		]) {
+			expect(remoteToolCatalog.map((tool) => tool.name)).not.toContain(unavailableName);
+		}
+		const flowPatchTool = remoteToolCatalog.find((tool) => tool.name === "tapcanvas_flow_patch");
 		const flowPatchDescription = String(flowPatchTool?.description || "");
-		expect(flowPatchDescription).toContain("Supported createNodes object types are taskNode / groupNode only");
-		expect(flowPatchDescription).toContain("Asset generation is executed by the web app after runnable nodes are added");
-		expect(flowPatchDescription).toContain("persist the real reference inputs into node data");
-		expect(flowPatchDescription).toContain("never rely on prompt wording alone to preserve references");
-		expect(flowPatchDescription).toContain("every referenced createNode must declare an explicit stable id first");
-		expect(flowPatchDescription).toContain("labels are never valid node ids for edges");
-		expect(flowPatchDescription).toContain("Child nodes that declare parentId must use positions relative to that parent group");
-		expect(flowPatchDescription).toContain("persisted node order is normalized parent-first");
-		expect(flowPatchDescription).toContain("list grouped children in the exact visual order you want preserved");
-		expect(flowPatchDescription).toContain("data.kind='text'");
-		expect(flowPatchDescription).toContain("Do not invent textNode");
-		expect(flowPatchDescription).toContain("prefer createEdges with the real source/target node ids");
-		expect(flowPatchDescription).toContain("out-image / in-image / out-video / in-any");
-		expect(flowPatchDescription).toContain("text-like nodes such as text / storyboardScript / novelDoc / scriptDoc use source handles out-text / out-text-wide and have no target handles");
-		expect(flowPatchDescription).toContain("sourceHandle:'out-image'");
-		expect(flowPatchDescription).toContain("Never invent semantic aliases like image / reference");
-		expect(flowPatchDescription).toContain("appendNodeArrays only appends items into data[key] of an existing node id");
-		expect(flowPatchDescription).toContain("The item shape is {id:'node-id', key:'arrayField', items:[...]}; items is required");
-		expect(flowPatchDescription).toContain("productionMetadata:{chapterGrounded:true,lockedAnchors");
-		expect(flowPatchDescription).toContain("do not plan a follow-up cleanup patch just to add metadata");
-		expect(flowPatchDescription).toContain("must already carry data.productionLayer / data.creationStage / data.approvalStatus plus complete data.productionMetadata");
-		expect(flowPatchDescription).not.toContain("primary visual deliverables");
-		expect(flowPatchDescription).not.toContain("Placeholder pending image/video nodes for later execution are allowed");
-		expect((flowPatchTool?.parameters as { properties?: Record<string, unknown> } | undefined)?.properties?.createEdges).toMatchObject({
-			type: "array",
+		expect(flowPatchDescription.length).toBeGreaterThan(0);
+		expect(flowPatchTool).toMatchObject({
+			schemaDeferred: true,
+			descriptionDeferred: true,
+			requiredScope: ["project", "canvas"],
+			capability: "canvas_core",
 		});
-		expect(
-			(
-				(
-					flowPatchTool?.parameters as {
-						properties?: Record<string, { items?: { oneOf?: Array<Record<string, unknown>> } }>;
-					}
-				)?.properties?.createNodes?.items?.oneOf?.[0] as
-					| { properties?: { data?: { properties?: Record<string, unknown> } } }
-					| undefined
-			)?.properties?.data?.properties,
-		).not.toHaveProperty("storyboardEditorCells");
-		expect(
-			(
-				(
-					flowPatchTool?.parameters as {
-						properties?: Record<string, { items?: { oneOf?: Array<Record<string, unknown>> } }>;
-					}
-				)?.properties?.createNodes?.items?.oneOf?.[0] as
-					| { properties?: { data?: { properties?: Record<string, unknown> } } }
-					| undefined
-			)?.properties?.data?.properties?.productionMetadata,
-		).toMatchObject({
-			type: "object",
-		});
-		expect(
-			(
-				(
-					flowPatchTool?.parameters as {
-						properties?: Record<string, { items?: { oneOf?: Array<Record<string, unknown>> } }>;
-					}
-				)?.properties?.createNodes?.items?.oneOf?.[0] as
-					| { properties?: { data?: { properties?: Record<string, unknown> } } }
-					| undefined
-			)?.properties?.data?.properties?.productionLayer,
-		).toMatchObject({
-			type: "string",
-		});
-		expect(
-			(
-				(
-					flowPatchTool?.parameters as {
-						properties?: Record<string, { items?: { oneOf?: Array<Record<string, unknown>> } }>;
-					}
-				)?.properties?.createNodes?.items?.oneOf?.[0] as
-					| { properties?: { data?: { properties?: Record<string, unknown> } } }
-					| undefined
-			)?.properties?.data?.properties?.creationStage,
-		).toMatchObject({
-			type: "string",
-		});
-		expect(
-			(
-				(
-					flowPatchTool?.parameters as {
-						properties?: Record<string, { items?: { oneOf?: Array<Record<string, unknown>> } }>;
-					}
-				)?.properties?.createNodes?.items?.oneOf?.[0] as
-					| { properties?: { data?: { properties?: Record<string, unknown> } } }
-					| undefined
-			)?.properties?.data?.properties?.approvalStatus,
-		).toMatchObject({
-			type: "string",
-		});
-		expect(
-			(
-				(
-					flowPatchTool?.parameters as {
-						properties?: Record<string, { items?: { oneOf?: Array<Record<string, unknown>> } }>;
-					}
-				)?.properties?.createNodes?.items?.oneOf?.[0] as
-					| { properties?: { data?: { properties?: Record<string, unknown> } } }
-					| undefined
-			)?.properties?.data?.properties?.referenceImages,
-		).toMatchObject({
-			type: "array",
-		});
-		expect(
-			(
-				(
-					flowPatchTool?.parameters as {
-						properties?: Record<string, { items?: { oneOf?: Array<Record<string, unknown>> } }>;
-					}
-				)?.properties?.createNodes?.items?.oneOf?.[0] as
-					| { properties?: { data?: { properties?: Record<string, unknown> } } }
-					| undefined
-			)?.properties?.data?.properties?.firstFrameUrl,
-		).toMatchObject({
-			type: "string",
-		});
+		expect(flowPatchTool?.parameters).toBeUndefined();
 	});
 
-	it("forwards project tools and auto-resolved flow tools when flowId is omitted", async () => {
+	it("resolves the sole owner-visible project flow when flowId is omitted", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-project-tools-only",
 					text: "已收到项目级工具。",
 					trace: {
@@ -5156,42 +3255,48 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		const remoteTools = (requestBody.remoteTools || []) as Array<Record<string, unknown>>;
-		const canvasCapabilityManifest = requestBody.canvasCapabilityManifest as Record<string, unknown>;
-		expect(remoteTools.map((tool) => tool.name)).toEqual([
-			"tapcanvas_project_flows_list",
+		const remoteToolCatalog = (requestBody.remoteToolCatalog || []) as Array<Record<string, unknown>>;
+		expect(requestBody.canvasCapabilityManifest).toBeUndefined();
+		expect(remoteTools).toEqual([]);
+		expect(remoteToolCatalog.map((tool) => tool.name)).toEqual(expect.arrayContaining([
 			"tapcanvas_project_context_get",
+			"tapcanvas_project_chapters_list",
+			"tapcanvas_project_chapter_get",
 			"tapcanvas_books_list",
-			"tapcanvas_book_index_get",
-			"tapcanvas_book_chapter_get",
-			"tapcanvas_book_storyboard_plan_get",
-			"tapcanvas_book_storyboard_plan_upsert",
-			"tapcanvas_storyboard_continuity_get",
+			"tapcanvas_material_assets_list",
+			"tapcanvas_material_asset_versions_get",
+			"tapcanvas_storyboard_anchor_candidates",
 			"tapcanvas_pipeline_runs_list",
 			"tapcanvas_pipeline_run_get",
-			"tapcanvas_storyboard_source_bundle_get",
-			"tapcanvas_node_context_bundle_get",
-			"tapcanvas_video_review_bundle_get",
 			"tapcanvas_executions_list",
 			"tapcanvas_execution_get",
 			"tapcanvas_execution_node_runs_get",
 			"tapcanvas_execution_events_list",
+			"tapcanvas_workflow_execution_inspect",
+			"tapcanvas_image_refs_get",
 			"tapcanvas_flow_get",
+			"tapcanvas_flow_search",
 			"tapcanvas_flow_patch",
-		]);
-		expect(
-			(canvasCapabilityManifest.remoteTools as Array<Record<string, unknown>>).map((tool) => tool.name),
-		).toEqual(remoteTools.map((tool) => tool.name));
+		]));
+		expect(remoteToolCatalog.map((tool) => tool.name)).not.toContain(
+			"tapcanvas_book_storyboard_plan_upsert",
+		);
+		expect(remoteToolCatalog.map((tool) => tool.name)).toContain("tapcanvas_image_generate_to_canvas");
+		expect(remoteToolCatalog.map((tool) => tool.name)).not.toContain("tapcanvas_video_orchestrate");
 		expect(requestBody.remoteToolConfig).toMatchObject({
 			endpoint: "https://api.tapcanvas.test/public/agents/tools/execute",
 			projectId: "project-1",
 			flowId: "flow-1",
 		});
+		expect(listFlowsByOwner).toHaveBeenCalledWith(expect.anything(), "user-1", "project-1");
+		expect(createFlow).not.toHaveBeenCalled();
+		expect(createFlowVersion).not.toHaveBeenCalled();
 	});
 
-	it("auto-resolves the latest writable flow when canvasFlowId is omitted", async () => {
+	it("resolves but never creates the sole owner-visible writable flow", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-resolve-flow",
 					text: "已解析当前画布。",
 					trace: {
@@ -5223,15 +3328,458 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
-		expect(requestBody.tapcanvasProjectId).toBe("project-1");
-		expect(requestBody.tapcanvasFlowId).toBe("flow-1");
-		expect("sessionId" in requestBody).toBe(false);
+		expect(requestBody).not.toHaveProperty("tapcanvasProjectId");
+		expect(requestBody).not.toHaveProperty("tapcanvasFlowId");
+		expect(requestBody).not.toHaveProperty("tapcanvasNodeId");
+		expect(requestBody).not.toHaveProperty("tapcanvasApiBaseUrl");
+		expect(requestBody).not.toHaveProperty("tapcanvasAuthorization");
+		expect(requestBody).not.toHaveProperty("tapcanvasApiKey");
+		expect(requestBody).not.toHaveProperty("knowledgeContext");
+		expect(requestBody.remoteToolConfig).toMatchObject({
+			endpoint: "https://api.tapcanvas.test/public/agents/tools/execute",
+			projectId: "project-1",
+			flowId: "flow-1",
+		});
+		expect(listFlowsByOwner).toHaveBeenCalledWith(expect.anything(), "user-1", "project-1");
+		expect(createFlow).not.toHaveBeenCalled();
+		expect(createFlowVersion).not.toHaveBeenCalled();
+		expect(requestBody.toolSurfaceConfig).toEqual({
+			mode: "tapcanvas_public",
+			hostUi: [],
+			allowDelegation: false,
+			allowsExternalMedia: true,
+		});
+		expect(requestBody.compactPrelude).toBe(true);
+		expect(requestBody.sessionId).toEqual(expect.any(String));
+	});
+
+	it("starts ordinary project/book/chapter chat with the fresh executable model catalog", async () => {
+		vi.spyOn(fs, "readFile").mockImplementation(async (inputPath) => {
+			const pathText = String(inputPath || "");
+			if (pathText.includes("/books/book-1/index.json")) {
+				return JSON.stringify({
+					projectId: "project-1",
+					bookId: "book-1",
+					title: "测试书籍",
+					chapters: [{ chapter: 1 }],
+				});
+			}
+			throw createFileNotFoundError(pathText);
+		});
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-zero-eager-context",
+					text: "已回答。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "这一章的主题是什么？",
+			extras: {
+				canvasProjectId: "project-1",
+				bookId: "book-1",
+				chapterId: "chapter-1",
+			},
+		});
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.remoteToolConfig).toMatchObject({
+			projectId: "project-1",
+			bookId: "book-1",
+			chapterId: "chapter-1",
+		});
+		expect(requestBody.remoteToolConfig).not.toHaveProperty("flowId");
+		expect(requestBody.localResourcePaths).toBeUndefined();
+		expect(requestBody.privilegedLocalAccess).toBeUndefined();
+		expect(requestBody.larkCredentials).toBeUndefined();
+		expect(listFlowsByOwner).not.toHaveBeenCalled();
+		expect(createFlow).not.toHaveBeenCalled();
+		expect(createFlowVersion).not.toHaveBeenCalled();
+		expect(listAssetsForUser).not.toHaveBeenCalled();
+		expect(listUserContextAssets).not.toHaveBeenCalled();
+		expect(loadPublicChatEnabledModelCatalogSummary).toHaveBeenCalledWith(
+			expect.anything(),
+			"user-1",
+		);
+		expect(getLarkAppCredentials).not.toHaveBeenCalled();
+	});
+
+	it("sends an explicit empty public surface when no project scope is authorized", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-empty-tool-surface",
+					text: "已回答。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "解释一下镜头景别。",
+			extras: {},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.remoteTools).toEqual([]);
+		expect(requestBody.remoteToolCatalog).toEqual([]);
+		expect(requestBody.remoteToolConfig).toEqual({});
+		expect(requestBody.toolSurfaceConfig).toEqual({
+			mode: "tapcanvas_public",
+			hostUi: [],
+			allowDelegation: false,
+			allowsExternalMedia: true,
+		});
+		expect(requestBody.compactPrelude).toBe(true);
+	});
+
+	it("removes provider submission capabilities from a trusted dependency continuation", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-dependency-settlement",
+					text: "已使用现有异步资产完成验收。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "结算已经完成的异步资产。",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "flow-1",
+			},
+		}, {
+			trustedPublicContinuation: true,
+			deniedRemoteTools: [
+				"tapcanvas_image_generate_to_canvas",
+				"tapcanvas_video_generate_to_canvas",
+				"tapcanvas_workflow_run",
+			],
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		const exposedNames = [
+			...(requestBody.remoteTools as Array<Record<string, unknown>>),
+			...(requestBody.remoteToolCatalog as Array<Record<string, unknown>>),
+		].map((tool) => tool.name);
+		expect(exposedNames).not.toContain("tapcanvas_image_generate_to_canvas");
+		expect(exposedNames).not.toContain("tapcanvas_video_generate_to_canvas");
+		expect(exposedNames).not.toContain("tapcanvas_workflow_run");
+		expect(exposedNames).toContain("tapcanvas_image_reconcile");
+		expect(exposedNames).toContain("tapcanvas_video_reconcile");
+	});
+
+	it("does not compact the public prelude when delegation is explicitly enabled", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-delegated-tool-surface",
+					text: "已保留委派说明。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "请让 worker 并行整理当前任务。",
+			extras: {
+				allowedSubagentTypes: ["worker"],
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.toolSurfaceConfig).toEqual({
+			mode: "tapcanvas_public",
+			hostUi: [],
+			allowDelegation: true,
+			allowsExternalMedia: true,
+		});
+		expect(requestBody.compactPrelude).toBeUndefined();
+	});
+
+	it("does not preload or forward Lark credentials on the public bridge", async () => {
+		getLarkAppCredentials.mockResolvedValue({
+			appId: "lark-app-id",
+			appSecret: "lark-app-secret",
+			brand: "feishu",
+		});
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-lark-facts-only",
+					text: "已收到集成事实。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "总结我提供的资料。",
+			extras: {},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.larkCredentials).toBeUndefined();
+		expect(getLarkAppCredentials).not.toHaveBeenCalled();
+		const systemPrompt = String(requestBody.systemPrompt || "");
+		expect(systemPrompt).not.toContain("必须调用 lark_cli");
+		expect(systemPrompt).not.toContain("lark_cli docs +fetch");
+		expect(systemPrompt).not.toContain("用户已配置飞书/Lark 集成");
+	});
+
+	it.each([
+		{
+			label: "capability manifest",
+			extras: { hostCapabilityManifest: { protocol_version: "2" } },
+			code: "invalid_host_capability_manifest",
+		},
+		{
+			label: "canvas context",
+			extras: { hostCanvasContext: "invalid" },
+			code: "invalid_host_canvas_context",
+		},
+	] as const)("rejects an invalid explicit host $label instead of falling back", async ({ extras, code }) => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			runAgentsBridgeChatTask(createContext(), "user-1", {
+				kind: "chat",
+				prompt: "测试宿主协议。",
+				extras,
+			}),
+		).rejects.toMatchObject({ status: 400, code });
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("rejects a standalone host canvas context that no runtime branch can consume", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			runAgentsBridgeChatTask(createContext(), "user-1", {
+				kind: "chat",
+				prompt: "测试宿主画布快照。",
+				extras: { hostCanvasContext: { nodes: [], edges: [] } },
+			}),
+		).rejects.toMatchObject({
+			status: 400,
+			code: "host_canvas_context_without_manifest",
+		});
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps host mode to one direct flow_patch and an empty deferred catalog", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-host-surface",
+					text: "已下发宿主补丁。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "在宿主画布添加图片节点。",
+			extras: {
+				hostCapabilityManifest: {
+					protocol_version: "1",
+					host: "test-host",
+					patchOps: ["addNode", "runNode"],
+					nodeSpecs: [{ type: "imageGenerator" }],
+					ui: ["request_user_input", "media"],
+				},
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(
+			(requestBody.remoteTools as Array<Record<string, unknown>>).map((tool) => tool.name),
+		).toEqual(["flow_patch"]);
+		expect(requestBody.remoteToolCatalog).toEqual([]);
+		expect(requestBody.toolSurfaceConfig).toEqual({
+			mode: "host",
+			hostUi: ["request_user_input", "media"],
+			allowDelegation: false,
+			allowsExternalMedia: true,
+		});
+		expect(requestBody.compactPrelude).toBe(true);
+		expect(requestBody.includeFullToolInput).toBe(true);
+		expect(requestBody.remoteToolConfig).toMatchObject({
+			endpoint: "https://api.tapcanvas.test/public/agents/tools/host-execute",
+		});
+		expect(requestBody.remoteToolConfig).not.toHaveProperty("hostMode");
+		expect(requestBody.remoteToolConfig).not.toHaveProperty("hostProtocolVersion");
+	});
+
+	it("preserves host surface mode when a restricted policy removes flow_patch", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-host-empty-surface",
+					text: "宿主工具已受限。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "只回答，不改宿主画布。",
+			extras: {
+				hostCapabilityManifest: {
+					protocol_version: "1",
+					host: "restricted-host",
+					patchOps: ["addNode"],
+					nodeSpecs: [{ type: "text" }],
+				},
+				executionToolPolicy: { mode: "restricted", allowedTools: [] },
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(requestBody.remoteTools).toEqual([]);
+		expect(requestBody.remoteToolCatalog).toEqual([]);
+		expect(requestBody.remoteToolConfig).toEqual({});
+		expect(requestBody.toolSurfaceConfig).toEqual({
+			mode: "host",
+			hostUi: [],
+			allowDelegation: false,
+			allowsExternalMedia: true,
+		});
+		expect(requestBody.compactPrelude).toBe(true);
+		expect(requestBody.includeFullToolInput).toBeUndefined();
+	});
+
+	it("keeps an allowed catalog tool dormant until an authorized DAG frontier activates it", async () => {
+		vi.spyOn(fs, "readFile").mockImplementation(async (inputPath) => {
+			const pathText = String(inputPath || "");
+			if (pathText.includes("/books/book-1/index.json")) {
+				return JSON.stringify({
+					projectId: "project-1",
+					bookId: "book-1",
+					title: "测试书籍",
+					chapters: [],
+				});
+			}
+			throw createFileNotFoundError(pathText);
+		});
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-restricted-catalog",
+					text: "已收到受限能力面。",
+					trace: {
+						toolCalls: [],
+						summary: { totalToolCalls: 0 },
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "提交已经准备好的事实变更。",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "flow-1",
+				bookId: "book-1",
+				executionToolPolicy: {
+					mode: "restricted",
+					allowedTools: ["tapcanvas_story_facts_commit"],
+				},
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+		expect(
+			(requestBody.remoteTools as Array<Record<string, unknown>>).map((tool) => tool.name),
+		).toEqual([]);
+		expect(
+			(requestBody.remoteToolCatalog as Array<Record<string, unknown>>).map((tool) => tool.name),
+		).toContain("tapcanvas_story_facts_commit");
+		expect(requestBody.allowedTools).toEqual(["tapcanvas_story_facts_commit"]);
+		expect(requestBody.toolSurfaceConfig).toMatchObject({ mode: "tapcanvas_public" });
 	});
 
 	it("forwards response_format preferences to agents-cli chat requests", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-response-format",
 					text: "已收到结构化输出约束。",
 					trace: {
@@ -5266,26 +3814,65 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 				},
 			},
 		};
+		const outputContract = {
+			kind: "json",
+			requiredArrayField: "$",
+		};
+		const workflowPhysicalAttemptDeadlineAt = "2026-08-29T05:02:20.000Z";
 
 		await runAgentsBridgeChatTask(createContext(), "user-1", {
 			kind: "chat",
 			prompt: "添加空白文本节点",
 			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				responseFormat,
-			},
-		});
+					canvasProjectId: "project-1",
+					canvasFlowId: "flow-1",
+					responseFormat,
+					outputContract,
+					workflowPhysicalAttemptDeadlineAt,
+					forcedAgentRole: "writer",
+				},
+			}, {
+				directForcedAgentExecution: true,
+			});
 
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(requestBody.responseFormat).toEqual(responseFormat);
+		expect(requestBody.outputContract).toEqual(outputContract);
+		expect(requestBody.workflowPhysicalAttemptDeadlineAt).toBe(workflowPhysicalAttemptDeadlineAt);
+		expect(requestBody.canvasCapabilityManifest).toBeUndefined();
+		const remoteTools = (requestBody.remoteTools || []) as Array<Record<string, unknown>>;
+		const flowPatchTool = remoteTools.find((tool) => tool.name === "tapcanvas_flow_patch");
+		expect(flowPatchTool?.parameters).toBeTruthy();
+		expect(String(flowPatchTool?.description || "")).toContain("allowOverwrite=true");
+		expect(String(flowPatchTool?.description || "")).not.toContain("A blank text node must be a taskNode");
+
+		fetchMock.mockClear();
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "继续同一结构化节点",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "flow-1",
+				responseFormat,
+				outputContract,
+				continuationExecutionContract: {
+					workflowPhysicalAttemptDeadlineAt,
+				},
+				forcedAgentRole: "writer",
+			},
+		}, {
+			directForcedAgentExecution: true,
+		});
+		const nestedRequestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const nestedRequestBody = JSON.parse(String(nestedRequestInit?.body || "{}")) as Record<string, unknown>;
+		expect(nestedRequestBody.workflowPhysicalAttemptDeadlineAt).toBe(workflowPhysicalAttemptDeadlineAt);
 	});
 
 	it("marks successful tapcanvas_flow_patch calls as direct canvas writes", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-flow-patch-write",
 					text: "已在画布添加文本节点。",
 					trace: {
@@ -5323,7 +3910,6 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			expect.objectContaining({
 				executionKind: "execute",
 				canvasAction: "write_canvas",
-				requiresConfirmation: false,
 			}),
 		);
 		expect(rawMeta.toolEvidence).toEqual(
@@ -5337,7 +3923,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("summarizes created and patched canvas node ids for frontend follow-up execution", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-flow-patch-summary",
 					text: "已补全旧节点并新增脚本节点。",
 					trace: {
@@ -5407,10 +3993,11 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("does not count failed tapcanvas_flow_patch calls as canvas-write evidence", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-flow-patch-failed",
 					text: "flow patch 失败，未写入画布。",
 					trace: {
+						...buildCanonicalAgentsBridgeFailure("tool_execution_issues"),
 						toolCalls: [
 							{
 								name: "tapcanvas_flow_patch",
@@ -5444,7 +4031,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		});
 
-		expect(result.status).toBe("succeeded");
+		expect(result.status).toBe("failed");
 		const rawMeta = (result.raw as {
 			meta: {
 				agentDecision: Record<string, unknown>;
@@ -5465,646 +4052,15 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			}),
 		);
 		expect(rawMeta.turnVerdict).toEqual({
-			status: "partial",
-			reasons: ["tool_execution_issues", "diagnostic_flags_present"],
-		});
-	});
-
-	it("marks storyboard text-only flow patches as partial when the storyboard editor contract is violated", async () => {
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-storyboard-text-only",
-					text: "已把第一章分镜节点写进画布。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									createNodes: [
-										{
-											type: "taskNode",
-											position: { x: 0, y: 0 },
-											data: {
-												kind: "storyboard",
-												label: "第一章镜头拆解",
-												content: "镜头1：强拆冲突\n镜头2：分钱与旧宅倒塌",
-											},
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 35,
-						},
-						output: {
-							head: "已把第一章分镜节点写进画布。",
-							tail: "已把第一章分镜节点写进画布。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "把第一章分镜写进画布",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				diagnosticFlags: Array<{ code: string }>;
-				turnVerdict: { status: string; reasons: string[] };
-			};
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "storyboard_editor_text_only_misuse",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "partial",
-			reasons: expect.arrayContaining([
-				"storyboard_editor_text_only_misuse",
-				"diagnostic_flags_present",
-			]),
-		});
-	});
-
-	it("does not flag reference binding missing when a new in-batch authority base frame replaces the old selected authority chain", async () => {
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-in-batch-authority-handover",
-					text: "已重建第三章锁资产业务链。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									patchNodeData: [
-										{
-											id: "chapter3_baseframe",
-											data: {
-												kind: "image",
-												approvalStatus: "rejected",
-												productionMetadata: buildChapterGroundedProductionMetadata("confirmed"),
-											},
-										},
-									],
-									createNodes: [
-										{
-											id: "chapter3_baseframe_locked",
-											type: "taskNode",
-											position: { x: 40, y: 40 },
-											data: {
-												kind: "image",
-												label: "第3章新权威基底帧",
-												prompt: "第三章新权威基底帧",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionLayer: "preproduction",
-												creationStage: "authority_base_frame",
-												approvalStatus: "needs_confirmation",
-												productionMetadata: buildChapterGroundedProductionMetadata("planned"),
-											},
-										},
-										{
-											id: "chapter3_stills_plan",
-											type: "taskNode",
-											position: { x: 340, y: 40 },
-											data: {
-												kind: "image",
-												label: "第3章静帧组",
-												prompt: "第三章多镜头静帧",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionLayer: "draft",
-												creationStage: "storyboard_stills",
-												approvalStatus: "needs_confirmation",
-												productionMetadata: buildChapterGroundedProductionMetadata("planned"),
-											},
-										},
-										{
-											id: "chapter3_video_plan",
-											type: "taskNode",
-											position: { x: 640, y: 40 },
-											data: {
-												kind: "composeVideo",
-												label: "第3章视频补充",
-												prompt: "第三章视频补充占位",
-												productionLayer: "draft",
-												creationStage: "video_followup",
-												approvalStatus: "needs_confirmation",
-												productionMetadata: buildChapterGroundedProductionMetadata("planned"),
-											},
-										},
-									],
-									createEdges: [
-										{
-											id: "edge_ch3_base_locked_stills",
-											source: "chapter3_baseframe_locked",
-											target: "chapter3_stills_plan",
-											sourceHandle: "out-image",
-											targetHandle: "in-image",
-										},
-										{
-											id: "edge_ch3_base_locked_video",
-											source: "chapter3_baseframe_locked",
-											target: "chapter3_video_plan",
-											sourceHandle: "out-image",
-											targetHandle: "in-any",
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 31,
-						},
-						output: {
-							head: "已重建第三章锁资产业务链。",
-							tail: "已重建第三章锁资产业务链。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "重新完成第三章的定格动画图片创作，重建锁资产业务链",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-					selectedReference: {
-						nodeId: "chapter3_baseframe",
-						label: "错误旧基底帧",
-						kind: "image",
-						imageUrl: "https://cdn.tapcanvas.test/ch3-old-baseframe.png",
-						approvalStatus: "approved",
-						authorityBaseFrameNodeId: "chapter3_baseframe",
-						authorityBaseFrameStatus: "confirmed",
-						hasUpstreamTextEvidence: true,
-						hasDownstreamComposeVideo: true,
-						chapterId: "3",
-					},
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				diagnosticFlags: Array<{ code: string }>;
-				canvasMutation: {
-					deletedNodeIds: string[];
-					deletedEdgeIds: string[];
-					createdNodeIds: string[];
-					patchedNodeIds: string[];
-					executableNodeIds: string[];
-				};
-			};
-		}).meta;
-		expect(rawMeta.canvasMutation).toMatchObject({
-			createdNodeIds: expect.arrayContaining([
-				"chapter3_baseframe_locked",
-				"chapter3_stills_plan",
-				"chapter3_video_plan",
-			]),
-			patchedNodeIds: expect.arrayContaining(["chapter3_baseframe"]),
-		});
-		expect(rawMeta.diagnosticFlags).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_reference_binding_missing",
-				}),
-			]),
-		);
-	});
-
-	it("flags chapter grounded image nodes that drop runtime reference images without persisting bindings", async () => {
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-runtime-reference-binding-missing",
-					text: "已创建第四章场景资产节点。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									createNodes: [
-										{
-											id: "chapter4_scene_anchor",
-											type: "taskNode",
-											position: { x: 120, y: 120 },
-											data: {
-												kind: "image",
-												label: "第4章房内晨光场景",
-												prompt: "清晨木屋内景，晨光透窗，写实空间描写。",
-												productionLayer: "draft",
-												creationStage: "preproduction",
-												approvalStatus: "needs_confirmation",
-												productionMetadata: {
-													chapterGrounded: true,
-													lockedAnchors: {
-														character: [],
-														scene: ["木屋内景"],
-														shot: ["晨光建立镜头"],
-														continuity: ["承接第4章清晨起行氛围"],
-														missing: [],
-													},
-												},
-											},
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 25,
-						},
-						output: {
-							head: "已创建第四章场景资产节点。",
-							tail: "已创建第四章场景资产节点。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "完成第四章的创作。",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				assetInputs: [
-					{
-						url: "https://cdn.tapcanvas.test/style-board.png",
-						role: "style",
-						name: "chapter-4-style-anchor",
-					},
-				],
-				chatContext: {
-					currentProjectName: "蛊真人",
-					selectedNodeKind: "image",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				diagnosticFlags: Array<{ code: string }>;
-			};
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "chapter_grounded_reference_binding_missing",
-				}),
-			]),
-		);
-	});
-
-	it("fails prompt-only storyboard delivery even when the turn also created image-like plan nodes", async () => {
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-storyboard-prompt-only-delivery",
-					text: "已拆出第三章 12 镜头并写入分镜板。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									createNodes: [
-										{
-											id: "rolecard-fangyuan-c3",
-											type: "taskNode",
-											position: { x: 40, y: 60 },
-											data: {
-												kind: "image",
-												label: "角色卡-方源-第三章",
-												prompt: "少年方源角色卡，黑金古装，夜雨世界观。",
-											},
-										},
-										{
-											id: "chapter3_board",
-											type: "taskNode",
-											position: { x: 40, y: 520 },
-											data: {
-												kind: "storyboard",
-												label: "第三章漫剧分镜板",
-												storyboardEditorCells: [
-													{
-														id: "c3s1",
-														shotNo: 1,
-														label: "重生确认",
-														prompt: "古装玄幻雨夜木屋，方源抬手凝视。",
-													},
-													{
-														id: "c3s2",
-														shotNo: 2,
-														label: "光阴之河",
-														prompt: "方源窗边闭眼，背后出现逆流光阴幻象。",
-													},
-												],
-											},
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 46,
-						},
-						output: {
-							head: "已拆出第三章 12 镜头并写入分镜板。",
-							tail: "已拆出第三章 12 镜头并写入分镜板。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "完成第三章节的漫剧创作",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				mode: "auto",
-				forceAssetGeneration: true,
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				diagnosticFlags: Array<{ code: string }>;
-				turnVerdict: { status: string; reasons: string[] };
-			};
-		}).meta;
-		expect(rawMeta.diagnosticFlags).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					code: "storyboard_prompt_only_visual_delivery_missing",
-				}),
-			]),
-		);
-		expect(rawMeta.turnVerdict).toEqual({
 			status: "failed",
-			reasons: expect.arrayContaining(["storyboard_prompt_only_visual_delivery_missing"]),
-		});
-	});
-
-	it("fails chapter-grounded stop-motion deliveries that only write one base frame plus a video placeholder", async () => {
-		const repoRoot = path.resolve(process.cwd(), "..", "..");
-		const scopedBookDir = path.join(
-			repoRoot,
-			"project-data",
-			"users",
-			"user-1",
-			"projects",
-			"project-1",
-			"books",
-			"book-1",
-		);
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				JSON.stringify({
-					id: "bridge-task-chapter-single-baseframe-video-placeholder",
-					text: "已完成第三章定格动画创作并写入画布。",
-					trace: {
-						toolCalls: [
-							{
-								name: "tapcanvas_flow_patch",
-								status: "succeeded",
-								input: {
-									createNodes: [
-										{
-											id: "chapter3_group",
-											type: "groupNode",
-											position: { x: 40, y: 40 },
-											style: { width: 1200, height: 760 },
-											data: { label: "第3章定格动画", isGroup: true, groupKind: "chapterProduction" },
-										},
-										{
-											id: "chapter3_script",
-											type: "taskNode",
-											parentId: "chapter3_group",
-											position: { x: 40, y: 80 },
-											data: {
-												kind: "storyboardScript",
-												label: "第三章脚本",
-												content: "8 个镜头文本脚本",
-											},
-										},
-										{
-											id: "chapter3_baseframe",
-											type: "taskNode",
-											parentId: "chapter3_group",
-											position: { x: 380, y: 80 },
-											data: {
-												kind: "image",
-												label: "第三章基底帧",
-												prompt: "古装玄幻雨夜木屋，方源重生确认。",
-												structuredPrompt: buildImagePromptSpecV2Payload(),
-												productionLayer: "preproduction",
-												creationStage: "authority_base_frame",
-												approvalStatus: "planned",
-												productionMetadata: {
-													chapterGrounded: true,
-													lockedAnchors: {
-														character: ["方源"],
-														scene: ["木屋", "雨夜"],
-														shot: ["抬手确认重生"],
-														continuity: [],
-														missing: [],
-													},
-													authorityBaseFrame: {
-														status: "planned",
-														source: "chapter_context",
-														reason: "等待确认",
-														nodeId: null,
-													},
-												},
-											},
-										},
-										{
-											id: "chapter3_video_plan",
-											type: "taskNode",
-											parentId: "chapter3_group",
-											position: { x: 720, y: 80 },
-											data: {
-												kind: "composeVideo",
-												label: "第三章视频占位",
-												prompt: "基于第三章基底帧做后续定格动画视频。",
-												productionLayer: "draft",
-												creationStage: "video_followup",
-												approvalStatus: "planned",
-												productionMetadata: {
-													chapterGrounded: true,
-													lockedAnchors: {
-														character: ["方源"],
-														scene: ["木屋", "雨夜"],
-														shot: ["重生确认", "长生执念"],
-														continuity: [],
-														missing: [],
-													},
-													authorityBaseFrame: {
-														status: "planned",
-														source: "chapter_context",
-														reason: "等待确认",
-														nodeId: "chapter3_baseframe",
-													},
-												},
-											},
-										},
-									],
-								},
-							},
-						],
-						summary: {
-							totalToolCalls: 1,
-							succeededToolCalls: 1,
-							failedToolCalls: 0,
-							deniedToolCalls: 0,
-							blockedToolCalls: 0,
-							runMs: 52,
-						},
-						output: {
-							head: "已完成第三章定格动画创作并写入画布。",
-							tail: "已完成第三章定格动画创作并写入画布。",
-						},
-						turns: [],
-					},
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return JSON.stringify({
-					bookId: "book-1",
-					title: "蛊真人",
-					chapterCount: 3,
-					assets: {},
-				});
-			}
-			throw new Error(`unexpected readFile: ${String(targetPath)}`);
-		});
-		vi.spyOn(fs, "access").mockImplementation(async (targetPath) => {
-			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
-				return undefined;
-			}
-			throw new Error(`unexpected access: ${String(targetPath)}`);
-		});
-
-		const result = await runAgentsBridgeChatTask(createContext(), "user-1", {
-			kind: "chat",
-			prompt: "完成第三章节的定格动画创作",
-			extras: {
-				canvasProjectId: "project-1",
-				canvasFlowId: "flow-1",
-				mode: "auto",
-				forceAssetGeneration: true,
-				bookId: "book-1",
-				chapterId: "3",
-				chatContext: {
-					currentProjectName: "蛊真人",
-					currentBookId: "book-1",
-					currentChapterId: "3",
-				},
-			},
-		});
-
-		expect(result.status).toBe("succeeded");
-		const rawMeta = (result.raw as {
-			meta: {
-				diagnosticFlags: Array<{ code: string }>;
-				expectedDelivery: { kind: string; reason: string };
-				deliveryVerification: { status: string; code: string | null };
-				deliveryEvidence: { imageLikeNodeCount: number; hasVideoNodes: boolean };
-				turnVerdict: { status: string; reasons: string[] };
-			};
-		}).meta;
-		expect(rawMeta.diagnosticFlags).not.toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ code: "chapter_grounded_multishot_delivery_missing" }),
-			]),
-		);
-		expect(rawMeta.expectedDelivery).toMatchObject({
-			kind: "chapter_multishot_stills",
-		});
-		expect(rawMeta.deliveryEvidence).toMatchObject({
-			imageLikeNodeCount: 1,
-			hasVideoNodes: true,
-		});
-		expect(rawMeta.deliveryVerification).toMatchObject({
-			applicable: true,
-			status: "failed",
-			code: "chapter_grounded_multishot_delivery_missing",
-		});
-		expect(rawMeta.turnVerdict).toEqual({
-			status: "failed",
-			reasons: ["chapter_grounded_multishot_delivery_missing"],
+			reasons: ["tool_execution_issues"],
 		});
 	});
 
 	it("marks successful tapcanvas_video_generate_to_canvas calls as generated assets and direct canvas writes", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-video-generate-write",
 					text: "已生成视频并写入画布。",
 					trace: {
@@ -6141,7 +4097,6 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			expect.objectContaining({
 				executionKind: "execute",
 				canvasAction: "write_canvas",
-				requiresConfirmation: false,
 			}),
 		);
 		expect(rawMeta.toolEvidence).toEqual(
@@ -6155,10 +4110,11 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("does not count failed tapcanvas_image_generate_to_canvas calls as generated-asset evidence", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-image-generate-failed",
 					text: "图片生成失败。",
 					trace: {
+						...buildCanonicalAgentsBridgeFailure("tool_execution_issues"),
 						toolCalls: [
 							{
 								name: "tapcanvas_image_generate_to_canvas",
@@ -6192,7 +4148,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		});
 
-		expect(result.status).toBe("succeeded");
+		expect(result.status).toBe("failed");
 		const rawMeta = (result.raw as {
 			meta: {
 				agentDecision: Record<string, unknown>;
@@ -6213,8 +4169,8 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			}),
 		);
 		expect(rawMeta.turnVerdict).toEqual({
-			status: "partial",
-			reasons: ["tool_execution_issues", "diagnostic_flags_present"],
+			status: "failed",
+			reasons: ["tool_execution_issues"],
 		});
 	});
 
@@ -6242,7 +4198,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-non-anchor-direct-video",
 					text: "以下为规划，尚未执行。\nprompt: use selected image as direct video start.\nstoryBeatPlan: [{\"summary\":\"beat1\"}]",
 					trace: {
@@ -6336,7 +4292,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-anchor-direct-video",
 					text: "以下为规划，尚未执行。\nprompt: use locked scene keyframe motion.\nstoryBeatPlan: [{\"summary\":\"beat1\"}]",
 					trace: {
@@ -6434,7 +4390,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-structural-anchor-direct-video",
 					text: "以下为规划，尚未执行。\nprompt: use selected still as scene keyframe motion.\nstoryBeatPlan: [{\"summary\":\"beat1\"}]",
 					trace: {
@@ -6537,7 +4493,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-no-chapter-read",
 					text: "以下为规划，尚未执行。\nprompt: use locked keyframe motion.\nstoryBeatPlan: [{\"summary\":\"beat1\"}]",
 					trace: {
@@ -6599,7 +4555,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("keeps text-grounded single_video quick action diagnosable when uploaded novel text was not read", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-require-project-text",
 					text: "以下为规划，尚未执行。\nprompt: use locked keyframe motion.\nstoryBeatPlan: [{\"summary\":\"beat1\"}]",
 					trace: {
@@ -6662,7 +4618,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("keeps source bundle only single_video responses diagnosable when chapter正文 is still missing", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-source-bundle-only",
 					text: [
 						"以下为规划，尚未执行：",
@@ -6712,9 +4668,10 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 
 	it("does not inject project text local-access guards for generic canvas mutations", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-			const requestBody = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+		const requestBody = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
 			expect(requestBody.localResourcePaths).toBeUndefined();
-			expect(requestBody.privilegedLocalAccess).toBe(true);
+			expect(requestBody.allowedTools).toBeUndefined();
+			expect(requestBody.privilegedLocalAccess).toBeUndefined();
 			expect(requestBody.forceLocalResourceViaBash).toBeUndefined();
 			expect(String(requestBody.prompt || "")).not.toContain("自动项目文本访问");
 			expect(String(requestBody.prompt || "")).not.toContain("强制读取顺序：先用 tapcanvas_books_list");
@@ -6724,7 +4681,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			expect(String(requestBody.systemPrompt || "")).not.toContain("只陈述已被本轮工具或结构化结果直接证实的事实");
 			expect(String(requestBody.systemPrompt || "")).not.toContain("若未读取当前项目状态，不得把项目进度、画布状态或界面可见性写成已确认事实");
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-generic-canvas-mutation",
 					text: "已执行。",
 					trace: {
@@ -6765,7 +4722,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("does not flag missing video specialists for placeholder error composeVideo nodes", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-placeholder-video-node",
 					text: [
 						"以下为规划，尚未执行：",
@@ -6813,7 +4770,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("does not require video specialists for plan_only canvas plans that already contain videoPrompt", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-plan-only-video-prompts",
 					text: [
 						"以下为规划，尚未执行：",
@@ -6886,7 +4843,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		});
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-no-progress-detect",
 					text: "以下为规划，尚未执行。\nprompt: use locked keyframe motion.\nstoryBeatPlan: [{\"summary\":\"beat1\"}]",
 					trace: {
@@ -6969,7 +4926,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("accepts specialist success from structured outputJson even when outputPreview is truncated", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-output-json",
 					text: "以下为规划，尚未执行。\nprompt: use locked keyframe motion.\nstoryBeatPlan: [...]",
 					trace: {
@@ -7031,7 +4988,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("allows prompt specialist situational claims when no chapter or continuity evidence was read", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-situational-claim-without-evidence",
 					text: JSON.stringify({
 						imagePrompt: "@方源 stands alone on the summit, enemies hesitate to attack.",
@@ -7091,7 +5048,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("allows situational specialist output when continuity evidence was read", async () => {
 		const fetchMock = vi.fn(async () => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-situational-claim-with-evidence",
 					text: JSON.stringify({
 						imagePrompt: "@方源 stands alone on the summit, enemies hesitate to attack.",
@@ -7158,7 +5115,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 	it("forwards numbered reference image slots and records them in trace context", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-reference-slots",
 					text: "已收到图位协议。",
 					trace: {
@@ -7192,12 +5149,15 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 				],
 				assetInputs: [
 					{
+						nodeId: "node-character",
+						assetId: "asset-character",
 						url: "https://example.com/character.png",
 						role: "character",
 						name: "李长安",
 						note: "主角外观锚点",
 					},
 					{
+						nodeId: "node-scene",
 						url: "https://example.com/scene.png",
 						role: "context",
 						note: "老屋空间关系",
@@ -7218,31 +5178,33 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			{
 				slot: "图1",
 				url: "https://example.com/character.png",
-				role: "角色参考",
+				referenceId: "node:node-character",
+				nodeId: "node-character",
+				assetId: "asset-character",
+				assetRefId: null,
+				role: "character",
 				label: "李长安",
 				note: "主角外观锚点",
 			},
 			{
 				slot: "图2",
 				url: "https://example.com/scene.png",
-				role: "场景参考",
+				referenceId: "node:node-scene",
+				nodeId: "node-scene",
+				assetId: null,
+				assetRefId: null,
+				role: "context",
 				label: "老屋建立镜头",
 				note: "老屋空间关系",
 			},
 		]);
 
-		expect(writeUserExecutionTrace).toHaveBeenCalledTimes(1);
-		const traceInput = writeUserExecutionTrace.mock.calls[0]?.[2] as ExecutionTraceInput;
-		expect((traceInput.meta?.requestContext as Record<string, unknown>)?.referenceImageSlots).toEqual([
-			"图1 | 李长安 | role=角色参考 | note=主角外观锚点",
-			"图2 | 老屋建立镜头 | role=场景参考 | note=老屋空间关系",
-		]);
 	});
 
 	it("injects runtime reference context even when the prompt already mentions natural-language reference headings", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-reference-runtime-context",
 					text: "已收到参考图上下文。",
 					trace: {
@@ -7266,13 +5228,14 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 
 		await runAgentsBridgeChatTask(createContext(), "user-1", {
 			kind: "chat",
-			prompt: "请把【参考图】和【资产输入】都体现在最终执行 prompt 里。",
+			prompt: "请参考 https://example.com/character.png，把【参考图】和【资产输入】都体现在最终执行 prompt 里。",
 			extras: {
 				canvasProjectId: "project-1",
 				canvasFlowId: "flow-1",
 				referenceImages: ["https://example.com/character.png"],
 				assetInputs: [
 					{
+						nodeId: "node-character",
 						url: "https://example.com/character.png",
 						role: "character",
 						name: "李长安",
@@ -7287,15 +5250,19 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const forwardedPrompt = String(requestBody.prompt || "");
 		expect(forwardedPrompt).toContain("<tapcanvas_runtime_reference_context>");
 		expect(forwardedPrompt).toContain("【资产输入】");
-		expect(forwardedPrompt).toContain("role=character | url=https://example.com/character.png");
-		expect(forwardedPrompt).toContain("【参考图图位清单】");
-		expect(forwardedPrompt).toContain("图1 | url=https://example.com/character.png");
+		expect(forwardedPrompt).toContain("role=character | nodeId=node-character");
+		expect(forwardedPrompt).toContain("【参考图位】");
+		expect(forwardedPrompt).toContain("图1 | referenceId=node:node-character | nodeId=node-character");
+		expect(forwardedPrompt).toContain(
+			"[媒体引用#1 | mediaType=image | name=李长安 | nodeId=node-character]",
+		);
+		expect(forwardedPrompt).not.toContain("https://example.com/character.png");
 	});
 
 	it("does not inject product integrity constraints for chapter-grounded storyboard requests with target/reference assets", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
-				JSON.stringify({
+				stringifyCanonicalAgentsBridgeSuccess({
 					id: "bridge-task-chapter-grounded-no-product-integrity",
 					text: "已收到章节分镜请求。",
 					trace: {
@@ -7346,7 +5313,180 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
 		expect(String(requestBody.prompt || "")).not.toContain("【参考图保真硬约束】");
-		expect(String(requestBody.prompt || "")).toContain("【参考图图位协议】");
+		expect(String(requestBody.prompt || "")).toContain("【引用事实边界】");
+		expect(String(requestBody.prompt || "")).not.toContain("【参考主体保真硬约束】");
+	});
+
+	it("does not activate retired shot-preview lightweight handling when the old skill key is supplied", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+			return new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-retired-shot-preview-skill",
+					text: "已按统一 agents 通道处理。",
+					trace: {
+						toolCalls: [],
+						summary: {
+							totalToolCalls: 0,
+							succeededToolCalls: 0,
+							failedToolCalls: 0,
+							deniedToolCalls: 0,
+							blockedToolCalls: 0,
+							runMs: 10,
+						},
+						output: {},
+						turns: [],
+					},
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await runAgentsBridgeChatTask(createContext(), "user-1", {
+			kind: "chat",
+			prompt: "帮我设计第3镜的构图和提示词。",
+			extras: {
+				canvasProjectId: "project-1",
+				canvasFlowId: "flow-1",
+				requiredSkills: ["tapcanvas-shot-preview-expert"],
+				referenceImages: ["https://example.com/anchor.png"],
+				assetInputs: [
+					{
+						role: "character",
+						url: "https://example.com/role-card.png",
+						assetRefId: "方源",
+					},
+				],
+				chatContext: {
+					currentProjectName: "地煞七十二变",
+					creationMode: "scene",
+				},
+			},
+		});
+
+		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
+
+		expect(requestBody.referenceImages).toEqual(
+			expect.arrayContaining(["https://example.com/anchor.png", "https://example.com/role-card.png"]),
+		);
+		expect(requestBody.canvasCapabilityManifest).toBeUndefined();
+		expect(String(requestBody.prompt || "")).not.toContain("【镜头设计板最小上下文约束】");
+	});
+
+	it("queues same-user bridge requests at the configured concurrency limit", async () => {
+		const previousPerUser = process.env.AGENTS_BRIDGE_MAX_PER_USER;
+		const previousQueueDepth = process.env.AGENTS_BRIDGE_MAX_QUEUE_DEPTH;
+		process.env.AGENTS_BRIDGE_MAX_PER_USER = "1";
+		process.env.AGENTS_BRIDGE_MAX_QUEUE_DEPTH = "2";
+			let releaseFirst: () => void = () => undefined;
+		const firstGate = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const successResponse = () =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-concurrency",
+					text: "完成",
+					trace: { toolCalls: [], summary: { totalToolCalls: 0 }, output: {}, turns: [] },
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		const fetchMock = vi.fn(async () => {
+			if (fetchMock.mock.calls.length === 1) await firstGate;
+			return successResponse();
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		try {
+			const first = runAgentsBridgeChatTask(createContext(), "user-1", {
+				kind: "chat",
+				prompt: "first",
+				extras: {},
+			});
+			await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+			const second = runAgentsBridgeChatTask(createContext(), "user-1", {
+					kind: "chat",
+					prompt: "second",
+					extras: {},
+				});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+			releaseFirst();
+			await Promise.all([first, second]);
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+		} finally {
+				releaseFirst();
+			if (typeof previousPerUser === "string") {
+				process.env.AGENTS_BRIDGE_MAX_PER_USER = previousPerUser;
+			} else {
+				delete process.env.AGENTS_BRIDGE_MAX_PER_USER;
+			}
+			if (typeof previousQueueDepth === "string") {
+				process.env.AGENTS_BRIDGE_MAX_QUEUE_DEPTH = previousQueueDepth;
+			} else {
+				delete process.env.AGENTS_BRIDGE_MAX_QUEUE_DEPTH;
+			}
+		}
+	});
+
+	it("aborts a request while it is waiting for a global bridge slot", async () => {
+		const previousConcurrency = process.env.AGENTS_BRIDGE_MAX_CONCURRENCY;
+		const previousQueueDepth = process.env.AGENTS_BRIDGE_MAX_QUEUE_DEPTH;
+		process.env.AGENTS_BRIDGE_MAX_CONCURRENCY = "1";
+		process.env.AGENTS_BRIDGE_MAX_QUEUE_DEPTH = "2";
+			let releaseFirst: () => void = () => undefined;
+		const firstGate = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const successResponse = () =>
+			new Response(
+				stringifyCanonicalAgentsBridgeSuccess({
+					id: "bridge-task-queued-abort",
+					text: "完成",
+					trace: { toolCalls: [], summary: { totalToolCalls: 0 }, output: {}, turns: [] },
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		const fetchMock = vi.fn(async () => {
+			if (fetchMock.mock.calls.length === 1) await firstGate;
+			return successResponse();
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		try {
+			const first = runAgentsBridgeChatTask(createContext(), "user-1", {
+				kind: "chat",
+				prompt: "first",
+				extras: {},
+			});
+			await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+			const abortController = new AbortController();
+			const queued = runAgentsBridgeChatTask(
+				createContext(),
+				"user-2",
+				{ kind: "chat", prompt: "queued", extras: {} },
+				{ abortSignal: abortController.signal },
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			abortController.abort(new Error("queued-request-aborted"));
+			await expect(queued).rejects.toThrow("queued-request-aborted");
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+				releaseFirst();
+			await first;
+		} finally {
+				releaseFirst();
+			if (typeof previousConcurrency === "string") {
+				process.env.AGENTS_BRIDGE_MAX_CONCURRENCY = previousConcurrency;
+			} else {
+				delete process.env.AGENTS_BRIDGE_MAX_CONCURRENCY;
+			}
+			if (typeof previousQueueDepth === "string") {
+				process.env.AGENTS_BRIDGE_MAX_QUEUE_DEPTH = previousQueueDepth;
+			} else {
+				delete process.env.AGENTS_BRIDGE_MAX_QUEUE_DEPTH;
+			}
+		}
 	});
 
 });

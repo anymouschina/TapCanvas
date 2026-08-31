@@ -8,7 +8,11 @@ export type StoryboardPlanRecord = {
   outputAssetId?: string;
   runId?: string;
   storyboardContent?: string;
-  storyboardStructured?: unknown;
+  storyboardArtifact: Record<string, unknown>;
+  artifactSha256: string;
+  storyboardStructured: unknown;
+  /** Opaque compatibility metadata from records written before the artifact-only cutover. */
+  semanticReview?: unknown;
   shotPrompts: string[];
   nextChunkIndexByGroup?: {
     "1"?: number;

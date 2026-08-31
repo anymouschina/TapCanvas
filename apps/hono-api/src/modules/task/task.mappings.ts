@@ -1270,13 +1270,21 @@ export async function buildMappedUpstreamRequest(options: {
 		(typeof stageMapping.contentType === "string" && stageMapping.contentType.trim()) ||
 		(/multipart\/form-data/i.test(headerContentType) ? "multipart" : "json");
 	const contentType = contentTypeRaw.toLowerCase();
+	const sanitizedHeaders: Record<string, string> =
+		contentType === "multipart"
+			? Object.fromEntries(
+					Object.entries(headers).filter(
+						([key]) => key.toLowerCase() !== "content-type",
+					),
+				)
+			: headers;
 
 	const init: RequestInit = {
 		method,
-		headers,
+		headers: sanitizedHeaders,
 	};
 	const requestLogHeaders: Record<string, string> = {};
-	for (const [key, value] of Object.entries(headers)) {
+	for (const [key, value] of Object.entries(sanitizedHeaders)) {
 		if (key.toLowerCase() === "authorization") {
 			requestLogHeaders[key] = "***";
 			continue;
@@ -1570,7 +1578,8 @@ export function parseMappedTaskResultFromPayload(options: {
 		options.reqKind === "text_to_image" ||
 		options.reqKind === "image_edit" ||
 		options.reqKind === "text_to_video" ||
-		options.reqKind === "image_to_video";
+		options.reqKind === "image_to_video" ||
+		options.reqKind === "video_edit";
 	const hasSyncModelOutput = (() => {
 		if (Array.isArray((options.payload as any)?.candidates) && (options.payload as any).candidates.length) {
 			return true;

@@ -1,10 +1,23 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../../types";
+import type { AppContext } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import { ensureVendorCallLogsSchema } from "../task/vendor-call-logs.repo";
 import { listApiRequestLogs } from "../observability/request-logs.repo";
 import { getPrismaClient } from "../../platform/node/prisma";
+import {
+	HomepageVideoRankingConfigSchema,
+	HomepageVideoModerationConfigSchema,
+	SkillRankingConfigSchema,
+	getHomepageVideoModerationConfig,
+	getHomepageVideoRankingConfig,
+	getSkillRankingConfig,
+	listSkillMarketplace,
+	saveHomepageVideoRankingConfig,
+	saveHomepageVideoModerationConfig,
+	saveSkillRankingConfig,
+} from "../ranking/ranking-control";
 
 export const statsRouter = new Hono<AppEnv>();
 
@@ -119,11 +132,6 @@ function isAdmin(c: any): boolean {
 	return auth?.role === "admin";
 }
 
-function normalizeRevenueItemLabel(raw: string): string {
-	const trimmed = raw.trim();
-	return trimmed.length > 0 ? trimmed : "未命名商品";
-}
-
 async function hasUserColumn(c: any, column: string): Promise<boolean> {
 	void c;
 	void column;
@@ -143,6 +151,17 @@ async function ensureStatsSchema(c: any): Promise<Response | null> {
 		);
 	}
 	return null;
+}
+
+function requireNonNegativeSafeInteger(
+	value: number | null | undefined,
+	field: string,
+): number {
+	const normalized = value ?? 0;
+	if (!Number.isSafeInteger(normalized) || normalized < 0) {
+		throw new Error(`Invalid stats aggregate for ${field}: ${String(value)}`);
+	}
+	return normalized;
 }
 
 statsRouter.post("/ping", async (c) => {
@@ -168,6 +187,56 @@ statsRouter.post("/ping", async (c) => {
 	return c.json({ ok: true });
 });
 
+statsRouter.get("/rankings/skills", async (c) => {
+	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	return c.json(await listSkillMarketplace(userId));
+});
+
+statsRouter.put("/rankings/skills", async (c) => {
+	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body: unknown = await c.req.json().catch(() => null);
+	const parsed = SkillRankingConfigSchema.safeParse(body);
+	if (!parsed.success) return c.json({ error: "Invalid request body", issues: parsed.error.issues }, 400);
+	await saveSkillRankingConfig(c as unknown as AppContext, userId, parsed.data);
+	return c.json(await listSkillMarketplace(userId));
+});
+
+statsRouter.get("/rankings/homepage-videos", async (c) => {
+	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
+	return c.json(await getHomepageVideoRankingConfig());
+});
+
+statsRouter.put("/rankings/homepage-videos", async (c) => {
+	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body: unknown = await c.req.json().catch(() => null);
+	const parsed = HomepageVideoRankingConfigSchema.safeParse(body);
+	if (!parsed.success) return c.json({ error: "Invalid request body", issues: parsed.error.issues }, 400);
+	const config = await saveHomepageVideoRankingConfig(c as unknown as AppContext, userId, parsed.data);
+	return c.json({ configured: true, config });
+});
+
+statsRouter.get("/rankings/homepage-video-moderation", async (c) => {
+	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
+	return c.json(await getHomepageVideoModerationConfig());
+});
+
+statsRouter.put("/rankings/homepage-video-moderation", async (c) => {
+	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body: unknown = await c.req.json().catch(() => null);
+	const parsed = HomepageVideoModerationConfigSchema.safeParse(body);
+	if (!parsed.success) return c.json({ error: "Invalid request body", issues: parsed.error.issues }, 400);
+	const config = await saveHomepageVideoModerationConfig(c as unknown as AppContext, userId, parsed.data);
+	return c.json({ configured: true, config });
+});
+
 statsRouter.get("/", async (c) => {
 	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
 
@@ -181,7 +250,13 @@ statsRouter.get("/", async (c) => {
 	const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
 		.toISOString()
 		.slice(0, 10);
-	const [totalUsers, onlineUsers, newUsersToday] = await Promise.all([
+	const [
+		totalUsers,
+		onlineUsers,
+		newUsersToday,
+		circulatingCreditsAggregate,
+		consumedCreditsAggregate,
+	] = await Promise.all([
 		prisma.users.count(),
 		prisma.users.count({
 			where: { last_seen_at: { not: null, gte: twoMinAgoIso } },
@@ -189,8 +264,29 @@ statsRouter.get("/", async (c) => {
 		prisma.users.count({
 			where: { created_at: { gte: today, lt: tomorrow } },
 		}),
+		prisma.teams.aggregate({
+			_sum: { credits: true },
+		}),
+		prisma.team_credit_ledger.aggregate({
+			where: { entry_type: "deduct" },
+			_sum: { amount: true },
+		}),
 	]);
-	return c.json({ onlineUsers, totalUsers, newUsersToday });
+	const circulatingCredits = requireNonNegativeSafeInteger(
+		circulatingCreditsAggregate._sum.credits,
+		"circulatingCredits",
+	);
+	const consumedCredits = requireNonNegativeSafeInteger(
+		consumedCreditsAggregate._sum.amount,
+		"consumedCredits",
+	);
+	return c.json({
+		onlineUsers,
+		totalUsers,
+		newUsersToday,
+		circulatingCredits,
+		consumedCredits,
+	});
 });
 
 statsRouter.get("/dau", async (c) => {
@@ -346,129 +442,6 @@ statsRouter.get("/vendors", async (c) => {
 	return c.json({ days, points, vendors: extras });
 });
 
-statsRouter.get("/revenue", async (c) => {
-	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);
-
-	const rawDays = c.req.query("days");
-	const parsedDays = Number(rawDays ?? 30);
-	const days = Number.isFinite(parsedDays)
-		? Math.max(1, Math.min(365, Math.floor(parsedDays)))
-		: 30;
-
-	const sinceIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-	const prisma = getPrismaClient();
-	const orders = await prisma.orders.findMany({
-		where: {
-			payment_status: "paid",
-			paid_at: { not: null, gte: sinceIso },
-		},
-		orderBy: { paid_at: "desc" },
-		select: {
-			id: true,
-			currency: true,
-			total_amount_cents: true,
-			paid_amount_cents: true,
-			refund_amount_cents: true,
-			order_items: {
-				orderBy: { created_at: "asc" },
-				select: {
-					title_snapshot: true,
-					total_price_cents: true,
-					quantity: true,
-				},
-			},
-		},
-	});
-
-	const currencies = new Set<string>();
-	const sliceMap = new Map<
-		string,
-		{ amountCents: number; quantity: number; orderIds: Set<string> }
-	>();
-	let totalAmountCents = 0;
-	let paidOrderCount = 0;
-
-	for (const order of orders) {
-		const netPaidAmountCents = Math.max(
-			0,
-			(Number(order.paid_amount_cents ?? 0) || 0) -
-				(Number(order.refund_amount_cents ?? 0) || 0),
-		);
-		if (netPaidAmountCents <= 0) continue;
-
-		const validItems = order.order_items.filter(
-			(item) => (Number(item.total_price_cents ?? 0) || 0) > 0,
-		);
-		if (validItems.length === 0) continue;
-
-		const itemGrossTotalCents = validItems.reduce(
-			(sum, item) => sum + (Number(item.total_price_cents ?? 0) || 0),
-			0,
-		);
-		if (itemGrossTotalCents <= 0) continue;
-
-		const currency = String(order.currency || "").trim().toUpperCase();
-		if (currency) currencies.add(currency);
-
-		totalAmountCents += netPaidAmountCents;
-		paidOrderCount += 1;
-
-		let allocatedAmountCents = 0;
-		for (let index = 0; index < validItems.length; index += 1) {
-			const item = validItems[index];
-			const itemTotalPriceCents = Number(item.total_price_cents ?? 0) || 0;
-			const amountCents =
-				index === validItems.length - 1
-					? Math.max(0, netPaidAmountCents - allocatedAmountCents)
-					: Math.floor(
-							(netPaidAmountCents * itemTotalPriceCents) / itemGrossTotalCents,
-						);
-			allocatedAmountCents += amountCents;
-			if (amountCents <= 0) continue;
-
-			const label = normalizeRevenueItemLabel(String(item.title_snapshot || ""));
-			const existing = sliceMap.get(label) ?? {
-				amountCents: 0,
-				quantity: 0,
-				orderIds: new Set<string>(),
-			};
-			existing.amountCents += amountCents;
-			existing.quantity += Math.max(0, Number(item.quantity ?? 0) || 0);
-			existing.orderIds.add(order.id);
-			sliceMap.set(label, existing);
-		}
-	}
-
-	if (currencies.size > 1) {
-		return c.json(
-			{
-				error: "Mixed currencies are not supported",
-				message: "近30日收入存在多币种订单，当前概览饼图仅支持单币种展示。",
-				code: "mixed_revenue_currencies",
-				currencies: Array.from(currencies),
-			},
-			409,
-		);
-	}
-
-	const slices = Array.from(sliceMap.entries())
-		.map(([label, value]) => ({
-			label,
-			amountCents: value.amountCents,
-			orderCount: value.orderIds.size,
-			quantity: value.quantity,
-			share: totalAmountCents > 0 ? value.amountCents / totalAmountCents : 0,
-		}))
-		.sort((left, right) => right.amountCents - left.amountCents);
-
-	return c.json({
-		days,
-		currency: currencies.size === 1 ? Array.from(currencies)[0] : null,
-		totalAmountCents,
-		paidOrderCount,
-		slices,
-	});
-});
 
 statsRouter.get("/requests", async (c) => {
 	if (!isAdmin(c)) return c.json({ error: "Forbidden" }, 403);

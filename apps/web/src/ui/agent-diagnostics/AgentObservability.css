@@ -1,0 +1,175 @@
+.agent-observability {
+  padding: 10px;
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 82%, transparent);
+}
+
+.agent-observability-metrics {
+  align-items: stretch;
+}
+
+.agent-observability-metric {
+  display: inline-flex;
+  min-width: 78px;
+  align-items: baseline;
+  gap: 5px;
+  padding: 4px 7px;
+  background: color-mix(in srgb, var(--mantine-color-dark-6) 76%, transparent);
+}
+
+.agent-observability-metric-value {
+  color: var(--mantine-color-gray-1);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-observability-metric-label {
+  color: var(--mantine-color-dimmed);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.agent-observability-trace {
+  background: color-mix(in srgb, var(--mantine-color-dark-6) 54%, transparent);
+}
+
+.agent-observability-trace-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.agent-observability-trace-toggle:hover {
+  background: color-mix(in srgb, var(--mantine-color-blue-9) 18%, transparent);
+}
+
+.agent-observability-trace-main,
+.agent-observability-trace-facts {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.agent-observability-trace-id,
+.agent-observability-trace-duration,
+.agent-observability-trace-tokens,
+.agent-observability-span-duration,
+.agent-observability-span-tokens {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-observability-trace-model,
+.agent-observability-trace-scope {
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--mantine-color-dimmed);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-observability-trace-detail {
+  padding: 2px 8px 8px;
+}
+
+.agent-observability-timeline {
+  display: grid;
+  gap: 1px;
+  background: color-mix(in srgb, var(--mantine-color-dark-8) 70%, transparent);
+}
+
+.agent-observability-span {
+  display: grid;
+  grid-template-columns: 104px minmax(120px, 1fr) 96px 72px 72px;
+  min-height: 25px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: var(--mantine-color-dark-7);
+  font-size: 10px;
+}
+
+.agent-observability-span-kind,
+.agent-observability-span-status {
+  color: var(--mantine-color-dimmed);
+}
+
+.agent-observability-span-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-observability-span-status-succeeded {
+  color: var(--mantine-color-green-4);
+}
+
+.agent-observability-span-status-failed,
+.agent-observability-span-status-denied,
+.agent-observability-span-status-blocked {
+  color: var(--mantine-color-red-4);
+}
+
+.agent-observability-span-status-accepted_async,
+.agent-observability-span-status-suspended {
+  color: var(--mantine-color-blue-4);
+}
+
+.agent-trace-feedback {
+  padding-top: 4px;
+}
+
+.agent-trace-feedback-latest {
+  color: var(--mantine-color-dimmed);
+  font-size: 10px;
+}
+
+.agent-trace-feedback-latest-accepted {
+  color: var(--mantine-color-green-4);
+}
+
+.agent-trace-feedback-latest-rejected {
+  color: var(--mantine-color-red-4);
+}
+
+.agent-trace-feedback-annotation-pending,
+.agent-trace-feedback-annotation-reviewed {
+  font-size: 10px;
+}
+
+.agent-trace-feedback-annotation-pending {
+  color: var(--mantine-color-yellow-4);
+}
+
+.agent-trace-feedback-annotation-reviewed {
+  color: var(--mantine-color-green-4);
+}
+
+.agent-trace-feedback-dataset {
+  flex: 1;
+}
+
+.agent-observability-load-more {
+  align-self: center;
+}
+
+@media (max-width: 760px) {
+  .agent-observability-span {
+    grid-template-columns: 78px minmax(90px, 1fr) 78px 58px;
+  }
+
+  .agent-observability-span-tokens {
+    display: none;
+  }
+}

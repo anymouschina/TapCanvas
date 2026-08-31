@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	vertexchannel "github.com/QuantumNous/new-api/relay/channel/vertex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -89,8 +90,20 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 	}
 	info.LockedChannel = ch
 
+	resolvedProtocol, protocolErr := ch.ResolveProtocol(info.OriginModelName)
+	if protocolErr != nil {
+		return service.TaskErrorWrapperLocal(protocolErr, "channel_protocol_invalid", http.StatusServiceUnavailable)
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolvedProtocol.ChannelSetting)
+	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, ch.GetOtherSettings())
+	common.SetContextKey(c, constant.ContextKeyChannelProtocol, resolvedProtocol.Protocol)
+	common.SetContextKey(c, constant.ContextKeyChannelProtocolBinding, resolvedProtocol.Binding)
+	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, ch.GetParamOverride())
+	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, ch.GetHeaderOverride())
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, model.BuildImplicitModelMapping(ch))
+
 	if originTask.ChannelId != info.ChannelId {
-		key, _, NewAPIError := ch.GetNextEnabledKey()
+		key, _, NewAPIError := ch.GetNextEnabledKey(nil)
 		if NewAPIError != nil {
 			return service.TaskErrorWrapper(NewAPIError, "channel_no_available_key", NewAPIError.StatusCode)
 		}
@@ -145,10 +158,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	info.InitChannelMeta(c)
 
 	// 1. 确定 platform → 创建适配器 → 验证请求
-	platform := constant.TaskPlatform(c.GetString("platform"))
-	if platform == "" {
-		platform = GetTaskPlatform(c)
-	}
+	platform := GetTaskPlatform(c)
 	adaptor := GetTaskAdaptor(platform)
 	if adaptor == nil {
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
@@ -170,6 +180,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
+	pricingModelName, err := info.ChannelSetting.ResolvePricingModelName(modelName)
+	if err != nil {
+		return nil, service.TaskErrorWrapperLocal(err, "pricing_model_mapping_failed", http.StatusBadRequest)
+	}
+	info.PricingModelName = pricingModelName
 
 	// 3. 预生成公开 task ID（仅首次）
 	if info.PublicTaskID == "" {
@@ -191,6 +206,26 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		for k, v := range estimatedRatios {
 			info.PriceData.AddOtherRatio(k, v)
 		}
+	}
+
+	// 5.5 规格价兜底：适配器没有给出任何计费倍率、而模型发布了 (分辨率×时长) 规格价
+	//（/api/pricing 的 param_pricing，下游按它给用户定价）时，按同一张价表把固定
+	// 基础价折算成本次请求的规格价，避免任意时长/规格都扣固定基础价。
+	if len(info.PriceData.OtherRatios) == 0 && info.PriceData.UsePrice && info.PriceData.ModelPrice > 0 {
+		if ratio, ok := estimateTaskVideoSpecPriceRatio(c, info); ok {
+			info.PriceData.AddOtherRatio("spec_price", ratio)
+		}
+	}
+
+	// 5.7 渠道价格倍率：采购价更贵的渠道在现有价格上额外乘以配置倍率
+	//（channels.setting.price_ratio）。放在规格价兜底之后，避免影响其
+	// len(OtherRatios)==0 的判断；token 差额结算同样会乘上此倍率。
+	channelPriceRatio, err := effectiveTaskChannelPriceRatio(c, info)
+	if err != nil {
+		return nil, service.TaskErrorWrapperLocal(err, "channel_price_floor_failed", http.StatusBadRequest)
+	}
+	if channelPriceRatio != 1.0 {
+		info.PriceData.AddOtherRatio("channel_price", channelPriceRatio)
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度
@@ -218,6 +253,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
+		// 本地构建失败（如 kling motion-control 缺 image_url）也要落 trace attempt，
+		// 否则日志面板只有原始请求体、显示"当前没有记录上游链路"，排查无从下手。
+		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
+			ErrorMessage: fmt.Sprintf("build_request_failed (local, no upstream call): %s", err.Error()),
+		})
 		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 	}
 
@@ -289,6 +329,60 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func effectiveTaskChannelPriceRatio(c *gin.Context, info *relaycommon.RelayInfo) (float64, error) {
+	configuredRatio := info.ChannelSetting.GetPriceRatio()
+	floorPerSecond := info.ChannelSetting.GetMinVideoPriceCNYPerSecond()
+	if floorPerSecond <= 0 {
+		return configuredRatio, nil
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return 0, fmt.Errorf("resolve video price floor request: %w", err)
+	}
+	_, duration := taskcommon.ResolveTaskVideoBillingSpec(&req)
+	if duration <= 0 {
+		return 0, fmt.Errorf("duration is required when min_video_price_cny_per_second is configured")
+	}
+	sourcePrice := info.PriceData.ModelPrice
+	for ratioName, ratio := range info.PriceData.OtherRatios {
+		if ratio <= 0 {
+			return 0, fmt.Errorf("billing ratio %s must be positive, got %v", ratioName, ratio)
+		}
+		sourcePrice *= ratio
+	}
+	if sourcePrice <= 0 {
+		return 0, fmt.Errorf("source video price must be positive when a channel price floor is configured")
+	}
+	floorRatio := floorPerSecond * float64(duration) / sourcePrice
+	if floorRatio > configuredRatio {
+		return floorRatio, nil
+	}
+	return configuredRatio, nil
+}
+
+// estimateTaskVideoSpecPriceRatio 从任务请求的顶层字段 / metadata 解析 (分辨率, 时长)，
+// 查模型发布的规格价表（model.VideoSpecPriceCNY），折算为相对基础模型价的倍率。
+// 解析不到显式规格或模型没有规格价表时返回 false（保持按次基础价）。
+func estimateTaskVideoSpecPriceRatio(c *gin.Context, info *relaycommon.RelayInfo) (float64, bool) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return 0, false
+	}
+	if info.PriceData.ModelPrice <= 0 {
+		return 0, false
+	}
+	resolution, duration := taskcommon.ResolveTaskVideoBillingSpec(&req)
+	pricingModelName := info.PricingModelName
+	if pricingModelName == "" {
+		pricingModelName = info.OriginModelName
+	}
+	price, ok := model.VideoSpecPriceCNY(pricingModelName, resolution, duration)
+	if !ok || price <= 0 {
+		return 0, false
+	}
+	return price / info.PriceData.ModelPrice, true
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
@@ -449,15 +543,20 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
-// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。
-// 仅当渠道类型为 Gemini 或 Vertex 时触发；其他渠道或出错时返回 nil。
+// tryRealtimeFetch uses the task's persisted protocol platform to pull the
+// latest upstream state. Provider channel type is only used for connection
+// data such as the base URL.
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
 func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
-	channelModel, err := model.GetChannelById(task.ChannelId, true)
-	if err != nil {
+	geminiProtocol, geminiRegistered := constant.GetProtocolDefinition(constant.ProtocolTaskGemini)
+	vertexProtocol, vertexRegistered := constant.GetProtocolDefinition(constant.ProtocolTaskVertex)
+	if (!geminiRegistered || task.Platform != geminiProtocol.TaskPlatform) &&
+		(!vertexRegistered || task.Platform != vertexProtocol.TaskPlatform) {
 		return nil
 	}
-	if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
+
+	channelModel, err := model.GetChannelById(task.ChannelId, true)
+	if err != nil {
 		return nil
 	}
 
@@ -465,13 +564,40 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	if channelModel.GetBaseURL() != "" {
 		baseURL = channelModel.GetBaseURL()
 	}
-	proxy := channelModel.GetSetting().Proxy
-	adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelModel.Type)))
+	channelSetting := channelModel.GetSetting()
+	key := channelModel.Key
+	proxy := channelSetting.Proxy
+	if vertexRegistered && task.Platform == vertexProtocol.TaskPlatform {
+		key = strings.TrimSpace(task.PrivateData.Key)
+		if key == "" {
+			common.SysError(fmt.Sprintf(
+				"Vertex task %s is missing its persisted account credential; realtime fetch stopped",
+				task.TaskID,
+			))
+			return nil
+		}
+		selection, resolveErr := vertexchannel.ResolveDedicatedEgress(
+			channelSetting,
+			channelModel.GetOtherSettings().VertexKeyType,
+			key,
+			task.PrivateData.EgressCellID,
+		)
+		if resolveErr != nil {
+			common.SysError(fmt.Sprintf(
+				"Vertex task %s Dedicated Egress resolution failed: %v",
+				task.TaskID,
+				resolveErr,
+			))
+			return nil
+		}
+		proxy = selection.ProxyURL
+	}
+	adaptor := GetTaskAdaptor(task.Platform)
 	if adaptor == nil {
 		return nil
 	}
 
-	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
+	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
 	}, proxy)

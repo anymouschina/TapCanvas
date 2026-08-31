@@ -1,0 +1,47 @@
+[
+  {
+    "key": "product-shot-director",
+    "title": "商品短片镜头导演",
+    "description": "把商品卖点和素材约束转成可执行的短片镜头表，控制单一主张、证据镜头与行动引导。",
+    "category": "电商营销",
+    "priceCredits": 399,
+    "logoFile": "logo-2k.png",
+    "logoKey": "assets/skill-marketplace/20260722-v2/product-shot-director-logo-2k.png"
+  },
+  {
+    "key": "social-content-repackager",
+    "title": "社媒内容拆条师",
+    "description": "将一份长内容拆成不同平台可发布的选题、正文、标题和互动钩子，并保留事实边界。",
+    "category": "社媒运营",
+    "priceCredits": 299,
+    "logoFile": "logo-2k.png",
+    "logoKey": "assets/skill-marketplace/20260722-v2/social-content-repackager-logo-2k.png"
+  },
+  {
+    "key": "character-continuity-auditor",
+    "title": "角色连续性审校",
+    "description": "审查跨章节角色身份、动机、关系与物理状态变化，输出证据化冲突清单和最小修订建议。",
+    "category": "角色设定",
+    "priceCredits": 499,
+    "logoFile": "logo-2k.png",
+    "logoKey": "assets/skill-marketplace/20260722-v2/character-continuity-auditor-logo-2k.png"
+  },
+  {
+    "key": "story-hook-editor",
+    "title": "故事钩子编辑",
+    "description": "诊断故事开场、段落兑现与结尾追读力，在不改核心设定的前提下给出可落地的重写。",
+    "category": "故事小说",
+    "priceCredits": 399,
+    "logoFile": "logo-2k.png",
+    "logoKey": "assets/skill-marketplace/20260722-v2/story-hook-editor-logo-2k.png"
+  },
+  {
+    "key": "voice-performance-director",
+    "title": "配音表演导演",
+    "description": "把台词与角色状态转成逐句表演标注、停连节奏和声音一致性要求，适用于旁白与角色对白。",
+    "category": "音频配音",
+    "priceCredits": 299,
+    "logoFile": "logo-2k.png",
+    "logoKey": "assets/skill-marketplace/20260722-v2/voice-performance-director-logo-2k.png"
+  }
+]

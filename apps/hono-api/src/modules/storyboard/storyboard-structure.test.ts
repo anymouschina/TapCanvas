@@ -1,213 +1,380 @@
 import { describe, expect, it } from "vitest";
 import {
-	adaptStoryboardShotDesignToStructuredData,
-	assessStoryboardMiniArc,
-	deriveShotPromptsFromStructuredData,
-	normalizeStoryboardShotDesignArtifact,
-	normalizeStoryboardStructuredData,
+  createBookStoryboardDirectorV12Fixture,
+  createTaskStoryboardDirectorV12Fixture,
+} from "../../../../../packages/schemas/storyboard-director-protocol/test-fixtures";
+import {
+  deriveShotPromptsFromStructuredData,
+  normalizeStoryboardStructuredData,
+  validateStoryboardDirectorV12Contract,
 } from "./storyboard-structure";
+import type { StoryboardDirectorV12ExpectedContext } from "./storyboard-structure";
+
+function readRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected record");
+  return value as Record<string, unknown>;
+}
+
+function readShot(payload: Record<string, unknown>, index: number): Record<string, unknown> {
+  const shots = Array.isArray(payload.shots) ? payload.shots : [];
+  return readRecord(shots[index]);
+}
+
+function createExpectedBookContext(): StoryboardDirectorV12ExpectedContext {
+  return {
+    mode: "book_ledger",
+    bookId: "book-archive-night",
+    ledgerRevision: 12,
+    effectiveAt: { chapter: 5, sequence: 10 },
+    facts: [
+      {
+        factId: "fact_injury_xuzhou_left_wrist",
+        category: "character_state",
+        status: "confirmed",
+        validFrom: { chapter: 1, sequence: 0 },
+        validUntil: null,
+        disclosure: { mode: "immediate", revealAt: null },
+      },
+      {
+        factId: "fact_prop_copper_key_owner",
+        category: "prop",
+        status: "confirmed",
+        validFrom: { chapter: 1, sequence: 0 },
+        validUntil: null,
+        disclosure: { mode: "immediate", revealAt: null },
+      },
+      {
+        factId: "fact_xuzhou_suspicion_letter",
+        category: "knowledge",
+        status: "inferred",
+        validFrom: { chapter: 5, sequence: 0 },
+        validUntil: null,
+        disclosure: { mode: "immediate", revealAt: null },
+      },
+      {
+        factId: "fact_hidden_relation_04",
+        category: "relationship",
+        status: "confirmed",
+        validFrom: { chapter: 1, sequence: 0 },
+        validUntil: null,
+        disclosure: {
+          mode: "gated",
+          revealAt: { chapter: 7, sequence: 0 },
+        },
+      },
+    ],
+  };
+}
 
 describe("storyboard structure helpers", () => {
-	it("normalizes storyboard-director v1.1 payloads into dense render prompts", () => {
-		const structured = normalizeStoryboardStructuredData({
-			schemaVersion: "storyboard-director/v1.1",
-			globalStyle: {
-				genre: "东方奇幻定格动画",
-				visualTone: "冷灰压迫感",
-				palette: "冷蓝灰与烛火暖橙",
-			},
-			shots: [
-				{
-					shotId: "SHOT_01",
-					durationSec: 3,
-					narrativeGoal: "建立角色被雨夜压迫的处境",
-					subjectAnchors: ["李长安湿透黑发", "旧式粗布外套"],
-					scene: {
-						location: "老屋门前",
-						timeOfDay: "深夜",
-						weather: "暴雨",
-						environmentDetails: ["泥地积水反光", "门框剥落木刺"],
-					},
-					camera: {
-						shotSize: "中景",
-						angle: "轻低机位",
-						height: "胸口高度",
-						lensMm: 35,
-						shutterAngleDeg: 180,
-						movement: "缓慢前推",
-						focusTarget: "李长安面部",
-					},
-					lighting: {
-						keyDirection: "左后方祠堂冷光",
-						keyAngleDeg: 35,
-						colorTempK: 4800,
-						contrastRatio: "4:1",
-						fillStyle: "雨夜环境漫反射",
-						rimLight: "湿发边缘弱轮廓",
-					},
-					actionChain: ["李长安停步", "抬眼盯住房门"],
-					composition: {
-						foreground: "雨线和门槛积水",
-						midground: "李长安侧身站定",
-						background: "老屋门板与晃动白幡",
-						spatialRule: "人物偏左，房门占右侧压迫视野",
-					},
-					dramaticBeat: {
-						before: "刚穿过村口",
-						during: "在老屋前察觉异样",
-						after: "决定逼近房门",
-					},
-					performance: {
-						emotion: "警惕压抑",
-						microExpression: "眼角紧绷",
-						bodyLanguage: "肩膀前探但脚下迟疑",
-					},
-					continuity: {
-						fromPrev: "首镜建立，无需承接上一镜",
-						persistentAnchors: ["人物湿透外套不变", "房门始终位于画面右侧"],
-						forbiddenDrifts: ["不要把老屋改成现代楼房"],
-					},
-					continuityLocks: {
-						identityLock: ["李长安脸型与黑发保持一致"],
-						propLock: ["木门破损纹理保持一致"],
-						spaceLock: ["门在右、人物在左的轴线不变"],
-						lightLock: ["冷雨夜与门内暖光对比保持稳定"],
-					},
-					failureRisks: ["人物站位漂移"],
-					negativeConstraints: ["禁止现代元素", "禁止卡通表情"],
-					prompt: {
-						cn: "中景，李长安站在暴雨中的老屋门前。",
-					},
-				},
-			],
-		});
+  it("normalizes storyboard-director v1.2 and preserves traceable story locks", () => {
+    const payload = createBookStoryboardDirectorV12Fixture();
+    const validation = validateStoryboardDirectorV12Contract(payload, {
+      expectedShotCount: 2,
+      expectedContext: createExpectedBookContext(),
+    });
+    expect(validation.ok).toBe(true);
 
-		expect(structured?.shots).toHaveLength(1);
-		expect(structured?.shots[0]?.render?.promptText).toContain("空间锁");
-		expect(structured?.shots[0]?.render?.promptText).toContain("李长安");
-		expect(structured?.shots[0]?.render?.promptText).toContain("老屋门前");
-		expect(structured?.shots[0]?.render?.shotType).toBe("中景");
-		expect(structured?.shots[0]?.render?.cameraMovement).toBe("缓慢前推");
-	});
+    const structured = normalizeStoryboardStructuredData(payload);
+    expect(structured?.sourceSchemaVersion).toBe("storyboard-director/v1.2");
+    expect(structured?.storyFactsContext).toMatchObject({
+      mode: "book_ledger",
+      bookId: "book-archive-night",
+      ledgerRevision: 12,
+    });
+    expect(structured?.shots).toHaveLength(2);
+    expect(structured?.shots[0]?.sourceShotId).toBe("SHOT_01");
+    expect(structured?.shots[0]?.exitState).toContain("空白信封");
+    expect(structured?.shots[1]?.purpose.continuity).toBe(structured?.shots[0]?.exitState);
+    expect(structured?.shots[0]?.storyFactLocks?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ factId: "fact_hidden_relation_04", visibility: "hidden" }),
+      ]),
+    );
 
-	it("normalizes two-phase storyboard data and derives legacy prompts", () => {
-		const structured = normalizeStoryboardStructuredData({
-			pacingGoal: "7-15秒总时长",
-			shots: [
-				{
-					shot_number: "分镜 1",
-					beat_role: "opening",
-					dramatic_beat: "危险逼近",
-					story_purpose: "建立威胁",
-					continuity: "承接上一镜视线方向",
-					durationSec: 3,
-					render_prompt: "中景，角色A回头看向门外，烛火摇动",
-					subject_action: "角色A回头",
-					shot_type: "中景",
-					camera_movement: "轻推",
-				},
-			],
-		});
+    const prompt = structured?.shots[0]?.render.promptText || "";
+    expect(prompt).toContain("客观事实锁");
+    expect(prompt).toContain("视角认知锁");
+    expect(prompt).toContain("叙事保密锁");
+    expect(prompt).toContain("许舟左手腕骨裂");
+    expect(prompt).toContain("铜钥匙仍由顾宁持有");
+    expect(prompt).toContain("镜尾客观状态");
+    expect(prompt).not.toContain("fact_hidden_relation_04");
 
-		expect(structured?.version).toBe("two_phase_v1");
-		expect(structured?.shots[0]?.purpose?.dramaticBeat).toBe("危险逼近");
-		expect(structured?.shots[0]?.purpose?.beatRole).toBe("opening");
-		expect(structured?.shots[0]?.render?.promptText).toBe("中景，角色A回头看向门外，烛火摇动");
-		expect(deriveShotPromptsFromStructuredData(structured)).toEqual([
-			"中景，角色A回头看向门外，烛火摇动",
-		]);
-	});
+    if (!structured) throw new Error("expected structured storyboard");
+    expect(normalizeStoryboardStructuredData(structured)).toBeNull();
+    expect(deriveShotPromptsFromStructuredData(structured)).toEqual(
+      structured.shots.map((shot) => shot.render.promptText),
+    );
+  });
 
-	it("adapts shot design into renderable structured prompts", () => {
-		const design = normalizeStoryboardShotDesignArtifact({
-			version: "shot_design_v1",
-			shots: [
-				{
-					shot_number: "分镜 1",
-					beat_role: "opening",
-					dramatic_beat: "角色停步听见门后异响",
-					story_purpose: "建立危险靠近的压力",
-					continuity: "承接上一组尾帧的视线方向",
-					durationSec: 3,
-					subject_action: "角色A停步侧耳",
-					shot_type: "中景",
-					camera_movement: "轻推",
-					environment: "祠堂门口",
-					time_lighting: "夜内景烛火",
-				},
-			],
-		});
+  it("returns allowed enum values in structural story-fact diagnostics", () => {
+    const payload = createBookStoryboardDirectorV12Fixture();
+    const locks = readRecord(readShot(payload, 0).storyFactLocks);
+    const bindings = Array.isArray(locks.bindings) ? locks.bindings : [];
+    const binding = readRecord(bindings[0]);
+    binding.status = "locked";
+    binding.visibility = "public";
+    binding.source = "unknown_source";
 
-		expect(design?.version).toBe("shot_design_v1");
-		const structured = adaptStoryboardShotDesignToStructuredData(design);
-		expect(structured?.shots[0]?.render?.promptText).toContain("中景");
-		expect(structured?.shots[0]?.render?.promptText).toContain("角色A停步侧耳");
-		expect(structured?.shots[0]?.render?.promptText).toContain("祠堂门口");
-	});
+    const result = validateStoryboardDirectorV12Contract(payload, {
+      expectedShotCount: 2,
+      expectedContext: createExpectedBookContext(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const diagnostics = result.issues.map((issue) => issue.message).join(" | ");
+      expect(diagnostics).toContain("confirmed | inferred | draft_choice");
+      expect(diagnostics).toContain("objective | viewpoint_only | hidden");
+      expect(diagnostics).toContain("story_fact | task_context");
+    }
+  });
 
-	it("assesses a valid short-form mini arc", () => {
-		const assessment = assessStoryboardMiniArc({
-			shots: [
-				{
-					shot_number: "分镜 1",
-					beat_role: "opening",
-					dramatic_beat: "角色A发现门后异响",
-					story_purpose: "建立压迫和警觉",
-					continuity: "承接上一组尾帧视线",
-					durationSec: 3,
-					render_prompt: "中景，角色A侧耳靠近门缝",
-				},
-				{
-					shot_number: "分镜 2",
-					beat_role: "escalation",
-					dramatic_beat: "门缝内突然露出血手",
-					story_purpose: "把威胁升级为实体冲击",
-					continuity: "延续门的方位和角色站位",
-					durationSec: 4,
-					render_prompt: "近景，血手猛地抓住门框，角色A后仰",
-				},
-				{
-					shot_number: "分镜 3",
-					beat_role: "payoff",
-					dramatic_beat: "角色A撞开门后看到尸体真相",
-					story_purpose: "完成揭示并形成落点",
-					continuity: "镜头沿门缝方向推进至内室",
-					durationSec: 4,
-					render_prompt: "推进镜头，内室尸体暴露在烛火下",
-				},
-			],
-		});
+  it("binds visibility, status, category, activity, and reveal guards to the authoritative ledger", () => {
+    const valid = validateStoryboardDirectorV12Contract(createBookStoryboardDirectorV12Fixture(), {
+      expectedContext: createExpectedBookContext(),
+    });
+    expect(valid.ok).toBe(true);
 
-		expect(assessment.ok).toBe(true);
-		expect(assessment.totalDurationSec).toBe(11);
-	});
+    const visibilitySpoof = createBookStoryboardDirectorV12Fixture();
+    for (let index = 0; index < 2; index += 1) {
+      const locks = readRecord(readShot(visibilitySpoof, index).storyFactLocks);
+      const bindings = Array.isArray(locks.bindings) ? locks.bindings : [];
+      const hiddenBinding = readRecord(bindings[3]);
+      hiddenBinding.visibility = "objective";
+      hiddenBinding.directive = "模型自行伪报为已揭示事实";
+      locks.revealGuards = [];
+    }
+    const visibilityResult = validateStoryboardDirectorV12Contract(visibilitySpoof, {
+      expectedContext: createExpectedBookContext(),
+    });
+    expect(visibilityResult.ok).toBe(false);
+    if (!visibilityResult.ok) {
+      expect(visibilityResult.issues.map((issue) => issue.code)).toContain(
+        "story_fact_hidden_visibility_required",
+      );
+    }
 
-	it("rejects mini arc outputs with missing escalation/payoff roles", () => {
-		const assessment = assessStoryboardMiniArc({
-			shots: [
-				{
-					shot_number: "分镜 1",
-					beat_role: "opening",
-					dramatic_beat: "角色A警觉回头",
-					story_purpose: "建立开场",
-					continuity: "承接视线",
-					durationSec: 3,
-					render_prompt: "中景，角色A回头",
-				},
-				{
-					shot_number: "分镜 2",
-					beat_role: "opening",
-					dramatic_beat: "角色A继续回头",
-					story_purpose: "重复描述",
-					continuity: "延续站位",
-					durationSec: 3,
-					render_prompt: "中景，角色A继续回头",
-				},
-			],
-		});
+    const metadataSpoof = createBookStoryboardDirectorV12Fixture();
+    const locks = readRecord(readShot(metadataSpoof, 0).storyFactLocks);
+    const bindings = Array.isArray(locks.bindings) ? locks.bindings : [];
+    const injuryBinding = readRecord(bindings[0]);
+    injuryBinding.category = "relationship";
+    injuryBinding.status = "draft_choice";
+    const metadataResult = validateStoryboardDirectorV12Contract(metadataSpoof, {
+      expectedContext: createExpectedBookContext(),
+    });
+    expect(metadataResult.ok).toBe(false);
+    if (!metadataResult.ok) {
+      const codes = metadataResult.issues.map((issue) => issue.code);
+      expect(codes).toContain("story_fact_category_mismatch");
+      expect(codes).toContain("story_fact_status_mismatch");
+    }
 
-		expect(assessment.ok).toBe(false);
-		expect(assessment.reasons).toContain("mini_arc_missing_escalation_turn");
-		expect(assessment.reasons).toContain("mini_arc_missing_payoff_landing");
-	});
+    const inactiveFactBase = createExpectedBookContext();
+    if (inactiveFactBase.mode !== "book_ledger") throw new Error("expected book ledger context");
+    const inactiveFact: StoryboardDirectorV12ExpectedContext = {
+      ...inactiveFactBase,
+      facts: inactiveFactBase.facts.map((fact, index) =>
+        index === 0 ? { ...fact, validUntil: { chapter: 5, sequence: 10 } } : fact,
+      ),
+    };
+    const inactiveResult = validateStoryboardDirectorV12Contract(
+      createBookStoryboardDirectorV12Fixture(),
+      { expectedContext: inactiveFact },
+    );
+    expect(inactiveResult.ok).toBe(false);
+    if (!inactiveResult.ok) {
+      expect(inactiveResult.issues.map((issue) => issue.code)).toContain(
+        "story_fact_not_active_at_shot",
+      );
+    }
+  });
+
+  it("allows forward shot story points but rejects a wrong entry point or regression", () => {
+    const valid = validateStoryboardDirectorV12Contract(createBookStoryboardDirectorV12Fixture(), {
+      expectedContext: createExpectedBookContext(),
+    });
+    expect(valid.ok).toBe(true);
+
+    const wrongEntry = createBookStoryboardDirectorV12Fixture();
+    const firstLocks = readRecord(readShot(wrongEntry, 0).storyFactLocks);
+    firstLocks.effectiveAt = { chapter: 5, sequence: 9 };
+    const wrongEntryResult = validateStoryboardDirectorV12Contract(wrongEntry);
+    expect(wrongEntryResult.ok).toBe(false);
+    if (!wrongEntryResult.ok) {
+      expect(wrongEntryResult.issues.map((issue) => issue.code)).toContain(
+        "first_shot_story_point_mismatch",
+      );
+    }
+
+    const regression = createBookStoryboardDirectorV12Fixture();
+    const secondLocks = readRecord(readShot(regression, 1).storyFactLocks);
+    secondLocks.effectiveAt = { chapter: 5, sequence: 9 };
+    const regressionResult = validateStoryboardDirectorV12Contract(regression);
+    expect(regressionResult.ok).toBe(false);
+    if (!regressionResult.ok) {
+      expect(regressionResult.issues.map((issue) => issue.code)).toContain(
+        "shot_story_point_regression",
+      );
+    }
+  });
+
+  it("preserves fractional shot duration in the deterministic v1.2 projection", () => {
+    const payload = createBookStoryboardDirectorV12Fixture();
+    readShot(payload, 0).durationSec = 2.5;
+    readShot(payload, 1).durationSec = 3.75;
+
+    const structured = normalizeStoryboardStructuredData(payload);
+    expect(structured?.shots.map((shot) => shot.purpose.durationSec)).toEqual([2.5, 3.75]);
+    expect(structured?.totalDurationSec).toBe(6.25);
+
+    if (!structured) throw new Error("expected structured storyboard");
+    expect(deriveShotPromptsFromStructuredData(structured)).toHaveLength(2);
+    expect(normalizeStoryboardStructuredData(structured)).toBeNull();
+  });
+
+  it("hard-rejects storyboard-director v1.1 instead of falling through to legacy shot parsing", () => {
+    expect(
+      normalizeStoryboardStructuredData({
+        schemaVersion: "storyboard-director/v1.1",
+        shots: [{ render_prompt: "旧版本不应继续进入生产" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts task_context without fabricated fact IDs or ledger revision", () => {
+    const payload = createTaskStoryboardDirectorV12Fixture();
+    const validation = validateStoryboardDirectorV12Contract(payload, { expectedShotCount: 2 });
+    expect(validation.ok).toBe(true);
+    const structured = normalizeStoryboardStructuredData(payload);
+    expect(structured?.storyFactsContext).toEqual(
+      expect.objectContaining({
+        mode: "task_context",
+        bookId: null,
+        ledgerRevision: null,
+        effectiveAt: null,
+        consumedFactIds: [],
+        consumedContextKeys: ["ctx_001", "ctx_002"],
+      }),
+    );
+  });
+
+  it("rejects missing exit state, fact trace drift, and broken handoff", () => {
+    const missingExit = createBookStoryboardDirectorV12Fixture();
+    delete readShot(missingExit, 0).exitState;
+    const missingExitResult = validateStoryboardDirectorV12Contract(missingExit);
+    expect(missingExitResult.ok).toBe(false);
+    if (!missingExitResult.ok) {
+      expect(missingExitResult.issues.map((issue) => issue.code)).toContain("required_string_missing");
+    }
+
+    const traceDrift = createBookStoryboardDirectorV12Fixture();
+    const context = readRecord(traceDrift.storyFactsContext);
+    context.consumedFactIds = ["fact_injury_xuzhou_left_wrist"];
+    const traceDriftResult = validateStoryboardDirectorV12Contract(traceDrift);
+    expect(traceDriftResult.ok).toBe(false);
+    if (!traceDriftResult.ok) {
+      expect(traceDriftResult.issues.map((issue) => issue.code)).toContain("binding_fact_not_consumed");
+    }
+
+    const brokenHandoff = createBookStoryboardDirectorV12Fixture();
+    const secondContinuity = readRecord(readShot(brokenHandoff, 1).continuity);
+    secondContinuity.fromPrev = "与上一镜退出态不一致";
+    const brokenHandoffResult = validateStoryboardDirectorV12Contract(brokenHandoff);
+    expect(brokenHandoffResult.ok).toBe(false);
+    if (!brokenHandoffResult.ok) {
+      expect(brokenHandoffResult.issues.map((issue) => issue.code)).toContain("shot_exit_state_handoff_mismatch");
+    }
+  });
+
+  it("rejects task_context bindings that impersonate story facts", () => {
+    const payload = createTaskStoryboardDirectorV12Fixture();
+    const locks = readRecord(readShot(payload, 0).storyFactLocks);
+    const bindings = Array.isArray(locks.bindings) ? locks.bindings : [];
+    bindings[0] = {
+      source: "story_fact",
+      factId: "fake_fact_id",
+      category: "character_state",
+      status: "confirmed",
+      visibility: "objective",
+      directive: "非法伪造账本事实",
+    };
+    const validation = validateStoryboardDirectorV12Contract(payload);
+    expect(validation.ok).toBe(false);
+    if (!validation.ok) {
+      expect(validation.issues.map((issue) => issue.code)).toContain("story_fact_source_mode_mismatch");
+    }
+  });
+
+  it("rejects missing ledger provenance, duplicate consumption, inferred-objective projection, and hidden text", () => {
+    const missingProvenance = createBookStoryboardDirectorV12Fixture();
+    const missingContext = readRecord(missingProvenance.storyFactsContext);
+    delete missingContext.ledgerRevision;
+    delete missingContext.effectiveAt;
+    const missingResult = validateStoryboardDirectorV12Contract(missingProvenance);
+    expect(missingResult.ok).toBe(false);
+    if (!missingResult.ok) {
+      const codes = missingResult.issues.map((issue) => issue.code);
+      expect(codes).toContain("required_number_missing");
+      expect(codes).toContain("story_point_invalid");
+    }
+
+    const duplicateConsumption = createBookStoryboardDirectorV12Fixture();
+    const duplicateContext = readRecord(duplicateConsumption.storyFactsContext);
+    const factIds = Array.isArray(duplicateContext.consumedFactIds) ? duplicateContext.consumedFactIds : [];
+    duplicateContext.consumedFactIds = [...factIds, factIds[0]];
+    const duplicateResult = validateStoryboardDirectorV12Contract(duplicateConsumption);
+    expect(duplicateResult.ok).toBe(false);
+    if (!duplicateResult.ok) {
+      expect(duplicateResult.issues.map((issue) => issue.code)).toContain("string_array_duplicate");
+    }
+
+    const inferredObjective = createBookStoryboardDirectorV12Fixture();
+    const inferredLocks = readRecord(readShot(inferredObjective, 0).storyFactLocks);
+    const inferredBindings = Array.isArray(inferredLocks.bindings) ? inferredLocks.bindings : [];
+    const inferredBinding = readRecord(inferredBindings[2]);
+    inferredBinding.visibility = "objective";
+    const inferredResult = validateStoryboardDirectorV12Contract(inferredObjective);
+    expect(inferredResult.ok).toBe(false);
+    if (!inferredResult.ok) {
+      expect(inferredResult.issues.map((issue) => issue.code)).toContain("inferred_fact_cannot_be_objective");
+    }
+
+    const hiddenText = createBookStoryboardDirectorV12Fixture();
+    const hiddenLocks = readRecord(readShot(hiddenText, 0).storyFactLocks);
+    const hiddenBindings = Array.isArray(hiddenLocks.bindings) ? hiddenLocks.bindings : [];
+    const hiddenBinding = readRecord(hiddenBindings[3]);
+    hiddenBinding.directive = "这一字段会把隐藏真相暴露给生成模型";
+    const hiddenTextResult = validateStoryboardDirectorV12Contract(hiddenText);
+    expect(hiddenTextResult.ok).toBe(false);
+    if (!hiddenTextResult.ok) {
+      expect(hiddenTextResult.issues.map((issue) => issue.code)).toContain("additional_property_forbidden");
+    }
+  });
+
+  it("normalizes only the complete storyboard-director/v1.2 artifact", () => {
+    const artifact = createBookStoryboardDirectorV12Fixture();
+    const structured = normalizeStoryboardStructuredData(artifact);
+    const prompts = deriveShotPromptsFromStructuredData(artifact);
+
+    expect(structured?.version).toBe("two_phase_v1");
+    expect(structured?.sourceSchemaVersion).toBe("storyboard-director/v1.2");
+    expect(structured?.shots).toHaveLength(2);
+    expect(prompts).toHaveLength(2);
+    expect(prompts.every((prompt) => prompt.trim().length > 0)).toBe(true);
+  });
+
+  it("rejects unversioned, v1, v1.1, and internal projection-shaped inputs", () => {
+    expect(normalizeStoryboardStructuredData({ shots: [{ render_prompt: "legacy" }] })).toBeNull();
+    expect(normalizeStoryboardStructuredData({ schemaVersion: "storyboard-director/v1", shots: [] })).toBeNull();
+    expect(normalizeStoryboardStructuredData({ schemaVersion: "storyboard-director/v1.1", shots: [] })).toBeNull();
+    expect(
+      normalizeStoryboardStructuredData({
+        version: "two_phase_v1",
+        sourceSchemaVersion: "storyboard-director/v1.2",
+        shots: [],
+      }),
+    ).toBeNull();
+  });
 });

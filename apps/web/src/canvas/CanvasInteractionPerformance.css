@@ -1,0 +1,71 @@
+/* The transformed React Flow viewport is already promoted by Chromium when it
+   needs compositing. A permanent will-change on that canvas-sized layer keeps
+   a large tile set alive and is especially costly next to decoded video
+   surfaces. Only the one node being dragged receives a short-lived hint. */
+.tc-canvas .react-flow__node.dragging {
+  will-change: transform;
+}
+
+.tc-canvas[data-viewport-moving='true'] .react-flow__node {
+  pointer-events: none !important;
+}
+
+.tc-canvas[data-viewport-moving='true'] .react-flow__node:not(.selected) *,
+.tc-canvas[data-viewport-moving='true'] .react-flow__edge *,
+.tc-canvas[data-dragging='true'] .react-flow__node,
+.tc-canvas[data-dragging='true'] .react-flow__node *,
+.tc-canvas[data-dragging='true'] .react-flow__edge * {
+  transition: none !important;
+  animation: none !important;
+}
+
+.tc-canvas[data-viewport-moving='true'] .react-flow__node:not(.selected) *,
+.tc-canvas[data-viewport-moving='true'] .react-flow__node:not(.selected) {
+  box-shadow: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* A selected node is the user's active editing surface. Its visual state and
+   inline toolbars stay intact while the viewport moves; only unfocused nodes
+   take the temporary paint-cost reduction above. */
+
+/* Decoded video surfaces deliberately remain painted during pan, zoom and node
+   drag. The playback owner pauses decoder progress on motion while preserving
+   the last submitted frame; replacing it with a newly mounted poster creates a
+   visible empty window and an avoidable image decode. */
+
+.tc-canvas[data-viewport-moving='true'] .react-flow__edge-interaction,
+.tc-canvas[data-viewport-moving='true'] .react-flow__edgeupdater,
+.tc-canvas[data-viewport-moving='true'] .react-flow__edgelabel-renderer {
+  display: none !important;
+}
+
+/* Screen-space selection overlays otherwise subscribe to every viewport frame
+   and can repaint a full Mantine subtree while the canvas itself is moving. */
+.tc-canvas[data-viewport-moving='true'] .tc-canvas__selection-action-bar,
+.tc-canvas[data-viewport-moving='true'] .tc-canvas__selection-connect-btn,
+.tc-canvas[data-dragging='true'] .tc-canvas__selection-action-bar,
+.tc-canvas[data-dragging='true'] .tc-canvas__selection-connect-btn {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* React Flow can remeasure handles while the viewport is moving. Keep their
+   layout boxes available so a transient hidden state cannot persist 0x0 bounds. */
+.tc-canvas[data-viewport-moving='true'] .react-flow__node:not(.selected) .tc-handle-layer,
+.tc-canvas[data-viewport-moving='true'] .react-flow__node:not(.selected) .react-flow__handle {
+  visibility: hidden !important;
+}
+
+.tc-canvas[data-viewport-moving='true'] .react-flow__edge-path {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Active drag frames move only the touched node DOM. Hiding edges on large
+   canvases avoids presenting stale endpoints before the single drop commit. */
+.tc-canvas[data-large-canvas='true'][data-dragging='true'] .react-flow__edges {
+  visibility: hidden;
+}

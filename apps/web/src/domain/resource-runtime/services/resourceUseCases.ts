@@ -21,7 +21,6 @@ export type ViewportSnapshot = {
   visibleNodeIds: string[]
   bufferNodeIds: string[]
   selectedNodeIds: string[]
-  focusedNodeId: string | null
   previewNodeId: string | null
   isDragging: boolean
   isPanning: boolean

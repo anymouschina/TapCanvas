@@ -1,6 +1,11 @@
 package constant
 
 const (
+	GoogleGeminiOfficialChannelName = "google-gemini-official"
+	GoogleGeminiOfficialBaseURL     = "https://generativelanguage.googleapis.com"
+)
+
+const (
 	ChannelTypeUnknown        = 0
 	ChannelTypeOpenAI         = 1
 	ChannelTypeMidjourney     = 2
@@ -63,6 +68,16 @@ const (
 	ChannelType147AI          = 63
 	ChannelTypeAmux           = 64
 	ChannelTypeCode0AI        = 65
+	ChannelTypeVolcMediaKit   = 66 // 火山引擎 AI MediaKit 画质增强/超分 (task adaptor)
+	ChannelTypeLingjing       = 67 // 灵镜AI 异步出图 (submit→poll, sync-wrapped image adaptor)
+	ChannelTypeRunningHub     = 68 // RunningHub Standard Model API 异步出图 (submit→/openapi/v2/query poll, sync-wrapped image adaptor)
+	ChannelTypeEvolink        = 69 // Evolink (api.evolink.ai) 统一异步出图/出片 (submit→/v1/tasks/{id} poll)；图片同步包装 + 视频 TaskAdaptor
+	ChannelTypeKiro           = 70 // Kiro (AWS CodeWhisperer / Kiro IDE) free 账号；OIDC refresh_token→accessToken，generateAssistantResponse 事件流
+	ChannelTypeFunAI          = 71 // FunAI (api.funai.works) OpenAI-compatible async video tasks
+	ChannelTypeMegaby         = 72 // Megaby (newapi.megabyai.cc) OpenAI-compatible async video tasks
+	ChannelTypeGaiscImage     = 73 // G-AISC OpenAI-compatible GPT Image 2 generation/edit channel
+	ChannelTypeAIStudioToAPI  = 74 // Browser-backed Google AI Studio runtime with an importer-managed account pool
+	ChannelTypeLluban         = 75 // Recommended lluban new-api upstream (OpenAI-compatible)
 
 )
 
@@ -91,7 +106,7 @@ var ChannelBaseURLs = []string{
 	"https://api.aiproxy.io",              // 21
 	"https://fastgpt.run/api/openapi",     // 22
 	"https://hunyuan.tencentcloudapi.com", //23
-	"https://generativelanguage.beqlee.icu", //24
+	"https://generativelanguage.googleapis.com", //24
 	"https://api.moonshot.cn",                   //25
 	"https://open.bigmodel.cn",                  //26
 	"https://api.perplexity.ai",                 //27
@@ -127,12 +142,22 @@ var ChannelBaseURLs = []string{
 	"https://chatgpt.com",                       //57
 	"https://api.wuyinkeji.com",                 //58
 	"https://api.apimart.ai",                    //59
-	"https://www.right.codes/draw",              //60
+	"https://www.right.codes",                   //60
 	"",                                          //61 (Dummy)
-	"http://152.53.38.70:3001",                 //62
-	"https://api.147ai.cn",                     //63
-	"https://api.amux.ai",                      //64
-	"https://code0.ai",                         //65
+	"http://152.53.38.70:3001",                  //62
+	"https://api.147ai.cn",                      //63
+	"https://api.amux.ai",                       //64
+	"https://code0.ai",                          //65
+	"https://mediakit.cn-beijing.volces.com",    //66
+	"https://api-llm.lingjingai.cn",             //67
+	"https://www.runninghub.ai",                 //68
+	"https://api.evolink.ai",                    //69
+	"https://codewhisperer.us-east-1.amazonaws.com", //70 Kiro
+	"https://api.funai.works",                       //71 FunAI
+	"https://newapi.megabyai.cc",                    //72 Megaby
+	"https://sub.g-aisc.com",                        //73 G-AISC Image
+	"",                                              //74 AI Studio To API (operator-supplied runtime URL)
+	"https://tt-api.lluban.com",                     //75 lluban new-api upstream
 }
 
 var ChannelTypeNames = map[int]string{
@@ -197,6 +222,16 @@ var ChannelTypeNames = map[int]string{
 	ChannelType147AI:          "147AI",
 	ChannelTypeAmux:           "Amux",
 	ChannelTypeCode0AI:        "Code0AI",
+	ChannelTypeVolcMediaKit:   "VolcMediaKit",
+	ChannelTypeLingjing:       "Lingjing",
+	ChannelTypeRunningHub:     "RunningHub",
+	ChannelTypeEvolink:        "Evolink",
+	ChannelTypeKiro:           "Kiro",
+	ChannelTypeFunAI:          "FunAI",
+	ChannelTypeMegaby:         "Megaby",
+	ChannelTypeGaiscImage:     "G-AISC Image",
+	ChannelTypeAIStudioToAPI:  "AI Studio To API",
+	ChannelTypeLluban:         "Lluban API",
 }
 
 func GetChannelTypeName(channelType int) string {

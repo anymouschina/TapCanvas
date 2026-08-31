@@ -419,26 +419,25 @@ export async function listStoryboardShotsByChapter(input: {
 	await ensureStoryboardSchema(input.db);
 	const rows = await queryAll<StoryboardShotRow>(
 		input.db,
-		`SELECT *
-		 FROM storyboard_shots
-		 WHERE owner_id = ?
-		   AND project_id = ?
-		   AND (
-		     chapter_id = ?
-		     OR (
-		       chapter_id IS NULL
-		       AND ? IS NOT NULL
-		       AND chunk_index = ?
-		     )
-		   )
-		 ORDER BY shot_index ASC, created_at ASC`,
-		[
-			input.ownerId,
-			input.projectId,
-			input.chapterId,
-			input.legacyChunkIndex,
-			input.legacyChunkIndex,
-		],
+		input.legacyChunkIndex !== null
+			? `SELECT *
+			   FROM storyboard_shots
+			   WHERE owner_id = ?
+			     AND project_id = ?
+			     AND (
+			       chapter_id = ?
+			       OR (chapter_id IS NULL AND chunk_index = ?)
+			     )
+			   ORDER BY shot_index ASC, created_at ASC`
+			: `SELECT *
+			   FROM storyboard_shots
+			   WHERE owner_id = ?
+			     AND project_id = ?
+			     AND chapter_id = ?
+			   ORDER BY shot_index ASC, created_at ASC`,
+		input.legacyChunkIndex !== null
+			? [input.ownerId, input.projectId, input.chapterId, input.legacyChunkIndex]
+			: [input.ownerId, input.projectId, input.chapterId],
 	);
 	return rows.map(toShotDto);
 }

@@ -48,9 +48,29 @@ func buildCanonicalModelList(models []model.Model) []model.Model {
 
 	result := make([]model.Model, 0, len(order))
 	for _, canonicalName := range order {
-		result = append(result, rowsByCanonical[canonicalName].value)
+		entry := rowsByCanonical[canonicalName]
+		entry.value.RoutingAliases = canonicalRoutingAliases(canonicalName)
+		result = append(result, entry.value)
 	}
 	return result
+}
+
+func canonicalRoutingAliases(canonicalName string) []string {
+	aliases := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, candidate := range model.RoutingModelCandidates(canonicalName) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || candidate == canonicalName {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		aliases = append(aliases, candidate)
+	}
+	sort.Strings(aliases)
+	return aliases
 }
 
 func buildCanonicalModelParamsCatalog(models []model.Model) map[string]dto.ModelParamsCatalogEntry {

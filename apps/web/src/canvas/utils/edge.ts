@@ -366,12 +366,12 @@ export const EdgeStyles: Record<string, React.CSSProperties> = {
   },
   selected: {
     strokeWidth: 3,
-    stroke: '#3B82F6',
+    stroke: '#7a8190',
     fill: 'none',
   },
   animated: {
     strokeWidth: 2,
-    stroke: '#8B5CF6',
+    stroke: '#7c828e',
     fill: 'none',
     strokeDasharray: '5,5',
     animation: 'dash 0.5s linear infinite',
@@ -413,10 +413,10 @@ export function getEdgeStyle(
   // 根据边类型设置颜色
   const edgeType = getEdgeType(edge);
   const typeColors: Record<string, string> = {
-    image: '#3B82F6',
+    image: '#7a8190',
     audio: '#10B981',
     subtitle: '#EAB308',
-    video: '#8B5CF6',
+    video: '#7c828e',
     text: '#6B7280',
   };
 

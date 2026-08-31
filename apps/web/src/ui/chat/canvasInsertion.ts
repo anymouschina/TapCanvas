@@ -1,7 +1,6 @@
 import type { Node } from '@xyflow/react'
 import { computeContextAwarePosition, resolveNonOverlappingPosition, useRFStore } from '../../canvas/store'
 import { getNodeAbsPosition, getNodeSize, type NodeSize, type XY } from '../../canvas/utils/nodeBounds'
-import { useUIStore } from '../uiStore'
 
 type CanvasInsertionScope = {
   anchor: XY
@@ -9,11 +8,6 @@ type CanvasInsertionScope = {
 }
 
 function getAnchorNode(nodes: Node[]): Node | null {
-  const focusedNodeId = String(useUIStore.getState().focusedNodeId || '').trim()
-  if (focusedNodeId) {
-    const focusedNode = nodes.find((node) => String(node.id || '').trim() === focusedNodeId) ?? null
-    if (focusedNode) return focusedNode
-  }
   return nodes.find((node) => node.selected) ?? null
 }
 

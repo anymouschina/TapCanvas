@@ -3,6 +3,7 @@ package router
 import (
 	"embed"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,10 +17,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func readOpenAPIDocument(documentFS fs.FS, document string) ([]byte, error) {
+	switch document {
+	case "relay.json", "api.json":
+		return fs.ReadFile(documentFS, "docs/openapi/"+document)
+	default:
+		return nil, fs.ErrNotExist
+	}
+}
+
 func SetWebRouter(router *gin.Engine, buildFS embed.FS, indexPage []byte, webDistDir string) error {
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
 	router.Use(middleware.GlobalWebRateLimit())
 	router.Use(middleware.Cache())
+
+	// Serve the OpenAPI documents from their authoritative source. The web build
+	// may contain historical public/ copies, so this route must be registered
+	// before the static middleware to prevent documentation drift at runtime.
+	router.GET("/openapi/:document", func(c *gin.Context) {
+		document, err := readOpenAPIDocument(buildFS, c.Param("document"))
+		if err != nil {
+			controller.RelayNotFound(c)
+			return
+		}
+		c.Header("Cache-Control", "no-cache")
+		c.Data(http.StatusOK, "application/json; charset=utf-8", document)
+	})
 
 	if webDistDir == "" {
 		router.Use(static.Serve("/", common.EmbedFolder(buildFS, "web/dist")))

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "replan-attention-projection",
+  "input": {
+    "sessionId": "session_replay_1",
+    "turnId": "turn_replay_1",
+    "logicalTaskId": "logical_replay_1",
+    "physicalRunId": "physical_replay_1",
+    "reasonCode": "replan_required"
+  },
+  "expected": {
+    "attentionProjection": {
+      "version": 1,
+      "logicalTaskId": "logical_replay_1",
+      "status": "replan",
+      "waitingOn": "replan_required",
+      "obligation": "建立新的执行计划",
+      "sourceHeads": {
+        "graphRevision": null,
+        "evidenceRevision": null,
+        "physicalRunId": "physical_replay_1"
+      }
+    }
+  }
+}

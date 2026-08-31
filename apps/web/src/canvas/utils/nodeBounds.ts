@@ -1,5 +1,11 @@
 import type { Node } from '@xyflow/react'
 import { getTaskNodeCoreType } from '../nodes/taskNodeSchema'
+import { resolveWorkflowNodeCanvasSize } from '../workflowNodeGeometry'
+import {
+  TEXT_NODE_DEFAULT_HEIGHT,
+  TEXT_NODE_DEFAULT_WIDTH,
+  getVisualNodeDefaults,
+} from '../nodes/taskNodeHelpers'
 
 export type XY = { x: number; y: number }
 export type NodeSize = { w: number; h: number }
@@ -19,9 +25,16 @@ function fallbackSizeForNode(node: Node): NodeSize {
   const kind = String((node as Record<string, unknown> & { data?: Record<string, unknown> })?.data?.kind || '')
   if (type === 'taskNode') {
     const coreType = getTaskNodeCoreType(kind)
-    if (coreType === 'text') return { w: 380, h: 360 }
-    if (kind === 'imageEdit') return { w: 320, h: 220 }
+    if (coreType === 'text') return { w: TEXT_NODE_DEFAULT_WIDTH, h: TEXT_NODE_DEFAULT_HEIGHT }
+    if (kind === 'imageEdit') {
+      const defaults = getVisualNodeDefaults(kind, coreType, false)
+      return { w: defaults.width, h: defaults.height }
+    }
     if (coreType === 'storyboard') return { w: 560, h: 470 }
+    if (coreType === 'image' || coreType === 'video') {
+      const defaults = getVisualNodeDefaults(kind, coreType, false)
+      return { w: defaults.width, h: defaults.height }
+    }
     return { w: 420, h: 240 }
   }
   if (type === 'groupNode') return { w: 240, h: 160 }
@@ -32,6 +45,12 @@ function fallbackSizeForNode(node: Node): NodeSize {
 export function getNodeSize(node: Node, fallback?: NodeSize): NodeSize {
   const anyNode = node as any
   const data = (anyNode?.data || {}) as any
+  const nodeType = typeof anyNode?.type === 'string' ? anyNode.type : ''
+  const nodeKind = typeof data?.kind === 'string' ? data.kind : ''
+  if (nodeType === 'taskNode' && (nodeKind === 'workflowStage' || nodeKind === 'workflowTrigger')) {
+    const size = resolveWorkflowNodeCanvasSize(data as Record<string, unknown>)
+    return { w: size.width, h: size.height }
+  }
 
   const measuredW =
     typeof anyNode?.measured?.width === 'number' && Number.isFinite(anyNode.measured.width)

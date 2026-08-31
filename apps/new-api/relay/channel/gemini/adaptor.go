@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/geminiauth"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/imageutil"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
@@ -24,6 +25,11 @@ import (
 
 type Adaptor struct {
 }
+
+const (
+	antigravityRelayUserAgent       = "antigravity/hub/2.2.1 darwin/arm64"
+	antigravityRelayGoogleAPIClient = "gl-node/22.21.1"
+)
 
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
 	if len(request.Contents) > 0 {
@@ -41,6 +47,13 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 				}
 			}
 		}
+	}
+	if isGeminiCodeAssistInfo(info) {
+		wrapped, err := wrapGeminiCodeAssistRequest(info, request)
+		if err != nil {
+			return nil, err
+		}
+		return wrapped, nil
 	}
 	return request, nil
 }
@@ -185,6 +198,14 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		geminiRequest.GenerationConfig.ImageConfig = imageConfigBytes
 	}
 
+	if isGeminiCodeAssistInfo(info) {
+		wrapped, err := wrapGeminiCodeAssistRequest(info, &geminiRequest)
+		if err != nil {
+			return nil, err
+		}
+		return wrapped, nil
+	}
+
 	return geminiRequest, nil
 }
 
@@ -210,6 +231,9 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	}
 
 	version := model_setting.GetGeminiVersionSetting(info.UpstreamModelName)
+	if configuredVersion := info.ProtocolOptions["api_version"]; configuredVersion != "" {
+		version = configuredVersion
+	}
 
 	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return fmt.Sprintf("%s/%s/models/%s:predict", info.ChannelBaseUrl, version, info.UpstreamModelName), nil
@@ -225,6 +249,17 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, info.UpstreamModelName, action), nil
 	}
 
+	if isGeminiCodeAssistInfo(info) {
+		action := "generateContent"
+		if info.IsStream {
+			action = "streamGenerateContent?alt=sse"
+			if info.RelayMode == constant.RelayModeGemini {
+				info.DisablePing = true
+			}
+		}
+		return fmt.Sprintf("%s/v1internal:%s", geminiCodeAssistBaseURL(info.ChannelBaseUrl), action), nil
+	}
+
 	action := "generateContent"
 	if info.IsStream {
 		action = "streamGenerateContent?alt=sse"
@@ -237,6 +272,24 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
+	if oauthKey, err := geminiauth.ParseOAuthKey(info.ApiKey); err == nil {
+		accessToken := strings.TrimSpace(oauthKey.AccessToken)
+		if accessToken == "" {
+			return errors.New("gemini OAuth credential is missing access_token")
+		}
+		req.Del("x-goog-api-key")
+		req.Set("Authorization", "Bearer "+accessToken)
+		if strings.EqualFold(oauthKey.EffectiveOAuthType(), "antigravity") {
+			// Code Assist validates Antigravity traffic against its installed client
+			// fingerprint. Mirror the direct Antigravity curl contract rather than
+			// only attaching a generic OAuth bearer token.
+			req.Set("User-Agent", antigravityRelayUserAgent)
+			req.Set("X-Goog-Api-Client", antigravityRelayGoogleAPIClient)
+		} else {
+			req.Set("User-Agent", "new-api-gemini-oauth/1.0")
+		}
+		return nil
+	}
 	req.Set("x-goog-api-key", info.ApiKey)
 	return nil
 }
@@ -251,6 +304,13 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 
+	if isGeminiCodeAssistInfo(info) {
+		wrapped, err := wrapGeminiCodeAssistRequest(info, geminiRequest)
+		if err != nil {
+			return nil, err
+		}
+		return wrapped, nil
+	}
 	return geminiRequest, nil
 }
 
@@ -312,6 +372,11 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if isGeminiCodeAssistInfo(info) && !info.IsStream {
+		if unwrapErr := unwrapGeminiCodeAssistResponseBody(resp); unwrapErr != nil {
+			return nil, types.NewOpenAIError(unwrapErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
+	}
 	if info.RelayMode == constant.RelayModeGemini {
 		if strings.Contains(info.RequestURLPath, ":embedContent") ||
 			strings.Contains(info.RequestURLPath, ":batchEmbedContents") {

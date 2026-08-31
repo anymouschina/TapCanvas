@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   API,
   getLogo,
@@ -64,8 +64,12 @@ import { StatusContext } from '../../context/Status';
 import { useTranslation } from 'react-i18next';
 import { SiDiscord } from 'react-icons/si';
 
+const CONTACT_QR_URL =
+  'https://neo-spark.oss-cn-guangzhou.aliyuncs.com/image/20260424/fa9df2e45f28425d9194373cb8bc5b37.png';
+
 const RegisterForm = () => {
   let navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t } = useTranslation();
   const githubButtonTextKeyByState = {
     idle: '使用 GitHub 继续',
@@ -79,8 +83,7 @@ const RegisterForm = () => {
     email: '',
     verification_code: '',
     wechat_verification_code: '',
-    phone: '',
-    sms_code: '',
+    captcha_code: '',
   });
   const [userState, userDispatch] = useContext(UserContext);
   const [statusState] = useContext(StatusContext);
@@ -88,14 +91,17 @@ const RegisterForm = () => {
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
   const [turnstileToken, setTurnstileToken] = useState('');
   const [showWeChatLoginModal, setShowWeChatLoginModal] = useState(false);
+  const [showContactModal, setShowContactModal] = useState(false);
   const [wechatLoading, setWechatLoading] = useState(false);
   const [githubLoading, setGithubLoading] = useState(false);
   const [discordLoading, setDiscordLoading] = useState(false);
   const [oidcLoading, setOidcLoading] = useState(false);
   const [linuxdoLoading, setLinuxdoLoading] = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
-  const [smsCodeLoading, setSmsCodeLoading] = useState(false);
+  const [verificationCodeLoading, setVerificationCodeLoading] = useState(false);
   const [wechatCodeSubmitLoading, setWechatCodeSubmitLoading] = useState(false);
+  const [captcha, setCaptcha] = useState({ token: '', image: '' });
+  const [captchaLoading, setCaptchaLoading] = useState(false);
   const [customOAuthLoading, setCustomOAuthLoading] = useState({});
   const [disableButton, setDisableButton] = useState(false);
   const [countdown, setCountdown] = useState(60);
@@ -106,6 +112,12 @@ const RegisterForm = () => {
   const [githubButtonDisabled, setGithubButtonDisabled] = useState(false);
   const githubTimeoutRef = useRef(null);
   const githubButtonText = t(githubButtonTextKeyByState[githubButtonState]);
+  const requestedNext = searchParams.get('next');
+  const nextPath =
+    requestedNext?.startsWith('/') && !requestedNext.startsWith('//')
+      ? requestedNext
+      : '/console';
+  const loginPath = `/login?next=${encodeURIComponent(nextPath)}`;
 
   const logo = getLogo();
   const systemName = getSystemName();
@@ -147,6 +159,28 @@ const RegisterForm = () => {
     setHasUserAgreement(status?.user_agreement_enabled || false);
     setHasPrivacyPolicy(status?.privacy_policy_enabled || false);
   }, [status]);
+
+  const refreshCaptcha = async () => {
+    setCaptchaLoading(true);
+    try {
+      const res = await API.get('/api/captcha');
+      const data = res.data?.data;
+      if (res.data?.success && data?.token && data?.image) {
+        setCaptcha({ token: data.token, image: data.image });
+        setInputs((current) => ({ ...current, captcha_code: '' }));
+      } else {
+        showError('图形验证码加载失败，请刷新重试');
+      }
+    } catch {
+      showError('图形验证码加载失败，请刷新重试');
+    } finally {
+      setCaptchaLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshCaptcha();
+  }, []);
 
   useEffect(() => {
     let countdownInterval = null;
@@ -208,78 +242,94 @@ const RegisterForm = () => {
     setInputs((inputs) => ({ ...inputs, [name]: value }));
   }
 
-  const sendSmsCode = async () => {
-    const phone = inputs.phone.trim();
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      showInfo('请输入正确的手机号');
+  const sendEmailVerification = async () => {
+    const email = inputs.email.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      showInfo(t('请输入正确的邮箱地址'));
       return;
     }
     if (turnstileEnabled && !turnstileToken) {
-      showInfo('请稍后几秒重试，Turnstile 正在检查用户环境！');
+      showInfo(t('请稍后几秒重试，Turnstile 正在检查用户环境！'));
       return;
     }
-    setSmsCodeLoading(true);
+    setVerificationCodeLoading(true);
     try {
-      const res = await API.get(`/api/user/sms/code?phone=${encodeURIComponent(phone)}`);
+      const res = await API.get(
+        `/api/verification?email=${encodeURIComponent(email)}&turnstile=${turnstileToken}`,
+      );
       const { success, message } = res.data;
       if (success) {
-        showSuccess('验证码已发送，请查收短信');
+        showSuccess(t('验证码已发送，请查收邮件'));
         setDisableButton(true);
       } else {
         showError(message);
       }
     } catch {
-      showError('发送验证码失败，请重试');
+      showError(t('发送验证码失败，请重试'));
     } finally {
-      setSmsCodeLoading(false);
+      setVerificationCodeLoading(false);
     }
   };
 
-  const handlePhoneSubmit = async () => {
-    const phone = inputs.phone.trim();
-    const code = inputs.sms_code.trim();
+  const handlePasswordRegister = async () => {
+    const username = inputs.username.trim();
     const password = inputs.password;
     const password2 = inputs.password2;
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      showInfo('请输入正确的手机号');
+    const email = inputs.email.trim();
+    const verificationCode = inputs.verification_code.trim();
+
+    if (!username || username.length > 20) {
+      showInfo(t('用户名不能为空且不能超过 20 个字符'));
       return;
     }
-    if (password.length < 8) {
-      showInfo('密码长度不得小于 8 位');
+    if (password.length < 8 || password.length > 20) {
+      showInfo(t('密码长度需为 8 到 20 位'));
       return;
     }
     if (password !== password2) {
-      showInfo('两次输入的密码不一致');
+      showInfo(t('两次输入的密码不一致'));
       return;
     }
-    if (!code) {
-      showInfo('请输入短信验证码');
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      showInfo(t('请输入正确的邮箱地址'));
+      return;
+    }
+    if (status.email_verification && (!email || !verificationCode)) {
+      showInfo(t('请输入邮箱和邮箱验证码'));
       return;
     }
     if (turnstileEnabled && !turnstileToken) {
-      showInfo('请稍后几秒重试，Turnstile 正在检查用户环境！');
+      showInfo(t('请稍后几秒重试，Turnstile 正在检查用户环境！'));
       return;
     }
+    if (!captcha.token || !inputs.captcha_code.trim()) {
+      showInfo('请输入图形验证码');
+      return;
+    }
+
     setRegisterLoading(true);
     try {
-      const affCodeVal = localStorage.getItem('aff') || '';
       const res = await API.post(
-        `/api/user/phone/register?turnstile=${turnstileToken}`,
-        { phone, code, password, aff_code: affCodeVal },
+        `/api/user/register?turnstile=${turnstileToken}`,
+        {
+          username,
+          password,
+          email,
+          verification_code: verificationCode,
+          captcha_token: captcha.token,
+          captcha_code: inputs.captcha_code.trim(),
+          aff_code: localStorage.getItem('aff') || '',
+        },
       );
-      const { success, message, data } = res.data;
+      const { success, message } = res.data;
       if (success) {
-        userDispatch({ type: 'login', payload: data });
-        localStorage.setItem('user', JSON.stringify(data));
-        setUserData(data);
-        updateAPI();
-        showSuccess('注册成功！');
-        navigate('/console');
+        showSuccess(t('注册成功，请登录'));
+        navigate(loginPath);
       } else {
         showError(message);
       }
     } catch {
-      showError('注册失败，请重试');
+      showError(t('注册失败，请重试'));
     } finally {
       setRegisterLoading(false);
     }
@@ -389,14 +439,14 @@ const RegisterForm = () => {
     return (
       <div className='flex flex-col items-center'>
         <div className='w-full max-w-md'>
-          <div className='flex items-center justify-center mb-6 gap-2'>
+          <div className='auth-brand flex items-center justify-center mb-6 gap-2'>
             <img src={logo} alt='Logo' className='h-10 rounded-full' />
             <Title heading={3} className='!text-gray-800'>
               {systemName}
             </Title>
           </div>
 
-          <Card className='border-0 !rounded-2xl overflow-hidden'>
+          <Card className='auth-panel overflow-hidden'>
             <div className='flex justify-center pt-6 pb-2'>
               <Title heading={3} className='text-gray-800 dark:text-gray-200'>
                 {t('注 册')}
@@ -405,25 +455,44 @@ const RegisterForm = () => {
             <div className='px-2 py-8'>
               <Form className='space-y-3'>
                 <Form.Input
-                  field='phone'
-                  label={t('手机号')}
-                  placeholder={t('请输入手机号')}
-                  name='phone'
-                  type='tel'
-                  onChange={(value) => handleChange('phone', value)}
+                  field='username'
+                  label={t('用户名')}
+                  placeholder={t('请输入用户名')}
+                  name='username'
+                  onChange={(value) => handleChange('username', value)}
                   prefix={<IconUser />}
-                  suffix={
-                    <Button
-                      onClick={sendSmsCode}
-                      loading={smsCodeLoading}
-                      disabled={disableButton || smsCodeLoading}
-                    >
-                      {disableButton
-                        ? `${t('重新发送')} (${countdown}s)`
-                        : t('获取验证码')}
-                    </Button>
-                  }
                 />
+                <Form.Input
+                  field='email'
+                  label={t('邮箱')}
+                  placeholder={t('请输入邮箱')}
+                  name='email'
+                  type='email'
+                  onChange={(value) => handleChange('email', value)}
+                  prefix={<IconUser />}
+                />
+                {status.email_verification && (
+                  <Form.Input
+                    field='verification_code'
+                    label={t('邮箱验证码')}
+                    placeholder={t('请输入邮箱验证码')}
+                    name='verification_code'
+                    onChange={(value) => handleChange('verification_code', value)}
+                    prefix={<IconKey />}
+                    suffix={
+                      <Button
+                        onClick={sendEmailVerification}
+                        loading={verificationCodeLoading}
+                        disabled={disableButton || verificationCodeLoading}
+                      >
+                        {disableButton
+                          ? `${t('重新发送')} (${countdown}s)`
+                          : t('获取验证码')}
+                      </Button>
+                    }
+                  />
+                )}
+
                 <Form.Input
                   field='password'
                   label={t('密码')}
@@ -442,14 +511,30 @@ const RegisterForm = () => {
                   onChange={(value) => handleChange('password2', value)}
                   prefix={<IconLock />}
                 />
-                <Form.Input
-                  field='sms_code'
-                  label={t('短信验证码')}
-                  placeholder={t('请输入短信验证码')}
-                  name='sms_code'
-                  onChange={(value) => handleChange('sms_code', value)}
-                  prefix={<IconKey />}
-                />
+                <div className='flex items-center gap-3'>
+                  <Form.Input
+                    field='captcha_code'
+                    label={t('图形验证码')}
+                    placeholder={t('请输入图形验证码')}
+                    name='captcha_code'
+                    onChange={(value) => handleChange('captcha_code', value)}
+                    prefix={<IconKey />}
+                    className='flex-1'
+                  />
+                  <button
+                    type='button'
+                    onClick={refreshCaptcha}
+                    disabled={captchaLoading}
+                    className='mt-7 h-10 w-[132px] overflow-hidden rounded border border-gray-200 bg-white p-0'
+                    title={t('点击刷新图形验证码')}
+                  >
+                    {captcha.image ? (
+                      <img src={captcha.image} alt={t('图形验证码')} className='h-full w-full object-cover' />
+                    ) : (
+                      <span className='text-xs text-gray-500'>{t('刷新验证码')}</span>
+                    )}
+                  </button>
+                </div>
 
                 {(hasUserAgreement || hasPrivacyPolicy) && (
                   <div className='pt-4'>
@@ -492,10 +577,10 @@ const RegisterForm = () => {
                 <div className='space-y-2 pt-2'>
                   <Button
                     theme='solid'
-                    className='w-full !rounded-full'
+                    className='auth-submit-action w-full'
                     type='primary'
                     htmlType='submit'
-                    onClick={handlePhoneSubmit}
+                    onClick={handlePasswordRegister}
                     loading={registerLoading}
                     disabled={
                       (hasUserAgreement || hasPrivacyPolicy) && !agreedToTerms
@@ -633,12 +718,21 @@ const RegisterForm = () => {
                 <Text>
                   {t('已有账户？')}{' '}
                   <Link
-                    to='/login'
+                    to={loginPath}
                     className='text-blue-600 hover:text-blue-800 font-medium'
                   >
                     {t('登录')}
                   </Link>
                 </Text>
+              </div>
+              <div className='mt-3 text-center'>
+                <Button
+                  theme='tertiary'
+                  type='tertiary'
+                  onClick={() => setShowContactModal(true)}
+                >
+                  联系客服
+                </Button>
               </div>
             </div>
           </Card>
@@ -686,20 +780,27 @@ const RegisterForm = () => {
     );
   };
 
+  const renderContactModal = () => (
+    <Modal
+      title='联系客服'
+      visible={showContactModal}
+      onCancel={() => setShowContactModal(false)}
+      footer={null}
+      centered
+    >
+      <div className='flex flex-col items-center gap-3 py-2'>
+        <img src={CONTACT_QR_URL} alt='客服微信二维码' className='h-64 w-64 object-contain' />
+        <Text type='tertiary'>扫码添加客服微信，注册或使用遇到问题可直接咨询</Text>
+      </div>
+    </Modal>
+  );
+
   return (
-    <div className='relative overflow-hidden bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
-      {/* 背景模糊晕染球 */}
-      <div
-        className='blur-ball blur-ball-indigo'
-        style={{ top: '-80px', right: '-80px', transform: 'none' }}
-      />
-      <div
-        className='blur-ball blur-ball-teal'
-        style={{ top: '50%', left: '-120px' }}
-      />
-      <div className='w-full max-w-sm mt-[60px]'>
+    <div className='auth-page-shell relative overflow-hidden flex justify-center'>
+      <div className='auth-page-shell__content w-full max-w-sm'>
         {renderEmailRegisterForm()}
         {renderWeChatLoginModal()}
+        {renderContactModal()}
 
         {turnstileEnabled && (
           <div className='flex justify-center mt-6'>

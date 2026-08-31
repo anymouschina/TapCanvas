@@ -9,6 +9,7 @@ import {
 type StructuredPromptSectionProps = {
   structuredValue: unknown
   loading?: boolean
+  readOnly?: boolean
   externalError?: string | null
   onCommit: (patch: { structuredPrompt: ImagePromptSpecV2; prompt: string }) => void
   onRefine?: () => void
@@ -23,9 +24,10 @@ function formatStructuredDraft(value: unknown): string {
   }
 }
 
-export function StructuredPromptSection({
+function StructuredPromptSection({
   structuredValue,
   loading = false,
+  readOnly = false,
   externalError,
   onCommit,
   onRefine,
@@ -75,7 +77,7 @@ export function StructuredPromptSection({
 
   return (
     <Stack className="task-node-structured-prompt__root" gap={6}>
-      {onRefine ? (
+      {onRefine && !readOnly ? (
         <Group className="task-node-structured-prompt__header" justify="flex-end" gap={8}>
           <Button
             className="task-node-structured-prompt__refine-button"
@@ -95,12 +97,14 @@ export function StructuredPromptSection({
         minRows={8}
         maxRows={14}
         value={draft}
-        disabled={loading}
+        disabled={loading || readOnly}
         onChange={(event) => {
           setDraft(event.currentTarget.value)
           if (localError) setLocalError('')
         }}
-        onBlur={commitDraft}
+        onBlur={() => {
+          if (!readOnly) commitDraft()
+        }}
         placeholder={`{\n  "version": "v2",\n  "shotIntent": "...",\n  "spatialLayout": ["..."],\n  "subjectRelations": [],\n  "environmentObjects": [],\n  "cameraPlan": ["..."],\n  "lightingPlan": ["..."],\n  "styleConstraints": [],\n  "continuityConstraints": [],\n  "negativeConstraints": []\n}`}
       />
       {errorMessage ? (
@@ -111,3 +115,6 @@ export function StructuredPromptSection({
     </Stack>
   )
 }
+
+const _StructuredPromptSection = React.memo(StructuredPromptSection)
+export { _StructuredPromptSection as StructuredPromptSection }

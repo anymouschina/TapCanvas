@@ -2,6 +2,7 @@ import type { AppContext } from "../../types";
 import type { TaskRequestDto, TaskResultDto } from "./task.schemas";
 import { upsertTaskResult } from "./task-result.repo";
 import { upsertVendorTaskRef } from "./vendor-task-refs.repo";
+import { readGenerationAssetContextFromRaw } from "./generation-asset-context";
 
 export async function maybeWrapSyncImageResultAsStoredTask(
 	c: AppContext,
@@ -16,7 +17,7 @@ export async function maybeWrapSyncImageResultAsStoredTask(
 	const requestKind = input.requestKind;
 	const result = input.result;
 
-	if (vendor !== "dmxapi") return result;
+	// 对所有同步返回 succeeded 的图片任务统一包装成 task_UUID，前端轮询路径一致
 	if (requestKind !== "text_to_image" && requestKind !== "image_edit") return result;
 	if (result?.status !== "succeeded") return result;
 	if (!Array.isArray((result as any)?.assets) || (result as any).assets.length <= 0) return result;
@@ -27,6 +28,8 @@ export async function maybeWrapSyncImageResultAsStoredTask(
 		typeof (result as any)?.id === "string"
 			? String((result as any).id).trim()
 			: String((result as any)?.id || "").trim();
+	const generationContext = readGenerationAssetContextFromRaw(result.raw);
+	const generationContextRaw = generationContext ? { generationContext } : {};
 
 	try {
 		const finalResult: TaskResultDto = {
@@ -39,6 +42,7 @@ export async function maybeWrapSyncImageResultAsStoredTask(
 				vendor,
 				upstreamTaskId: upstreamTaskId || null,
 				storedAt: nowIso,
+				...generationContextRaw,
 			},
 		};
 		await upsertTaskResult(c.env.DB, {
@@ -73,14 +77,14 @@ export async function maybeWrapSyncImageResultAsStoredTask(
 				vendor,
 				upstreamTaskId: upstreamTaskId || null,
 				storedResultReady: true,
+				...generationContextRaw,
 			},
 		};
 	} catch (err: any) {
 		console.warn(
-			"[task-store] persist dmxapi result failed",
+			"[task-store] persist sync image result failed",
 			err?.message || err,
 		);
 		return result;
 	}
 }
-

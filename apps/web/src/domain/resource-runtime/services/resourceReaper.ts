@@ -21,7 +21,7 @@ function getEstimatedBytes(entry: ImageResourceEntry): number {
 }
 
 function isTrimEligible(entry: ImageResourceEntry): boolean {
-  return entry.refCount <= 0 && Boolean(entry.decoded?.objectUrl || entry.decoded?.imageBitmap)
+  return entry.refCount <= 0 && Boolean(entry.decoded?.renderUrl)
 }
 
 function compareTrimCandidate(left: ImageResourceEntry, right: ImageResourceEntry): number {

@@ -16,6 +16,7 @@ description: 统一的 TapCanvas API skill。凡是要通过 TapCanvas 项目的
 
 涉及以下任一场景时，只能使用本 skill：
 - 调用 `/public/agents/chat`
+- 调用 `/public/agents/tools/execute` 读取或执行当前 Agents 工具面
 - 调用 `/public/draw`
 - 调用 `/public/vision`
 - 调用 `/public/video`
@@ -42,10 +43,23 @@ description: 统一的 TapCanvas API skill。凡是要通过 TapCanvas 项目的
 - `apiBaseUrl`: TapCanvas API 域名或本地开发地址，不带尾部斜杠更清晰
 - `apiKey`: 当前用户生成的 API Key
 
+本地开发实例若已由 Hono 显式启用 `TAPCANVAS_DEV_PUBLIC_BYPASS`，诊断时可以额外传
+`--devBypassToken <token>`。调用器只在该参数明确出现时发送 `x-tap-dev-bypass`，并且不会
+同时发送 Bearer，以复现浏览器 HttpOnly 会话委托链；生产调用、普通 API Key 调用和
+`config.json` 不会自动启用或保存 bypass。本地 Hono 未显式启用该 token 时请求会原地失败。
+
+诊断已登录浏览器会话时，可以显式传 `--sessionCookie <cookie>`，或仅在当前进程设置
+`TAPCANVAS_SESSION_COOKIE`；同时必须显式传 `--origin <origin>` 或设置
+`TAPCANVAS_SESSION_ORIGIN`，以满足浏览器会话的 CSRF 来源校验。调用器只把这些值用于
+本次请求，既不写入 `config.json`，也不与 Bearer 或 dev bypass 同时发送。会话或来源
+无效时必须原样返回 401/403。
+
 优先级：
 1. 脚本参数显式传入
 2. `config.json`
 3. 环境变量 `TAPCANVAS_API_BASE_URL` / `TAPCANVAS_API_KEY`
+
+鉴权方式互斥优先级：显式 dev bypass > 显式会话 Cookie > API Key。
 
 如果最终缺少 `apiBaseUrl` 或 `apiKey`，必须直接失败。
 
@@ -67,10 +81,21 @@ node apps/agents-cli/skills/tapcanvas-api/scripts/call.mjs \
   --payloadFile /abs/path/request.json
 ```
 
+本地开发诊断示例：
+
+```bash
+node apps/agents-cli/skills/tapcanvas-api/scripts/call.mjs \
+  --endpoint chat \
+  --apiBaseUrl http://127.0.0.1:8788 \
+  --devBypassToken '<explicit-local-secret>' \
+  --payload '{"prompt":"你好","stream":true}'
+```
+
 ## Endpoint 规则
 
 可用 endpoint：
 - `chat` -> `POST /public/agents/chat`
+- `agentTool` -> `POST /public/agents/tools/execute`
 - `draw` -> `POST /public/draw`
 - `vision` -> `POST /public/vision`
 - `video` -> `POST /public/video`
@@ -80,7 +105,7 @@ node apps/agents-cli/skills/tapcanvas-api/scripts/call.mjs \
 - `flowPatch` -> `POST /public/flows/:id/patch`
 
 规则：
-- `chat/draw/vision/video/taskResult` 必须传 `payload`
+- `chat/agentTool/draw/vision/video/taskResult` 必须传 `payload`
 - `flows` 必须传 `--projectId`
 - `flowGet` 必须传 `--flowId`
 - `flowPatch` 必须同时传 `--flowId` 和 `payload`

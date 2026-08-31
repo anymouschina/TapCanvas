@@ -20,6 +20,14 @@ export const GithubExchangeRequestSchema = z.object({
 
 export const AuthResponseSchema = z.object({
 	token: z.string(),
+	refreshToken: z.string(),
+	accessTokenExpiresInSeconds: z.number().int().positive(),
+	refreshTokenExpiresInSeconds: z.number().int().positive(),
+	user: UserPayloadSchema,
+});
+
+export const BrowserAuthResponseSchema = z.object({
+	authenticated: z.literal(true),
 	user: UserPayloadSchema,
 });
 
@@ -47,41 +55,14 @@ export const EmailVerifyRequestSchema = z.object({
 		.regex(/^\d{6}$/, "验证码需为 6 位数字"),
 });
 
-export const PhoneLoginRequestSchema = z.object({
-	phone: z
+export const CredentialLoginRequestSchema = z.object({
+	username: z
 		.string()
 		.trim()
-		.min(6, "手机号不正确")
-		.max(32, "手机号不正确"),
-});
-
-export const PhoneVerifyRequestSchema = z.object({
-	phone: z
-		.string()
-		.trim()
-		.min(6, "手机号不正确")
-		.max(32, "手机号不正确"),
-	code: z
-		.string()
-		.trim()
-		.regex(/^\d{6}$/, "验证码需为 6 位数字"),
-});
-
-export const PhonePasswordLoginRequestSchema = z.object({
-	phone: z
-		.string()
-		.trim()
-		.min(6, "手机号不正确")
-		.max(32, "手机号不正确"),
+		.min(1, "请输入账号")
+		.max(64, "账号过长"),
 	password: z
 		.string()
-		.min(8, "密码至少 8 位")
-		.max(128, "密码过长"),
-});
-
-export const SetPasswordRequestSchema = z.object({
-	password: z
-		.string()
-		.min(8, "密码至少 8 位")
+		.min(6, "密码至少 6 位")
 		.max(128, "密码过长"),
 });

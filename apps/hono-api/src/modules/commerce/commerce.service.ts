@@ -1,31 +1,23 @@
 import { AppError } from "../../middleware/error";
 import type { AppContext } from "../../types";
-import { syncOpenClawAuthorizationForOwner } from "./openclaw.service";
-import { listOrderItems } from "../order/order.repo";
 import { getProductById } from "../product/product.repo";
+import { isAdminRequest } from "../team/team.service";
 import {
-	ensurePersonalBillingTeam,
-	getMyTeam,
-} from "../team/team.service";
-import {
-	getTeamCreditsOverview,
-	topUpTeamCredits,
-} from "../team/team.repo";
+	ACCOUNT_SETTINGS_DICT_TYPE,
+	resolveConfiguredPlatformOwnerId,
+} from "../account/account.settings";
 import {
 	consumeDailyQuota,
 	deleteDictionaryRow,
 	getDailyQuotaByDate,
 	getDictionaryById,
-	getOrderEntitlementLog,
+	getDictionaryByIdAnyOwner,
 	getProductEntitlementByProductId,
 	getProductEntitlement,
 	getQuotaEventByIdempotencyKey,
 	getDetailPageSampleById,
 	getDetailPageEvolutionSummaryRow,
 	getSubscriptionById,
-	insertOrderEntitlementLog,
-	insertSubscription,
-	insertSubscriptionDailyQuota,
 	insertDetailPageEvolutionRun,
 	insertDetailPageFeedbackRows,
 	insertDetailPageRetrievalLogRows,
@@ -35,7 +27,6 @@ import {
 	listDictionaryRows,
 	listTopDetailPageSamplesForRetrieve,
 	listWeakDetailPageCategories,
-	listRechargePackageRows,
 	countDetailPageFeedbacks,
 	deleteDetailPageSampleRow,
 	ensureDetailPageSchema,
@@ -49,6 +40,10 @@ import {
 	type SubscriptionDailyQuotaRow,
 	type SubscriptionRow,
 } from "./commerce.repo";
+import {
+	CommerceEntitlementTypeSchema,
+	MembershipConfigSchema,
+} from "./commerce.schemas";
 import type {
 	CommerceEntitlementType,
 	DetailPageEvolutionSummaryDto,
@@ -56,7 +51,6 @@ import type {
 	DetailPageSampleRetrieveResponseDto,
 	DictionaryItemDto,
 	ProductEntitlementDto,
-	RechargePackageDto,
 	RunDetailPageEvolutionResponseDto,
 	SubscriptionDailyQuotaDto,
 	SubscriptionDto,
@@ -77,40 +71,23 @@ function mapDictionaryRowToDto(row: DictionaryRow): DictionaryItemDto {
 	};
 }
 
-async function getBillingTeamSnapshot(c: AppContext, ownerId: string): Promise<{
-	teamId: string;
-}> {
-	const membership = await getMyTeam(c, ownerId);
-	const teamId = membership?.team?.id ?? (await ensurePersonalBillingTeam(c, ownerId));
-	if (!teamId) {
-		throw new AppError("Billing team not found", {
-			status: 404,
-			code: "billing_team_not_found",
-			details: { ownerId },
-		});
-	}
-	const overview = await getTeamCreditsOverview(c.env.DB, teamId);
-	if (!overview) {
-		throw new AppError("Billing team not found", {
-			status: 404,
-			code: "billing_team_not_found",
-			details: { ownerId, teamId },
-		});
-	}
-	return { teamId };
-}
-
 function mapSubscriptionRowToDto(row: SubscriptionRow): SubscriptionDto {
 	return {
 		id: row.id,
 		ownerId: row.owner_id,
 		planCode: row.plan_code,
-		sourceOrderId: row.source_order_id,
 		status: row.status as "active" | "expired" | "canceled",
 		startAt: row.start_at,
 		endAt: row.end_at,
+		billingCycle: row.billing_cycle as "monthly" | "annual",
 		durationDays: Number(row.duration_days ?? 0) || 0,
-		dailyLimit: Number(row.daily_limit ?? 0) || 0,
+		monthlyCredits: Number(row.monthly_credits ?? 0) || 0,
+		dailyGiftCredits: Number(row.daily_gift_credits ?? 0) || 0,
+		concurrencyLimit: Number(row.concurrency_limit ?? 0) || 0,
+		capacityLabel: row.capacity_label,
+		creditGrantCount: Number(row.credit_grant_count ?? 0) || 0,
+		creditGrantsIssued: Number(row.credit_grants_issued ?? 0) || 0,
+		nextCreditGrantAt: row.next_credit_grant_at,
 		timezone: row.timezone,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
@@ -134,28 +111,6 @@ function mapDailyQuotaRowToDto(row: SubscriptionDailyQuotaRow): SubscriptionDail
 	};
 }
 
-function parseEntitlementConfig(row: ProductEntitlementRow): Record<string, unknown> {
-	try {
-		const parsed: unknown = row.config_json ? JSON.parse(row.config_json) : {};
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-		return {};
-	} catch {
-		return {};
-	}
-}
-
-function pickSkuConfig(
-	config: Record<string, unknown>,
-	skuId: string | null,
-): Record<string, unknown> {
-	if (!skuId) return {};
-	const skuConfigs = config.skuConfigs;
-	if (!skuConfigs || typeof skuConfigs !== "object" || Array.isArray(skuConfigs)) return {};
-	const matched = (skuConfigs as Record<string, unknown>)[skuId];
-	if (!matched || typeof matched !== "object" || Array.isArray(matched)) return {};
-	return matched as Record<string, unknown>;
-}
-
 function mapProductEntitlementRowToDto(row: ProductEntitlementRow): ProductEntitlementDto {
 	return {
 		productId: row.product_id,
@@ -166,62 +121,8 @@ function mapProductEntitlementRowToDto(row: ProductEntitlementRow): ProductEntit
 	};
 }
 
-function parseRechargeConfig(value: string | null): { points: number; bonusPoints: number } | null {
-	if (!value) return null;
-	try {
-		const parsed: unknown = JSON.parse(value);
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-		const obj = parsed as Record<string, unknown>;
-		const points = Number(obj.points ?? 0) || 0;
-		const bonusPoints = Math.max(0, Number(obj.bonusPoints ?? 0) || 0);
-		if (points <= 0) return null;
-		return { points, bonusPoints };
-	} catch {
-		return null;
-	}
-}
-
-function buildRechargePackageSignature(input: {
-	title: string;
-	priceCents: number;
-	points: number;
-	bonusPoints: number;
-}): string {
-	return [
-		input.title.trim(),
-		String(Math.trunc(input.priceCents) || 0),
-		String(Math.trunc(input.points) || 0),
-		String(Math.trunc(input.bonusPoints) || 0),
-	].join("::");
-}
-
-function dedupeRechargePackages(items: RechargePackageDto[]): RechargePackageDto[] {
-	const seen = new Set<string>();
-	const uniqueItems: RechargePackageDto[] = [];
-	for (const item of items) {
-		const signature = buildRechargePackageSignature({
-			title: item.title,
-			priceCents: item.priceCents,
-			points: item.points,
-			bonusPoints: item.bonusPoints,
-		});
-		if (seen.has(signature)) {
-			continue;
-		}
-		seen.add(signature);
-		uniqueItems.push(item);
-	}
-	return uniqueItems;
-}
-
 function toIsoDate(input: Date): string {
 	return input.toISOString().slice(0, 10);
-}
-
-function addDays(input: Date, days: number): Date {
-	const out = new Date(input.getTime());
-	out.setUTCDate(out.getUTCDate() + days);
-	return out;
 }
 
 function parseTagsJson(raw: string): string[] {
@@ -288,31 +189,11 @@ function buildDetailSampleContextSnippet(items: Array<{ sample: DetailPageSample
 }
 
 export async function listCommerceDictionaryItems(c: AppContext, ownerId: string | undefined, dictType?: string) {
+	if (dictType === ACCOUNT_SETTINGS_DICT_TYPE && !isAdminRequest(c)) {
+		throw new AppError("平台账户配置仅管理员可读取", { status: 403, code: "platform_account_admin_required" });
+	}
 	const rows = await listDictionaryRows(c.env.DB, ownerId, dictType);
 	return rows.map(mapDictionaryRowToDto);
-}
-
-export async function listRechargePackagesForOwner(c: AppContext, ownerId: string): Promise<RechargePackageDto[]> {
-	void ownerId;
-	const rows = await listRechargePackageRows(c.env.DB);
-	const items: RechargePackageDto[] = [];
-	for (const row of rows) {
-		const cfg = parseRechargeConfig(row.config_json);
-		if (!cfg) continue;
-		items.push({
-			productId: row.product_id,
-			title: row.title,
-			subtitle: row.subtitle,
-			currency: row.currency,
-			priceCents: Number(row.price_cents ?? 0) || 0,
-			points: cfg.points,
-			bonusPoints: cfg.bonusPoints,
-			totalPoints: cfg.points + cfg.bonusPoints,
-		});
-	}
-	const uniqueItems = dedupeRechargePackages(items);
-	uniqueItems.sort((a, b) => a.priceCents - b.priceCents);
-	return uniqueItems;
 }
 
 export async function upsertCommerceDictionaryItem(c: AppContext, ownerId: string, input: {
@@ -324,6 +205,21 @@ export async function upsertCommerceDictionaryItem(c: AppContext, ownerId: strin
 	enabled?: boolean;
 	sortOrder?: number;
 }) {
+	if (input.dictType === ACCOUNT_SETTINGS_DICT_TYPE) {
+		if (!isAdminRequest(c)) {
+			throw new AppError("平台账户配置仅管理员可操作", { status: 403, code: "platform_account_admin_required" });
+		}
+		const platformOwnerId = resolveConfiguredPlatformOwnerId(c);
+		if (!platformOwnerId) {
+			throw new AppError("未配置 COMMERCE_PLATFORM_OWNER_ID", {
+				status: 503,
+				code: "account_platform_owner_not_configured",
+			});
+		}
+		if (ownerId !== platformOwnerId) {
+			throw new AppError("平台账户配置归属不正确", { status: 403, code: "platform_account_owner_invalid" });
+		}
+	}
 	const nowIso = new Date().toISOString();
 	await upsertDictionaryRow(c.env.DB, {
 		id: input.id || crypto.randomUUID(),
@@ -342,10 +238,32 @@ export async function upsertCommerceDictionaryItem(c: AppContext, ownerId: strin
 	return mapDictionaryRowToDto(target);
 }
 
-export async function deleteCommerceDictionaryItem(c: AppContext, ownerId: string, id: string): Promise<void> {
-	const row = await getDictionaryById(c.env.DB, ownerId, id);
+export async function deleteCommerceDictionaryItem(
+	c: AppContext,
+	actorUserId: string,
+	id: string,
+): Promise<void> {
+	const admin = isAdminRequest(c);
+	const row = admin
+		? await getDictionaryByIdAnyOwner(c.env.DB, id)
+		: await getDictionaryById(c.env.DB, actorUserId, id);
 	if (!row) throw new AppError("Dictionary item not found", { status: 404, code: "dictionary_not_found" });
-	await deleteDictionaryRow(c.env.DB, ownerId, id);
+	if (row.dict_type === ACCOUNT_SETTINGS_DICT_TYPE) {
+		if (!admin) {
+			throw new AppError("平台账户配置仅管理员可操作", { status: 403, code: "platform_account_admin_required" });
+		}
+		const platformOwnerId = resolveConfiguredPlatformOwnerId(c);
+		if (!platformOwnerId) {
+			throw new AppError("未配置 COMMERCE_PLATFORM_OWNER_ID", {
+				status: 503,
+				code: "account_platform_owner_not_configured",
+			});
+		}
+		if (row.owner_id !== platformOwnerId) {
+			throw new AppError("Dictionary item not found", { status: 404, code: "dictionary_not_found" });
+		}
+	}
+	await deleteDictionaryRow(c.env.DB, row.owner_id, row.id);
 }
 
 export async function upsertProductEntitlementForCatalog(c: AppContext, productId: string, input: {
@@ -354,13 +272,23 @@ export async function upsertProductEntitlementForCatalog(c: AppContext, productI
 }) {
 	const product = await getProductById(c.env.DB, { id: productId });
 	if (!product) throw new AppError("Product not found", { status: 404, code: "product_not_found" });
+	const config = input.entitlementType === "membership"
+		? MembershipConfigSchema.safeParse(input.config)
+		: null;
+	if (config && !config.success) {
+		throw new AppError("月度会员权益配置不正确", {
+			status: 400,
+			code: "membership_config_invalid",
+			details: config.error.issues,
+		});
+	}
 	const nowIso = new Date().toISOString();
 	await upsertProductEntitlement(c.env.DB, {
 		id: crypto.randomUUID(),
 		ownerId: product.owner_id,
 		productId,
 		entitlementType: input.entitlementType,
-		configJson: JSON.stringify(input.config || {}),
+		configJson: JSON.stringify(config?.success ? config.data : input.config),
 		nowIso,
 	});
 	const row = await getProductEntitlementByProductId(c.env.DB, productId);
@@ -419,245 +347,6 @@ export async function consumeSubscriptionQuotaForOwner(c: AppContext, ownerId: s
 	const quota = await getDailyQuotaByDate(c.env.DB, ownerId, input.subscriptionId, quotaDate);
 	if (!quota) throw new AppError("Daily quota not found", { status: 400, code: "quota_not_found" });
 	return mapDailyQuotaRowToDto(quota);
-}
-
-export async function applyOrderEntitlementsForPaidOrder(c: AppContext, ownerId: string, orderId: string): Promise<void> {
-	const items = await listOrderItems(c.env.DB, { orderId });
-	if (!items.length) return;
-	for (const item of items) {
-		const entitlement = await getProductEntitlementByProductId(c.env.DB, item.product_id);
-		if (!entitlement || entitlement.entitlement_type === "none") continue;
-		const duplicate = await getOrderEntitlementLog(c.env.DB, ownerId, item.id, entitlement.entitlement_type);
-		if (duplicate) continue;
-		const now = new Date();
-		const nowIso = now.toISOString();
-		const quantity = Math.max(1, Number(item.quantity ?? 0) || 1);
-		const config = parseEntitlementConfig(entitlement);
-		const skuConfig = pickSkuConfig(config, item.sku_id);
-		const mergedConfig = { ...config, ...skuConfig };
-		if (entitlement.entitlement_type === "points_topup") {
-			const points = Number(mergedConfig.points ?? 0) || 0;
-			const bonusPoints = Math.max(0, Number(mergedConfig.bonusPoints ?? 0) || 0);
-			const totalPoints = (points + bonusPoints) * quantity;
-			if (points <= 0) {
-				await insertOrderEntitlementLog(c.env.DB, {
-					id: crypto.randomUUID(),
-					ownerId,
-					orderId,
-					orderItemId: item.id,
-					productId: item.product_id,
-					entitlementType: entitlement.entitlement_type,
-					status: "skipped",
-					resultJson: JSON.stringify({ reason: "invalid_points_config", quantity, skuId: item.sku_id }),
-					nowIso,
-				});
-				continue;
-			}
-			const teamSnapshot = await getBillingTeamSnapshot(c, ownerId);
-			await topUpTeamCredits(c.env.DB, {
-				teamId: teamSnapshot.teamId,
-				amount: totalPoints,
-				actorUserId: ownerId,
-				note: `order_paid | order:${orderId} | product:${item.product_id}`,
-				nowIso,
-			});
-			await insertOrderEntitlementLog(c.env.DB, {
-				id: crypto.randomUUID(),
-				ownerId,
-				orderId,
-				orderItemId: item.id,
-				productId: item.product_id,
-				entitlementType: entitlement.entitlement_type,
-				status: "applied",
-				resultJson: JSON.stringify({ points, bonusPoints, quantity, totalPoints, skuId: item.sku_id }),
-				nowIso,
-			});
-			continue;
-		}
-		if (entitlement.entitlement_type === "monthly_quota") {
-			const durationDays = Number(mergedConfig.durationDays ?? 0) || 0;
-			const dailyLimit = Number(mergedConfig.dailyLimit ?? 0) || 0;
-			const timezone =
-				typeof mergedConfig.timezone === "string" && mergedConfig.timezone.trim()
-					? mergedConfig.timezone.trim()
-					: "Asia/Shanghai";
-			if (durationDays <= 0 || dailyLimit <= 0) {
-				await insertOrderEntitlementLog(c.env.DB, {
-					id: crypto.randomUUID(),
-					ownerId,
-					orderId,
-					orderItemId: item.id,
-					productId: item.product_id,
-					entitlementType: entitlement.entitlement_type,
-					status: "skipped",
-					resultJson: JSON.stringify({ reason: "invalid_monthly_quota_config", quantity, skuId: item.sku_id }),
-					nowIso,
-				});
-				continue;
-			}
-			const subscriptionIds: string[] = [];
-			for (let index = 0; index < quantity; index += 1) {
-				const subscriptionId = crypto.randomUUID();
-				const start = now;
-				const end = addDays(start, durationDays);
-				await insertSubscription(c.env.DB, {
-					id: subscriptionId,
-					ownerId,
-					planCode: `monthly_quota_${durationDays}d_${dailyLimit}`,
-					sourceOrderId: orderId,
-					status: "active",
-					startAt: start.toISOString(),
-					endAt: end.toISOString(),
-					durationDays,
-					dailyLimit,
-					timezone,
-					nowIso,
-				});
-				for (let i = 0; i < durationDays; i += 1) {
-					const d = addDays(start, i);
-					await insertSubscriptionDailyQuota(c.env.DB, {
-						id: crypto.randomUUID(),
-						subscriptionId,
-						ownerId,
-						quotaDate: toIsoDate(d),
-						dailyLimit,
-						usedCount: 0,
-						nowIso,
-					});
-				}
-				subscriptionIds.push(subscriptionId);
-			}
-			await insertOrderEntitlementLog(c.env.DB, {
-				id: crypto.randomUUID(),
-				ownerId,
-				orderId,
-				orderItemId: item.id,
-				productId: item.product_id,
-				entitlementType: entitlement.entitlement_type,
-				status: "applied",
-				resultJson: JSON.stringify({ subscriptionIds, quantity, durationDays, dailyLimit, timezone, skuId: item.sku_id }),
-				nowIso,
-			});
-		}
-
-		if (entitlement.entitlement_type === "openclaw_subscription") {
-			const durationDays = Number(mergedConfig.durationDays ?? 0) || 0;
-			const dailyLimit = Number(mergedConfig.dailyLimit ?? 0) || 0;
-			const timezone =
-				typeof mergedConfig.timezone === "string" && mergedConfig.timezone.trim()
-					? mergedConfig.timezone.trim()
-					: "Asia/Shanghai";
-			const descriptionText =
-				typeof mergedConfig.descriptionText === "string" && mergedConfig.descriptionText.trim()
-					? mergedConfig.descriptionText.trim()
-					: null;
-			const externalName =
-				typeof mergedConfig.externalName === "string" && mergedConfig.externalName.trim()
-					? mergedConfig.externalName.trim()
-					: "openclaw";
-			const allowWallet = mergedConfig.allowWallet !== false;
-			const allowedItemIds = Array.isArray(mergedConfig.allowedItemIds)
-				? mergedConfig.allowedItemIds
-					.map((item) => (typeof item === "string" ? item.trim() : ""))
-					.filter(Boolean)
-				: null;
-			if (durationDays <= 0 || dailyLimit <= 0) {
-				await insertOrderEntitlementLog(c.env.DB, {
-					id: crypto.randomUUID(),
-					ownerId,
-					orderId,
-					orderItemId: item.id,
-					productId: item.product_id,
-					entitlementType: entitlement.entitlement_type,
-					status: "skipped",
-					resultJson: JSON.stringify({ reason: "invalid_openclaw_config", quantity, skuId: item.sku_id }),
-					nowIso,
-				});
-				continue;
-			}
-			const subscriptionIds: string[] = [];
-			for (let index = 0; index < quantity; index += 1) {
-				const subscriptionId = crypto.randomUUID();
-				const start = now;
-				const end = addDays(start, durationDays);
-				await insertSubscription(c.env.DB, {
-					id: subscriptionId,
-					ownerId,
-					planCode: `openclaw_${durationDays}d_${dailyLimit}`,
-					sourceOrderId: orderId,
-					status: "active",
-					startAt: start.toISOString(),
-					endAt: end.toISOString(),
-					durationDays,
-					dailyLimit,
-					timezone,
-					nowIso,
-				});
-				for (let i = 0; i < durationDays; i += 1) {
-					const d = addDays(start, i);
-					await insertSubscriptionDailyQuota(c.env.DB, {
-						id: crypto.randomUUID(),
-						subscriptionId,
-						ownerId,
-						quotaDate: toIsoDate(d),
-						dailyLimit,
-						usedCount: 0,
-						nowIso,
-					});
-				}
-				subscriptionIds.push(subscriptionId);
-			}
-			const quotaLimit = quantity * dailyLimit;
-			try {
-				const authorization = await syncOpenClawAuthorizationForOwner(c, {
-					ownerId,
-					subscriptionId: subscriptionIds[subscriptionIds.length - 1] || null,
-					sourceOrderId: orderId,
-					productId: item.product_id,
-					skuId: item.sku_id,
-					quotaLimit,
-					externalName,
-					descriptionText,
-					allowWallet,
-					allowedItemIds,
-					desiredStatus: "active",
-				});
-				await insertOrderEntitlementLog(c.env.DB, {
-					id: crypto.randomUUID(),
-					ownerId,
-					orderId,
-					orderItemId: item.id,
-					productId: item.product_id,
-					entitlementType: entitlement.entitlement_type,
-					status: "applied",
-					resultJson: JSON.stringify({
-						authorizationId: authorization.id,
-						subscriptionIds,
-						quantity,
-						durationDays,
-						dailyLimit,
-						quotaLimit: authorization.quotaLimit,
-						externalName: authorization.externalName,
-						skuId: item.sku_id,
-					}),
-					nowIso,
-				});
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error || "openclaw sync failed");
-				await insertOrderEntitlementLog(c.env.DB, {
-					id: crypto.randomUUID(),
-					ownerId,
-					orderId,
-					orderItemId: item.id,
-					productId: item.product_id,
-					entitlementType: entitlement.entitlement_type,
-					status: "failed",
-					resultJson: JSON.stringify({ subscriptionIds, quantity, durationDays, dailyLimit, quotaLimit, skuId: item.sku_id, message }),
-					nowIso,
-				});
-			}
-		}
-	}
 }
 
 export async function listDetailPageSamplesForOwner(

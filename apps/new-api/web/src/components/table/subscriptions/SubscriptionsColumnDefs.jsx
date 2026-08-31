@@ -30,7 +30,6 @@ import {
   Tooltip,
 } from '@douyinfe/semi-ui';
 import { renderQuota } from '../../../helpers';
-import { convertUSDToCurrency } from '../../../helpers/render';
 
 const { Text } = Typography;
 
@@ -77,10 +76,6 @@ const renderPlanTitle = (text, record, t) => {
       )}
       <Divider margin={12} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <Text type='tertiary'>{t('价格')}</Text>
-        <Text strong style={{ color: 'var(--semi-color-success)' }}>
-          {convertUSDToCurrency(Number(plan?.price_amount || 0), 2)}
-        </Text>
         <Text type='tertiary'>{t('总额度')}</Text>
         {plan?.total_amount > 0 ? (
           <Tooltip content={`${t('原生额度')}：${plan.total_amount}`}>
@@ -91,7 +86,7 @@ const renderPlanTitle = (text, record, t) => {
         )}
         <Text type='tertiary'>{t('升级分组')}</Text>
         <Text>{plan?.upgrade_group ? plan.upgrade_group : t('不升级')}</Text>
-        <Text type='tertiary'>{t('购买上限')}</Text>
+        <Text type='tertiary'>{t('分配上限')}</Text>
         <Text>
           {plan?.max_purchase_per_user > 0
             ? plan.max_purchase_per_user
@@ -122,14 +117,6 @@ const renderPlanTitle = (text, record, t) => {
         )}
       </div>
     </Popover>
-  );
-};
-
-const renderPrice = (text) => {
-  return (
-    <Text strong style={{ color: 'var(--semi-color-success)' }}>
-      {convertUSDToCurrency(Number(text || 0), 2)}
-    </Text>
   );
 };
 
@@ -202,32 +189,6 @@ const renderResetPeriod = (text, record, t) => {
   );
 };
 
-const renderPaymentConfig = (text, record, t, enableEpay) => {
-  const hasStripe = !!record?.plan?.stripe_price_id;
-  const hasCreem = !!record?.plan?.creem_product_id;
-  const hasEpay = !!enableEpay;
-
-  return (
-    <Space spacing={4}>
-      {hasStripe && (
-        <Tag color='violet' shape='circle'>
-          Stripe
-        </Tag>
-      )}
-      {hasCreem && (
-        <Tag color='cyan' shape='circle'>
-          Creem
-        </Tag>
-      )}
-      {hasEpay && (
-        <Tag color='light-green' shape='circle'>
-          {t('易支付')}
-        </Tag>
-      )}
-    </Space>
-  );
-};
-
 const renderOperations = (text, record, { openEdit, setPlanEnabled, t }) => {
   const isEnabled = record?.plan?.enabled;
 
@@ -235,7 +196,7 @@ const renderOperations = (text, record, { openEdit, setPlanEnabled, t }) => {
     if (isEnabled) {
       Modal.confirm({
         title: t('确认禁用'),
-        content: t('禁用后用户端不再展示，但历史订单不受影响。是否继续？'),
+        content: t('禁用后用户端不再展示，已分配给用户的订阅不受影响。是否继续？'),
         centered: true,
         onOk: () => setPlanEnabled(record, false),
       });
@@ -281,7 +242,6 @@ export const getSubscriptionsColumns = ({
   t,
   openEdit,
   setPlanEnabled,
-  enableEpay,
 }) => {
   return [
     {
@@ -297,13 +257,7 @@ export const getSubscriptionsColumns = ({
       render: (text, record) => renderPlanTitle(text, record, t),
     },
     {
-      title: t('价格'),
-      dataIndex: ['plan', 'price_amount'],
-      width: 100,
-      render: (text) => renderPrice(text),
-    },
-    {
-      title: t('购买上限'),
+      title: t('分配上限'),
       width: 90,
       render: (text, record) => renderPurchaseLimit(text, record, t),
     },
@@ -328,12 +282,6 @@ export const getSubscriptionsColumns = ({
       dataIndex: ['plan', 'enabled'],
       width: 80,
       render: (text, record) => renderEnabled(text, record, t),
-    },
-    {
-      title: t('支付渠道'),
-      width: 180,
-      render: (text, record) =>
-        renderPaymentConfig(text, record, t, enableEpay),
     },
     {
       title: t('总额度'),

@@ -220,8 +220,8 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 		geminiRequest.GenerationConfig.Seed = common.GetPointer(geminiSeed)
 	}
 
-	attachThoughtSignature := (info.ChannelType == constant.ChannelTypeGemini ||
-		info.ChannelType == constant.ChannelTypeVertexAi) &&
+	attachThoughtSignature := (info.ProtocolID == constant.ProtocolGemini ||
+		info.ProtocolID == constant.ProtocolVertexAI) &&
 		model_setting.GetGeminiSettings().FunctionCallThoughtSignatureEnabled
 
 	if model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
@@ -1295,6 +1295,14 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	responseText := strings.Builder{}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		if isGeminiCodeAssistInfo(info) {
+			unwrapped, unwrapErr := unwrapGeminiCodeAssistData(data)
+			if unwrapErr != nil {
+				sr.Stop(fmt.Errorf("unwrap Code Assist response: %w", unwrapErr))
+				return
+			}
+			data = unwrapped
+		}
 		var geminiResponse dto.GeminiChatResponse
 		if err := common.UnmarshalJsonStr(data, &geminiResponse); err != nil {
 			sr.Stop(fmt.Errorf("unmarshal: %w", err))
@@ -1625,20 +1633,7 @@ func GeminiImagineImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	openAIResponse := dto.ImageResponse{
 		Created: common.GetTimestamp(),
-		Data:    make([]dto.ImageData, 0),
-	}
-	for _, candidate := range geminiResponse.Candidates {
-		for _, part := range candidate.Content.Parts {
-			if part.InlineData == nil || !strings.HasPrefix(part.InlineData.MimeType, "image/") {
-				continue
-			}
-			if strings.TrimSpace(part.InlineData.Data) == "" {
-				continue
-			}
-			openAIResponse.Data = append(openAIResponse.Data, dto.ImageData{
-				B64Json: strings.TrimSpace(part.InlineData.Data),
-			})
-		}
+		Data:    extractGeminiImagineImageData(&geminiResponse),
 	}
 	if len(openAIResponse.Data) == 0 {
 		return nil, types.NewOpenAIError(errors.New("no images generated"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)

@@ -1,0 +1,127 @@
+# syntax=docker.io/docker/dockerfile:1.7
+#
+# 生产镜像（api + credit-finalizer-worker + async-image-worker 共用）——多阶段「只打构建包」：
+#   base    : 系统依赖 + pnpm（builder/runtime 共享，只装一次）
+#   builder : 装全部依赖(含 dev) + COPY 源码 + 编译出 dist（src/tsconfig 只活在这一层）
+#   runtime : 只从 builder 取 dist + node_modules + 运行期必需资产；
+#             不含 src/ 业务源码、不含 tsconfig、不含 sourcemap → 镜像无法逆向出 TS 源码。
+#
+# 为什么删 src 是安全的：scripts/build.mjs 用 esbuild bundle:true 把 src/ 全部内联进
+#   dist/main.js，运行期 `node dist/main.js` 根本不读 src/。sourcemap 会还原源码，故构建后删掉 *.map。
+# 仍保留的「源码态」文件：scripts/*.mjs —— api-init 迁移/seed/sync 直接 `node scripts/*.mjs`
+#   调用的运维脚本，编不进 dist、运行期必需（非核心业务逻辑）。
+# packages/ 必须落 /packages：运行期 shared-schema-loader 按 cwd(/app)/../../packages 读盘。
+#
+# 构建（在仓库根执行）：
+#   docker buildx build --platform linux/amd64 \
+#     -f apps/hono-api/Dockerfile.prod -t <registry>/tapcanvas/api:<tag> --push .
+#
+# ⚠️ 系统依赖块（apt/pip）与开发 Dockerfile 保持一致——改一处记得同步另一处。
+# 注：剪辑包装层 hyperframes + 其专用 chromium 已不打入镜像（tapcanvas_hyperframes_render 运行时优雅报
+#     not installed，不影响主线）；ffmpeg 保留——出片 concat/尾帧续写/拆解/scene-detect/TTS 混音都依赖它。
+
+ARG DOCKERHUB_REGISTRY=docker.io
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG APT_MIRROR=mirrors.aliyun.com
+
+# ─────────────────────────── base：系统依赖（builder/runtime 共享）───────────────────────────
+FROM ${DOCKERHUB_REGISTRY}/node:22-bookworm-slim AS base
+
+# FROM 之前的全局 ARG 在 stage 内不可见，凡 FROM 之后还要用的(NPM_REGISTRY/APT_MIRROR)必须重声明，
+# 否则 ENV/RUN 里的 ${NPM_REGISTRY} 会变空串、国内镜像源失效。
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG APT_MIRROR=mirrors.aliyun.com
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
+WORKDIR /app
+
+# ── 系统依赖：ffmpeg / pg-client / python(scenedetect) / yt-dlp ──
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+  mirror="${APT_MIRROR:-mirrors.aliyun.com}" \
+  && printf "deb http://%s/debian bookworm main\n" "$mirror" > /etc/apt/sources.list \
+  && printf "deb http://%s/debian bookworm-updates main\n" "$mirror" >> /etc/apt/sources.list \
+  && printf "deb http://%s/debian-security bookworm-security main\n" "$mirror" >> /etc/apt/sources.list \
+  && rm -f /etc/apt/sources.list.d/debian.sources \
+  && apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
+  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+  && mkdir -p /usr/share/postgresql-common/pgdg \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg \
+  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
+  && apt-get install -y --no-install-recommends sqlite3 postgresql-client-16 python3 python3-pip fonts-noto-cjk ffmpeg libgl1-mesa-glx \
+  && rm -rf /var/lib/apt/lists/* \
+  # PIL 用 pip 装 pillow（wheel），不用 apt 的 python3-pil——后者 postinst 的 py3compile 在
+  # Apple Silicon 跨架构 QEMU 模拟下会偶发 SIGSEGV 而构建失败；pillow wheel 不跑 py3compile，规避之。
+  # 运行时 from PIL import Image（splitLocalStoryboardGridIntoFiles 切九宫格故事板）完全等价。
+  && pip install --no-cache-dir --break-system-packages --retries 5 --timeout 60 \
+    -i "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" 'scenedetect[opencv]' yt-dlp pillow
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="${PNPM_HOME}:${PATH}"
+ENV COREPACK_NPM_REGISTRY="${NPM_REGISTRY}"
+ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
+ENV npm_config_proxy="" npm_config_https_proxy=""
+ENV npm_config_registry="${NPM_REGISTRY}"
+ENV PNPM_CONFIG_REGISTRY="${NPM_REGISTRY}"
+ENV PNPM_STORE_DIR="/pnpm/store"
+
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+  rm -f /root/.npmrc \
+  && npm config set proxy "" && npm config set https-proxy "" \
+  && npm config set registry "${NPM_REGISTRY}" \
+  && /usr/bin/env -i PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+     npm_config_registry="${NPM_REGISTRY}" npm_config_proxy="" npm_config_https_proxy="" \
+     npm install -g pnpm@10.8.1
+
+# 剪辑包装层 hyperframes + chromium 已移除（见顶部说明）。
+
+# ─────────────────────────── builder：装依赖 + 编译（src 只活在这一层）───────────────────────────
+FROM base AS builder
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+WORKDIR /app
+
+# ── 应用依赖（含 dev：prisma/esbuild/typescript，编译期需要）──
+# 注意 COPY 路径：context=仓库根，故源路径带 apps/hono-api 前缀。
+COPY apps/hono-api/package.json apps/hono-api/pnpm-lock.yaml ./
+COPY apps/hono-api/prisma ./prisma
+RUN --mount=type=cache,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --child-concurrency=1 --network-concurrency=1 --registry "${NPM_REGISTRY}"
+
+# ── 源码 + 共享 schemas，然后编译；编译产物即 dist/main.js（src 内联进去，不再被运行时读取）──
+COPY packages /packages
+COPY apps/hono-api/tsconfig.json apps/hono-api/schema.sql ./
+COPY apps/hono-api/scripts ./scripts
+COPY apps/hono-api/marketplace-skills ./marketplace-skills
+COPY apps/hono-api/src ./src
+# System-Skill catalog is reconciled against these source-of-truth Skill files at startup.
+COPY apps/agents-cli/skills /apps/agents-cli/skills
+# Compiled built-in knowledge cards are checksum-verified and materialized into pgvector at startup.
+COPY apps/agents-cli/knowledge /apps/agents-cli/knowledge
+# 删 *.map：sourcemap 会把 TS 源码完整还原，等于白删 src，故构建后剔除。
+RUN pnpm prisma:generate && pnpm build && rm -f dist/*.map
+
+# ─────────────────────────── runtime：只打构建包（无 src / 无 tsconfig / 无 sourcemap）───────────────────────────
+FROM base AS runtime
+WORKDIR /app
+
+# 只取「跑起来真正需要的」：编译产物 + 依赖 + 运行期资产。不取 src/、tsconfig.json、pnpm-lock。
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/marketplace-skills ./marketplace-skills
+COPY --from=builder /apps/agents-cli/skills /apps/agents-cli/skills
+COPY --from=builder /apps/agents-cli/knowledge /apps/agents-cli/knowledge
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/schema.sql ./schema.sql
+# 运行期 shared-schema-loader 按 cwd(/app)/../../packages 读盘，必须落 /packages。
+COPY --from=builder /packages /packages
+
+ENV NODE_ENV=production
+EXPOSE 8788
+
+# 默认即应用进程；DB 迁移/seed/sync 由 docker-compose.prod.yml 的一次性 api-init 服务用同镜像跑。
+CMD ["node", "dist/main.js"]

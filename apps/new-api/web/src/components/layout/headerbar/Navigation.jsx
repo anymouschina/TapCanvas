@@ -30,28 +30,14 @@ const Navigation = ({
 }) => {
   const renderNavLinks = () => {
     const baseClasses =
-      'flex-shrink-0 flex items-center gap-1 font-semibold rounded-md transition-all duration-200 ease-in-out';
-    const hoverClasses = 'hover:text-semi-color-primary';
+      'tc-app-navigation__link flex-shrink-0 flex items-center gap-1 font-semibold transition-colors duration-150';
+    const hoverClasses = 'hover:text-semi-color-text-0';
     const spacingClasses = isMobile ? 'p-1' : 'p-2';
 
     const commonLinkClasses = `${baseClasses} ${spacingClasses} ${hoverClasses}`;
 
     return mainNavLinks.map((link) => {
       const linkContent = <span>{link.text}</span>;
-
-      if (link.isExternal) {
-        return (
-          <a
-            key={link.itemKey}
-            href={link.externalLink}
-            target='_blank'
-            rel='noopener noreferrer'
-            className={commonLinkClasses}
-          >
-            {linkContent}
-          </a>
-        );
-      }
 
       let targetPath = link.to;
       if (link.itemKey === 'console' && !userState.user) {
@@ -70,7 +56,7 @@ const Navigation = ({
   };
 
   return (
-    <nav className='flex flex-1 items-center gap-1 lg:gap-2 mx-2 md:mx-4 overflow-x-auto whitespace-nowrap scrollbar-hide'>
+    <nav className='tc-app-navigation flex flex-1 items-center gap-1 lg:gap-2 mx-2 md:mx-4 overflow-x-auto whitespace-nowrap scrollbar-hide'>
       <SkeletonWrapper
         loading={isLoading}
         type='navigation'

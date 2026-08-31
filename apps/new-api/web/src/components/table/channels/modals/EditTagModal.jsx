@@ -47,7 +47,6 @@ import {
   IconCode,
   IconSetting,
 } from '@douyinfe/semi-icons';
-import { getChannelModels } from '../../../../helpers';
 import { useTranslation } from 'react-i18next';
 
 const { Text, Title } = Typography;
@@ -60,6 +59,8 @@ const EditTagModal = (props) => {
   const { t } = useTranslation();
   const { visible, tag, handleClose, refresh } = props;
   const [loading, setLoading] = useState(false);
+  const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
+  const [modelCatalogError, setModelCatalogError] = useState('');
   const [originModelOptions, setOriginModelOptions] = useState([]);
   const [modelOptions, setModelOptions] = useState([]);
   const [groupOptions, setGroupOptions] = useState([]);
@@ -102,79 +103,28 @@ const EditTagModal = (props) => {
     if (formApiRef.current) {
       formApiRef.current.setValue(name, value);
     }
-    if (name === 'type') {
-      let localModels = [];
-      switch (value) {
-        case 2:
-          localModels = [
-            'mj_imagine',
-            'mj_variation',
-            'mj_reroll',
-            'mj_blend',
-            'mj_upscale',
-            'mj_describe',
-            'mj_uploads',
-          ];
-          break;
-        case 5:
-          localModels = [
-            'swap_face',
-            'mj_imagine',
-            'mj_video',
-            'mj_edits',
-            'mj_variation',
-            'mj_reroll',
-            'mj_blend',
-            'mj_upscale',
-            'mj_describe',
-            'mj_zoom',
-            'mj_shorten',
-            'mj_modal',
-            'mj_inpaint',
-            'mj_custom_zoom',
-            'mj_high_variation',
-            'mj_low_variation',
-            'mj_pan',
-            'mj_uploads',
-          ];
-          break;
-        case 36:
-          localModels = ['suno_music', 'suno_lyrics'];
-          break;
-        case 53:
-          localModels = [
-            'NousResearch/Hermes-4-405B-FP8',
-            'Qwen/Qwen3-235B-A22B-Thinking-2507',
-            'Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8',
-            'Qwen/Qwen3-235B-A22B-Instruct-2507',
-            'zai-org/GLM-4.5-FP8',
-            'openai/gpt-oss-120b',
-            'deepseek-ai/DeepSeek-R1-0528',
-            'deepseek-ai/DeepSeek-R1',
-            'deepseek-ai/DeepSeek-V3-0324',
-            'deepseek-ai/DeepSeek-V3.1',
-          ];
-          break;
-        default:
-          localModels = getChannelModels(value);
-          break;
-      }
-      if (inputs.models.length === 0) {
-        setInputs((inputs) => ({ ...inputs, models: localModels }));
-      }
-    }
   };
 
   const fetchModels = async () => {
+    setModelCatalogLoading(true);
+    setModelCatalogError('');
     try {
-      let res = await API.get(`/api/channel/models`);
-      let localModelOptions = res.data.data.map((model) => ({
+      const res = await API.get('/api/channel/models');
+      if (!res?.data?.success || !Array.isArray(res.data.data)) {
+        throw new Error(res?.data?.message || t('模型目录返回格式无效'));
+      }
+      const localModelOptions = res.data.data.map((model) => ({
         label: model.id,
         value: model.id,
       }));
       setOriginModelOptions(localModelOptions);
     } catch (error) {
-      showError(error.message);
+      const message = error?.message || t('模型目录加载失败');
+      setOriginModelOptions([]);
+      setModelCatalogError(message);
+      showError(message);
+    } finally {
+      setModelCatalogLoading(false);
     }
   };
 
@@ -196,6 +146,10 @@ const EditTagModal = (props) => {
   };
 
   const handleSave = async (values) => {
+    if (modelCatalogLoading || modelCatalogError) {
+      showError(t('模型目录尚未成功加载，禁止保存'));
+      return;
+    }
     setLoading(true);
     const formVals = values || formApiRef.current?.getValues() || {};
     let data = { tag };
@@ -393,7 +347,8 @@ const EditTagModal = (props) => {
             <Button
               theme='solid'
               onClick={() => formApiRef.current?.submitForm()}
-              loading={loading}
+              loading={loading || modelCatalogLoading}
+              disabled={Boolean(modelCatalogError)}
               icon={<IconSave />}
             >
               {t('保存')}
@@ -418,7 +373,7 @@ const EditTagModal = (props) => {
         onSubmit={handleSave}
       >
         {() => (
-          <Spin spinning={loading}>
+          <Spin spinning={loading || modelCatalogLoading}>
             <div className='p-2'>
               <Card className='!rounded-2xl shadow-sm border-0 mb-6'>
                 {/* Header: Tag Info */}
@@ -469,6 +424,15 @@ const EditTagModal = (props) => {
                 </div>
 
                 <div className='space-y-4'>
+                  {modelCatalogError ? (
+                    <Banner
+                      type='danger'
+                      description={t('模型目录加载失败：{{message}}', {
+                        message: modelCatalogError,
+                      })}
+                      className='mb-4'
+                    />
+                  ) : null}
                   <Banner
                     type='info'
                     description={t(
@@ -486,6 +450,7 @@ const EditTagModal = (props) => {
                     autoClearSearchValue={false}
                     searchPosition='dropdown'
                     optionList={modelOptions}
+                    disabled={modelCatalogLoading || Boolean(modelCatalogError)}
                     onSearch={(value) => setModelSearchValue(value)}
                     innerBottomSlot={
                       modelSearchHintText ? (
@@ -507,6 +472,9 @@ const EditTagModal = (props) => {
                       <Button
                         size='small'
                         type='primary'
+                        disabled={
+                          modelCatalogLoading || Boolean(modelCatalogError)
+                        }
                         onClick={addCustomModels}
                       >
                         {t('填入')}

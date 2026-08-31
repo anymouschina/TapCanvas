@@ -1,7 +1,8 @@
 import type { Node as FlowNode } from '@xyflow/react'
 
 import { downloadUrl } from '../../utils/download'
-import { getTaskNodeSchema } from '../nodes/taskNodeSchema'
+import { fetchAssetDownloadBlob } from '../../api/server'
+import { getTaskNodeCoreType } from '../nodes/taskNodeSchema'
 
 export type GroupDownloadableMediaType = 'image' | 'video' | 'audio'
 
@@ -117,27 +118,27 @@ function pickPrimaryAudioUrl(data: UnknownNodeData): string | null {
 
 function pickPrimaryMedia(data: UnknownNodeData): { mediaType: GroupDownloadableMediaType; url: string } | null {
   const kind = normalizeString(data.kind)
-  const schema = getTaskNodeSchema(kind)
+  const coreType = getTaskNodeCoreType(kind)
 
   const imageUrl = pickPrimaryImageUrl(data)
   const videoUrl = pickPrimaryVideoUrl(data)
   const audioUrl = pickPrimaryAudioUrl(data)
 
-  if (schema.category === 'image' || schema.category === 'storyboard') {
+  if (coreType === 'image' || coreType === 'storyboard') {
     if (imageUrl) return { mediaType: 'image', url: imageUrl }
     if (videoUrl) return { mediaType: 'video', url: videoUrl }
     if (audioUrl) return { mediaType: 'audio', url: audioUrl }
     return null
   }
 
-  if (schema.category === 'video' || schema.category === 'composer') {
+  if (coreType === 'video') {
     if (videoUrl) return { mediaType: 'video', url: videoUrl }
     if (imageUrl) return { mediaType: 'image', url: imageUrl }
     if (audioUrl) return { mediaType: 'audio', url: audioUrl }
     return null
   }
 
-  if (schema.category === 'audio') {
+  if (coreType === 'audio') {
     if (audioUrl) return { mediaType: 'audio', url: audioUrl }
     if (videoUrl) return { mediaType: 'video', url: videoUrl }
     if (imageUrl) return { mediaType: 'image', url: imageUrl }
@@ -249,8 +250,7 @@ export async function downloadGroupAssets({
     await downloadUrl({
       url: asset.url,
       filename: `${groupPrefix}-${asset.filename}`,
-      preferBlob: true,
-      fallbackTarget: '_blank',
+      proxyBlob: fetchAssetDownloadBlob,
     })
     // Slight delay helps browsers treat this as a user-initiated multi-download batch.
     // eslint-disable-next-line no-await-in-loop

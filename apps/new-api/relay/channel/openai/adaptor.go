@@ -109,6 +109,10 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if isFlow2APIProtocol(info) &&
+		(info.RelayMode == relayconstant.RelayModeImagesGenerations || info.RelayMode == relayconstant.RelayModeImagesEdits) {
+		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, "/v1/chat/completions", info.ProtocolID), nil
+	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		if strings.HasPrefix(info.ChannelBaseUrl, "https://") {
 			baseUrl := strings.TrimPrefix(info.ChannelBaseUrl, "https://")
@@ -120,8 +124,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			info.ChannelBaseUrl = baseUrl
 		}
 	}
-	switch info.ChannelType {
-	case constant.ChannelTypeAzure:
+	if info.ProtocolID == constant.ProtocolAzureOpenAI {
 		apiVersion := info.ApiVersion
 		if apiVersion == "" {
 			apiVersion = constant.AzureDefaultAPIVersion
@@ -156,7 +159,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			}
 
 			requestURL = fmt.Sprintf("%s?api-version=%s", subUrl, responsesApiVersion)
-			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestURL, info.ChannelType), nil
+			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestURL, info.ProtocolID), nil
 		}
 
 		model_ := info.UpstreamModelName
@@ -169,26 +172,26 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		if info.RelayMode == relayconstant.RelayModeRealtime {
 			requestURL = fmt.Sprintf("/openai/realtime?deployment=%s&api-version=%s", model_, apiVersion)
 		}
-		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestURL, info.ChannelType), nil
-	//case constant.ChannelTypeMiniMax:
-	//	return minimax.GetRequestURL(info)
-	case constant.ChannelTypeCustom:
+		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestURL, info.ProtocolID), nil
+	}
+	// Custom channels may use a full URL template for non-Azure-compatible
+	// protocols. Azure URL semantics are determined solely by ProtocolID above.
+	if info.ChannelType == constant.ChannelTypeCustom {
 		url := info.ChannelBaseUrl
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
-	default:
-		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
-			info.RelayMode != relayconstant.RelayModeResponses &&
-			info.RelayMode != relayconstant.RelayModeResponsesCompact {
-			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
-		}
-		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, info.RequestURLPath, info.ChannelType), nil
 	}
+	if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
+		info.RelayMode != relayconstant.RelayModeResponses &&
+		info.RelayMode != relayconstant.RelayModeResponsesCompact {
+		return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+	}
+	return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, info.RequestURLPath, info.ProtocolID), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, header)
-	if info.ChannelType == constant.ChannelTypeAzure {
+	if info.ProtocolID == constant.ProtocolAzureOpenAI {
 		header.Set("api-key", info.ApiKey)
 		return nil
 	}
@@ -229,7 +232,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 			header.Set("Authorization", "Bearer "+info.ApiKey)
 		}
 	}
-	if info.ChannelType == constant.ChannelTypeOpenRouter {
+	if info.ProtocolID == constant.ProtocolOpenRouter {
 		if header.Get("HTTP-Referer") == "" {
 			header.Set("HTTP-Referer", "https://www.neoSparkMart.ai")
 		}
@@ -244,10 +247,15 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	if info.ChannelType != constant.ChannelTypeOpenAI && info.ChannelType != constant.ChannelTypeAzure {
+	if isFlow2APIProtocol(info) {
+		if err := applyFlow2APIChatModel(c, info, request); err != nil {
+			return nil, err
+		}
+	}
+	if !info.SupportStreamOptions {
 		request.StreamOptions = nil
 	}
-	if info.ChannelType == constant.ChannelTypeOpenRouter {
+	if info.ProtocolID == constant.ProtocolOpenRouter {
 		if len(request.Usage) == 0 {
 			request.Usage = json.RawMessage(`{"include":true}`)
 		}
@@ -438,12 +446,52 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if isFlow2APIProtocol(info) {
+		if info.RelayMode == relayconstant.RelayModeImagesEdits {
+			return nil, errors.New("flow2api protocol does not support /v1/images/edits")
+		}
+		return convertFlow2APIImageRequest(c, info, request)
+	}
 	if trimmed := strings.TrimSuffix(request.Model, "-official"); trimmed != request.Model {
 		request.Model = trimmed
 		info.UpstreamModelName = trimmed
 	}
+	isGaiscImage2 := info.ChannelType == constant.ChannelTypeGaiscImage && strings.HasPrefix(request.Model, "gpt-image-2")
+	if isGaiscImage2 {
+		var err error
+		request, err = normalizeGaiscImageRequest(request)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if strings.HasPrefix(request.Model, "gpt-image-2") {
+		var err error
+		request, err = dto.NormalizeGptImage2Size(request)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if isGaiscImage2 {
+		var err error
+		request, err = stripGaiscImageTransportAliases(request)
+		if err != nil {
+			return nil, err
+		}
+		if len(request.Images) > 0 && info.RelayMode == relayconstant.RelayModeImagesGenerations {
+			info.RelayMode = relayconstant.RelayModeImagesEdits
+			info.RequestURLPath = "/v1/images/edits"
+			c.Request.Header.Set("Content-Type", "application/json")
+		}
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
+		if !strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+			if len(request.Images) == 0 {
+				return nil, errors.New("images is required for JSON image edits")
+			}
+			c.Request.Header.Set("Content-Type", "application/json")
+			return request, nil
+		}
 
 		var requestBody bytes.Buffer
 		writer := multipart.NewWriter(&requestBody)
@@ -565,27 +613,96 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		return &requestBody, nil
 
 	default:
-		// OpenAI's gpt-image-2 API only accepts pixel dimensions, not aspect-ratio
-		// strings. Channels that do their own size mapping (magic666, rightcode,
-		// apimart) handle this themselves; here we cover the direct OpenAI path.
-		if strings.HasPrefix(request.Model, "gpt-image-2") && strings.Contains(request.Size, ":") {
-			request.Size = normalizeGptImage2Size(request.Size)
-		}
 		return request, nil
 	}
 }
 
-// normalizeGptImage2Size converts an aspect-ratio shorthand to the nearest
-// pixel dimension accepted by OpenAI's gpt-image-2 API.
-func normalizeGptImage2Size(size string) string {
-	switch strings.TrimSpace(size) {
-	case "16:9", "3:2", "4:3", "21:9":
-		return "1536x1024"
-	case "9:16", "2:3", "3:4", "9:21":
-		return "1024x1536"
-	default:
-		return "1024x1024"
+func normalizeGaiscImageRequest(request dto.ImageRequest) (dto.ImageRequest, error) {
+	request = dto.CanonicalizeGptImage2SizeAliases(request)
+
+	if len(request.Images) == 0 {
+		for _, key := range []string{"image_urls", "image_url", "urls"} {
+			raw := request.Extra[key]
+			if len(raw) == 0 {
+				continue
+			}
+			references, err := parseGaiscImageReferences(raw)
+			if err != nil {
+				return request, fmt.Errorf("invalid %s: %w", key, err)
+			}
+			request.Images = references
+			break
+		}
 	}
+	if len(request.Images) == 0 && len(request.Image) > 0 {
+		references, err := parseGaiscImageReferences(request.Image)
+		if err == nil {
+			request.Images = references
+			request.Image = nil
+		}
+	}
+	if request.Mask == nil {
+		if raw := request.Extra["mask_url"]; len(raw) > 0 {
+			references, err := parseGaiscImageReferences(raw)
+			if err != nil {
+				return request, fmt.Errorf("invalid mask_url: %w", err)
+			}
+			if len(references) != 1 {
+				return request, errors.New("mask_url must contain exactly one image URL")
+			}
+			request.Mask = &references[0]
+		}
+	}
+
+	if strings.TrimSpace(request.ResponseFormat) == "" {
+		request.ResponseFormat = "url"
+	}
+	return request, nil
+}
+
+func stripGaiscImageTransportAliases(request dto.ImageRequest) (dto.ImageRequest, error) {
+	for _, key := range []string{
+		"aspect_ratio", "aspectRatio",
+		"resolution", "imageSize", "image_size",
+		"image_urls", "image_url", "urls", "mask_url",
+	} {
+		delete(request.Extra, key)
+	}
+	if raw := request.Extra["metadata"]; len(raw) > 0 {
+		var metadata map[string]json.RawMessage
+		if err := common.Unmarshal(raw, &metadata); err != nil {
+			return request, fmt.Errorf("invalid metadata: %w", err)
+		}
+		for _, key := range []string{"aspect_ratio", "aspectRatio", "resolution", "imageSize", "image_size"} {
+			delete(metadata, key)
+		}
+		if len(metadata) == 0 {
+			delete(request.Extra, "metadata")
+		} else {
+			encoded, err := common.Marshal(metadata)
+			if err != nil {
+				return request, fmt.Errorf("encode metadata: %w", err)
+			}
+			request.Extra["metadata"] = encoded
+		}
+	}
+	return request, nil
+}
+
+func parseGaiscImageReferences(raw json.RawMessage) ([]dto.ImageURLReference, error) {
+	var references []dto.ImageURLReference
+	if err := common.Unmarshal(raw, &references); err == nil {
+		if len(references) == 0 {
+			return nil, errors.New("at least one image URL is required")
+		}
+		return references, nil
+	}
+
+	var reference dto.ImageURLReference
+	if err := common.Unmarshal(raw, &reference); err != nil {
+		return nil, err
+	}
+	return []dto.ImageURLReference{reference}, nil
 }
 
 // detectImageMimeType determines the MIME type based on the file extension
@@ -630,7 +747,8 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	if info.RelayMode == relayconstant.RelayModeAudioTranscription ||
 		info.RelayMode == relayconstant.RelayModeAudioTranslation ||
-		info.RelayMode == relayconstant.RelayModeImagesEdits {
+		(info.RelayMode == relayconstant.RelayModeImagesEdits &&
+			strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data")) {
 		return channel.DoFormRequest(a, c, info, requestBody)
 	} else if info.RelayMode == relayconstant.RelayModeRealtime {
 		return channel.DoWssRequest(a, c, info, requestBody)
@@ -640,6 +758,9 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if isFlow2APIProtocol(info) && info.RelayMode == relayconstant.RelayModeImagesGenerations {
+		return flow2APIImageHandler(c, info, resp)
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeRealtime:
 		err, usage = OpenaiRealtimeHandler(c, info)
@@ -654,7 +775,12 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeRerank:
 		usage, err = common_handler.RerankHandler(c, info, resp)
 	case relayconstant.RelayModeResponses:
-		if info.IsStream {
+		if c.GetBool("responses_force_stream_aggregate") {
+			// Client asked for a non-stream response but we forced the upstream to
+			// stream (reasoning models drop the message in non-stream bodies);
+			// aggregate the SSE back into a single JSON response.
+			usage, err = OaiResponsesAggregateStreamHandler(c, info, resp)
+		} else if info.IsStream {
 			usage, err = OaiResponsesStreamHandler(c, info, resp)
 		} else {
 			usage, err = OaiResponsesHandler(c, info, resp)

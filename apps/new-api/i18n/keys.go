@@ -101,7 +101,7 @@ const (
 	MsgUserTransferQuotaMinimum      = "user.transfer_quota_minimum"
 	MsgUserTransferSuccess           = "user.transfer_success"
 	MsgUserTransferFailed            = "user.transfer_failed"
-	MsgUserTopUpProcessing           = "user.topup_processing"
+	MsgUserRedemptionProcessing      = "user.redemption_processing"
 	MsgUserRegisterFailed            = "user.register_failed"
 	MsgUserDefaultTokenFailed        = "user.default_token_failed"
 	MsgUserAffCodeEmpty              = "user.aff_code_empty"
@@ -129,38 +129,11 @@ const (
 const (
 	MsgSubscriptionNotEnabled       = "subscription.not_enabled"
 	MsgSubscriptionTitleEmpty       = "subscription.title_empty"
-	MsgSubscriptionPriceNegative    = "subscription.price_negative"
-	MsgSubscriptionPriceMax         = "subscription.price_max"
-	MsgSubscriptionPurchaseLimitNeg = "subscription.purchase_limit_negative"
 	MsgSubscriptionQuotaNegative    = "subscription.quota_negative"
 	MsgSubscriptionGroupNotExists   = "subscription.group_not_exists"
 	MsgSubscriptionResetCycleGtZero = "subscription.reset_cycle_gt_zero"
-	MsgSubscriptionPurchaseMax      = "subscription.purchase_max"
 	MsgSubscriptionInvalidId        = "subscription.invalid_id"
 	MsgSubscriptionInvalidUserId    = "subscription.invalid_user_id"
-)
-
-// Payment related messages
-const (
-	MsgPaymentNotConfigured    = "payment.not_configured"
-	MsgPaymentMethodNotExists  = "payment.method_not_exists"
-	MsgPaymentCallbackError    = "payment.callback_error"
-	MsgPaymentCreateFailed     = "payment.create_failed"
-	MsgPaymentStartFailed      = "payment.start_failed"
-	MsgPaymentAmountTooLow     = "payment.amount_too_low"
-	MsgPaymentStripeNotConfig  = "payment.stripe_not_configured"
-	MsgPaymentWebhookNotConfig = "payment.webhook_not_configured"
-	MsgPaymentPriceIdNotConfig = "payment.price_id_not_configured"
-	MsgPaymentCreemNotConfig   = "payment.creem_not_configured"
-)
-
-// Topup related messages
-const (
-	MsgTopupNotProvided    = "topup.not_provided"
-	MsgTopupOrderNotExists = "topup.order_not_exists"
-	MsgTopupOrderStatus    = "topup.order_status"
-	MsgTopupFailed         = "topup.failed"
-	MsgTopupInvalidQuota   = "topup.invalid_quota"
 )
 
 // Channel related messages
@@ -309,6 +282,7 @@ const (
 	MsgDistributorChannelDisabled     = "distributor.channel_disabled"
 	MsgDistributorTokenNoModelAccess  = "distributor.token_no_model_access"
 	MsgDistributorTokenModelForbidden = "distributor.token_model_forbidden"
+	MsgDistributorModelDisabled       = "distributor.model_disabled"
 	MsgDistributorModelNameRequired   = "distributor.model_name_required"
 	MsgDistributorInvalidPlayground   = "distributor.invalid_playground_request"
 	MsgDistributorGroupAccessDenied   = "distributor.group_access_denied"

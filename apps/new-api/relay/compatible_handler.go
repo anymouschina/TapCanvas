@@ -83,7 +83,8 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *types
 	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
 		!passThroughGlobal &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
-		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
+		(service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) ||
+			service.ShouldChatCompletionsUseResponsesForUpstream(info.ProtocolID, info.UpstreamModelName)) {
 		applySystemPromptIfNeeded(c, info, request)
 		usage, neoSparkMartErr := chatCompletionsViaResponses(c, info, adaptor, request)
 		if neoSparkMartErr != nil {

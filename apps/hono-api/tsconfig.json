@@ -12,7 +12,27 @@
 		"experimentalDecorators": true,
 		"outDir": "dist",
 		"rootDir": ".",
-		"types": ["node"]
+		"types": ["node"],
+		"baseUrl": ".",
+		"paths": {
+			"@tapcanvas/agent-observability": ["../../packages/schemas/agent-observability/index.d.ts"],
+			"@tapcanvas/canvas-plan-protocol": ["../../packages/schemas/canvas-plan-protocol/index.ts"],
+			"@tapcanvas/codex-task-protocol": ["../../packages/schemas/codex-task-protocol/index.ts"],
+			"@tapcanvas/chapter-canvas-intents": ["../../packages/schemas/chapter-canvas-intents/index.ts"],
+			"@tapcanvas/canvas-edge-semantics": ["../../packages/schemas/canvas-edge-semantics/index.ts"],
+			"@tapcanvas/flow-anchor-bindings": ["./src/modules/flow/flow.anchor-bindings.ts"],
+			"@tapcanvas/storyboard-selection-protocol": ["../../packages/schemas/storyboard-selection-protocol/index.ts"],
+			"@tapcanvas/storyboard-adventure-protocol": ["../../packages/schemas/storyboard-adventure-protocol/index.ts"],
+			"@tapcanvas/character-bible-protocol": ["../../packages/schemas/character-bible-protocol/index.ts"],
+			"@tapcanvas/script-structure-protocol": ["../../packages/schemas/script-structure-protocol/index.ts"],
+			"@tapcanvas/shot-table-protocol": ["../../packages/schemas/shot-table-protocol/index.ts"],
+			"@tapcanvas/project-directory-protocol": ["./src/modules/project-directory/project-directory.contract.ts"],
+			"@tapcanvas/image-prompt-spec": ["../../packages/schemas/image-prompt-spec/index.d.ts"],
+			"@tapcanvas/image-view-controls": ["../../packages/schemas/image-view-controls/index.d.ts"],
+			"@tapcanvas/image-operation-protocol": ["../../packages/schemas/image-operation-protocol/index.ts"],
+			"@tapcanvas/video-orchestrator-protocol": ["../../packages/schemas/video-orchestrator-protocol/index.ts"],
+			"@tapcanvas/workflow-kernel-protocol": ["../../packages/schemas/workflow-kernel-protocol/index.ts"]
+		}
 	},
 	"include": ["src/**/*.ts", "scripts/**/*.ts", "scripts/**/*.mjs"],
 	"exclude": ["node_modules", "dist"]

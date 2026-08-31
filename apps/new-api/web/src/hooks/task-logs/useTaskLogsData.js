@@ -47,6 +47,7 @@ export const useTaskLogsData = () => {
     TASK_STATUS: 'task_status',
     PROGRESS: 'progress',
     SPEC: 'spec',
+    INPUT: 'input',
     FAIL_REASON: 'fail_reason',
     RESULT_URL: 'result_url',
   };
@@ -76,6 +77,15 @@ export const useTaskLogsData = () => {
   // Audio preview modal state
   const [isAudioModalOpen, setIsAudioModalOpen] = useState(false);
   const [audioClips, setAudioClips] = useState([]);
+
+  // 新增：入参预览弹窗状态（参考图 + 提示词）
+  const [isInputModalOpen, setIsInputModalOpen] = useState(false);
+  const [inputModalData, setInputModalData] = useState(null);
+
+  // 新增：请求链路弹窗状态（复用普通日志的 RequestTraceModal，展示原始请求体 + 媒体预览）
+  const [showRequestTraceModal, setShowRequestTraceModal] = useState(false);
+  const [requestTraceData, setRequestTraceData] = useState(null);
+  const [loadingRequestTrace, setLoadingRequestTrace] = useState(false);
 
   // User info modal state
   const [showUserInfo, setShowUserInfoModal] = useState(false);
@@ -140,6 +150,7 @@ export const useTaskLogsData = () => {
       [COLUMN_KEYS.TASK_STATUS]: true,
       [COLUMN_KEYS.PROGRESS]: true,
       [COLUMN_KEYS.SPEC]: true,
+      [COLUMN_KEYS.INPUT]: true,
       [COLUMN_KEYS.FAIL_REASON]: true,
       [COLUMN_KEYS.RESULT_URL]: true,
     };
@@ -288,6 +299,39 @@ export const useTaskLogsData = () => {
     setIsAudioModalOpen(true);
   };
 
+  // 新增：打开入参预览弹窗（接收任务记录的 properties）
+  const openInputModal = (properties) => {
+    setInputModalData(properties || null);
+    setIsInputModalOpen(true);
+  };
+
+  // 新增：按任务的 request_id 拉取请求链路（原始请求体里参考图是真实 https，可直接预览）
+  const openRequestTraceModal = async (requestId) => {
+    if (!requestId || loadingRequestTrace) {
+      return;
+    }
+    setLoadingRequestTrace(true);
+    setShowRequestTraceModal(true);
+    setRequestTraceData(null);
+    const path = isAdminUser ? '/api/log/trace' : '/api/log/self/trace';
+    const url = `${path}?request_id=${encodeURIComponent(requestId)}`;
+    try {
+      const res = await API.get(url);
+      const { success, message, data } = res.data;
+      if (!success) {
+        showError(message);
+        setShowRequestTraceModal(false);
+      } else {
+        setRequestTraceData(data);
+      }
+    } catch (error) {
+      showError(error?.message || t('读取请求链路失败'));
+      setShowRequestTraceModal(false);
+    } finally {
+      setLoadingRequestTrace(false);
+    }
+  };
+
   // User info function
   const showUserInfoFunc = async (userId) => {
     if (!isAdminUser) {
@@ -335,6 +379,19 @@ export const useTaskLogsData = () => {
     setIsAudioModalOpen,
     audioClips,
 
+    // 入参预览弹窗
+    isInputModalOpen,
+    setIsInputModalOpen,
+    inputModalData,
+    openInputModal,
+
+    // 请求链路弹窗（原始请求体 + 媒体预览）
+    showRequestTraceModal,
+    setShowRequestTraceModal,
+    requestTraceData,
+    loadingRequestTrace,
+    openRequestTraceModal,
+
     // Form state
     formApi,
     setFormApi,
@@ -369,6 +426,7 @@ export const useTaskLogsData = () => {
     openContentModal,
     openVideoModal,
     openAudioModal,
+    openInputModal,
     enrichLogs,
     syncPageData,
 

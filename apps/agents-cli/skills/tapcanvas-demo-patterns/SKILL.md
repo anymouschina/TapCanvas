@@ -1,14 +1,14 @@
 ---
 name: tapcanvas-demo-patterns
-description: 把 assets/demo 提炼成运行时可用的视觉连续性方法论：先锁资产/角色/场景/镜头语义，再做扩镜与视频。
+description: 使用已提炼的视觉连续性方法论：先锁资产、角色、场景与镜头语义，再做扩镜与视频。
 ---
 
 # TapCanvas Demo Patterns
 
 ## 来源边界
 
-- 本 skill 已把 `assets/demo` 与对应分析文件的共性规律压缩成运行时方法论。
-- 运行时直接使用本 skill，不直接把 `assets/demo` / `ai-metadata` 当作知识源读取。
+- 本 skill 已固化经审查的共性规律，不依赖仓库外的原始研究素材。
+- 运行时直接使用本 skill，不把 `docs/`、`assets/` 或 `ai-metadata` 当作知识源读取。
 - 你只能把这里的方法与本轮实时证据结合使用，不能把 demo 个案细节当成当前项目事实。
 
 ## 核心原则

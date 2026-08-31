@@ -76,12 +76,10 @@ const LoginForm = () => {
     timeout: '请求超时，请刷新页面后重新发起 GitHub 登录',
   };
   const [inputs, setInputs] = useState({
-    phone: '',
+    username: '',
     password: '',
-    sms_code: '',
     wechat_verification_code: '',
   });
-  const [loginMode, setLoginMode] = useState('code'); // 'code' | 'password'
   const [searchParams] = useSearchParams();
   const [userState, userDispatch] = useContext(UserContext);
   const [statusState] = useContext(StatusContext);
@@ -95,9 +93,6 @@ const LoginForm = () => {
   const [oidcLoading, setOidcLoading] = useState(false);
   const [linuxdoLoading, setLinuxdoLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
-  const [smsCodeLoading, setSmsCodeLoading] = useState(false);
-  const [disableButton, setDisableButton] = useState(false);
-  const [countdown, setCountdown] = useState(60);
   const [wechatCodeSubmitLoading, setWechatCodeSubmitLoading] = useState(false);
   const [showTwoFA, setShowTwoFA] = useState(false);
   const [passkeySupported, setPasskeySupported] = useState(false);
@@ -110,6 +105,12 @@ const LoginForm = () => {
   const githubTimeoutRef = useRef(null);
   const githubButtonText = t(githubButtonTextKeyByState[githubButtonState]);
   const [customOAuthLoading, setCustomOAuthLoading] = useState({});
+  const requestedNext = searchParams.get('next');
+  const nextPath =
+    requestedNext?.startsWith('/') && !requestedNext.startsWith('//')
+      ? requestedNext
+      : '/console';
+  const registerPath = `/register?next=${encodeURIComponent(nextPath)}`;
 
   const logo = getLogo();
   const systemName = getSystemName();
@@ -168,19 +169,6 @@ const LoginForm = () => {
     }
   }, []);
 
-  useEffect(() => {
-    let countdownInterval = null;
-    if (disableButton && countdown > 0) {
-      countdownInterval = setInterval(() => {
-        setCountdown((c) => c - 1);
-      }, 1000);
-    } else if (countdown === 0) {
-      setDisableButton(false);
-      setCountdown(60);
-    }
-    return () => clearInterval(countdownInterval);
-  }, [disableButton, countdown]);
-
   const onWeChatLoginClicked = () => {
     if ((hasUserAgreement || hasPrivacyPolicy) && !agreedToTerms) {
       showInfo(t('请先阅读并同意用户协议和隐私政策'));
@@ -222,83 +210,6 @@ const LoginForm = () => {
 
   function handleChange(name, value) {
     setInputs((inputs) => ({ ...inputs, [name]: value }));
-  }
-
-  const sendSmsCode = async () => {
-    const phone = inputs.phone.trim();
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      showInfo('请输入正确的手机号');
-      return;
-    }
-    if (turnstileEnabled && !turnstileToken) {
-      showInfo('请稍后几秒重试，Turnstile 正在检查用户环境！');
-      return;
-    }
-    setSmsCodeLoading(true);
-    try {
-      const res = await API.get(
-        `/api/user/sms/code?phone=${encodeURIComponent(phone)}`,
-      );
-      const { success, message } = res.data;
-      if (success) {
-        showSuccess('验证码已发送，请查收短信');
-        setDisableButton(true);
-      } else {
-        showError(message);
-      }
-    } catch {
-      showError('发送验证码失败，请重试');
-    } finally {
-      setSmsCodeLoading(false);
-    }
-  };
-
-  async function handlePhoneSubmit() {
-    if ((hasUserAgreement || hasPrivacyPolicy) && !agreedToTerms) {
-      showInfo(t('请先阅读并同意用户协议和隐私政策'));
-      return;
-    }
-    if (turnstileEnabled && turnstileToken === '') {
-      showInfo('请稍后几秒重试，Turnstile 正在检查用户环境！');
-      return;
-    }
-    const phone = inputs.phone.trim();
-    const code = inputs.sms_code.trim();
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      showInfo('请输入正确的手机号');
-      return;
-    }
-    if (!code) {
-      showInfo('请输入验证码');
-      return;
-    }
-    setLoginLoading(true);
-    try {
-      const affCodeVal = localStorage.getItem('aff') || '';
-      const res = await API.post(
-        `/api/user/phone/login?turnstile=${turnstileToken}`,
-        { phone, code, aff_code: affCodeVal },
-      );
-      const { success, message, data } = res.data;
-      if (success) {
-        if (data && data.require_2fa) {
-          setShowTwoFA(true);
-          setLoginLoading(false);
-          return;
-        }
-        userDispatch({ type: 'login', payload: data });
-        setUserData(data);
-        updateAPI();
-        showSuccess('登录成功！');
-        navigate('/console');
-      } else {
-        showError(message);
-      }
-    } catch (error) {
-      showError('登录失败，请重试');
-    } finally {
-      setLoginLoading(false);
-    }
   }
 
   const onTelegramLoginClicked = async (response) => {
@@ -470,7 +381,7 @@ const LoginForm = () => {
         setUserData(finish.data);
         updateAPI();
         showSuccess('登录成功！');
-        navigate('/console');
+        navigate(nextPath);
       } else {
         showError(finish.message || 'Passkey 登录失败，请重试');
       }
@@ -490,7 +401,7 @@ const LoginForm = () => {
     setUserData(data);
     updateAPI();
     showSuccess('登录成功！');
-    navigate('/console');
+    navigate(nextPath);
   };
 
   async function handlePasswordLogin() {
@@ -502,10 +413,10 @@ const LoginForm = () => {
       showInfo('请稍后几秒重试，Turnstile 正在检查用户环境！');
       return;
     }
-    const phone = inputs.phone.trim();
+    const username = inputs.username.trim();
     const password = inputs.password;
-    if (!phone) {
-      showInfo('请输入手机号或用户名');
+    if (!username) {
+      showInfo('请输入用户名');
       return;
     }
     if (!password) {
@@ -516,7 +427,7 @@ const LoginForm = () => {
     try {
       const res = await API.post(
         `/api/user/login?turnstile=${turnstileToken}`,
-        { username: phone, password },
+        { username, password },
       );
       const { success, message, data } = res.data;
       if (success) {
@@ -529,7 +440,7 @@ const LoginForm = () => {
         setUserData(data);
         updateAPI();
         showSuccess('登录成功！');
-        navigate('/console');
+        navigate(nextPath);
       } else {
         showError(message);
       }
@@ -542,41 +453,29 @@ const LoginForm = () => {
 
   const handleBackToLogin = () => {
     setShowTwoFA(false);
-    setInputs({ phone: '', password: '', sms_code: '', wechat_verification_code: '' });
+    setInputs({
+      username: '',
+      password: '',
+      wechat_verification_code: '',
+    });
   };
 
   const renderPhoneLoginForm = () => {
     return (
       <div className='flex flex-col items-center'>
         <div className='w-full max-w-md'>
-          <div className='flex items-center justify-center mb-6 gap-2'>
+          <div className='auth-brand flex items-center justify-center mb-6 gap-2'>
             <img src={logo} alt='Logo' className='h-10 rounded-full' />
             <Title heading={3}>{systemName}</Title>
           </div>
 
-          <Card className='border-0 !rounded-2xl overflow-hidden'>
+          <Card className='auth-panel overflow-hidden'>
             <div className='flex justify-center pt-6 pb-2'>
               <Title heading={3} className='text-gray-800 dark:text-gray-200'>
                 {t('登 录')}
               </Title>
             </div>
             <div className='px-2 py-8'>
-              {/* 登录方式 tab */}
-              <div className='flex mb-4 rounded-full bg-gray-100 p-1'>
-                <button
-                  className={`flex-1 py-2 text-sm rounded-full transition-colors ${loginMode === 'code' ? 'bg-white shadow font-medium' : 'text-gray-500 hover:text-gray-700'}`}
-                  onClick={() => setLoginMode('code')}
-                >
-                  {t('验证码登录')}
-                </button>
-                <button
-                  className={`flex-1 py-2 text-sm rounded-full transition-colors ${loginMode === 'password' ? 'bg-white shadow font-medium' : 'text-gray-500 hover:text-gray-700'}`}
-                  onClick={() => setLoginMode('password')}
-                >
-                  {t('密码登录')}
-                </button>
-              </div>
-
               {status.passkey_login && passkeySupported && (
                 <Button
                   theme='outline'
@@ -591,48 +490,23 @@ const LoginForm = () => {
               )}
               <Form className='space-y-3'>
                 <Form.Input
-                  field='phone'
-                  label={loginMode === 'code' ? t('手机号') : t('手机号 / 用户名')}
-                  placeholder={loginMode === 'code' ? t('请输入手机号') : t('请输入手机号或用户名')}
-                  name='phone'
-                  type={loginMode === 'code' ? 'tel' : 'text'}
-                  onChange={(value) => handleChange('phone', value)}
+                  field='username'
+                  label={t('用户名')}
+                  placeholder={t('请输入用户名')}
+                  name='username'
+                  type='text'
+                  onChange={(value) => handleChange('username', value)}
                   prefix={<IconUser />}
-                  suffix={
-                    loginMode === 'code' ? (
-                      <Button
-                        onClick={sendSmsCode}
-                        loading={smsCodeLoading}
-                        disabled={disableButton || smsCodeLoading}
-                      >
-                        {disableButton
-                          ? `${t('重新发送')} (${countdown}s)`
-                          : t('获取验证码')}
-                      </Button>
-                    ) : undefined
-                  }
                 />
-
-                {loginMode === 'code' ? (
-                  <Form.Input
-                    field='sms_code'
-                    label={t('验证码')}
-                    placeholder={t('请输入短信验证码')}
-                    name='sms_code'
-                    onChange={(value) => handleChange('sms_code', value)}
-                    prefix={<IconKey />}
-                  />
-                ) : (
-                  <Form.Input
-                    field='password'
-                    label={t('密码')}
-                    placeholder={t('请输入密码')}
-                    name='password'
-                    mode='password'
-                    onChange={(value) => handleChange('password', value)}
-                    prefix={<IconLock />}
-                  />
-                )}
+                <Form.Input
+                  field='password'
+                  label={t('密码')}
+                  placeholder={t('请输入密码')}
+                  name='password'
+                  mode='password'
+                  onChange={(value) => handleChange('password', value)}
+                  prefix={<IconLock />}
+                />
 
                 {(hasUserAgreement || hasPrivacyPolicy) && (
                   <div className='pt-4'>
@@ -675,16 +549,10 @@ const LoginForm = () => {
                 <div className='space-y-2 pt-2'>
                   <Button
                     theme='solid'
-                    className='w-full !rounded-full'
+                    className='auth-submit-action w-full'
                     type='primary'
                     htmlType='button'
-                    onClick={() => {
-                      if (loginMode === 'password') {
-                        handlePasswordLogin();
-                      } else {
-                        handlePhoneSubmit();
-                      }
-                    }}
+                    onClick={handlePasswordLogin}
                     loading={loginLoading}
                     disabled={
                       (hasUserAgreement || hasPrivacyPolicy) && !agreedToTerms
@@ -823,7 +691,7 @@ const LoginForm = () => {
                   <Text>
                     {t('没有账户？')}{' '}
                     <Link
-                      to='/register'
+                      to={registerPath}
                       className='text-blue-600 hover:text-blue-800 font-medium'
                     >
                       {t('注册')}
@@ -914,17 +782,8 @@ const LoginForm = () => {
   };
 
   return (
-    <div className='relative overflow-hidden bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
-      {/* 背景模糊晕染球 */}
-      <div
-        className='blur-ball blur-ball-indigo'
-        style={{ top: '-80px', right: '-80px', transform: 'none' }}
-      />
-      <div
-        className='blur-ball blur-ball-teal'
-        style={{ top: '50%', left: '-120px' }}
-      />
-      <div className='w-full max-w-sm mt-[60px]'>
+    <div className='auth-page-shell relative overflow-hidden flex justify-center'>
+      <div className='auth-page-shell__content w-full max-w-sm'>
         {renderPhoneLoginForm()}
         {renderWeChatLoginModal()}
         {render2FAModal()}

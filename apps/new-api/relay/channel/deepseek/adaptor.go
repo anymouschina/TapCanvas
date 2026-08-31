@@ -44,19 +44,21 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	fimBaseUrl := info.ChannelBaseUrl
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
-		return fmt.Sprintf("%s/anthropic/v1/messages", info.ChannelBaseUrl), nil
+		// DeepSeek beta Anthropic-compatible endpoint
+		return fmt.Sprintf("%s/anthropic/v1/messages", strings.TrimRight(info.ChannelBaseUrl, "/")), nil
+	case types.RelayFormatOpenAIResponses:
+		// DeepSeek V4 exposes the native OpenAI-compatible Responses API.
+		return fmt.Sprintf("%s/responses", strings.TrimRight(info.ChannelBaseUrl, "/")), nil
 	default:
-		if !strings.HasSuffix(info.ChannelBaseUrl, "/beta") {
-			fimBaseUrl += "/beta"
-		}
 		switch info.RelayMode {
 		case constant.RelayModeCompletions:
-			return fmt.Sprintf("%s/completions", fimBaseUrl), nil
+			// FIM (Fill-in-the-Middle) beta endpoint
+			return fmt.Sprintf("%s/beta/completions", strings.TrimRight(info.ChannelBaseUrl, "/")), nil
 		default:
-			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+			// Standard chat completions (official docs: /chat/completions, no /v1 prefix)
+			return fmt.Sprintf("%s/chat/completions", strings.TrimRight(info.ChannelBaseUrl, "/")), nil
 		}
 	}
 }
@@ -84,8 +86,22 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// TODO implement me
-	return nil, errors.New("not implemented")
+	// DeepSeek V4 Responses defaults to thinking mode upstream. Make the gateway
+	// contract deterministic: callers must opt in explicitly, while ordinary
+	// agent/tool requests run without emitting or replaying private reasoning.
+	if request.Thinking == nil {
+		request.Thinking = &dto.ThinkingConfig{Type: "disabled"}
+	}
+	if request.Thinking.Type == "enabled" && isForcedResponsesToolChoice(request.ToolChoice) {
+		return nil, errors.New("deepseek responses: thinking mode cannot be combined with a forced tool_choice")
+	}
+	// Native pass-through otherwise preserves explicitly requested server tools.
+	return request, nil
+}
+
+func isForcedResponsesToolChoice(toolChoice []byte) bool {
+	value := strings.TrimSpace(string(toolChoice))
+	return value != "" && value != "null" && value != `"auto"` && value != `"none"`
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {

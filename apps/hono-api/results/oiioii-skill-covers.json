@@ -1,0 +1,497 @@
+{
+  "importedAt": "2026-07-26T01:21:48.487Z",
+  "provider": "r2",
+  "complete": true,
+  "covers": [
+    {
+      "index": 0,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/01-741e388b37bdcbe0.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/01-2326564101b78f3b.jpg",
+      "key": "portal/skills/oiioii/covers/01-2326564101b78f3b.jpg",
+      "contentType": "image/jpeg",
+      "size": 101041,
+      "sha256": "2326564101b78f3b5844f2ff58191702163754c26c34000316ff2d901f71b507"
+    },
+    {
+      "index": 1,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/02-dfb3ca8622eeebdd.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/02-625db30b1b5499be.jpg",
+      "key": "portal/skills/oiioii/covers/02-625db30b1b5499be.jpg",
+      "contentType": "image/jpeg",
+      "size": 113246,
+      "sha256": "625db30b1b5499bedb0b6d8a863b50b9e5068f0266716badef8fe7adb2317b6c"
+    },
+    {
+      "index": 2,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/03-4691c194fb4dc050.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/03-df8617a62e74ea38.jpg",
+      "key": "portal/skills/oiioii/covers/03-df8617a62e74ea38.jpg",
+      "contentType": "image/jpeg",
+      "size": 70404,
+      "sha256": "df8617a62e74ea38b3ef59b025b3a88bdbb6ad369a6ca74fa430280593668a39"
+    },
+    {
+      "index": 3,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/04-8ced13c3ba292661.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/04-02e9326987f76fa0.jpg",
+      "key": "portal/skills/oiioii/covers/04-02e9326987f76fa0.jpg",
+      "contentType": "image/jpeg",
+      "size": 192090,
+      "sha256": "02e9326987f76fa0962c8d534f1abd33ea1102cbeeab2c4116b21bc6e17d06b6"
+    },
+    {
+      "index": 4,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/05-c42d1352c813dfbc.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/05-8c204e239981cd71.jpg",
+      "key": "portal/skills/oiioii/covers/05-8c204e239981cd71.jpg",
+      "contentType": "image/jpeg",
+      "size": 73105,
+      "sha256": "8c204e239981cd711529f655b3f47953e519edc35f986d6d49c4d2f0eae4e256"
+    },
+    {
+      "index": 5,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/06-f949317bea8826f2.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/06-926c521aa35cc9d5.jpg",
+      "key": "portal/skills/oiioii/covers/06-926c521aa35cc9d5.jpg",
+      "contentType": "image/jpeg",
+      "size": 71820,
+      "sha256": "926c521aa35cc9d54e3c6284a5b859c4c7f50da7bccfd4bbe0e252cc82f8cf59"
+    },
+    {
+      "index": 6,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/07-1aeec6c9cf1071ef.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/07-ca6d4cf004c2420c.jpg",
+      "key": "portal/skills/oiioii/covers/07-ca6d4cf004c2420c.jpg",
+      "contentType": "image/jpeg",
+      "size": 71882,
+      "sha256": "ca6d4cf004c2420c4002e2d1f82ae24af54b022a88d0f6386032371ca16d978d"
+    },
+    {
+      "index": 7,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/08-bd1cd6f00d99f426.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/08-2b35624d1538bc9c.jpg",
+      "key": "portal/skills/oiioii/covers/08-2b35624d1538bc9c.jpg",
+      "contentType": "image/jpeg",
+      "size": 57472,
+      "sha256": "2b35624d1538bc9cde848861f43211c7f3e23510e8bb4b6d66e7b0ecc5a142b7"
+    },
+    {
+      "index": 8,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/09-a647b22c9b38e559.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/09-30e1057df4fb16bf.jpg",
+      "key": "portal/skills/oiioii/covers/09-30e1057df4fb16bf.jpg",
+      "contentType": "image/jpeg",
+      "size": 76100,
+      "sha256": "30e1057df4fb16bfcd883a6125a2eac84d45634e342471ee7a4e43d6c90c11b7"
+    },
+    {
+      "index": 9,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/10-de2dbe21d11aeacf.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/10-d6d455851e5a144a.jpg",
+      "key": "portal/skills/oiioii/covers/10-d6d455851e5a144a.jpg",
+      "contentType": "image/jpeg",
+      "size": 43303,
+      "sha256": "d6d455851e5a144ab9e30c4fb0b82d2ee76354cf4761faa5ee02d63864202868"
+    },
+    {
+      "index": 10,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/11-d127e3c88068e5af.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/11-75b1d1202f6da53d.jpg",
+      "key": "portal/skills/oiioii/covers/11-75b1d1202f6da53d.jpg",
+      "contentType": "image/jpeg",
+      "size": 52156,
+      "sha256": "75b1d1202f6da53d67bd69c2cfdb24a8f344c7cd9be867e30e3e1ffbd284aae2"
+    },
+    {
+      "index": 11,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/12-ea333c5434876a8f.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/12-dd0bcb75c4aabfac.jpg",
+      "key": "portal/skills/oiioii/covers/12-dd0bcb75c4aabfac.jpg",
+      "contentType": "image/jpeg",
+      "size": 69699,
+      "sha256": "dd0bcb75c4aabfacc1fc44abe6237b208004148f1dd14a0a7a6883a6dd2bbc93"
+    },
+    {
+      "index": 12,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/13-8ba69793b1e06e86.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/13-e0bba4c1cc517466.jpg",
+      "key": "portal/skills/oiioii/covers/13-e0bba4c1cc517466.jpg",
+      "contentType": "image/jpeg",
+      "size": 37625,
+      "sha256": "e0bba4c1cc5174667caeac82506c6bb6e1fd4c72bd981b0ef3c336e8d16fd2a5"
+    },
+    {
+      "index": 13,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/14-968b90d3323e583f.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/14-49540569e7a8816f.jpg",
+      "key": "portal/skills/oiioii/covers/14-49540569e7a8816f.jpg",
+      "contentType": "image/jpeg",
+      "size": 68548,
+      "sha256": "49540569e7a8816f6dd19593fc4971e21eb172c26e22e756488a3a1d6fe697ed"
+    },
+    {
+      "index": 14,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/15-b3ace495edb234b8.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/15-ad51167ba76fed80.jpg",
+      "key": "portal/skills/oiioii/covers/15-ad51167ba76fed80.jpg",
+      "contentType": "image/jpeg",
+      "size": 75723,
+      "sha256": "ad51167ba76fed800dbd184373993eecc4548f7a812f1fde57aa0b98d26b7b85"
+    },
+    {
+      "index": 15,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/16-0fc0ceef1f7eb87c.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/16-6b6e8eee9e5cb518.jpg",
+      "key": "portal/skills/oiioii/covers/16-6b6e8eee9e5cb518.jpg",
+      "contentType": "image/jpeg",
+      "size": 57839,
+      "sha256": "6b6e8eee9e5cb5182bd5f2203a5c7bf8422e9de6bc91229af16f028e613bb008"
+    },
+    {
+      "index": 16,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/17-b661a9bec4dbb3a6.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/17-220d71acff0efac5.jpg",
+      "key": "portal/skills/oiioii/covers/17-220d71acff0efac5.jpg",
+      "contentType": "image/jpeg",
+      "size": 66061,
+      "sha256": "220d71acff0efac5766ec1c2f8a4d8a5ce800f4f305574a590fa7b9eecc0b3ae"
+    },
+    {
+      "index": 17,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/18-338b5eb61b776ffc.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/18-c7a6f290038ea5c1.jpg",
+      "key": "portal/skills/oiioii/covers/18-c7a6f290038ea5c1.jpg",
+      "contentType": "image/jpeg",
+      "size": 50197,
+      "sha256": "c7a6f290038ea5c12012a9cafbfe4617f3cf759ffce181efd3fac23278d43447"
+    },
+    {
+      "index": 18,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/19-8dc95c76ef162ca9.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/19-772df9b8f3729354.jpg",
+      "key": "portal/skills/oiioii/covers/19-772df9b8f3729354.jpg",
+      "contentType": "image/jpeg",
+      "size": 64083,
+      "sha256": "772df9b8f3729354aa36adbbc13eb2b6a318cdd9a31a77ec5f28719baf69e087"
+    },
+    {
+      "index": 19,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/20-eaafc3d5c33484c4.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/20-8bb0499689b52c46.jpg",
+      "key": "portal/skills/oiioii/covers/20-8bb0499689b52c46.jpg",
+      "contentType": "image/jpeg",
+      "size": 78372,
+      "sha256": "8bb0499689b52c46b7cb520fff482a0bd1b7dbd4d9f558c9b3914333eaeac219"
+    },
+    {
+      "index": 20,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/21-82516140566c874f.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/21-8495988cac153a9b.jpg",
+      "key": "portal/skills/oiioii/covers/21-8495988cac153a9b.jpg",
+      "contentType": "image/jpeg",
+      "size": 39015,
+      "sha256": "8495988cac153a9bdd196a4c832e9b1fdc34f986e67ab944e2880b4dd0b5842a"
+    },
+    {
+      "index": 21,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/22-236061fa8799b0f8.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/22-8935bb32fe7b022b.jpg",
+      "key": "portal/skills/oiioii/covers/22-8935bb32fe7b022b.jpg",
+      "contentType": "image/jpeg",
+      "size": 34691,
+      "sha256": "8935bb32fe7b022bc204caad43c228fcd4d1e84a9cf5570d8b06bfd322c38db8"
+    },
+    {
+      "index": 22,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/23-ae9aa0880931dbf1.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/23-0291dbcfb2068d85.jpg",
+      "key": "portal/skills/oiioii/covers/23-0291dbcfb2068d85.jpg",
+      "contentType": "image/jpeg",
+      "size": 59229,
+      "sha256": "0291dbcfb2068d8588466a3e0c9784da1c0833b3f120acccf9b1117a0089c970"
+    },
+    {
+      "index": 23,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/24-485eb05fc985e7fe.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/24-5aa184344b28eab3.jpg",
+      "key": "portal/skills/oiioii/covers/24-5aa184344b28eab3.jpg",
+      "contentType": "image/jpeg",
+      "size": 81070,
+      "sha256": "5aa184344b28eab354a93bb51c33ae90e9aee4494339f459a26317e06f9f4b56"
+    },
+    {
+      "index": 24,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/25-d5bdd4bb98bbf31f.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/25-3d7d9bddbb2acc60.jpg",
+      "key": "portal/skills/oiioii/covers/25-3d7d9bddbb2acc60.jpg",
+      "contentType": "image/jpeg",
+      "size": 110253,
+      "sha256": "3d7d9bddbb2acc60da6c5b44c596342eefbf73f162b7da87d5df9ee7be794e97"
+    },
+    {
+      "index": 25,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/26-a60781b4c86367f7.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/26-955ae08135bf38c4.jpg",
+      "key": "portal/skills/oiioii/covers/26-955ae08135bf38c4.jpg",
+      "contentType": "image/jpeg",
+      "size": 147292,
+      "sha256": "955ae08135bf38c469a06717e97d6d8d1db3a2fdce9316eb270aee43aedc279d"
+    },
+    {
+      "index": 26,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/27-0d70ab5fea226fdc.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/27-032d75820c8bbd69.jpg",
+      "key": "portal/skills/oiioii/covers/27-032d75820c8bbd69.jpg",
+      "contentType": "image/jpeg",
+      "size": 62235,
+      "sha256": "032d75820c8bbd694a475de869993a19d579fcbff2b971cb7d670e55a4a2c73a"
+    },
+    {
+      "index": 27,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/28-53d18e5174163ceb.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/28-78c8e5f31a8b9a58.jpg",
+      "key": "portal/skills/oiioii/covers/28-78c8e5f31a8b9a58.jpg",
+      "contentType": "image/jpeg",
+      "size": 63318,
+      "sha256": "78c8e5f31a8b9a58bb762111f4ac15fee83219129a1d51bacb45931bbc71a8e8"
+    },
+    {
+      "index": 28,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/29-339997ddaa3a43f1.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/29-8e90fb4961e89939.jpg",
+      "key": "portal/skills/oiioii/covers/29-8e90fb4961e89939.jpg",
+      "contentType": "image/jpeg",
+      "size": 19207,
+      "sha256": "8e90fb4961e8993921edb4661cd5f03589d4fea4b1d0bb4437cb225c88a7b798"
+    },
+    {
+      "index": 29,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/30-3d136cbea258bb05.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/30-573b3c32c80d5b92.jpg",
+      "key": "portal/skills/oiioii/covers/30-573b3c32c80d5b92.jpg",
+      "contentType": "image/jpeg",
+      "size": 97396,
+      "sha256": "573b3c32c80d5b9253e2cc3e1a5855635a39ac1d97c2a8e9c5866eb266d0cb84"
+    },
+    {
+      "index": 30,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/31-19017d0ce4877a3d.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/31-fe0dea19863fc8cf.jpg",
+      "key": "portal/skills/oiioii/covers/31-fe0dea19863fc8cf.jpg",
+      "contentType": "image/jpeg",
+      "size": 84247,
+      "sha256": "fe0dea19863fc8cf031c80663bbe841a83713b93ae94f1a5cc443a11e3ace3d2"
+    },
+    {
+      "index": 31,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/32-8afff3543935daee.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/32-3da6a9d3d6f99a09.jpg",
+      "key": "portal/skills/oiioii/covers/32-3da6a9d3d6f99a09.jpg",
+      "contentType": "image/jpeg",
+      "size": 48246,
+      "sha256": "3da6a9d3d6f99a09c81790cd4ed6327559a836720a0b7e7f2a40e8ad87ee474f"
+    },
+    {
+      "index": 32,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/33-2edc2b01d6df7582.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/33-d310833e6a11c56f.jpg",
+      "key": "portal/skills/oiioii/covers/33-d310833e6a11c56f.jpg",
+      "contentType": "image/jpeg",
+      "size": 25239,
+      "sha256": "d310833e6a11c56fd0f7bc1121dca01b1984d29f7b0db1a494682d46ea09c674"
+    },
+    {
+      "index": 33,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/34-135ee2315884b2ee.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/34-bf92df6524fdc003.jpg",
+      "key": "portal/skills/oiioii/covers/34-bf92df6524fdc003.jpg",
+      "contentType": "image/jpeg",
+      "size": 31234,
+      "sha256": "bf92df6524fdc003d22d35f022c10c50772c4045c7fb72b59bc303ace6460764"
+    },
+    {
+      "index": 34,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/35-52075afb67c57d94.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/35-36c8c5c0117dba66.jpg",
+      "key": "portal/skills/oiioii/covers/35-36c8c5c0117dba66.jpg",
+      "contentType": "image/jpeg",
+      "size": 71516,
+      "sha256": "36c8c5c0117dba6671ab5ed6ca1016fd21aa1366eecfb784cf6b7d1b56e6e3b3"
+    },
+    {
+      "index": 35,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/36-35e0d0fce8a719c8.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/36-9fcaaec1279af1ac.jpg",
+      "key": "portal/skills/oiioii/covers/36-9fcaaec1279af1ac.jpg",
+      "contentType": "image/jpeg",
+      "size": 71988,
+      "sha256": "9fcaaec1279af1ac123e5ebc2610b5c649ff16bdcc555d6c3f4c213bfdf4517a"
+    },
+    {
+      "index": 36,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/37-8f0a1205d246ef64.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/37-960730293c62c22c.jpg",
+      "key": "portal/skills/oiioii/covers/37-960730293c62c22c.jpg",
+      "contentType": "image/jpeg",
+      "size": 52028,
+      "sha256": "960730293c62c22ce37ea5ae74b7a2fc8316c0ecb56fb0dee7a80fd6e887620b"
+    },
+    {
+      "index": 37,
+      "sourceType": "case-video-frame",
+      "sourceUrl": "https://file.beqlee.icu/portal/skills/oiioii/cases/38-2fa17e929bb0590f.mp4",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/38-f4c1a34d458b5111.jpg",
+      "key": "portal/skills/oiioii/covers/38-f4c1a34d458b5111.jpg",
+      "contentType": "image/jpeg",
+      "size": 17654,
+      "sha256": "f4c1a34d458b511173d1341a3739a5801a57b70b59b187ac641c026c8fb4075f"
+    },
+    {
+      "index": 38,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/aonzycxf_02c23ee95c7e309c.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/39-518028d7ab0d36b1.webp",
+      "key": "portal/skills/oiioii/covers/39-518028d7ab0d36b1.webp",
+      "contentType": "image/webp",
+      "size": 1602742,
+      "sha256": "518028d7ab0d36b17573a047fef7eaf64a8e59cc13055febc9fd5df4cd20e1b5"
+    },
+    {
+      "index": 39,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/hnlnheuv_d97fefeb0d415f53.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/40-3a63c6061c51ab5a.webp",
+      "key": "portal/skills/oiioii/covers/40-3a63c6061c51ab5a.webp",
+      "contentType": "image/webp",
+      "size": 71898,
+      "sha256": "3a63c6061c51ab5a00d981cfd326101b282781f8bb2efdac344a5c84d3adbcdf"
+    },
+    {
+      "index": 40,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mput7uzv_2022442bbe91c0a7.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/41-04b8e469fbb5c041.webp",
+      "key": "portal/skills/oiioii/covers/41-04b8e469fbb5c041.webp",
+      "contentType": "image/webp",
+      "size": 179574,
+      "sha256": "04b8e469fbb5c041418c63ab08380a6de25f15e002e09f982eb282806d18dbdb"
+    },
+    {
+      "index": 41,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/jcyvnfdf_9bf6ddff753b0a52.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/42-5bf9e66ac7ab2a89.webp",
+      "key": "portal/skills/oiioii/covers/42-5bf9e66ac7ab2a89.webp",
+      "contentType": "image/webp",
+      "size": 321200,
+      "sha256": "5bf9e66ac7ab2a89f83d52f32867fbfe68e1762b9f381780c22217940c7f06df"
+    },
+    {
+      "index": 42,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/raajnjix_ee211bd400837860.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/43-8c21d593f705b014.webp",
+      "key": "portal/skills/oiioii/covers/43-8c21d593f705b014.webp",
+      "contentType": "image/webp",
+      "size": 1179534,
+      "sha256": "8c21d593f705b01421e842d702386174d29d5d8551f87b3bac48a1a0f2e9a1f7"
+    },
+    {
+      "index": 43,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mpw8yclp_b5835f1b95d534e1.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/44-d73ee37b7f3ec809.webp",
+      "key": "portal/skills/oiioii/covers/44-d73ee37b7f3ec809.webp",
+      "contentType": "image/webp",
+      "size": 44220,
+      "sha256": "d73ee37b7f3ec809045dc9be2d9b8a017620528e30c8ff61bf68314f8753b5c0"
+    },
+    {
+      "index": 44,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mpw8ekbw_96a65984ca90fd0d.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/45-e89db60b5ef84cbd.webp",
+      "key": "portal/skills/oiioii/covers/45-e89db60b5ef84cbd.webp",
+      "contentType": "image/webp",
+      "size": 156104,
+      "sha256": "e89db60b5ef84cbdc94734ff4fa99f01fc05cdf9f16c3f9d89b4cd7fa917389e"
+    },
+    {
+      "index": 45,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mumxqerc_daf002474e7cda36.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/46-fbab08037f96ef94.webp",
+      "key": "portal/skills/oiioii/covers/46-fbab08037f96ef94.webp",
+      "contentType": "image/webp",
+      "size": 154954,
+      "sha256": "fbab08037f96ef94dde88e189af87b327847c851a0f6213dfabc6dd6ea8e0d11"
+    },
+    {
+      "index": 46,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/hiscjcid_cb80dce77c430fde.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/47-7e4af3cd54bbf4b5.webp",
+      "key": "portal/skills/oiioii/covers/47-7e4af3cd54bbf4b5.webp",
+      "contentType": "image/webp",
+      "size": 45156,
+      "sha256": "7e4af3cd54bbf4b52f1965f96bd6ba262181a3517e7944ede388600fddeaf5cb"
+    },
+    {
+      "index": 47,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mpwasrqb_f031f3f310e8f41f.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/48-2f8fa28b95cd805a.webp",
+      "key": "portal/skills/oiioii/covers/48-2f8fa28b95cd805a.webp",
+      "contentType": "image/webp",
+      "size": 180770,
+      "sha256": "2f8fa28b95cd805a70a6a04c9bbce770165d82104ea59967c8c16277e238111f"
+    },
+    {
+      "index": 48,
+      "sourceType": "oiioii-cover",
+      "sourceUrl": "https://static-oiioii-sg.hogiai.cn/skill_cases/mpw1lg7j_cc423c73902b74b4.webp",
+      "assetUrl": "https://file.beqlee.icu/portal/skills/oiioii/covers/49-f2188673f5e0718f.webp",
+      "key": "portal/skills/oiioii/covers/49-f2188673f5e0718f.webp",
+      "contentType": "image/webp",
+      "size": 293236,
+      "sha256": "f2188673f5e0718fa32750a2f078384283d492493d39939484833404e8936f3b"
+    }
+  ]
+}

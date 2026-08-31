@@ -4,6 +4,7 @@ import { getPrismaClient } from "../../platform/node/prisma";
 import {
 	CreateLlmNodePresetRequestSchema,
 	LlmNodePresetSchema,
+	LlmNodePresetStyleReferenceSchema,
 	PromptSampleInputSchema,
 	PromptSampleSchema,
 	UpsertAdminLlmNodePresetRequestSchema,
@@ -41,6 +42,7 @@ type LlmNodePresetRow = {
 	title: string;
 	prompt: string;
 	description: string | null;
+	meta: string | null;
 	enabled: number;
 	sort_order: number | null;
 	created_at: string;
@@ -67,15 +69,99 @@ function normalizeLlmNodePresetType(
 	return undefined;
 }
 
+function normalizeLlmNodePresetScope(
+	scope?: string | null,
+): typeof PRESET_SCOPE_BASE | typeof PRESET_SCOPE_USER | undefined {
+	const raw = String(scope || "").trim().toLowerCase();
+	if (!raw) return undefined;
+	if (raw === PRESET_SCOPE_BASE) return PRESET_SCOPE_BASE;
+	if (raw === PRESET_SCOPE_USER) return PRESET_SCOPE_USER;
+	throw new AppError("无效的预设范围", {
+		status: 400,
+		code: "invalid_node_preset_scope",
+	});
+}
+
+type ParsedPresetMeta = Pick<LlmNodePresetDto, "referenceImageUrl" | "styleReference">;
+
+function readStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const output: string[] = [];
+	for (const item of value) {
+		const text = typeof item === "string" ? item.trim() : "";
+		if (text) output.push(text);
+	}
+	return output;
+}
+
+function parsePresetMeta(raw: string | null | undefined): ParsedPresetMeta {
+	if (!raw) return {};
+	try {
+		const parsed = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null) return {};
+		const record = parsed as Record<string, unknown>;
+		const url = typeof record.referenceImageUrl === "string" ? record.referenceImageUrl.trim() : "";
+		const rawStyleReference =
+			record.styleReference && typeof record.styleReference === "object" && !Array.isArray(record.styleReference)
+				? (record.styleReference as Record<string, unknown>)
+				: {};
+		const styleReference = LlmNodePresetStyleReferenceSchema.parse({
+			...(typeof record.styleId === "string" && record.styleId.trim() ? { styleId: record.styleId.trim() } : {}),
+			...(typeof rawStyleReference.styleId === "string" && rawStyleReference.styleId.trim()
+				? { styleId: rawStyleReference.styleId.trim() }
+				: {}),
+			...(readStringArray(record.categories).length ? { categories: readStringArray(record.categories) } : {}),
+			...(readStringArray(rawStyleReference.categories).length ? { categories: readStringArray(rawStyleReference.categories) } : {}),
+			...(readStringArray(record.tags).length ? { tags: readStringArray(record.tags) } : {}),
+			...(readStringArray(rawStyleReference.tags).length ? { tags: readStringArray(rawStyleReference.tags) } : {}),
+			...(typeof rawStyleReference.era === "string" && rawStyleReference.era.trim()
+				? { era: rawStyleReference.era.trim() }
+				: {}),
+			...(typeof rawStyleReference.region === "string" && rawStyleReference.region.trim()
+				? { region: rawStyleReference.region.trim() }
+				: {}),
+			...(typeof rawStyleReference.ethnicity === "string" && rawStyleReference.ethnicity.trim()
+				? { ethnicity: rawStyleReference.ethnicity.trim() }
+				: {}),
+			...(typeof rawStyleReference.medium === "string" && rawStyleReference.medium.trim()
+				? { medium: rawStyleReference.medium.trim() }
+				: {}),
+		});
+		return {
+			...(url ? { referenceImageUrl: url } : {}),
+			...(Object.keys(styleReference).length ? { styleReference } : {}),
+		};
+	} catch {
+		return {};
+	}
+}
+
+function buildPresetMeta(input: {
+	referenceImageUrl?: string | null;
+	styleReference?: LlmNodePresetDto["styleReference"];
+}): string | null {
+	const referenceImageUrl = input.referenceImageUrl?.trim() || "";
+	const styleReference = input.styleReference
+		? LlmNodePresetStyleReferenceSchema.parse(input.styleReference)
+		: undefined;
+	const meta = {
+		...(referenceImageUrl ? { referenceImageUrl } : {}),
+		...(styleReference && Object.keys(styleReference).length ? { styleReference } : {}),
+	};
+	return Object.keys(meta).length ? JSON.stringify(meta) : null;
+}
+
 function mapLlmNodePresetRow(row: LlmNodePresetRow): LlmNodePresetDto {
 	const type = normalizeLlmNodePresetType(row.preset_type) ?? "text";
 	const scope = row.scope === PRESET_SCOPE_BASE ? PRESET_SCOPE_BASE : PRESET_SCOPE_USER;
+	const meta = parsePresetMeta(row.meta);
 	return LlmNodePresetSchema.parse({
 		id: row.id,
 		title: row.title,
 		type,
 		prompt: row.prompt,
 		description: row.description || undefined,
+		...meta,
 		scope,
 		enabled: !!row.enabled,
 		sortOrder: row.sort_order,
@@ -373,18 +459,29 @@ export async function parsePromptSample(
 export async function listLlmNodePresets(
 	c: AppContext,
 	userId: string,
-	input?: { q?: string; type?: string | null },
+	input?: { q?: string; type?: string | null; scope?: string | null; limit?: string | number | null },
 ): Promise<LlmNodePresetDto[]> {
 	await ensureLlmNodePresetSchema(c);
 	const normalizedType = normalizeLlmNodePresetType(input?.type);
+	const normalizedScope = normalizeLlmNodePresetScope(input?.scope);
 	const q = String(input?.q || "").trim().toLowerCase();
+	const rawLimit = Number(input?.limit ?? 200);
+	const limit = Number.isFinite(rawLimit)
+		? Math.max(1, Math.min(300, Math.trunc(rawLimit)))
+		: 200;
+	const scopeFilter =
+		normalizedScope === PRESET_SCOPE_BASE
+			? [{ scope: PRESET_SCOPE_BASE, owner_id: null }]
+			: normalizedScope === PRESET_SCOPE_USER
+				? [{ scope: PRESET_SCOPE_USER, owner_id: userId }]
+				: [
+					{ scope: PRESET_SCOPE_BASE, owner_id: null },
+					{ scope: PRESET_SCOPE_USER, owner_id: userId },
+				];
 	const rows = (await getPrismaClient().llm_node_presets.findMany({
 		where: {
 			enabled: 1,
-			OR: [
-				{ scope: PRESET_SCOPE_BASE, owner_id: null },
-				{ scope: PRESET_SCOPE_USER, owner_id: userId },
-			],
+			OR: scopeFilter,
 			...(normalizedType ? { preset_type: normalizedType } : {}),
 		},
 		orderBy: [{ updated_at: "desc" }],
@@ -402,14 +499,27 @@ export async function listLlmNodePresets(
 			return b.updated_at.localeCompare(a.updated_at);
 		})
 		.map(mapLlmNodePresetRow);
-	if (!q) return rows.slice(0, 80);
+	if (!q) return rows.slice(0, limit);
 	const filtered = rows.filter((row) => {
 		const title = row.title.toLowerCase();
 		const desc = (row.description || "").toLowerCase();
 		const prompt = row.prompt.toLowerCase();
-		return title.includes(q) || desc.includes(q) || prompt.includes(q);
+		const styleReference = row.styleReference;
+		const metaText = [
+			styleReference?.styleId,
+			styleReference?.era,
+			styleReference?.region,
+			styleReference?.ethnicity,
+			styleReference?.medium,
+			...(styleReference?.categories || []),
+			...(styleReference?.tags || []),
+		]
+			.filter(Boolean)
+			.join(" ")
+			.toLowerCase();
+		return title.includes(q) || desc.includes(q) || prompt.includes(q) || metaText.includes(q);
 	});
-	return filtered.slice(0, 80);
+	return filtered.slice(0, limit);
 }
 
 export async function createLlmNodePreset(
@@ -421,12 +531,17 @@ export async function createLlmNodePreset(
 	const parsed = CreateLlmNodePresetRequestSchema.parse(input);
 	const title = parsed.title.trim();
 	const prompt = parsed.prompt.trim();
-	if (!title || !prompt) {
-		throw new AppError("标题和提示词不能为空", {
+	if (!title) {
+		throw new AppError("标题不能为空", {
 			status: 400,
 			code: "invalid_node_preset",
 		});
 	}
+	const referenceImageUrl = parsed.referenceImageUrl?.trim() || null;
+	const meta = buildPresetMeta({
+		referenceImageUrl,
+		styleReference: parsed.styleReference,
+	});
 	const nowIso = new Date().toISOString();
 	const id = crypto.randomUUID();
 	await getPrismaClient().llm_node_presets.create({
@@ -438,6 +553,7 @@ export async function createLlmNodePreset(
 			title,
 			prompt,
 			description: parsed.description ?? null,
+			meta,
 			enabled: 1,
 			sort_order: null,
 			created_at: nowIso,
@@ -466,14 +582,49 @@ export async function deleteLlmNodePreset(
 		where: { id, scope: PRESET_SCOPE_USER, owner_id: userId },
 		select: { id: true },
 	});
-	if (!existing) {
+	if (existing) {
+		await getPrismaClient().llm_node_presets.deleteMany({
+			where: { id, scope: PRESET_SCOPE_USER, owner_id: userId },
+		});
+		return;
+	}
+
+	const sourcePreset = await getPrismaClient().llm_node_presets.findFirst({
+		where: { id, enabled: 1 },
+		select: { id: true, preset_type: true, meta: true },
+	});
+	const sourceReferenceImageUrl = parsePresetMeta(sourcePreset?.meta).referenceImageUrl?.trim() || "";
+	if (!sourcePreset || !sourceReferenceImageUrl) {
 		throw new AppError("未找到该预设或无权删除", {
 			status: 404,
 			code: "node_preset_not_found",
 		});
 	}
+
+	const userPresets = await getPrismaClient().llm_node_presets.findMany({
+		where: {
+			scope: PRESET_SCOPE_USER,
+			owner_id: userId,
+			preset_type: sourcePreset.preset_type,
+		},
+		select: { id: true, meta: true },
+	});
+	const matchedUserPresetIds = userPresets
+		.filter((preset) => parsePresetMeta(preset.meta).referenceImageUrl?.trim() === sourceReferenceImageUrl)
+		.map((preset) => preset.id);
+	if (!matchedUserPresetIds.length) {
+		throw new AppError("未找到该预设或无权删除", {
+			status: 404,
+			code: "node_preset_not_found",
+		});
+	}
+
 	await getPrismaClient().llm_node_presets.deleteMany({
-		where: { id, scope: PRESET_SCOPE_USER, owner_id: userId },
+		where: {
+			id: { in: matchedUserPresetIds },
+			scope: PRESET_SCOPE_USER,
+			owner_id: userId,
+		},
 	});
 }
 
@@ -522,6 +673,11 @@ export async function upsertAdminLlmNodePreset(
 	const nowIso = new Date().toISOString();
 	const id = parsed.id?.trim() || `node_preset_${crypto.randomUUID()}`;
 	const enabled = parsed.enabled === false ? 0 : 1;
+	const referenceImageUrl = parsed.referenceImageUrl?.trim() || null;
+	const meta = buildPresetMeta({
+		referenceImageUrl,
+		styleReference: parsed.styleReference,
+	});
 	await getPrismaClient().llm_node_presets.upsert({
 		where: { id },
 		create: {
@@ -532,6 +688,7 @@ export async function upsertAdminLlmNodePreset(
 			title,
 			prompt,
 			description: parsed.description ?? null,
+			meta,
 			enabled,
 			sort_order: parsed.sortOrder ?? null,
 			created_at: nowIso,
@@ -544,6 +701,7 @@ export async function upsertAdminLlmNodePreset(
 			title,
 			prompt,
 			description: parsed.description ?? null,
+			meta,
 			enabled,
 			sort_order: parsed.sortOrder ?? null,
 			updated_at: nowIso,

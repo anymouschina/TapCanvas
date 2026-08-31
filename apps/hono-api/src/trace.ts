@@ -41,6 +41,16 @@ function createRequestId(): string {
 export function ensureRequestId(c: AppContext): string {
 	const existing = c.get("requestId");
 	if (typeof existing === "string" && existing.trim()) return existing.trim();
+
+	// Honor frontend-supplied trace ID so logs correlate end-to-end
+	const fromHeader =
+		c.req.raw.headers.get("x-trace-id") || c.req.raw.headers.get("x-request-id");
+	if (fromHeader && fromHeader.trim()) {
+		const id = fromHeader.trim().slice(0, 128);
+		c.set("requestId", id);
+		return id;
+	}
+
 	const id = createRequestId();
 	c.set("requestId", id);
 	return id;

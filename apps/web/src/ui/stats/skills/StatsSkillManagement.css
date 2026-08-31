@@ -1,0 +1,90 @@
+.stats-skill-ranking {
+  overflow: hidden;
+}
+
+.stats-skill-ranking__description {
+  max-width: 720px;
+}
+
+.stats-skill-ranking__actions {
+  flex: 0 0 auto;
+}
+
+.stats-skill-ranking__error {
+  padding: 10px 12px;
+  color: var(--tc-color-danger, #f87171);
+  background: rgba(248, 113, 113, 0.08);
+  font-size: 13px;
+}
+
+.stats-skill-ranking__weights {
+  padding: 12px 0;
+  background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.035));
+}
+
+.stats-skill-ranking__weight-input {
+  width: min(240px, 100%);
+}
+
+.stats-skill-ranking__table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.stats-skill-ranking__table {
+  min-width: 1080px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-skill-ranking__th {
+  color: var(--tc-color-text-tertiary, #73839a);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stats-skill-ranking__th--rank,
+.stats-skill-ranking__td--rank {
+  width: 52px;
+  text-align: center;
+}
+
+.stats-skill-ranking__td {
+  border-color: var(--tc-color-border-subtle, rgba(226, 232, 240, 0.08));
+}
+
+.stats-skill-ranking__td--number {
+  color: var(--tc-color-text-secondary, #aab7ca);
+  text-align: right;
+}
+
+.stats-skill-ranking__skill-name,
+.stats-skill-ranking__skill-key {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-skill-ranking__row-input {
+  width: 92px;
+}
+
+.stats-skill-ranking__price-input {
+  width: 92px;
+}
+
+@media (max-width: 760px) {
+  .stats-skill-ranking__header,
+  .stats-skill-ranking__weights {
+    align-items: stretch;
+  }
+
+  .stats-skill-ranking__weights {
+    flex-direction: column;
+  }
+
+  .stats-skill-ranking__weight-input {
+    width: 100%;
+  }
+}

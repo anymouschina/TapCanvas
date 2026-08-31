@@ -1,0 +1,123 @@
+.tc-workflow-execution-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 240px;
+  max-width: 300px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--canvas-node-bg, #1b2333);
+  color: var(--canvas-node-text, #e6ebf4);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.tc-workflow-execution-placeholder:hover {
+  border-color: var(--canvas-node-border, rgba(255, 255, 255, 0.14));
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.34);
+}
+
+.tc-workflow-execution-placeholder__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--canvas-node-subtext, #9aa7bd);
+}
+
+.tc-workflow-execution-placeholder--succeeded .tc-workflow-execution-placeholder__icon {
+  background: rgba(46, 160, 67, 0.16);
+  color: #3fb950;
+}
+
+.tc-workflow-execution-placeholder--failed .tc-workflow-execution-placeholder__icon {
+  background: rgba(248, 81, 73, 0.14);
+  color: #f85149;
+}
+
+.tc-workflow-execution-placeholder__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.tc-workflow-execution-placeholder__title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-workflow-execution-placeholder__meta {
+  font-size: 11px;
+  color: var(--canvas-node-subtext, #9aa7bd);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-workflow-execution-placeholder__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: #9aa7bd;
+}
+
+.tc-workflow-execution-placeholder--succeeded .tc-workflow-execution-placeholder__status {
+  color: #3fb950;
+}
+
+.tc-workflow-execution-placeholder--failed .tc-workflow-execution-placeholder__status {
+  color: #f85149;
+}
+
+.tc-workflow-execution-placeholder__spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(56, 139, 253, 0.3);
+  border-top-color: #388bfd;
+  animation: tc-workflow-execution-placeholder-spin 0.8s linear infinite;
+}
+
+@keyframes tc-workflow-execution-placeholder-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tc-workflow-execution-placeholder__status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--canvas-node-subtext, #9aa7bd);
+  white-space: nowrap;
+}
+
+.tc-workflow-execution-placeholder--running .tc-workflow-execution-placeholder__status-label {
+  color: #58a6ff;
+}
+
+.tc-workflow-execution-placeholder--succeeded .tc-workflow-execution-placeholder__status-label {
+  color: #3fb950;
+}
+
+.tc-workflow-execution-placeholder--failed .tc-workflow-execution-placeholder__status-label {
+  color: #f85149;
+}

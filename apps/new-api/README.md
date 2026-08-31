@@ -197,12 +197,12 @@ docker run --name new-api -d --restart always \
 | 📈 Data Dashboard | Visual console and statistical analysis |
 | 🔒 Permission Management | Token grouping, model restrictions, user management |
 
-### 💰 Payment and Billing
+### 📊 Quota Metering
 
-- ✅ Online recharge (EPay, Stripe)
 - ✅ Pay-per-use model pricing
 - ✅ Cache billing support (OpenAI, Azure, DeepSeek, Claude, Qwen and all supported models)
 - ✅ Flexible billing policy configuration
+- ✅ Redemption codes and administrator quota allocation; online payment is not included in the TapCanvas community deployment
 
 ### 🔐 Authorization and Security
 

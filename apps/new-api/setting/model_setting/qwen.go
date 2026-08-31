@@ -18,6 +18,8 @@ var defaultQwenSettings = QwenSettings{
 		"qwen-image",
 		"wan2.6",
 		"wan2.7",
+		"qwen-image-2.0",     // 图像生成与编辑融合模型（含 -pro，Contains 匹配）
+		"qwen-image-2.0-pro", // 专业版融合模型
 		"qwen-image-edit",
 		"qwen-image-edit-max",
 		"qwen-image-edit-max-2026-01-16",

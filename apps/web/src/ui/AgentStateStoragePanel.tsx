@@ -692,13 +692,13 @@ export default function AgentStateStoragePanel(props: AgentStateStoragePanelProp
                 前端状态存储概览
               </Text>
               <Group className="agent-state-storage-panel__hero-badges" gap="xs" wrap="wrap">
-                <Badge className="agent-state-storage-panel__hero-badge" variant="light" color="blue">
+                <Badge className="agent-state-storage-panel__hero-badge" variant="light" color="gray">
                   canvas
                 </Badge>
                 <Badge className="agent-state-storage-panel__hero-badge" variant="light" color="teal">
                   resource runtime
                 </Badge>
-                <Badge className="agent-state-storage-panel__hero-badge" variant="light" color="grape">
+                <Badge className="agent-state-storage-panel__hero-badge" variant="light" color="gray">
                   upload runtime
                 </Badge>
                 <Badge className="agent-state-storage-panel__hero-badge" variant="light" color="orange">
@@ -860,7 +860,7 @@ export default function AgentStateStoragePanel(props: AgentStateStoragePanelProp
                   <Text className="agent-state-storage-panel__section-title" size="sm" fw={700}>
                     Upload Runtime
                   </Text>
-                  <Badge className="agent-state-storage-panel__section-badge" variant="light" color="grape">
+                  <Badge className="agent-state-storage-panel__section-badge" variant="light" color="gray">
                     {formatCount(uploadSnapshot.pendingUploadCount)}
                   </Badge>
                 </Group>
@@ -882,7 +882,7 @@ export default function AgentStateStoragePanel(props: AgentStateStoragePanelProp
                   <Text className="agent-state-storage-panel__section-title" size="sm" fw={700}>
                     DOM 图片/渲染挂载
                   </Text>
-                  <Badge className="agent-state-storage-panel__section-badge" variant="light" color="blue">
+                  <Badge className="agent-state-storage-panel__section-badge" variant="light" color="gray">
                     {`img ${formatCount(domImageStats.imageCount)}`}
                   </Badge>
                 </Group>
@@ -993,7 +993,7 @@ export default function AgentStateStoragePanel(props: AgentStateStoragePanelProp
                 <Text className="agent-state-storage-panel__section-title" size="sm" fw={700}>
                   Live Chat Run Store
                 </Text>
-                <Badge className="agent-state-storage-panel__section-badge" variant="light" color={activeLiveRun ? (activeLiveRun.status === 'running' ? 'orange' : activeLiveRun.status === 'succeeded' ? 'green' : 'red') : 'gray'}>
+                <Badge className="agent-state-storage-panel__section-badge" variant="light" color={activeLiveRun ? (activeLiveRun.status === 'active' ? 'orange' : activeLiveRun.status === 'succeeded' ? 'green' : 'red') : 'gray'}>
                   {activeLiveRun ? activeLiveRun.status : 'idle'}
                 </Badge>
               </Group>

@@ -517,7 +517,7 @@ const ViewDetailsModal = ({ visible, onCancel, deployment, t }) => {
           >
             <div className='space-y-3'>
               <div className='flex items-center justify-between p-3 bg-green-50 rounded-lg'>
-                <Text>{t('已支付金额')}</Text>
+                <Text>{t('已产生费用')}</Text>
                 <Text strong className='text-lg text-green-600'>
                   $
                   {details.amount_paid

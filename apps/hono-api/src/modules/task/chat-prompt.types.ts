@@ -3,9 +3,10 @@ import type { PublicChatEnabledModelCatalogSummary } from "../model-catalog/mode
 import type { PublicFlowAnchorBinding } from "../flow/flow.anchor-bindings";
 
 export type ChatPromptSkill = {
+	id: string;
+	source: "system" | "user" | "marketplace";
 	key: string | null;
 	name: string | null;
-	content?: string | null;
 };
 
 export type PersonaContextFile = {
@@ -23,13 +24,30 @@ export type PersonaIdentity = {
 export type PublicChatReferenceImageSlot = {
 	slot: string;
 	url: string;
+	referenceId?: string | null;
+	nodeId?: string | null;
+	assetId?: string | null;
+	assetRefId?: string | null;
 	role: string | null;
 	label: string | null;
 	note: string | null;
 };
 
 export type PublicChatPromptContext = {
+	generationProposal?: {
+		version: 1;
+		proposalId: string;
+		kind: "image" | "video" | "audio" | "prompt";
+		title: string;
+		prompt: string;
+		model?: string;
+		parameters: Array<{ label: string; value: string }>;
+		action: string | null;
+		nodeId: string | null;
+	} | null;
 	currentProjectName: string | null;
+	chatMode: "creative" | null;
+	creativePhase: "prep" | "writing" | null;
 	workspaceAction?:
 		| "chapter_script_generation"
 		| "chapter_asset_generation"

@@ -5,6 +5,9 @@ import type { AppContext } from "./types";
 function createMockContext(): AppContext {
 	const store = new Map<string, unknown>();
 	const ctx = {
+		req: {
+			raw: new Request("https://tapcanvas.local/test"),
+		},
 		get(key: string) {
 			return store.get(key);
 		},

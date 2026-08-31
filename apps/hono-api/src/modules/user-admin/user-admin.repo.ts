@@ -21,6 +21,16 @@ export type UserRow = {
 	team_name?: string | null;
 	team_credits?: number | null;
 	team_credits_frozen?: number | null;
+	subscription_id?: string | null;
+	subscription_plan_code?: string | null;
+	subscription_start_at?: string | null;
+	subscription_end_at?: string | null;
+	subscription_billing_cycle?: string | null;
+	subscription_monthly_credits?: number | null;
+	subscription_daily_gift_credits?: number | null;
+	subscription_concurrency_limit?: number | null;
+	subscription_capacity_label?: string | null;
+	subscription_timezone?: string | null;
 };
 
 function toPersonalTeamId(userId: string): string {
@@ -70,22 +80,7 @@ export async function listUsers(
 	]);
 
 	const userIds = users.map((user) => user.id);
-	const memberships = userIds.length
-		? await getPrismaClient().team_memberships.findMany({
-				where: { user_id: { in: userIds } },
-			})
-		: [];
-	const membershipByUserId = new Map(memberships.map((m) => [m.user_id, m]));
-
-	const teamIds = new Set<string>();
-	for (const user of users) {
-		const membership = membershipByUserId.get(user.id);
-		if (membership?.team_id) {
-			teamIds.add(membership.team_id);
-		} else if (user.guest === 0) {
-			teamIds.add(toPersonalTeamId(user.id));
-		}
-	}
+	const teamIds = new Set(users.filter((user) => user.guest === 0).map((user) => toPersonalTeamId(user.id)));
 
 	const teams = teamIds.size
 		? await getPrismaClient().teams.findMany({
@@ -94,15 +89,28 @@ export async function listUsers(
 			})
 		: [];
 	const teamById = new Map(teams.map((team) => [team.id, team]));
+	const nowIso = new Date().toISOString();
+	const subscriptions = userIds.length
+		? await getPrismaClient().subscriptions.findMany({
+				where: {
+					owner_id: { in: userIds },
+					status: "active",
+					monthly_credits: { gt: 0 },
+					start_at: { lte: nowIso },
+					end_at: { gt: nowIso },
+				},
+				orderBy: [{ end_at: "desc" }, { created_at: "desc" }],
+			})
+		: [];
+	const subscriptionByUserId = new Map<string, (typeof subscriptions)[number]>();
+	for (const subscription of subscriptions) {
+		if (!subscriptionByUserId.has(subscription.owner_id)) subscriptionByUserId.set(subscription.owner_id, subscription);
+	}
 
 	const rows = users.map((user) => {
-		const membership = membershipByUserId.get(user.id);
-		const teamId = membership?.team_id
-			? membership.team_id
-			: user.guest === 0
-				? toPersonalTeamId(user.id)
-				: null;
+		const teamId = user.guest === 0 ? toPersonalTeamId(user.id) : null;
 		const team = teamId ? teamById.get(teamId) : null;
+		const subscription = subscriptionByUserId.get(user.id);
 		const fallbackPersonalName =
 			user.login && user.login.trim()
 				? `${user.login} 的个人账户`
@@ -123,7 +131,7 @@ export async function listUsers(
 			created_at: user.created_at,
 			updated_at: user.updated_at,
 			team_id: teamId,
-			team_role: membership?.role ?? null,
+			team_role: null,
 			team_name: team
 				? team.name
 				: teamId && user.guest === 0
@@ -132,6 +140,16 @@ export async function listUsers(
 			team_credits: team?.credits ?? (teamId && user.guest === 0 ? 0 : null),
 			team_credits_frozen:
 				team?.credits_frozen ?? (teamId && user.guest === 0 ? 0 : null),
+			subscription_id: subscription?.id ?? null,
+			subscription_plan_code: subscription?.plan_code ?? null,
+			subscription_start_at: subscription?.start_at ?? null,
+			subscription_end_at: subscription?.end_at ?? null,
+			subscription_billing_cycle: subscription?.billing_cycle ?? null,
+			subscription_monthly_credits: subscription?.monthly_credits ?? null,
+			subscription_daily_gift_credits: subscription?.daily_gift_credits ?? null,
+			subscription_concurrency_limit: subscription?.concurrency_limit ?? null,
+			subscription_capacity_label: subscription?.capacity_label ?? null,
+			subscription_timezone: subscription?.timezone ?? null,
 		};
 	});
 	return { rows, total };
@@ -147,14 +165,7 @@ export async function getUserById(
 	});
 	if (!user) return null;
 
-	const membership = await getPrismaClient().team_memberships.findFirst({
-		where: { user_id: userId },
-	});
-	const teamId = membership?.team_id
-		? membership.team_id
-		: user.guest === 0
-			? toPersonalTeamId(user.id)
-			: null;
+	const teamId = user.guest === 0 ? toPersonalTeamId(user.id) : null;
 	const team = teamId
 		? await getPrismaClient().teams.findUnique({
 				where: { id: teamId },
@@ -163,6 +174,17 @@ export async function getUserById(
 		: null;
 	const fallbackPersonalName =
 		user.login && user.login.trim() ? `${user.login} 的个人账户` : "个人账户";
+	const nowIso = new Date().toISOString();
+	const subscription = await getPrismaClient().subscriptions.findFirst({
+		where: {
+			owner_id: userId,
+			status: "active",
+			monthly_credits: { gt: 0 },
+			start_at: { lte: nowIso },
+			end_at: { gt: nowIso },
+		},
+		orderBy: [{ end_at: "desc" }, { created_at: "desc" }],
+	});
 
 	return {
 		id: user.id,
@@ -179,7 +201,7 @@ export async function getUserById(
 		created_at: user.created_at,
 		updated_at: user.updated_at,
 		team_id: teamId,
-		team_role: membership?.role ?? null,
+		team_role: null,
 		team_name: team
 			? team.name
 			: teamId && user.guest === 0
@@ -188,6 +210,16 @@ export async function getUserById(
 		team_credits: team?.credits ?? (teamId && user.guest === 0 ? 0 : null),
 		team_credits_frozen:
 			team?.credits_frozen ?? (teamId && user.guest === 0 ? 0 : null),
+		subscription_id: subscription?.id ?? null,
+		subscription_plan_code: subscription?.plan_code ?? null,
+		subscription_start_at: subscription?.start_at ?? null,
+		subscription_end_at: subscription?.end_at ?? null,
+		subscription_billing_cycle: subscription?.billing_cycle ?? null,
+		subscription_monthly_credits: subscription?.monthly_credits ?? null,
+		subscription_daily_gift_credits: subscription?.daily_gift_credits ?? null,
+		subscription_concurrency_limit: subscription?.concurrency_limit ?? null,
+		subscription_capacity_label: subscription?.capacity_label ?? null,
+		subscription_timezone: subscription?.timezone ?? null,
 	};
 }
 

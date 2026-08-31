@@ -1,0 +1,26 @@
+.project-rename-modal__submit {
+  border-color: transparent !important;
+  background: #3a3a40 !important;
+  color: #ffffff !important;
+}
+
+.project-rename-modal__submit:hover:not(:disabled):not([data-disabled]) {
+  background: #45454c !important;
+  color: #ffffff !important;
+}
+
+.project-rename-modal__submit:active:not(:disabled):not([data-disabled]) {
+  background: #303035 !important;
+  color: #ffffff !important;
+}
+
+.project-rename-modal__submit:focus-visible {
+  outline: 2px solid rgba(212, 215, 220, 0.32);
+  outline-offset: 2px;
+}
+
+.project-rename-modal__submit:disabled,
+.project-rename-modal__submit[data-disabled] {
+  background: rgba(58, 58, 64, 0.45) !important;
+  color: rgba(255, 255, 255, 0.45) !important;
+}

@@ -35,6 +35,7 @@ const ModelSetting = () => {
     'gemini.version_settings': '',
     'gemini.supported_imagine_models': '',
     'gemini.remove_function_response_id_enabled': true,
+    'gemini.official_channel_only_enabled': false,
     'claude.model_headers_settings': '',
     'claude.thinking_adapter_enabled': true,
     'claude.default_max_tokens': '',

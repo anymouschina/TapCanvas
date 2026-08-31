@@ -118,33 +118,33 @@ worker.on("error", (err) => {
 	console.warn("[prompt-evolution] worker error", err?.message || err);
 });
 
-const shutdown = async () => {
-	console.log("[prompt-evolution] shutting down...");
+let shutdownStarted = false;
+
+async function closeResource(label, close) {
 	try {
-		await worker.close();
-	} catch {
-		// ignore
+		await close();
+		return true;
+	} catch (error) {
+		console.error(`[prompt-evolution] failed to close ${label}`, error);
+		return false;
 	}
-	try {
-		await queue.close();
-	} catch {
-		// ignore
-	}
-	try {
-		await scheduler?.close?.();
-	} catch {
-		// ignore
-	}
-	try {
-		await connection.quit();
-	} catch {
-		// ignore
-	}
-	process.exit(0);
+}
+
+const shutdown = async (signal) => {
+	if (shutdownStarted) return;
+	shutdownStarted = true;
+	console.log(`[prompt-evolution] ${signal} received; stopping new claims and draining active jobs...`);
+	const closed = await Promise.all([
+		closeResource("worker", () => worker.close()),
+		closeResource("queue", () => queue.close()),
+		closeResource("scheduler", () => scheduler?.close?.()),
+		closeResource("redis connection", () => connection.quit()),
+	]);
+	process.exit(closed.every(Boolean) ? 0 : 1);
 };
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 await ensureSingleRepeatableTick();
 console.log(

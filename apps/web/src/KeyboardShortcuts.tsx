@@ -1,16 +1,12 @@
 import { useEffect } from 'react'
 import { useRFStore, persistToLocalStorage } from './canvas/store'
-import { useUIStore } from './ui/uiStore'
 import { extractCanvasGraph, type CanvasImportData } from './canvas/utils/serialization'
+import { isCanvasTextInteractionTarget } from './canvas/utils/isCanvasTextInteractionTarget'
 
-function isTextInputElement(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false
-  const tagName = target.tagName
-  if (tagName === 'INPUT' || tagName === 'TEXTAREA') return true
-  if (target.getAttribute('contenteditable') === 'true') return true
-  if (target.closest('input') || target.closest('textarea')) return true
-  if (target.closest('[contenteditable="true"]')) return true
-  return false
+export function isCanvasCompositionKeyEvent(
+  event: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>,
+): boolean {
+  return event.isComposing || event.keyCode === 229
 }
 
 function handleDeleteShortcut(e: KeyboardEvent, isTextInput: boolean, removeSelected: () => void) {
@@ -151,12 +147,10 @@ function handleGroupShortcut(
   addGroupForSelection()
 }
 
-function handleEscapeShortcut(e: KeyboardEvent, clearSelection: () => void, clearFocusedSubgraph: () => void) {
+function handleEscapeShortcut(e: KeyboardEvent, clearSelection: () => void) {
   if (e.key === 'Escape') {
     e.preventDefault()
-    const focusedNodeId = useUIStore.getState().focusedNodeId
-    if (focusedNodeId) clearFocusedSubgraph()
-    else clearSelection()
+    clearSelection()
   }
 }
 
@@ -188,7 +182,6 @@ export default function KeyboardShortcuts({ className }: { className?: string })
   const addGroupForSelection = useRFStore((s) => s.addGroupForSelection)
   const ungroupGroupNode = useRFStore((s) => s.ungroupGroupNode)
   const findGroupMatchingSelection = useRFStore((s) => s.findGroupMatchingSelection)
-  const clearFocusedSubgraph = useUIStore(s => s.clearFocusedSubgraph)
   const formatTree = useRFStore((s) => s.formatTree)
 
   useEffect(() => {
@@ -212,6 +205,10 @@ export default function KeyboardShortcuts({ className }: { className?: string })
       lastInteractionInsideApp = target ? rootEl.contains(target) : false
     }
     function onKey(e: KeyboardEvent) {
+      // Canvas shortcuts must never act on keys owned by an active IME. In
+      // particular, composition Escape/Enter can otherwise clear selection or
+      // run a node, unmounting a focused contentEditable before it commits.
+      if (isCanvasCompositionKeyEvent(e)) return
       if (!windowFocused || (typeof document.hasFocus === 'function' && !document.hasFocus())) {
         return
       }
@@ -223,8 +220,8 @@ export default function KeyboardShortcuts({ className }: { className?: string })
       const target = e.target as HTMLElement | null
       const focusTarget = document.activeElement as HTMLElement | null
       const isTextInput =
-        isTextInputElement(target) ||
-        isTextInputElement(focusTarget)
+        isCanvasTextInteractionTarget(target) ||
+        isCanvasTextInteractionTarget(focusTarget)
       const selection = window.getSelection()
       const hasTextSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim().length)
       handleDeleteShortcut(e, isTextInput, removeSelected)
@@ -242,7 +239,7 @@ export default function KeyboardShortcuts({ className }: { className?: string })
         ungroupGroupNode,
         findGroupMatchingSelection,
       )
-      handleEscapeShortcut(e, clearSelection, clearFocusedSubgraph)
+      handleEscapeShortcut(e, clearSelection)
       handleLayoutShortcut(e, isTextInput, formatTree)
       handleRunShortcut(e, mod, isTextInput)
     }
@@ -270,7 +267,6 @@ export default function KeyboardShortcuts({ className }: { className?: string })
     selectAll,
     clearSelection,
     invertSelection,
-    clearFocusedSubgraph,
     formatTree,
   ])
 

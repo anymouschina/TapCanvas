@@ -65,21 +65,6 @@ function MyComponent() {
 }
 ```
 
-### 4. 语言切换组件
-
-```typescript
-import { LanguageSwitcher } from '@/canvas/components/shared/LanguageSwitcher';
-
-// 直接使用
-<LanguageSwitcher />
-
-// 自定义样式
-<LanguageSwitcher
-  style={{ backgroundColor: '#f0f0f0' }}
-  className="my-language-switcher"
-/>
-```
-
 ## 支持的翻译内容
 
 ### 通用词汇

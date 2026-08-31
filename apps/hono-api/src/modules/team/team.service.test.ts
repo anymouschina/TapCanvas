@@ -1,15 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppContext } from "../../types";
 
-const {
-	createTeam,
-	getTeamById,
-	hasTeamSignupBonusLedgerEntry,
-	topUpTeamCredits,
-} = vi.hoisted(() => ({
+const { createTeam, getTeamById, topUpTeamCredits } = vi.hoisted(() => ({
 	createTeam: vi.fn(),
 	getTeamById: vi.fn(),
-	hasTeamSignupBonusLedgerEntry: vi.fn(),
 	topUpTeamCredits: vi.fn(),
 }));
 
@@ -19,11 +13,10 @@ vi.mock("./team.repo", async () => {
 		...actual,
 		createTeam,
 		getTeamById,
-		hasTeamSignupBonusLedgerEntry,
 		topUpTeamCredits,
 	};
 });
-import { grantSignupBonusToPersonalTeam } from "./team.service";
+import { ensurePersonalBillingTeamOnLogin } from "./team.service";
 
 function createContext(): AppContext {
 	return {
@@ -32,41 +25,38 @@ function createContext(): AppContext {
 	} as unknown as AppContext;
 }
 
-describe("grantSignupBonusToPersonalTeam", () => {
+describe("ensurePersonalBillingTeamOnLogin", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		createTeam.mockResolvedValue(undefined);
 		getTeamById
 			.mockResolvedValueOnce(null)
-			.mockResolvedValueOnce({ id: "personal_user_1", credits: 0 });
-		hasTeamSignupBonusLedgerEntry.mockResolvedValue(false);
+			.mockResolvedValueOnce({ id: "personal_user-1", credits: 0 });
 		topUpTeamCredits.mockResolvedValue(undefined);
 	});
 
-	it("tops up 100 points when signup bonus has not been granted", async () => {
-		await grantSignupBonusToPersonalTeam(createContext(), "user-1");
+	it("creates the personal billing team when it does not exist yet", async () => {
+		await ensurePersonalBillingTeamOnLogin(createContext(), "user-1");
 
-		expect(hasTeamSignupBonusLedgerEntry).toHaveBeenCalledWith(
+		expect(createTeam).toHaveBeenCalledTimes(1);
+		expect(createTeam).toHaveBeenCalledWith(
 			expect.anything(),
-			{ teamId: "personal_user-1", actorUserId: "user-1" },
-		);
-		expect(topUpTeamCredits).toHaveBeenCalledTimes(1);
-		expect(topUpTeamCredits).toHaveBeenCalledWith(
-			expect.anything(),
-			expect.objectContaining({
-				teamId: "personal_user-1",
-				amount: 100,
-				actorUserId: "user-1",
-				note: "signup_bonus",
-			}),
+			expect.objectContaining({ id: "personal_user-1" }),
 		);
 	});
 
-	it("skips topup when signup bonus ledger already exists", async () => {
-		hasTeamSignupBonusLedgerEntry.mockResolvedValue(true);
+	// 回归守卫：2026-07-15 产品决策——注册不再无条件赠送积分，只有带邀请码进来的用户
+	// 由 referral.service.bindReferrerOnRegister 赠送 50。此前这里无条件送 100。
+	it("never grants credits on signup", async () => {
+		await ensurePersonalBillingTeamOnLogin(createContext(), "user-1");
 
-		await grantSignupBonusToPersonalTeam(createContext(), "user-1");
+		expect(topUpTeamCredits).not.toHaveBeenCalled();
+	});
 
+	it("ignores blank user ids without touching the repo", async () => {
+		await ensurePersonalBillingTeamOnLogin(createContext(), "   ");
+
+		expect(createTeam).not.toHaveBeenCalled();
 		expect(topUpTeamCredits).not.toHaveBeenCalled();
 	});
 });

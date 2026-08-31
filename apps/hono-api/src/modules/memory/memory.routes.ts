@@ -5,6 +5,7 @@ import {
 	ExecutionTraceWriteRequestSchema,
 	MemoryContextRequestSchema,
 	MemoryProjectChatArtifactSessionsRequestSchema,
+	MemoryProjectSessionsRequestSchema,
 	MemorySearchRequestSchema,
 	MemoryWriteRequestSchema,
 } from "./memory.schemas";
@@ -13,6 +14,7 @@ import {
 	formatMemoryContextForPrompt,
 	formatMemoryContextSummary,
 	listUserProjectChatArtifactSessions,
+	listUserProjectChatSessions,
 	searchUserMemoryEntries,
 	writeUserExecutionTrace,
 	writeUserMemoryEntries,
@@ -74,6 +76,18 @@ memoryRouter.post("/project-chat-artifacts", async (c) => {
 	return c.json({ items });
 });
 
+memoryRouter.post("/project-sessions", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body = (await c.req.json().catch(() => ({}))) ?? {};
+	const parsed = MemoryProjectSessionsRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json({ error: "Invalid request body", issues: parsed.error.issues }, 400);
+	}
+	const items = await listUserProjectChatSessions(c, userId, parsed.data);
+	return c.json({ items });
+});
+
 memoryRouter.post("/trace", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
@@ -82,6 +96,9 @@ memoryRouter.post("/trace", async (c) => {
 	if (!parsed.success) {
 		return c.json({ error: "Invalid request body", issues: parsed.error.issues }, 400);
 	}
-	const id = await writeUserExecutionTrace(c, userId, parsed.data);
-	return c.json({ success: true, item: { id } });
+	const result = await writeUserExecutionTrace(c, userId, parsed.data);
+	if (result.status === "degraded") {
+		return c.json({ success: false, item: result, error: "execution trace persistence failed" }, 503);
+	}
+	return c.json({ success: true, item: result });
 });

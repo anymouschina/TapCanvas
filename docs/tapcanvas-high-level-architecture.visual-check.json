@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "visual-check",
+  "status": "fail",
+  "visualReview": "pending",
+  "artifact": {
+    "path": "/Users/libiqiang/workspace/TapCanvas/docs/tapcanvas-high-level-architecture.html",
+    "sha256": "e81a64678cc204e0f06249a563faa44c896652abd38023c364d47578e14ff136",
+    "bytes": 724369
+  },
+  "state": {
+    "detail": "read",
+    "motion": "still"
+  },
+  "chrome": {
+    "status": "available",
+    "executable": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  },
+  "diagnostics": [
+    {
+      "code": "viewer/visual-check-runtime",
+      "severity": "error",
+      "message": "visual-check could not complete its Chrome inspection.",
+      "subject": {
+        "artifact": "/Users/libiqiang/workspace/TapCanvas/docs/tapcanvas-high-level-architecture.html"
+      },
+      "evidence": {
+        "reason": "Page.loadEventFired: event timed out after 15000ms"
+      },
+      "supportedFixes": [
+        "resolve the reported Chrome inspection error, then rerun visual-check"
+      ]
+    }
+  ],
+  "containment": {
+    "status": "fail",
+    "viewports": []
+  },
+  "readability": {
+    "status": "fail",
+    "minimumProjectedNodeTextPx": 6,
+    "viewports": []
+  },
+  "viewerChrome": {
+    "status": "fail",
+    "viewports": []
+  },
+  "captures": {
+    "status": "fail",
+    "screenshots": [],
+    "contactSheet": null
+  },
+  "sidecars": {
+    "receipt": "tapcanvas-high-level-architecture.visual-check.json",
+    "contactSheet": "tapcanvas-high-level-architecture.visual-check.html"
+  },
+  "error": "Page.loadEventFired: event timed out after 15000ms"
+}

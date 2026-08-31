@@ -2,6 +2,7 @@ package doubao
 
 import (
 	"bytes"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	"github.com/QuantumNous/new-api/relay/channel/volcengine"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 
@@ -83,16 +85,16 @@ func (c responseTaskContent) effectiveURL() string {
 }
 
 type responseTask struct {
-	ID      string              `json:"id"`
-	Model   string              `json:"model"`
-	Status  string              `json:"status"`
-	Content responseTaskContent `json:"content"`
-	Seed            int    `json:"seed"`
-	Resolution      string `json:"resolution"`
-	Duration        int    `json:"duration"`
-	Ratio           string `json:"ratio"`
-	FramesPerSecond int    `json:"framespersecond"`
-	ServiceTier     string `json:"service_tier"`
+	ID              string              `json:"id"`
+	Model           string              `json:"model"`
+	Status          string              `json:"status"`
+	Content         responseTaskContent `json:"content"`
+	Seed            int                 `json:"seed"`
+	Resolution      string              `json:"resolution"`
+	Duration        int                 `json:"duration"`
+	Ratio           string              `json:"ratio"`
+	FramesPerSecond int                 `json:"framespersecond"`
+	ServiceTier     string              `json:"service_tier"`
 	Tools           []struct {
 		Type string `json:"type"`
 	} `json:"tools"`
@@ -129,9 +131,129 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
+// 命中「ARK 官渠 + Seedance 2.x 视频模型」时插入 ARK 素材审核闭环：
+// 把图片、音频和视频 URL 预上传 ARK 审核并替换为 asset://<id>，拒绝/技术失败一律硬拦（不降级）。
+// 在此处（预扣费之前、可控 HTTP 状态码）执行，故能区分 4xx(被拒) / 5xx(不可用)。
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	if taskErr = relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil // 无已解析请求 → 无可审核内容
+	}
+	// Seedance 2.x 官渠：所有外部参考媒体必须先经 ARK 预上传成 asset://，否则上游
+	// contents/generations/tasks 会对原始 URL 报 InvalidParameter "resource not found"。
+	// 素材来自两条通道，都要审核：
+	//   1) req.Images —— 纯图生视频 / 首尾帧路径；
+	//   2) metadata.content 内嵌的 image_url / audio_url / video_url —— 参考媒体路径。
+	if !volcengine.RequiresArkAssetUpload(a.ChannelType, req.Model) {
+		return nil
+	}
+	wrapModerationErr := func(mErr error) *dto.TaskError {
+		var me *volcengine.ArkModerationError
+		if stderrors.As(mErr, &me) && me.Rejected {
+			te := service.TaskErrorWrapperLocal(mErr, "ark_moderation_rejected", http.StatusBadRequest)
+			// 带上被拒的原始媒体 URL，调用方可据此定位对应参考素材。
+			if len(me.RejectedURLs) > 0 {
+				te.Data = map[string]interface{}{"rejected_urls": me.RejectedURLs}
+			}
+			return te
+		}
+		return service.TaskErrorWrapperLocal(mErr, "ark_moderation_unavailable", http.StatusBadGateway)
+	}
+	mutated := false
+	if req.HasImage() {
+		converted, mErr := volcengine.ModerateSeedanceImages(req.Images)
+		if mErr != nil {
+			return wrapModerationErr(mErr)
+		}
+		req.Images = converted
+		mutated = true
+	}
+	changed, mErr := moderateMetadataContentAssets(req.Metadata)
+	if mErr != nil {
+		return wrapModerationErr(mErr)
+	}
+	if changed {
+		mutated = true
+	}
+	if mutated {
+		relaycommon.SetTaskRequest(c, req)
+	}
+	return nil
+}
+
+type metadataAssetConverter func([]volcengine.SeedanceAssetInput) ([]string, error)
+
+// moderateMetadataContentAssets 把 metadata.content 中的图片、音频和视频 URL 经 ARK
+// 预上传为 asset:// 并原子回写。metadata 为 nil、无 content 或无媒体时是无操作。
+func moderateMetadataContentAssets(metadata map[string]interface{}) (bool, error) {
+	return rewriteMetadataContentAssets(metadata, volcengine.ModerateSeedanceAssets)
+}
+
+func rewriteMetadataContentAssets(metadata map[string]interface{}, convert metadataAssetConverter) (bool, error) {
+	if metadata == nil {
+		return false, nil
+	}
+	contentRaw, ok := metadata["content"]
+	if !ok {
+		return false, nil
+	}
+	contentSlice, ok := contentRaw.([]interface{})
+	if !ok {
+		return false, nil
+	}
+	type mediaRef struct {
+		urlMap map[string]interface{}
+	}
+	var refs []mediaRef
+	var inputs []volcengine.SeedanceAssetInput
+	for _, item := range contentSlice {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		contentType, ok := itemMap["type"].(string)
+		if !ok {
+			continue
+		}
+		var assetType volcengine.ArkAssetType
+		switch contentType {
+		case "image_url":
+			assetType = volcengine.ArkAssetTypeImage
+		case "video_url":
+			assetType = volcengine.ArkAssetTypeVideo
+		case "audio_url":
+			assetType = volcengine.ArkAssetTypeAudio
+		default:
+			continue
+		}
+		urlMap, ok := itemMap[contentType].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		u, ok := urlMap["url"].(string)
+		if !ok || u == "" {
+			continue
+		}
+		refs = append(refs, mediaRef{urlMap: urlMap})
+		inputs = append(inputs, volcengine.SeedanceAssetInput{URL: u, Type: assetType})
+	}
+	if len(inputs) == 0 {
+		return false, nil
+	}
+	converted, err := convert(inputs)
+	if err != nil {
+		return false, err
+	}
+	if len(converted) != len(refs) {
+		return false, fmt.Errorf("ARK asset conversion returned %d results for %d inputs", len(converted), len(refs))
+	}
+	for i := range refs {
+		refs[i].urlMap["url"] = converted[i]
+	}
+	return true, nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -147,11 +269,37 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+// 上游 ARK seedance 未显式传参时的默认规格（用于计费估算，与上游默认值一致）。
+const (
+	defaultBillingResolution      = "720p"
+	defaultBillingDurationSeconds = 5
+)
+
+// EstimateBilling 按 (分辨率 × 时长) 规格价折算计费倍率：spec_price = 规格价 / 基础模型价。
+// 规格价与 /api/pricing 发布给下游（画布积分定价）的是同一张表，保证「用户实际花费」
+// 与 new-api 扣减一致，而不是任意时长/规格都扣固定基础价。
+// 模型没有规格价表时回退到旧的视频输入折扣逻辑。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
+	}
+	if payload, perr := a.convertToRequestPayload(&req); perr == nil && info.PriceData.ModelPrice > 0 {
+		resolution := payload.Resolution
+		if resolution == "" {
+			resolution = defaultBillingResolution
+		}
+		duration := defaultBillingDurationSeconds
+		if payload.Duration != nil && int(*payload.Duration) > 0 {
+			duration = int(*payload.Duration)
+		}
+		_, billableDuration := taskcommon.ResolveTaskVideoBillingSpec(&req)
+		if billableDuration > 0 {
+			duration = billableDuration
+		}
+		if price, ok := model.VideoSpecPriceCNY(info.OriginModelName, resolution, duration); ok && price > 0 {
+			return map[string]float64{"spec_price": price / info.PriceData.ModelPrice}
+		}
 	}
 	if hasVideoInMetadata(req.Metadata) {
 		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
@@ -288,11 +436,15 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		Content: []ContentItem{},
 	}
 
-	// Add images if present
+	// Add images if present. ARK seedance 的 contents/generations/tasks 接口要求每张
+	// 参考图都用 role="reference_image"（与上游官方/参考实现一致）；首帧语义由 prompt
+	// 文本表达（如「图1为首帧图」），而不是用 role=first_frame。早期用 first_frame +
+	// 其余无 role 的写法会被上游按错误格式处理（asset/参考图无法解析）。
 	if req.HasImage() {
 		for _, imgURL := range req.Images {
 			r.Content = append(r.Content, ContentItem{
 				Type: "image_url",
+				Role: "reference_image",
 				ImageURL: &MediaURL{
 					URL: imgURL,
 				},
@@ -305,8 +457,45 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 
-	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
-		r.Duration = lo.ToPtr(dto.IntValue(sec))
+	// 参考媒体模式（含参考视频/运动迁移）：hono 经 metadata.content 传入的 video_url / image_url
+	// 默认无 role，上游 seedance 会报 "reference media mode requires video role to be
+	// reference_video"，且把无 role 的图片当作 first/last frame、与参考视频冲突
+	// ("first/last frame cannot be mixed with reference media")。这里统一补 role：
+	//   - video_url → reference_video
+	//   - image_url → reference_image（仅当本批存在参考视频时，避免影响纯首尾帧流程）
+	hasReferenceVideo := false
+	for i := range r.Content {
+		if r.Content[i].Type == "video_url" && r.Content[i].VideoURL != nil {
+			hasReferenceVideo = true
+			break
+		}
+	}
+	for i := range r.Content {
+		if r.Content[i].Role != "" {
+			continue
+		}
+		if r.Content[i].Type == "video_url" && r.Content[i].VideoURL != nil {
+			r.Content[i].Role = "reference_video"
+		} else if hasReferenceVideo && r.Content[i].Type == "image_url" && r.Content[i].ImageURL != nil {
+			r.Content[i].Role = "reference_image"
+		}
+	}
+
+	// 时长：hono-api 透传的是 req.Duration(int)；兼容旧的 req.Seconds(string)。
+	// metadata 已有 Duration 时不覆盖。
+	if r.Duration == nil {
+		if req.Duration > 0 {
+			r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
+		} else if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
+			r.Duration = lo.ToPtr(dto.IntValue(sec))
+		}
+	}
+	// 分辨率/画幅透传（metadata 未覆盖时取顶层字段）。
+	if r.Resolution == "" && req.Resolution != "" {
+		r.Resolution = req.Resolution
+	}
+	if r.Ratio == "" && req.AspectRatio != "" {
+		r.Ratio = req.AspectRatio
 	}
 
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })

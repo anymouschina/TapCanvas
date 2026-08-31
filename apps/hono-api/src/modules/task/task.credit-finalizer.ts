@@ -4,10 +4,10 @@ import { tryReleaseTeamCreditsOnce } from "../team/team.repo";
 import { releaseTeamCreditsOnFailure, settleTeamCreditsOnSuccess } from "../team/team.service";
 import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
 import { getVendorTaskRefByTaskId } from "./vendor-task-refs.repo";
-import { TaskResultSchema } from "./task.schemas";
+import { TaskResultSchema, type TaskKind } from "./task.schemas";
 import { upsertTaskResult } from "./task-result.repo";
-import { fetchNewApiTaskResult } from "./task.service";
 import { upsertTaskStatus } from "./task-status.repo";
+import { fetchTaskResultForPolling, isPermanentUpstreamTaskError } from "./task.polling";
 import {
 	extractBillingSpecKeyFromLedgerNote,
 	extractBillingSpecKeyFromTaskRaw,
@@ -23,6 +23,7 @@ type PendingReservationRow = {
 	released: number;
 	createdAt: string;
 	note: string | null;
+	apiKeyId: string | null;
 };
 
 const FINALIZER_PROVIDER = "credit_finalizer";
@@ -42,7 +43,7 @@ function parseVendorFromNote(note: string | null): string | null {
 
 function mapTaskKindToRefKind(taskKind: string | null): "video" | "image" | null {
 	const k = (taskKind || "").trim();
-	if (k === "text_to_video" || k === "image_to_video") return "video";
+	if (k === "text_to_video" || k === "image_to_video" || k === "video_edit") return "video";
 	if (k === "text_to_image" || k === "image_edit") return "image";
 	return null;
 }
@@ -69,15 +70,16 @@ async function listPendingReservations(
 		env.DB,
 		`
       SELECT
-        r.team_id AS teamId,
-        r.task_id AS taskId,
-        r.task_kind AS taskKind,
-        r.actor_user_id AS userId,
+        r.team_id AS "teamId",
+        r.task_id AS "taskId",
+        r.task_kind AS "taskKind",
+        r.actor_user_id AS "userId",
         r.amount AS reserved,
         COALESCE(d.deducted, 0) AS deducted,
         COALESCE(l.released, 0) AS released,
-        r.created_at AS createdAt,
-        r.note AS note
+        r.created_at AS "createdAt",
+        r.note AS note,
+        r.api_key_id AS "apiKeyId"
       FROM team_credit_ledger r
       LEFT JOIN (
         SELECT team_id, task_id, SUM(amount) AS deducted
@@ -95,6 +97,18 @@ async function listPendingReservations(
         ON l.team_id = r.team_id AND l.task_id = r.task_id
       WHERE r.entry_type = 'reserve'
         AND r.task_id IS NOT NULL AND r.task_id != ''
+        -- Only allocation-backed reservations belong to the current batch
+        -- authority.  Pre-cutover ledger rows have no batch allocation and
+        -- must not occupy the bounded scan window forever.
+        AND EXISTS (
+          SELECT 1
+          FROM team_credit_allocations reserve_allocation
+          WHERE reserve_allocation.ledger_entry_id = r.id
+        )
+        AND (
+          (r.actor_user_id IS NOT NULL AND r.actor_user_id != '')
+          OR r.task_kind = 'legacy_frozen_balance'
+        )
         AND (COALESCE(d.deducted, 0) + COALESCE(l.released, 0)) < r.amount
       ORDER BY r.created_at ASC
       LIMIT ?
@@ -102,17 +116,33 @@ async function listPendingReservations(
 		[Math.max(1, Math.min(100, Math.floor(limit)))],
 	);
 
-	return (rows || []).map((r) => ({
-		teamId: String(r.teamId),
-		taskId: String(r.taskId),
-		taskKind: typeof r.taskKind === "string" ? r.taskKind : null,
-		userId: typeof r.userId === "string" ? r.userId : null,
-		reserved: Number(r.reserved ?? 0) || 0,
-		deducted: Number(r.deducted ?? 0) || 0,
-		released: Number(r.released ?? 0) || 0,
-		createdAt: typeof r.createdAt === "string" ? r.createdAt : "",
-		note: typeof r.note === "string" ? r.note : null,
-	}));
+	return (rows || []).map((r) => {
+		const taskKind = typeof r.taskKind === "string" ? r.taskKind : null;
+		const rawTaskId = String(r.taskId ?? "");
+		const legacyTeamId = rawTaskId.startsWith("legacy_frozen:personal_")
+			? rawTaskId.slice("legacy_frozen:".length)
+			: "";
+		const legacyOwnerId = legacyTeamId.startsWith("personal_")
+			? legacyTeamId.slice("personal_".length)
+			: "";
+		return {
+			teamId: String(r.teamId),
+			taskId: rawTaskId,
+			taskKind,
+			userId:
+				typeof r.userId === "string" && r.userId.trim()
+					? r.userId
+					: taskKind === "legacy_frozen_balance" && legacyOwnerId
+						? legacyOwnerId
+						: null,
+			reserved: Number(r.reserved ?? 0) || 0,
+			deducted: Number(r.deducted ?? 0) || 0,
+			released: Number(r.released ?? 0) || 0,
+			createdAt: typeof r.createdAt === "string" ? r.createdAt : "",
+			note: typeof r.note === "string" ? r.note : null,
+			apiKeyId: typeof r.apiKeyId === "string" && r.apiKeyId.trim() ? r.apiKeyId : null,
+		};
+	});
 }
 
 export async function runCreditTaskFinalizer(
@@ -137,6 +167,17 @@ export async function runCreditTaskFinalizer(
 		Number.isFinite(options.orphanReleaseMs)
 			? Math.max(60_000, Math.floor(options.orphanReleaseMs))
 			: 10 * 60_000;
+	// 【预留硬年龄上限·防冻结泄漏】上游 poll 一直回 running（或上游早已忘掉该任务）的预留
+	// 永不释放；而扫描按 created_at ASC LIMIT 20——最旧的一批僵尸行会永久霸占扫描窗口，
+	// 后面的预留永远轮不到（实测积压 848 行 / 11.8 万积分冻结）。系统内任何生成任务都活
+	// 不过 24h（run 30min 无进展即取消），超龄一律按失败释放。env CREDIT_RESERVATION_MAX_AGE_MS 可调。
+	const maxReservationAgeMs = (() => {
+		const raw = Number(
+			(env as Record<string, unknown>)?.CREDIT_RESERVATION_MAX_AGE_MS ??
+				globalThis.process?.env?.CREDIT_RESERVATION_MAX_AGE_MS,
+		);
+		return Number.isFinite(raw) && raw > 0 ? Math.max(orphanReleaseMs, raw) : 24 * 3_600_000;
+	})();
 
 	const pending = await listPendingReservations(env, limit);
 
@@ -182,8 +223,8 @@ export async function runCreditTaskFinalizer(
 		}
 
 		const ageMs = row.createdAt ? Date.now() - parseEpoch(row.createdAt) : 0;
-		const isOrphan = !vendorRef;
-		if (isOrphan && ageMs >= orphanReleaseMs) {
+		// 超龄预留：不问上游死活，直接按失败释放（见 maxReservationAgeMs 注释）。
+		if (ageMs >= maxReservationAgeMs) {
 			try {
 				const released = await tryReleaseTeamCreditsOnce(env.DB, {
 					teamId: row.teamId,
@@ -191,7 +232,7 @@ export async function runCreditTaskFinalizer(
 					taskId,
 					taskKind,
 					actorUserId: userId,
-					note: "finalizer:orphan_release",
+					note: "finalizer:max_age_release",
 					nowIso,
 				});
 				if (released.released) {
@@ -202,26 +243,86 @@ export async function runCreditTaskFinalizer(
 						userId,
 						status: "failed",
 						data: {
-							reason: "orphan_release",
+							reason: "max_age_release",
 							taskKind,
 							teamId: row.teamId,
 							credits: { reserved: row.reserved, pending: pendingAmount },
+							ageMs,
 						},
 						completedAt: nowIso,
 						nowIso,
 					});
 				}
-			} catch (err: any) {
+			} catch {
 				errors += 1;
+			}
+			continue;
+		}
+		// pid 空 = 上游从未返回有效任务 id（提交即被内容审核拒/从未成功提交），没有可轮询对象——
+		// 再 fetchNewApiTaskResult 只会按原 prompt「重新提交」，被 ARK 硬拒(InputTextSensitive 400)的会
+		// 永久死循环、抢渠道。老化后视同孤儿释放终态（age guard 防误伤刚提交、pid 未及记录的在飞任务）。
+		const hasUpstreamTask = typeof pid === "string" && pid.trim().length > 0;
+		const isOrphan = !vendorRef || !hasUpstreamTask;
+		if (isOrphan) {
+			if (ageMs >= orphanReleaseMs) {
+				try {
+					const released = await tryReleaseTeamCreditsOnce(env.DB, {
+						teamId: row.teamId,
+						amount: pendingAmount,
+						taskId,
+						taskKind,
+						actorUserId: userId,
+						note: "finalizer:orphan_release",
+						nowIso,
+					});
+					if (released.released) {
+						orphanReleased += 1;
+						await upsertTaskStatus(env.DB, {
+							taskId,
+							provider: FINALIZER_PROVIDER,
+							userId,
+							status: "failed",
+							data: {
+								reason: "orphan_release",
+								taskKind,
+								teamId: row.teamId,
+								credits: { reserved: row.reserved, pending: pendingAmount },
+							},
+							completedAt: nowIso,
+							nowIso,
+						});
+					}
+				} catch (err: unknown) {
+					errors += 1;
+					await upsertTaskStatus(env.DB, {
+						taskId,
+						provider: FINALIZER_PROVIDER,
+						userId,
+						status: "running",
+						data: {
+							reason: "orphan_release_failed",
+							error: err instanceof Error ? err.message : String(err),
+							taskKind,
+							teamId: row.teamId,
+							credits: { reserved: row.reserved, pending: pendingAmount },
+						},
+						nowIso,
+					});
+				}
+			} else {
+				// A reserve row is created before the vendor task reference is bound.
+				// Polling the temporary reservation id during this window returns
+				// task_not_exist and can release the wrong identity after the reserve
+				// has already been rebound. Wait for the durable provider reference;
+				// the orphan age boundary remains the only release authority.
 				await upsertTaskStatus(env.DB, {
 					taskId,
 					provider: FINALIZER_PROVIDER,
 					userId,
 					status: "running",
 					data: {
-						reason: "orphan_release_failed",
-						error:
-							typeof err?.message === "string" ? err.message : String(err),
+						reason: "provider_task_binding_pending",
+						vendor: vendorRef,
 						taskKind,
 						teamId: row.teamId,
 						credits: { reserved: row.reserved, pending: pendingAmount },
@@ -232,25 +333,9 @@ export async function runCreditTaskFinalizer(
 			continue;
 		}
 
-		if (!vendorRef) {
-			await upsertTaskStatus(env.DB, {
-				taskId,
-				provider: FINALIZER_PROVIDER,
-				userId,
-				status: "running",
-				data: {
-					reason: "vendor_unknown",
-					taskKind,
-					teamId: row.teamId,
-					credits: { reserved: row.reserved, pending: pendingAmount },
-				},
-				nowIso,
-			});
-			continue;
-		}
-
 		const c = createInternalAppContext(env, {
-			apiKeyId: "internal-finalizer",
+			// 用 reserve 行落下的真实 caller key 做归因；无 key（JWT 消耗）回落 sentinel，行为不变。
+			apiKeyId: row.apiKeyId ?? "internal-finalizer",
 			routingTaskKind: taskKind || undefined,
 		});
 
@@ -311,11 +396,24 @@ export async function runCreditTaskFinalizer(
 				}
 				continue;
 			}
-			result = await fetchNewApiTaskResult(c, userId, taskId, {
-				taskKind: (taskKind as any) ?? null,
+			// 单次 poll 最多 25s：new-api 慢响应不得把整个 finalizer tick 挂死。
+			const polling = await fetchTaskResultForPolling(c, userId, {
+				taskId,
+				taskKind: (taskKind as TaskKind | null) ?? null,
 				vendor: "newapi",
-				promptFromClient: null,
+				prompt: null,
+				mode: "internal",
+				timeoutMs: 25_000,
 			});
+			if (!polling.ok) {
+				if (polling.status === 409) continue;
+				const pollingError = new Error(`task polling returned HTTP ${polling.status}`) as Error & {
+					status: number;
+				};
+				pollingError.status = polling.status;
+				throw pollingError;
+			}
+			result = polling.result;
 
 			polled += 1;
 
@@ -437,13 +535,42 @@ export async function runCreditTaskFinalizer(
 			});
 		} catch (err: any) {
 			errors += 1;
+			// 终态失败判定：上游 4xx 客户端错误（内容审核硬拒/参数错/权限）重试也不会变好——
+			// 标 failed 让本次对账结算并停止重试；429 限流与 5xx 暂时性错误仍按 running 下次重试。
+			// 根治死循环：ARK InputTextSensitiveContentDetected(400) 此前被一律标 running → 永久重试抢渠道。
+			const errStatus =
+				typeof err?.status === "number" ? err.status : 0;
+			// 单一真相源：永久错判据与画布 orphan-reconcile 共用 isPermanentUpstreamTaskError，禁各自内联。
+			const isTerminal = isPermanentUpstreamTaskError(
+				errStatus,
+				typeof err?.message === "string" ? err.message : String(err),
+			);
+			// 终态失败必须释放预留额度，否则 ledger 仍有未结算预留 → 下个 tick 仍被扫出 →
+			// 仍重试（死循环不止）。释放后 (deducted+released)>=reserved，彻底退出扫描。
+			if (isTerminal) {
+				const normalizedTaskKind = (taskKind || "").trim();
+				if (normalizedTaskKind) {
+					try {
+						await releaseTeamCreditsOnFailure(c, userId, {
+							taskId,
+							taskKind: normalizedTaskKind,
+							vendor: vendorRef || undefined,
+							modelKey: null,
+							specKey: extractBillingSpecKeyFromLedgerNote(row.note),
+						});
+					} catch {
+						// 释放失败不阻塞标记终态；下个 tick 仍会重试释放
+					}
+				}
+			}
 			await upsertTaskStatus(env.DB, {
 				taskId,
 				provider: FINALIZER_PROVIDER,
 				userId,
-				status: "running",
+				status: isTerminal ? "failed" : "running",
 				data: {
-					reason: "poll_failed",
+					reason: isTerminal ? "poll_failed_terminal" : "poll_failed",
+					terminalStatus: isTerminal ? errStatus || "moderation" : undefined,
 					vendor: vendorRef,
 					pid,
 					taskKind,
@@ -451,6 +578,7 @@ export async function runCreditTaskFinalizer(
 					credits: { reserved: row.reserved, pending: pendingAmount },
 					error: typeof err?.message === "string" ? err.message : String(err),
 				},
+				completedAt: isTerminal ? nowIso : null,
 				nowIso,
 			});
 		}

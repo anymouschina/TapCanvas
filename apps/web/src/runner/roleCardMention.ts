@@ -61,7 +61,7 @@ export function parseRoleCardMentionToken(rawMention: string): RoleCardMentionTo
 export function extractRoleCardMentionTokens(text: string): RoleCardMentionToken[] {
   const raw = String(text || '')
   if (!raw) return []
-  const matches = raw.match(/@[^\s@]+/g) || []
+  const matches = raw.match(/@[^@\s\u3000，。！？、；：,.!?;:)\]】》〉'"`]+/g) || []
   const out: RoleCardMentionToken[] = []
   const seen = new Set<string>()
   for (const match of matches) {

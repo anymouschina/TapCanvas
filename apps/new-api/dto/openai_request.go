@@ -36,6 +36,7 @@ type GeneralOpenAIRequest struct {
 	StreamOptions       *StreamOptions    `json:"stream_options,omitempty"`
 	MaxTokens           *uint             `json:"max_tokens,omitempty"`
 	MaxCompletionTokens *uint             `json:"max_completion_tokens,omitempty"`
+	Thinking            *ThinkingConfig   `json:"thinking,omitempty"` // DeepSeek V4: {"type":"enabled|disabled"}
 	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`
 	Verbosity           json.RawMessage   `json:"verbosity,omitempty"` // gpt-5
 	Temperature         *float64          `json:"temperature,omitempty"`
@@ -238,6 +239,12 @@ type FunctionRequest struct {
 	Name        string `json:"name"`
 	Parameters  any    `json:"parameters,omitempty"`
 	Arguments   string `json:"arguments,omitempty"`
+}
+
+// ThinkingConfig controls DeepSeek V4 thinking mode.
+// Pass {"type":"enabled"} to enable reasoning, {"type":"disabled"} to disable.
+type ThinkingConfig struct {
+	Type string `json:"type"`
 }
 
 type StreamOptions struct {
@@ -832,6 +839,7 @@ type OpenAIResponsesRequest struct {
 	ParallelToolCalls  json.RawMessage `json:"parallel_tool_calls,omitempty"`
 	PreviousResponseID string          `json:"previous_response_id,omitempty"`
 	Reasoning          *Reasoning      `json:"reasoning,omitempty"`
+	Thinking           *ThinkingConfig `json:"thinking,omitempty"`
 	// ServiceTier specifies upstream service level and may affect billing.
 	// This field is filtered by default and can be enabled via channel setting allow_service_tier.
 	ServiceTier string `json:"service_tier,omitempty"`

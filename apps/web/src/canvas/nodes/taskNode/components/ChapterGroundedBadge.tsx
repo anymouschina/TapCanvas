@@ -15,7 +15,7 @@ function buildBadgeLabel(metadata: ChapterGroundedProductionMetadata): string {
   return missingCount > 0 ? `章锁·${missingCount}待补` : '章锁·待基底'
 }
 
-export function ChapterGroundedBadge({ metadata }: ChapterGroundedBadgeProps): JSX.Element {
+function ChapterGroundedBadge({ metadata }: ChapterGroundedBadgeProps): JSX.Element {
   const confirmed = metadata.authorityBaseFrame.status === 'confirmed'
   const badgeColor = confirmed ? 'teal' : 'yellow'
 
@@ -33,3 +33,6 @@ export function ChapterGroundedBadge({ metadata }: ChapterGroundedBadgeProps): J
     </div>
   )
 }
+
+const _ChapterGroundedBadge = React.memo(ChapterGroundedBadge)
+export { _ChapterGroundedBadge as ChapterGroundedBadge }

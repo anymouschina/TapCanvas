@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { getCurrencyConfig } from './render';
+import { cnyAmountToQuota, quotaToCnyAmount } from './cnyPricingUnit';
 
 export const getQuotaPerUnit = () => {
   const raw = parseFloat(localStorage.getItem('quota_per_unit') || '1');
@@ -30,9 +31,8 @@ export const quotaToDisplayAmount = (quota) => {
   const abs = Math.abs(q);
   const { type, rate } = getCurrencyConfig();
   if (type === 'TOKENS') return q;
-  const usd = abs / getQuotaPerUnit();
-  if (type === 'USD') return sign * usd;
-  return sign * usd * (rate || 1);
+  const baseAmountCNY = quotaToCnyAmount(abs, getQuotaPerUnit());
+  return sign * baseAmountCNY * (rate || 1);
 };
 
 export const displayAmountToQuota = (amount) => {
@@ -42,6 +42,6 @@ export const displayAmountToQuota = (amount) => {
   const abs = Math.abs(val);
   const { type, rate } = getCurrencyConfig();
   if (type === 'TOKENS') return Math.round(val);
-  const usd = type === 'USD' ? abs : abs / (rate || 1);
-  return sign * Math.round(usd * getQuotaPerUnit());
+  const baseAmountCNY = abs / (rate || 1);
+  return sign * cnyAmountToQuota(baseAmountCNY, getQuotaPerUnit());
 };

@@ -110,10 +110,7 @@ const FooterBar = () => {
                   >
                     {t('安装指南')}
                   </a>
-                  <a
-                    href='/console/docs'
-                    className='!text-semi-color-text-1'
-                  >
+                  <a href='/docs' className='!text-semi-color-text-1'>
                     {t('API 文档')}
                   </a>
                 </div>

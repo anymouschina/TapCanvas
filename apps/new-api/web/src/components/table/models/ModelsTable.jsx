@@ -91,15 +91,24 @@ const ModelsTable = (modelsData) => {
       onRow={handleRow}
       empty={
         <Empty
-          image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
+          className='models-control-table-empty'
+          image={
+            <IllustrationNoResult
+              className='models-control-table-empty-image'
+              style={{ width: 150, height: 150 }}
+            />
+          }
           darkModeImage={
-            <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
+            <IllustrationNoResultDark
+              className='models-control-table-empty-image-dark'
+              style={{ width: 150, height: 150 }}
+            />
           }
           description={t('搜索无结果')}
           style={{ padding: 30 }}
         />
       }
-      className='rounded-xl overflow-hidden'
+      className='models-control-table overflow-hidden'
       size='middle'
     />
   );

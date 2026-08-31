@@ -28,12 +28,36 @@ func (r *readCloserWithSource) Close() error {
 }
 
 type responseTraceRecorder struct {
-	data []byte
+	data      []byte
+	truncated bool
 }
 
+const maxResponseTraceBytes = 64 << 10
+
 func (r *responseTraceRecorder) Write(p []byte) (int, error) {
-	r.data = append(r.data, p...)
+	remaining := maxResponseTraceBytes - len(r.data)
+	if remaining > 0 {
+		writeSize := len(p)
+		if writeSize > remaining {
+			writeSize = remaining
+		}
+		r.data = append(r.data, p[:writeSize]...)
+	}
+	if len(p) > remaining {
+		r.truncated = true
+	}
 	return len(p), nil
+}
+
+func (r *responseTraceRecorder) body() string {
+	if r == nil {
+		return ""
+	}
+	body := string(r.data)
+	if r.truncated {
+		body += "\n...[upstream response trace truncated]"
+	}
+	return body
 }
 
 func getOriginalRequestBody(c *gin.Context) string {

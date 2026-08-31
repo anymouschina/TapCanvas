@@ -1,0 +1,25 @@
+.tc-skill-logo {
+  width: 40px;
+  height: 40px;
+  display: block;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 7px;
+}
+
+.tc-skill-logo--image {
+  object-fit: cover;
+}
+
+.tc-skill-logo--missing {
+  display: grid;
+  place-items: center;
+  color: var(--tc-color-text-tertiary, #73839a);
+  background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.035));
+}
+
+.tc-skill-logo__missing-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+}

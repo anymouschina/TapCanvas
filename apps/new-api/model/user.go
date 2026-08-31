@@ -51,19 +51,22 @@ type User struct {
 	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
 	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	Phone            string         `json:"phone" gorm:"type:varchar(20);column:phone;uniqueIndex"`
+	CaptchaToken     string         `json:"captcha_token" gorm:"-:all"`
+	CaptchaCode      string         `json:"captcha_code" gorm:"-:all"`
+	PriceRatio       float64        `json:"price_ratio" gorm:"type:decimal(10,4);default:1"` // 用户真实折扣系数：真实扣减 = 原价 × price_ratio
 }
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Status:   user.Status,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
+		Id:         user.Id,
+		Group:      user.Group,
+		Quota:      user.Quota,
+		Status:     user.Status,
+		Username:   user.Username,
+		Setting:    user.Setting,
+		Email:      user.Email,
+		PriceRatio: user.PriceRatio,
 	}
 	return cache
 }
@@ -416,7 +419,13 @@ func (user *User) Insert(inviterId int) error {
 		user.SetSetting(defaultSetting)
 	}
 
-	result := DB.Create(user)
+	createDB := DB
+	if strings.TrimSpace(user.Phone) == "" {
+		// Phone is unique but optional for legacy/password registrations. Omitting
+		// the field lets PostgreSQL store NULL instead of a duplicate empty string.
+		createDB = DB.Omit("Phone")
+	}
+	result := createDB.Create(user)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -475,7 +484,11 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		user.SetSetting(defaultSetting)
 	}
 
-	result := tx.Create(user)
+	createDB := tx
+	if strings.TrimSpace(user.Phone) == "" {
+		createDB = tx.Omit("Phone")
+	}
+	result := createDB.Create(user)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -583,6 +596,7 @@ func (user *User) Edit(updatePassword bool) error {
 		"display_name": newUser.DisplayName,
 		"group":        newUser.Group,
 		"remark":       newUser.Remark,
+		"price_ratio":  newUser.PriceRatio,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

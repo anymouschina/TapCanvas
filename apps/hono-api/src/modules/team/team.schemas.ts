@@ -9,14 +9,15 @@ export const TeamSchema = z.object({
 	credits: z.number(),
 	creditsFrozen: z.number(),
 	creditsAvailable: z.number(),
+	maxMembers: z.number().int().min(1),
+	memberCount: z.number().int().min(0),
+	personal: z.boolean(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });
 export type TeamDto = z.infer<typeof TeamSchema>;
 
-export const TeamListItemSchema = TeamSchema.extend({
-	memberCount: z.number(),
-});
+export const TeamListItemSchema = TeamSchema;
 export type TeamListItemDto = z.infer<typeof TeamListItemSchema>;
 
 export const TeamMemberSchema = z.object({
@@ -51,6 +52,20 @@ export const AddTeamMemberRequestSchema = z.object({
 	role: TeamRoleSchema.optional(),
 });
 
+export const ShareTeamProjectRequestSchema = z.object({
+	teamId: z.string().trim().min(1),
+	shared: z.boolean(),
+}).strict();
+
+export const TeamProjectShareSchema = z.object({
+	projectId: z.string(),
+	teamId: z.string(),
+	access: z.enum(["edit"]),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+export type TeamProjectShareDto = z.infer<typeof TeamProjectShareSchema>;
+
 export const CreateTeamInviteRequestSchema = z.object({
 	email: z.string().email().optional(),
 	phone: z.string().min(6).max(32).optional(),
@@ -76,15 +91,21 @@ export const AcceptTeamInviteRequestSchema = z.object({
 	code: z.string().min(1),
 });
 
+export const RenameTeamRequestSchema = z.object({
+	name: z.string().min(1).max(64).trim(),
+});
+
 export const TopUpTeamCreditsRequestSchema = z.object({
-	amount: z.number().int().min(1).max(1_000_000),
+	amount: z.number().int().min(1).max(10_000_000),
 	note: z.string().max(200).optional(),
 });
 
 export const TeamCreditLedgerEntrySchema = z.object({
 	id: z.string(),
 	teamId: z.string(),
-	entryType: z.enum(["topup", "reserve", "deduct", "release"]),
+	/** 扣款账户展示名（个人账户/团队名）。仅 /teams/me/ledger 聚合视图回填。 */
+	teamName: z.string().nullable().optional(),
+	entryType: z.enum(["topup", "reserve", "deduct", "release", "referral_bonus", "referral_welcome"]),
 	amount: z.number(),
 	taskId: z.string().nullable(),
 	taskKind: z.string().nullable(),
@@ -93,3 +114,13 @@ export const TeamCreditLedgerEntrySchema = z.object({
 	createdAt: z.string(),
 });
 export type TeamCreditLedgerEntryDto = z.infer<typeof TeamCreditLedgerEntrySchema>;
+
+export const TeamCreditLedgerListResponseSchema = z.object({
+	items: z.array(TeamCreditLedgerEntrySchema),
+	hasMore: z.boolean(),
+	nextBefore: z.string().nullable(),
+	nextBeforeId: z.string().nullable(),
+});
+export type TeamCreditLedgerListResponseDto = z.infer<
+	typeof TeamCreditLedgerListResponseSchema
+>;

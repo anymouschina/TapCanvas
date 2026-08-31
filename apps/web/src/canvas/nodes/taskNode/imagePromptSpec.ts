@@ -266,10 +266,6 @@ function resolveStructuredPrompt(record: UnknownRecord): {
     }
   }
 
-  if (sawCandidate) {
-    throw new Error(`structuredPrompt 非法：${firstError || '缺少有效结构化内容'}`)
-  }
-
   return null
 }
 
@@ -317,8 +313,9 @@ export function resolveImagePromptExecution(data: unknown): ResolvedImagePromptE
     }
   }
 
+  const ownPrompt = readTrimmedString(record.prompt) || readTrimmedString(record.ngridSourcePrompt)
   return {
-    prompt: readTrimmedString(record.prompt),
+    prompt: ownPrompt,
     structuredPrompt: resolvedStructuredPrompt?.structuredPrompt ?? null,
     normalizedFromLegacy: resolvedStructuredPrompt?.normalizedFromLegacy ?? false,
     mode: 'text',

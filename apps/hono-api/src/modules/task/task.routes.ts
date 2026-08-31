@@ -5,9 +5,11 @@ import {
 	RunTaskRequestSchema,
 	TaskResultSchema,
 	TaskProgressSnapshotSchema,
+	TaskInboxQuerySchema,
+	TaskInboxResponseSchema,
 	FetchTaskResultRequestSchema,
+	VendorCallLogListQuerySchema,
 	VendorCallLogListResponseSchema,
-	VendorCallLogStatusSchema,
 	VendorCallLogSchema,
 } from "./task.schemas";
 import { upsertTaskResult } from "./task-result.repo";
@@ -17,10 +19,11 @@ import {
 	runGenericTaskForVendor,
 } from "./task.service";
 import { normalizeImageEditRequestKind, normalizeTaskAssetBackedVideoRequest } from "../apiKey/apiKey.routes";
-import { getPendingTaskSnapshots } from "./task.progress";
-import { listVendorCallLogs } from "./vendor-call-logs.repo";
+import { listVendorCallLogsPage } from "./vendor-call-logs.repo";
+import { isAdminRequest } from "../team/team.service";
 import { fetchTaskResultForPolling } from "./task.polling";
 import { maybeWrapSyncImageResultAsStoredTask } from "./task.task-store-wrap";
+import { listDurablePendingTaskSnapshots, listTaskInbox } from "./task-inbox.service";
 
 export const taskRouter = new Hono<AppEnv>();
 
@@ -31,7 +34,7 @@ const LOG_PREVIEW_MAX_STRING = 400;
 
 taskRouter.use("*", authMiddleware);
 
-function buildLogPayloadPreview(raw: string | null | undefined): string | null {
+export function buildLogPayloadPreview(raw: string | null | undefined): string | null {
 	if (typeof raw !== "string") return null;
 	const trimmed = raw.trim();
 	if (!trimmed) return null;
@@ -60,7 +63,7 @@ function buildLogPayloadPreview(raw: string | null | undefined): string | null {
 			return value;
 		}
 		if (typeof value !== "object") return String(value);
-		if (depth >= LOG_PREVIEW_MAX_DEPTH) {
+		if (depth > LOG_PREVIEW_MAX_DEPTH) {
 			return `[max-depth:${LOG_PREVIEW_MAX_DEPTH}]`;
 		}
 		if (Array.isArray(value)) {
@@ -91,27 +94,6 @@ function buildLogPayloadPreview(raw: string | null | undefined): string | null {
 	} catch {
 		return sanitizeString(trimmed, []);
 	}
-}
-
-function isLocalDevRequest(c: any): boolean {
-	try {
-		const url = new URL(c.req.url);
-		const host = url.hostname;
-		return (
-			host === "localhost" ||
-			host === "127.0.0.1" ||
-			host === "0.0.0.0" ||
-			host === "::1"
-		);
-	} catch {
-		return false;
-	}
-}
-
-function isAdminRequest(c: any): boolean {
-	if (isLocalDevRequest(c)) return true;
-	const auth = c.get("auth") as { role?: string | null } | undefined;
-	return auth?.role === "admin";
 }
 
 type FetchTaskResultRequestDto = ReturnType<
@@ -234,15 +216,31 @@ taskRouter.post("/", async (c) => {
 	return c.json(TaskResultSchema.parse(result));
 });
 
-// GET /tasks/pending - placeholder implementation for now
+// GET /tasks/pending - durable task truth used to reconnect after refresh/process loss.
 taskRouter.get("/pending", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const vendor = c.req.query("vendor") || undefined;
-	const items = getPendingTaskSnapshots(userId, vendor);
+	const items = await listDurablePendingTaskSnapshots(c.env.DB, { userId, vendor });
 	return c.json(
 		items.map((x) => TaskProgressSnapshotSchema.parse(x)),
 	);
+});
+
+// GET /tasks/inbox - recent durable task facts plus persisted read/unread outbox state.
+taskRouter.get("/inbox", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const query = TaskInboxQuerySchema.safeParse(c.req.query());
+	if (!query.success) {
+		return c.json({ error: "Invalid query", issues: query.error.issues }, 400);
+	}
+	const result = await listTaskInbox(c.env.DB, {
+		userId,
+		limit: query.data.limit,
+		cursor: query.data.cursor,
+	});
+	return c.json(TaskInboxResponseSchema.parse(result));
 });
 
 // GET /tasks/logs - per-user generation logs (vendor_api_call_logs)
@@ -250,50 +248,35 @@ taskRouter.get("/logs", async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const isAdmin = isAdminRequest(c);
-
-	const limitRaw = c.req.query("limit");
-	const parsedLimit = Number(limitRaw ?? 20);
-	const maxLimit = isAdmin ? 100 : 20;
-	const limit = Number.isFinite(parsedLimit)
-		? Math.max(1, Math.min(maxLimit, Math.floor(parsedLimit)))
-		: 20;
-
-	const queryUserIdRaw = c.req.query("userId");
-	const queryUserId =
-		typeof queryUserIdRaw === "string" && queryUserIdRaw.trim()
-			? queryUserIdRaw.trim()
-			: null;
-	if (!isAdmin && queryUserId && queryUserId !== userId) {
+	const parsed = VendorCallLogListQuerySchema.safeParse(c.req.query());
+	if (!parsed.success) {
+		return c.json({ error: "Invalid query", issues: parsed.error.issues }, 400);
+	}
+	if (!isAdmin && parsed.data.pageSize > 20) {
+		return c.json({ error: "pageSize exceeds the maximum of 20" }, 400);
+	}
+	if (!isAdmin && parsed.data.userId && parsed.data.userId !== userId) {
 		return c.json({ error: "Forbidden" }, 403);
 	}
-
-	const before = c.req.query("before") || null;
-	const vendor = c.req.query("vendor") || null;
-
-	const statusRaw = c.req.query("status") || null;
-	const statusParsed = (() => {
-		if (!statusRaw) return null;
-		const parsed = VendorCallLogStatusSchema.safeParse(statusRaw);
-		return parsed.success ? parsed.data : null;
-	})();
-
-	const taskKind = c.req.query("taskKind") || null;
-
-	const targetUserId = isAdmin ? queryUserId : userId;
-
-	// Fetch one extra row to detect "hasMore"
-	const rows = await listVendorCallLogs(c.env.DB, {
-		userId: targetUserId,
-		limit: limit + 1,
-		before,
-		vendor,
-		status: statusParsed,
-		taskKind,
+	if (
+		parsed.data.createdFrom &&
+		parsed.data.createdTo &&
+		Date.parse(parsed.data.createdFrom) > Date.parse(parsed.data.createdTo)
+	) {
+		return c.json({ error: "createdFrom must be earlier than or equal to createdTo" }, 400);
+	}
+	const pageResult = await listVendorCallLogsPage(c.env.DB, {
+		page: parsed.data.page,
+		pageSize: parsed.data.pageSize,
+		userId: isAdmin ? parsed.data.userId ?? null : userId,
+		vendor: parsed.data.vendor ?? null,
+		status: parsed.data.status ?? null,
+		taskKind: parsed.data.taskKind ?? null,
+		taskId: parsed.data.taskId ?? null,
+		createdFrom: parsed.data.createdFrom ?? null,
+		createdTo: parsed.data.createdTo ?? null,
 	});
-
-	const hasMore = rows.length > limit;
-	const sliced = hasMore ? rows.slice(0, limit) : rows;
-	const items = sliced.map((r) =>
+	const items = pageResult.rows.map((r) =>
 		VendorCallLogSchema.parse({
 			vendor: r.vendor,
 			taskId:
@@ -321,14 +304,13 @@ taskRouter.get("/logs", async (c) => {
 		}),
 	);
 
-	const nextBefore =
-		items.length > 0 ? items[items.length - 1]!.createdAt : null;
-
 	return c.json(
 		VendorCallLogListResponseSchema.parse({
 			items,
-			hasMore,
-			nextBefore,
+			page: parsed.data.page,
+			pageSize: parsed.data.pageSize,
+			total: pageResult.total,
+			totalPages: pageResult.total === 0 ? 0 : Math.ceil(pageResult.total / parsed.data.pageSize),
 		}),
 	);
 });
@@ -407,17 +389,15 @@ taskRouter.post("/:taskId/link", async (c) => {
 	const nodeId = typeof body.nodeId === "string" ? body.nodeId.trim() : null;
 	if (!chapterId || !nodeId) return c.json({ error: "chapterId and nodeId required" }, 400);
 
-	await upsertTaskResult(c.env.DB, {
-		userId,
-		taskId,
-		vendor: "n/a",
-		kind: "n/a",
-		status: "linked",
-		result: null,
-		nowIso: new Date().toISOString(),
-		chapterId,
-		nodeId,
+	const updated = await c.env.DB.task_results.updateMany({
+		where: { user_id: userId, task_id: taskId },
+		data: {
+			chapter_id: chapterId,
+			node_id: nodeId,
+			updated_at: new Date().toISOString(),
+		},
 	});
+	if (updated.count !== 1) return c.json({ error: "not_found" }, 404);
 	return c.json({ ok: true });
 });
 

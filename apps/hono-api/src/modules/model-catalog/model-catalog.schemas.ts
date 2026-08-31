@@ -62,13 +62,16 @@ export type BillingModelKind = z.infer<typeof BillingModelKindSchema>;
 
 export const VideoModelOrientationSchema = z.enum(["portrait", "landscape"]);
 
-export const ModelCatalogVideoDurationOptionSchema = z
-	.object({
-		value: z.number().positive(),
-		label: z.string().min(1),
-		priceLabel: z.string().min(1).optional(),
-	})
-	.passthrough();
+export const ModelCatalogVideoDurationOptionSchema = z.union([
+	z
+		.object({
+			value: z.number().positive(),
+			label: z.string().min(1),
+			priceLabel: z.string().min(1).optional(),
+		})
+		.passthrough(),
+	z.number().positive().transform((n) => ({ value: n, label: `${n}s` })),
+]);
 
 export const ModelCatalogVideoSizeOptionSchema = z
 	.object({
@@ -89,13 +92,16 @@ export const ModelCatalogVideoOrientationOptionSchema = z
 	})
 	.passthrough();
 
-export const ModelCatalogVideoResolutionOptionSchema = z
-	.object({
-		value: z.string().min(1),
-		label: z.string().min(1),
-		priceLabel: z.string().min(1).optional(),
-	})
-	.passthrough();
+export const ModelCatalogVideoResolutionOptionSchema = z.union([
+	z
+		.object({
+			value: z.string().min(1),
+			label: z.string().min(1),
+			priceLabel: z.string().min(1).optional(),
+		})
+		.passthrough(),
+	z.string().min(1).transform((s) => ({ value: s, label: s })),
+]);
 
 export const ModelCatalogVideoOptionsSchema = z
 	.object({
@@ -111,6 +117,29 @@ export const ModelCatalogVideoOptionsSchema = z
 		orientationOptions: z
 			.array(ModelCatalogVideoOrientationOptionSchema)
 			.default([]),
+		maxReferenceImages: z.number().int().positive().optional(),
+		maxReferenceVideos: z.number().int().positive().optional(),
+		maxReferenceAudios: z.number().int().positive().optional(),
+		maxReferenceMedia: z.number().int().positive().optional(),
+		maxReferenceVideoDurationSeconds: z.number().positive().optional(),
+		maxReferenceAudioDurationSeconds: z.number().positive().optional(),
+		maxReferenceAudioTotalDurationSeconds: z.number().positive().optional(),
+		maxVideoExtensionDurationSeconds: z.number().positive().optional(),
+		maxNestedVideoDurationSeconds: z.number().positive().optional(),
+		maxUltraLongDurationSeconds: z.number().positive().optional(),
+		supportsMultimodalReferences: z.boolean().optional(),
+		supportsReferenceImages: z.boolean().optional(),
+		supportsReferenceVideos: z.boolean().optional(),
+		supportsReferenceAudios: z.boolean().optional(),
+		supportsAudioOnlyReference: z.boolean().optional(),
+		supportsFirstLastFrame: z.boolean().optional(),
+		supportsVideoEditing: z.boolean().optional(),
+		supportsVideoSubjectRemoval: z.boolean().optional(),
+		supportsVideoSubtitleRemoval: z.boolean().optional(),
+		supportsVideoExtension: z.boolean().optional(),
+		supportsUltraLongVideo: z.boolean().optional(),
+		supportsTimestampPrompt: z.boolean().optional(),
+		supportsNativeAudio: z.boolean().optional(),
 	})
 	.passthrough();
 
@@ -333,7 +362,7 @@ export type ModelParamOption = z.infer<typeof ModelParamOptionSchema>;
 export const ModelParamSpecSchema = z
 	.object({
 		key: z.string(),
-		type: z.enum(["float", "integer", "boolean", "string", "enum"]),
+		type: z.enum(["float", "number", "integer", "boolean", "string", "enum"]),
 		label: z.string().optional(),
 		required: z.boolean().optional(),
 		default: z.union([z.string(), z.number(), z.boolean()]).nullable().optional(),
@@ -353,7 +382,9 @@ export const ModelParamsCatalogEntrySchema = z.object({
 	params: z.array(ModelParamSpecSchema).default([]),
 });
 
-export type ModelParamsCatalogEntry = z.infer<typeof ModelParamsCatalogEntrySchema>;
+export type ModelParamsCatalogEntry = z.infer<
+	typeof ModelParamsCatalogEntrySchema
+>;
 
 export const ModelParamsCatalogSchema = z.record(
 	z.string(),

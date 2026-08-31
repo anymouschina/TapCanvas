@@ -16,6 +16,7 @@ import (
 
 var (
 	Port         = flag.Int("port", 4455, "the listening port")
+	MigrateOnly  = flag.Bool("migrate-only", false, "apply database schema migrations and exit")
 	PrintVersion = flag.Bool("version", false, "print version and exit")
 	PrintHelp    = flag.Bool("help", false, "print help and exit")
 	LogDir       = flag.String("log-dir", "./logs", "specify the log directory")
@@ -25,7 +26,7 @@ func printHelp() {
 	fmt.Println("neoSparkMart(Based OneAPI) " + Version + " - The next-generation LLM gateway and AI asset management system supports multiple languages.")
 	fmt.Println("Original Project: OneAPI by JustSong - https://github.com/songquanpeng/one-api")
 	fmt.Println("Maintainer: QuantumNous - https://github.com/QuantumNous/new-api")
-	fmt.Println("Usage: neoSparkMart [--port <port>] [--log-dir <log directory>] [--version] [--help]")
+	fmt.Println("Usage: neoSparkMart [--port <port>] [--log-dir <log directory>] [--migrate-only] [--version] [--help]")
 }
 
 func InitEnv() {
@@ -129,6 +130,14 @@ func InitEnv() {
 }
 
 func initConstantEnv() {
+	// Gemini 的上游地址由部署环境决定。默认直连官方 API；需要经过
+	// Cloudflare Worker 时，通过 GEMINI_BASE_URL 注入 Worker 域名。
+	geminiBaseURL := strings.TrimRight(
+		GetEnvOrDefaultString("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+		"/",
+	)
+	constant.ChannelBaseURLs[constant.ChannelTypeGemini] = geminiBaseURL
+
 	constant.StreamingTimeout = GetEnvOrDefault("STREAMING_TIMEOUT", 300)
 	constant.DifyDebug = GetEnvOrDefaultBool("DIFY_DEBUG", true)
 	constant.MaxFileDownloadMB = GetEnvOrDefault("MAX_FILE_DOWNLOAD_MB", 64)
@@ -148,8 +157,8 @@ func initConstantEnv() {
 	// 覆盖所有注册路径：邮箱/手机号/OAuth/微信/管理员创建。统一在 model.User.Insert /
 	// model.User.FinalizeOAuthUserCreation 内部触发，token 配置：永不过期、无限额度。
 	constant.GenerateDefaultToken = GetEnvOrDefaultBool("GENERATE_DEFAULT_TOKEN", true)
-	// 是否启用错误日志
-	constant.ErrorLogEnabled = GetEnvOrDefaultBool("ERROR_LOG_ENABLED", false)
+	// 错误日志始终启用：失败请求必须可在管理后台按 request id、渠道和模型追踪。
+	constant.ErrorLogEnabled = true
 	// 任务轮询时查询的最大数量
 	constant.TaskQueryLimit = GetEnvOrDefault("TASK_QUERY_LIMIT", 1000)
 	// 异步任务超时时间（分钟），超过此时间未完成的任务将被标记为失败并退款。0 表示禁用。
@@ -173,22 +182,6 @@ func initConstantEnv() {
 		}
 		constant.TaskPricePatches = taskPricePatches
 	}
-
-	// Aliyun SMS
-	if k := os.Getenv("ALIYUN_SMS_ACCESS_KEY_ID"); k != "" {
-		AliyunSMSAccessKeyId = k
-	}
-	if k := os.Getenv("ALIYUN_SMS_ACCESS_KEY_SECRET"); k != "" {
-		AliyunSMSAccessKeySecret = k
-	}
-	if k := os.Getenv("ALIYUN_SMS_SIGN_NAME"); k != "" {
-		AliyunSMSSignName = k
-	}
-	if k := os.Getenv("ALIYUN_SMS_TEMPLATE_CODE"); k != "" {
-		AliyunSMSTemplateCode = k
-	}
-	AliyunSMSEnabled = AliyunSMSAccessKeyId != "" && AliyunSMSAccessKeySecret != "" &&
-		AliyunSMSSignName != "" && AliyunSMSTemplateCode != ""
 
 	// Initialize trusted redirect domains for URL validation
 	trustedDomainsStr := GetEnvOrDefaultString("TRUSTED_REDIRECT_DOMAINS", "")

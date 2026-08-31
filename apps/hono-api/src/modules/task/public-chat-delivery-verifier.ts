@@ -1,43 +1,85 @@
+export type PublicChatJsonValue =
+	| string
+	| number
+	| boolean
+	| null
+	| PublicChatJsonValue[]
+	| { [key: string]: PublicChatJsonValue };
+
+export type PublicChatSemanticDeliveryContract = {
+	kind: string;
+} & Record<string, PublicChatJsonValue>;
+
+export type PublicChatDeliveryEvidenceItem = {
+	evidenceId: string;
+	kind: "final_response" | "tool_call" | "artifact" | "persisted_state" | "source";
+	sourceRef: string;
+	requirementIds: string[];
+	artifactClass?: string;
+	/** Required (including explicit null) when kind=artifact; forbidden otherwise. */
+	mediaType?: "image" | "video" | "audio" | null;
+	attributes: Record<string, string | number | boolean | null>;
+};
+
+export type PublicChatDeliveryVerificationCriterion = {
+	requirementId: string;
+	status: "satisfied" | "avoided" | "applied" | "conflict" | "unresolved";
+	evidenceIds: string[];
+	reason: string;
+};
+
+export type PublicChatDeliveryVerificationSummary = {
+	version: 2;
+	contractHash: string;
+	status: "satisfied" | "unsatisfied";
+	criteria: PublicChatDeliveryVerificationCriterion[];
+	verifiedAt: string;
+};
+
 export type PublicChatSemanticTaskSummary = {
 	taskGoal: string;
 	requestedOutput: string;
 	taskKind: string;
 	recommendedNextStage: string;
 	mustStop: boolean;
+	requiresExecutionDelivery: boolean;
 	blockingGaps: string[];
 	successCriteria: string[];
 	deliveryContract?: PublicChatSemanticDeliveryContract | null;
-};
-
-export type PublicChatExpectedDeliveryKind =
-	| "none"
-	| "generic_execution"
-	| "chapter_storyboard_plan_persistence"
-	| "single_baseframe_preproduction"
-	| "chapter_asset_preproduction"
-	| "chapter_multishot_stills"
-	| "video_followup";
-
-export type PublicChatSemanticDeliveryContract = {
-	kind: Exclude<PublicChatExpectedDeliveryKind, "none">;
-	minStillCount?: number;
+	deliveryEvidence?: PublicChatDeliveryEvidenceItem[];
+	deliveryVerification?: PublicChatDeliveryVerificationSummary;
 };
 
 export type PublicChatExpectedDeliverySummary = {
 	active: boolean;
-	kind: PublicChatExpectedDeliveryKind;
-	source:
-		| "none"
-		| "semantic_task_summary"
-		| "workspace_action"
-		| "chapter_missing_assets"
-		| "chapter_grounded_scope"
-		| "selected_video_context";
+	kind: string;
+	source: "none" | "agents_cli_tool_trace" | "agents_cli_user_intent_contract";
 	reason: string;
-	minStillCount: number | null;
+	taskGoal?: string;
+	requestedOutput?: string;
+	successCriteria?: string[];
+	deliveryContract?: PublicChatSemanticDeliveryContract;
+	contractHash?: string;
 };
 
 export type PublicChatDeliveryEvidence = {
+	version: 2;
+	/** agents-cli runtime 已验证的唯一交付证据；Hono 只做结构校验和原样投影。 */
+	items: PublicChatDeliveryEvidenceItem[];
+	/** 确定性的宿主执行投影，供异步续跑和 UI 定位，不参与 Hono 语义裁决。 */
+	artifacts: Array<{
+		toolCallId: string;
+		toolName: string;
+		assetType: "image" | "video" | "audio" | "workflow";
+		deliveryState: "materialized" | "accepted_async";
+		nodeId: string | null;
+		taskId: string | null;
+		runId: string | null;
+		runProtocol?: "video_run" | "workflow_execution_family";
+		clipIndex: number | null;
+		assetUrl: string | null;
+		completionBoundary?: "submission";
+	}>;
 	assetCount: number;
 	imageAssetCount: number;
 	videoAssetCount: number;
@@ -52,244 +94,280 @@ export type PublicChatDeliveryEvidence = {
 	hasPlannedAuthorityBaseFrame: boolean;
 	hasConfirmedAuthorityBaseFrame: boolean;
 	storyboardPlanPersistenceCount: number;
+	videoTargetDurationSeconds?: number[];
 };
 
-export type PublicChatDeliveryVerificationSummary = {
-	applicable: boolean;
-	status: "not_applicable" | "satisfied" | "failed";
-	code: string | null;
-	summary: string;
+export type PublicChatDurableTerminalDelivery = {
+	version: 1;
+	requestTerminal: {
+		version: 1;
+		terminal: true;
+		status: "succeeded";
+		reason: string;
+	};
+	expectedDelivery: Record<string, unknown> & {
+		version: 2;
+		contractHash: string;
+	};
+	deliveryEvidence: PublicChatDeliveryEvidenceItem[];
+	deliveryVerification: PublicChatDeliveryVerificationSummary & {
+		status: "satisfied";
+	};
 };
 
-function normalizeText(value: string | null | undefined): string {
-	return String(value || "").trim().toLowerCase();
+const MAX_CONTRACT_CHARS = 16_000;
+const MAX_EVIDENCE_ITEMS = 128;
+const MAX_REQUIREMENT_IDS = 64;
+const MAX_ATTRIBUTE_KEYS = 32;
+const MAX_CRITERIA = 128;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isVideoLikeKind(value: string | null | undefined): boolean {
-	const normalized = normalizeText(value);
-	return normalized === "video" || normalized === "composevideo";
+function readString(value: unknown, maxLength: number): string | null {
+	const text = typeof value === "string" ? value.trim() : "";
+	return text && text.length <= maxLength ? text : null;
 }
 
-function normalizePositiveStillCount(value: unknown): number | null {
-	const numeric = Number(value);
-	if (!Number.isFinite(numeric) || numeric <= 0) return null;
-	return Math.max(1, Math.trunc(numeric));
+function readStringList(value: unknown, maxItems: number, maxLength: number): string[] | null {
+	if (!Array.isArray(value) || value.length > maxItems) return null;
+	const result: string[] = [];
+	const seen = new Set<string>();
+	for (const item of value) {
+		const text = readString(item, maxLength);
+		if (!text) return null;
+		if (seen.has(text)) continue;
+		seen.add(text);
+		result.push(text);
+	}
+	return result;
 }
 
-function readStructuredDeliveryContract(
-	summary: PublicChatSemanticTaskSummary | null,
+function cloneJsonRecord(value: Record<string, unknown>): Record<string, PublicChatJsonValue> | null {
+	let serialized = "";
+	try {
+		serialized = JSON.stringify(value);
+	} catch {
+		return null;
+	}
+	if (!serialized || serialized.length > MAX_CONTRACT_CHARS) return null;
+	try {
+		const parsed = JSON.parse(serialized) as unknown;
+		return isRecord(parsed) ? parsed as Record<string, PublicChatJsonValue> : null;
+	} catch {
+		return null;
+	}
+}
+
+export function normalizePublicChatSemanticDeliveryContract(
+	value: unknown,
 ): PublicChatSemanticDeliveryContract | null {
-	const contract = summary?.deliveryContract;
-	if (!contract) return null;
-	const kind = normalizeText(contract.kind);
+	if (!isRecord(value)) return null;
+	const kind = readString(value.kind, 160);
+	const cloned = cloneJsonRecord(value);
+	if (!kind || !cloned) return null;
+	return { ...cloned, kind };
+}
+
+function normalizeAttributes(
+	value: unknown,
+): Record<string, string | number | boolean | null> | null {
+	if (!isRecord(value) || Object.keys(value).length > MAX_ATTRIBUTE_KEYS) return null;
+	const result: Record<string, string | number | boolean | null> = {};
+	for (const [key, item] of Object.entries(value)) {
+		const normalizedKey = readString(key, 120);
+		if (!normalizedKey) return null;
+		if (item === null || typeof item === "boolean") {
+			result[normalizedKey] = item;
+			continue;
+		}
+		if (typeof item === "number") {
+			if (!Number.isFinite(item)) return null;
+			result[normalizedKey] = item;
+			continue;
+		}
+		const normalizedValue = readString(item, 1_000);
+		if (!normalizedValue) return null;
+		result[normalizedKey] = normalizedValue;
+	}
+	return result;
+}
+
+export function normalizePublicChatDeliveryEvidence(
+	value: unknown,
+): PublicChatDeliveryEvidenceItem[] | null {
+	if (!Array.isArray(value) || value.length === 0 || value.length > MAX_EVIDENCE_ITEMS) return null;
+	const result: PublicChatDeliveryEvidenceItem[] = [];
+	const seenIds = new Set<string>();
+	for (const item of value) {
+		if (!isRecord(item)) return null;
+		const evidenceId = readString(item.evidenceId, 160);
+		const kind = item.kind === "final_response" || item.kind === "tool_call" ||
+			item.kind === "artifact" || item.kind === "persisted_state" || item.kind === "source"
+			? item.kind
+			: null;
+		const sourceRef = readString(item.sourceRef, 500);
+		const requirementIds = readStringList(item.requirementIds, MAX_REQUIREMENT_IDS, 240);
+		const artifactClass = item.artifactClass === undefined
+			? undefined
+			: readString(item.artifactClass, 160) ?? null;
+		const mediaType = item.mediaType === null || item.mediaType === "image" ||
+				item.mediaType === "video" || item.mediaType === "audio"
+			? item.mediaType
+			: undefined;
+		const attributes = normalizeAttributes(item.attributes);
+		if (
+			!evidenceId || !kind || !sourceRef || !requirementIds || artifactClass === null || !attributes ||
+			(kind === "artifact" && mediaType === undefined) ||
+			(kind !== "artifact" && Object.hasOwn(item, "mediaType"))
+		) {
+			return null;
+		}
+		if (seenIds.has(evidenceId)) return null;
+		seenIds.add(evidenceId);
+		result.push({
+			evidenceId,
+			kind,
+			sourceRef,
+			requirementIds,
+			...(artifactClass ? { artifactClass } : {}),
+			...(kind === "artifact" ? { mediaType: mediaType ?? null } : {}),
+			attributes,
+		});
+	}
+	return result;
+}
+
+export function normalizePublicChatDeliveryVerification(
+	value: unknown,
+): PublicChatDeliveryVerificationSummary | null {
+	if (!isRecord(value) || value.version !== 2) return null;
+	const contractHash = readString(value.contractHash, 128);
+	const status = value.status === "satisfied" || value.status === "unsatisfied" ? value.status : null;
+	const verifiedAt = readString(value.verifiedAt, 80);
+	if (!contractHash || !status || !verifiedAt || !Array.isArray(value.criteria) || value.criteria.length > MAX_CRITERIA) {
+		return null;
+	}
+	const criteria: PublicChatDeliveryVerificationCriterion[] = [];
+	const seenRequirements = new Set<string>();
+	for (const item of value.criteria) {
+		if (!isRecord(item)) return null;
+		const requirementId = readString(item.requirementId, 120);
+		const criterionStatus = item.status === "satisfied" || item.status === "avoided" ||
+			item.status === "applied" || item.status === "conflict" || item.status === "unresolved"
+			? item.status
+			: null;
+		const evidenceIds = readStringList(item.evidenceIds, MAX_EVIDENCE_ITEMS, 160);
+		const reason = readString(item.reason, 600);
+		if (!requirementId || !criterionStatus || !evidenceIds || !reason || seenRequirements.has(requirementId)) {
+			return null;
+		}
+		seenRequirements.add(requirementId);
+		criteria.push({ requirementId, status: criterionStatus, evidenceIds, reason });
+	}
 	if (
-		kind !== "generic_execution" &&
-		kind !== "chapter_storyboard_plan_persistence" &&
-		kind !== "single_baseframe_preproduction" &&
-		kind !== "chapter_asset_preproduction" &&
-		kind !== "chapter_multishot_stills" &&
-		kind !== "video_followup"
+		status === "satisfied" &&
+		criteria.some((criterion) => criterion.status === "conflict" || criterion.status === "unresolved")
 	) {
 		return null;
 	}
-	const minStillCount = normalizePositiveStillCount(contract.minStillCount);
-	return {
-		kind: kind as PublicChatSemanticDeliveryContract["kind"],
-		...(minStillCount ? { minStillCount } : {}),
-	};
+	return { version: 2, contractHash, status, criteria, verifiedAt };
 }
 
-function computeStillDeliveryUnitCount(evidence: PublicChatDeliveryEvidence): number {
-	return Math.max(
-		evidence.imageAssetCount,
-		evidence.imageLikeNodeCount,
-		evidence.materializedStoryboardStillCount,
+export function isPublicChatDeliveryEnvelopeStructurallyConsistent(input: {
+	evidence: readonly PublicChatDeliveryEvidenceItem[];
+	verification: PublicChatDeliveryVerificationSummary;
+	expectedContractHash?: string | null;
+}): boolean {
+	if (
+		input.expectedContractHash &&
+		input.verification.contractHash !== input.expectedContractHash
+	) {
+		return false;
+	}
+	const evidenceById = new Map(
+		input.evidence.map((item) => [item.evidenceId, item] as const),
 	);
+	return input.verification.criteria.every((criterion) =>
+		criterion.evidenceIds.every((evidenceId) =>
+			evidenceById.get(evidenceId)?.requirementIds.includes(criterion.requirementId) === true,
+		),
+	);
+}
+
+/**
+ * Validates the exact success closure emitted by agents-cli from its
+ * authoritative Logical TaskStore. This is a structural transport boundary:
+ * it does not infer delivery from response prose, asset counts, tool names, or
+ * any Hono-owned semantic rule.
+ */
+export function normalizePublicChatDurableTerminalDelivery(
+	value: unknown,
+): PublicChatDurableTerminalDelivery | null {
+	if (!isRecord(value) || value.version !== 1) return null;
+	const requestTerminal = isRecord(value.requestTerminal) ? value.requestTerminal : null;
+	const expectedDelivery = isRecord(value.expectedDelivery) ? value.expectedDelivery : null;
+	const reason = readString(requestTerminal?.reason, 240);
+	const contractHash = readString(expectedDelivery?.contractHash, 128);
+	const deliveryEvidence = normalizePublicChatDeliveryEvidence(value.deliveryEvidence);
+	const deliveryVerification = normalizePublicChatDeliveryVerification(value.deliveryVerification);
+	if (
+		requestTerminal?.version !== 1 ||
+		requestTerminal.terminal !== true ||
+		requestTerminal.status !== "succeeded" ||
+		!reason ||
+		expectedDelivery?.version !== 2 ||
+		!contractHash ||
+		!deliveryEvidence ||
+		!deliveryVerification ||
+		deliveryVerification.status !== "satisfied" ||
+		!isPublicChatDeliveryEnvelopeStructurallyConsistent({
+			evidence: deliveryEvidence,
+			verification: deliveryVerification,
+			expectedContractHash: contractHash,
+		})
+	) {
+		return null;
+	}
+	return {
+		version: 1,
+		requestTerminal: {
+			version: 1,
+			terminal: true,
+			status: "succeeded",
+			reason,
+		},
+		expectedDelivery: { ...expectedDelivery, version: 2, contractHash },
+		deliveryEvidence,
+		deliveryVerification: { ...deliveryVerification, status: "satisfied" },
+	};
 }
 
 export function buildPublicChatExpectedDeliverySummary(input: {
 	taskSummary: PublicChatSemanticTaskSummary | null;
-	requiresExecutionDelivery: boolean;
-	forceAssetGeneration: boolean;
-	chapterGroundedPromptSpecRequired: boolean;
-	chapterAssetPreproductionRequired: boolean;
-	chapterAssetPreproductionCount: number | null;
-	selectedNodeKind: string | null;
-	selectedReferenceKind: string | null;
-	workspaceAction:
-		| "chapter_script_generation"
-		| "chapter_asset_generation"
-		| "shot_video_generation"
-		| null;
+	source: PublicChatExpectedDeliverySummary["source"];
 }): PublicChatExpectedDeliverySummary {
-	const executionRequested = input.requiresExecutionDelivery || input.forceAssetGeneration;
-	if (input.workspaceAction === "chapter_script_generation") {
-		return {
-			active: true,
-			kind: "chapter_storyboard_plan_persistence",
-			source: "workspace_action",
-			reason: "workspace_action_requires_chapter_storyboard_plan_persistence",
-			minStillCount: null,
-		};
-	}
-	if (!executionRequested && !input.chapterAssetPreproductionRequired) {
+	if (!input.taskSummary) {
 		return {
 			active: false,
 			kind: "none",
 			source: "none",
-			reason: "no_execution_delivery_required",
-			minStillCount: null,
+			reason: "agents_cli_task_summary_missing",
 		};
 	}
-	if (input.chapterAssetPreproductionRequired) {
-		return {
-			active: true,
-			kind: "chapter_asset_preproduction",
-			source: "chapter_missing_assets",
-			reason: "chapter_grounded_missing_reusable_assets_requires_preproduction_first",
-			minStillCount: input.chapterAssetPreproductionCount ?? 1,
-		};
-	}
-	const explicitDeliveryContract = readStructuredDeliveryContract(input.taskSummary);
-	if (explicitDeliveryContract) {
-		return {
-			active: true,
-			kind: explicitDeliveryContract.kind,
-			source: "semantic_task_summary",
-			reason: "explicit_structured_delivery_contract",
-			minStillCount:
-				explicitDeliveryContract.kind === "chapter_multishot_stills" ||
-				explicitDeliveryContract.kind === "chapter_asset_preproduction"
-					? explicitDeliveryContract.minStillCount ?? 2
-					: null,
-		};
-	}
-	if (input.chapterGroundedPromptSpecRequired) {
-		if (isVideoLikeKind(input.selectedNodeKind) || isVideoLikeKind(input.selectedReferenceKind)) {
-			return {
-				active: true,
-				kind: "video_followup",
-				source: "selected_video_context",
-				reason: "selected_context_is_video_like",
-				minStillCount: null,
-			};
-		}
-		return {
-			active: true,
-			kind: "chapter_multishot_stills",
-			source: "chapter_grounded_scope",
-			reason: "chapter_grounded_execution_defaults_to_multishot_still_delivery",
-			minStillCount: 2,
-		};
-	}
+	const deliveryContract = input.taskSummary.deliveryContract ?? undefined;
 	return {
 		active: true,
-		kind: "generic_execution",
-		source: "semantic_task_summary",
-		reason: "generic_execution_delivery",
-		minStillCount: null,
+		kind: deliveryContract?.kind ?? input.taskSummary.taskKind,
+		source: input.source,
+		reason: input.taskSummary.recommendedNextStage,
+		taskGoal: input.taskSummary.taskGoal,
+		requestedOutput: input.taskSummary.requestedOutput,
+		successCriteria: input.taskSummary.successCriteria,
+		...(deliveryContract ? { deliveryContract } : {}),
+		...(input.taskSummary.deliveryVerification?.contractHash
+			? { contractHash: input.taskSummary.deliveryVerification.contractHash }
+			: {}),
 	};
-}
-
-export function verifyPublicChatDelivery(input: {
-	expected: PublicChatExpectedDeliverySummary;
-	evidence: PublicChatDeliveryEvidence;
-}): PublicChatDeliveryVerificationSummary {
-	if (!input.expected.active || input.expected.kind === "none") {
-		return {
-			applicable: false,
-			status: "not_applicable",
-			code: null,
-			summary: "no_expected_delivery_contract",
-		};
-	}
-
-	switch (input.expected.kind) {
-		case "single_baseframe_preproduction": {
-			const satisfied =
-				input.evidence.imageAssetCount >= 1 ||
-				input.evidence.imageLikeNodeCount >= 1 ||
-				input.evidence.hasPlannedAuthorityBaseFrame ||
-				input.evidence.hasConfirmedAuthorityBaseFrame;
-			return {
-				applicable: true,
-				status: satisfied ? "satisfied" : "failed",
-				code: satisfied ? null : "single_baseframe_preproduction_missing",
-				summary: satisfied
-					? "single_baseframe_preproduction_delivered"
-					: "single_baseframe_preproduction_missing",
-			};
-		}
-		case "chapter_storyboard_plan_persistence": {
-			const satisfied = input.evidence.storyboardPlanPersistenceCount > 0;
-			return {
-				applicable: true,
-				status: satisfied ? "satisfied" : "failed",
-				code: satisfied ? null : "chapter_storyboard_plan_persistence_missing",
-				summary: satisfied
-					? "chapter_storyboard_plan_persistence_verified"
-					: "chapter_storyboard_plan_persistence_missing",
-			};
-		}
-		case "chapter_asset_preproduction": {
-			const requiredPreproductionCount = input.expected.minStillCount ?? 1;
-			const deliveredPreproductionCount = Math.max(
-				input.evidence.imageAssetCount,
-				input.evidence.reusablePreproductionImageLikeNodeCount,
-			);
-			const satisfied = deliveredPreproductionCount >= requiredPreproductionCount;
-			return {
-				applicable: true,
-				status: satisfied ? "satisfied" : "failed",
-				code: satisfied ? null : "chapter_asset_preproduction_missing",
-				summary: satisfied
-					? "chapter_asset_preproduction_verified"
-					: "chapter_asset_preproduction_missing",
-			};
-		}
-		case "chapter_multishot_stills": {
-			const requiredStillCount = input.expected.minStillCount ?? 2;
-			const stillUnitCount = computeStillDeliveryUnitCount(input.evidence);
-			const satisfied = stillUnitCount >= requiredStillCount;
-			return {
-				applicable: true,
-				status: satisfied ? "satisfied" : "failed",
-				code: satisfied ? null : "chapter_grounded_multishot_delivery_missing",
-				summary: satisfied
-					? "chapter_multishot_still_delivery_verified"
-					: "chapter_multishot_still_delivery_missing",
-			};
-		}
-		case "video_followup": {
-			const satisfied =
-				input.evidence.videoAssetCount >= 1 ||
-				input.evidence.hasVideoNodes ||
-				(input.evidence.wroteCanvas && input.evidence.hasMaterializedVisualOutputs);
-			return {
-				applicable: true,
-				status: satisfied ? "satisfied" : "failed",
-				code: satisfied ? null : "video_followup_delivery_missing",
-				summary: satisfied ? "video_followup_delivery_verified" : "video_followup_delivery_missing",
-			};
-		}
-		case "generic_execution": {
-			const satisfied =
-				input.evidence.assetCount > 0 ||
-				input.evidence.generatedAssets ||
-				input.evidence.wroteCanvas;
-			return {
-				applicable: true,
-				status: satisfied ? "satisfied" : "failed",
-				code: satisfied ? null : "generic_execution_delivery_missing",
-				summary: satisfied ? "generic_execution_delivery_verified" : "generic_execution_delivery_missing",
-			};
-		}
-		default:
-			return {
-				applicable: false,
-				status: "not_applicable",
-				code: null,
-				summary: "no_expected_delivery_contract",
-			};
-	}
 }

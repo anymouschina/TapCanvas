@@ -1,6 +1,7 @@
 import type { PrismaClient } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
 import type { FlowDto } from "./flow.schemas";
+import { mergeFlowStorageEnvelope, readFlowOwnerMeta } from "./flow.storage-envelope";
 
 export type FlowRow = {
 	id: string;
@@ -10,7 +11,24 @@ export type FlowRow = {
 	project_id: string | null;
 	created_at: string;
 	updated_at: string;
+	// DB flows 行为 NOT NULL DEFAULT 0，真实查询回来一定有值；设可选是为兼容
+	// synthetic FlowRow（章节画布伪造）和测试 mock 无需构造此字段。乐观锁逻辑用
+	// expectedRevision 入参 + DB where/select，不依赖本 type 字段是否必填。
+	canvas_revision?: number;
 };
+
+// 所有画布写入口共享同一个乐观锁版本。用户整图保存和 agent 增量回灌只要携带的
+// canvas_revision 落后于最新值，就抛出本错误；调用方必须重读并基于新事实重放变更。
+export class FlowRevisionConflictError extends Error {
+	constructor(
+		public flowId: string,
+		public expected: number,
+		public actual: number,
+	) {
+		super(`Flow revision conflict on ${flowId}: expected ${expected}, actual ${actual}`);
+		this.name = "FlowRevisionConflictError";
+	}
+}
 
 export type FlowVersionRow = {
 	id: string;
@@ -21,36 +39,14 @@ export type FlowVersionRow = {
 	created_at: string;
 };
 
+export type FlowVersionListRow = Pick<FlowVersionRow, "id" | "name" | "created_at">;
+
 function parseFlowData(raw: string): unknown {
 	try {
 		return JSON.parse(raw);
 	} catch {
 		return null;
 	}
-}
-
-function readFlowOwnerMeta(value: unknown): {
-	ownerType: "project" | "chapter" | "shot" | null;
-	ownerId: string | null;
-} {
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		return { ownerType: null, ownerId: null };
-	}
-	const record = value as Record<string, unknown>;
-	const meta = record.__tapcanvasFlowOwner;
-	if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
-		return { ownerType: null, ownerId: null };
-	}
-	const ownerRecord = meta as Record<string, unknown>;
-	const ownerType =
-		ownerRecord.ownerType === "project" || ownerRecord.ownerType === "chapter" || ownerRecord.ownerType === "shot"
-			? ownerRecord.ownerType
-			: null;
-	const ownerId =
-		typeof ownerRecord.ownerId === "string" && ownerRecord.ownerId.trim()
-			? ownerRecord.ownerId.trim()
-			: null;
-	return { ownerType, ownerId };
 }
 
 export function mapFlowRowToDto(row: FlowRow): FlowDto {
@@ -62,6 +58,7 @@ export function mapFlowRowToDto(row: FlowRow): FlowDto {
 		data,
 		ownerType: ownerMeta.ownerType,
 		ownerId: ownerMeta.ownerId,
+		canvasRevision: row.canvas_revision ?? 0,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
@@ -154,20 +151,40 @@ export async function updateFlow(
 		ownerId: string;
 		projectId?: string | null;
 		nowIso: string;
+		expectedRevision?: number | null;
+		source?: "user" | "agent";
 	},
 ): Promise<FlowRow | null> {
 	void db;
-	const { id, name, data, ownerId, projectId, nowIso } = params;
-	await getPrismaClient().flows.updateMany({
+	const { id, name, data, ownerId, projectId, nowIso, expectedRevision } = params;
+	const useLock = typeof expectedRevision === "number";
+	const prisma = getPrismaClient();
+	const current = await prisma.flows.findFirst({
 		where: { id, owner_id: ownerId },
+		select: { data: true },
+	});
+	if (!current) return null;
+	const mergedData = mergeFlowStorageEnvelope(current.data, data);
+	const result = await prisma.flows.updateMany({
+		where: useLock ? { id, owner_id: ownerId, canvas_revision: expectedRevision } : { id, owner_id: ownerId },
 		data: {
 			name,
-			data,
+			data: mergedData,
 			owner_id: ownerId,
 			project_id: projectId ?? null,
 			updated_at: nowIso,
+			canvas_revision: { increment: 1 },
 		},
 	});
+	if (result.count === 0 && useLock) {
+		const currentRevision = await prisma.flows.findFirst({
+			where: { id, owner_id: ownerId },
+			select: { canvas_revision: true },
+		});
+		if (currentRevision) {
+			throw new FlowRevisionConflictError(id, expectedRevision as number, currentRevision.canvas_revision);
+		}
+	}
 	return getFlowForOwner(db, id, ownerId);
 }
 
@@ -178,18 +195,67 @@ export async function updateFlowByIdUnsafe(
 		name: string;
 		data: string;
 		nowIso: string;
+		expectedRevision?: number | null;
+		source?: "user" | "agent";
 	},
 ): Promise<FlowRow | null> {
 	void db;
-	const { id, name, data, nowIso } = params;
-	await getPrismaClient().flows.updateMany({
+	const { id, name, data, nowIso, expectedRevision } = params;
+	const useLock = typeof expectedRevision === "number";
+	const prisma = getPrismaClient();
+	const current = await prisma.flows.findFirst({
 		where: { id },
+		select: { data: true },
+	});
+	if (!current) return null;
+	const mergedData = mergeFlowStorageEnvelope(current.data, data);
+	const result = await prisma.flows.updateMany({
+		where: useLock ? { id, canvas_revision: expectedRevision } : { id },
 		data: {
 			name,
-			data,
+			data: mergedData,
+			updated_at: nowIso,
+			canvas_revision: { increment: 1 },
+		},
+	});
+	if (result.count === 0 && useLock) {
+		const currentRevision = await prisma.flows.findFirst({
+			where: { id },
+			select: { canvas_revision: true },
+		});
+		if (currentRevision) {
+			throw new FlowRevisionConflictError(id, expectedRevision as number, currentRevision.canvas_revision);
+		}
+	}
+	return getFlowByIdUnsafe(db, id);
+}
+
+export async function replaceFlowDataIfUnchanged(
+	db: PrismaClient,
+	params: {
+		id: string;
+		projectId: string;
+		expectedData: string;
+		expectedUpdatedAt: string;
+		nextData: string;
+		nowIso: string;
+	},
+): Promise<FlowRow | null> {
+	void db;
+	const { id, projectId, expectedData, expectedUpdatedAt, nextData, nowIso } = params;
+	const result = await getPrismaClient().flows.updateMany({
+		where: {
+			id,
+			project_id: projectId,
+			data: expectedData,
+			updated_at: expectedUpdatedAt,
+		},
+		data: {
+			data: nextData,
 			updated_at: nowIso,
 		},
 	});
+	if (result.count !== 1) return null;
 	return getFlowByIdUnsafe(db, id);
 }
 
@@ -231,15 +297,26 @@ export async function createFlowVersion(
 	});
 }
 
-export async function listFlowVersions(
+export async function listFlowVersionPage(
 	db: PrismaClient,
 	flowId: string,
-): Promise<FlowVersionRow[]> {
+	options: Readonly<{ limit: number; cursor?: string }>,
+): Promise<Readonly<{ items: FlowVersionListRow[]; nextCursor: string | null }>> {
 	void db;
-	return getPrismaClient().flow_versions.findMany({
+	const limit = Math.max(1, Math.min(100, Math.floor(options.limit)));
+	const rows = await getPrismaClient().flow_versions.findMany({
 		where: { flow_id: flowId },
-		orderBy: { created_at: "desc" },
+		select: { id: true, name: true, created_at: true },
+		orderBy: [{ created_at: "desc" }, { id: "desc" }],
+		...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+		take: limit + 1,
 	});
+	const hasMore = rows.length > limit;
+	const items = hasMore ? rows.slice(0, limit) : rows;
+	return {
+		items,
+		nextCursor: hasMore ? items.at(-1)?.id ?? null : null,
+	};
 }
 
 export async function getFlowVersion(

@@ -2,7 +2,6 @@ import { z } from "zod";
 
 export const TEXT_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 export const TEXT_UPLOAD_MAX_LABEL = "50MB";
-export const PROJECT_BOOK_UPLOAD_CHUNK_MAX_CHARS = 300_000;
 
 const utf8Encoder = new TextEncoder();
 
@@ -42,7 +41,25 @@ export const PublicAssetSchema = z.object({
 	createdAt: z.string(),
 	ownerLogin: z.string().nullable().optional(),
 	ownerName: z.string().nullable().optional(),
+	ownerAvatarUrl: z.string().nullable().optional(),
 	projectName: z.string().nullable().optional(),
+	projectId: z.string().nullable().optional(),
+	sourceProjectId: z.string().nullable().optional(),
+	sourceOwnerType: z.enum(["project", "chapter", "shortFilm"]).nullable().optional(),
+	sourceOwnerId: z.string().nullable().optional(),
+	sourceChapterTitle: z.string().nullable().optional(),
+	pinWeight: z.number().optional(),
+	likeCount: z.number().nullable().optional(),
+	favoriteCount: z.number().nullable().optional(),
+	favorited: z.boolean().optional(),
+	canvasPublic: z.boolean().optional(),
+	algorithmScore: z.number().optional(),
+	manualBoost: z.number().optional(),
+	effectiveScore: z.number().optional(),
+	recommended: z.boolean().optional(),
+	pinned: z.boolean().optional(),
+	displayOrder: z.number().int().optional(),
+	rank: z.number().int().positive().optional(),
 });
 
 export type PublicAssetDto = z.infer<typeof PublicAssetSchema>;
@@ -82,16 +99,11 @@ export type IngestProjectBookDto = z.infer<typeof IngestProjectBookSchema>;
 export const StartProjectBookUploadSchema = z.object({
 	projectId: z.string().min(1),
 	title: z.string().min(1).max(200),
+	sourceFileName: z.string().min(1).max(240),
 	contentBytes: z.number().int().positive(),
 });
 
 export type StartProjectBookUploadDto = z.infer<typeof StartProjectBookUploadSchema>;
-
-export const AppendProjectBookUploadChunkSchema = z.object({
-	chunk: z.string().min(1).max(PROJECT_BOOK_UPLOAD_CHUNK_MAX_CHARS),
-});
-
-export type AppendProjectBookUploadChunkDto = z.infer<typeof AppendProjectBookUploadChunkSchema>;
 
 export const FinishProjectBookUploadSchema = z.object({
 	strictAgents: z.boolean().optional(),

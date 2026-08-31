@@ -257,21 +257,28 @@ var defaultModelRatio = map[string]float64{
 	"deepseek-v3-0324":           0.27 / 2,
 	"deepseek-v3.1-250821":       0.27 / 2,
 	"deepseek-v3.1-think-250821": 0.55 / 2,
+	// DeepSeek V4 family — 1M context, thinking/non-thinking modes.
+	// 固定采用供应商错峰价并乘 1.1：flash ¥1.65/M input，pro ¥4.95/M input。
+	// 使用人民币倍率，避免 CNY 展示层再次放大价格。
+	"deepseek-v4-flash": 1.65 / 1000 * RMB,
+	"deepseek-v4-pro":   4.95 / 1000 * RMB,
 	// Doubao Seed 1.6 (APIMart) 参考同级中文 chat / reasoner 模型
 	"doubao-seed-1-6-251015":          0.27 / 2,
 	"doubao-seed-1-6-flash-250828":    0.15,
 	"doubao-seed-1-6-thinking-250715": 0.55 / 2,
-	// Doubao Seed 2.0 (Volcengine 直连) 按[0,32]K档定价，$ = ¥，×1.2溢价
+	// Doubao Seed 2.0 (Volcengine 直连) 按官网人民币价格 ×1.1。
+	// 这里保存 [0,32]K 基础档；更长输入由 prompt_token_tier.go 按官网档位放大。
 	// pro:  输入 3.2 元/M，输出 16 元/M，completion=5
 	// lite: 输入 0.6 元/M，输出 3.6 元/M，completion=6
 	// mini: 输入 0.2 元/M，输出 2.0 元/M，completion=10
-	"doubao-seed-2-0-pro-260428":  3.2 / 1000 * USD * 1.2,
-	"doubao-seed-2.0-pro":         3.2 / 1000 * USD * 1.2,
-	"doubao-seed-2-0-lite-260428": 0.6 / 1000 * USD * 1.2,
-	"doubao-seed-2-0-lite-260215": 0.6 / 1000 * USD * 1.2,
-	"doubao-seed-2.0-lite":        0.6 / 1000 * USD * 1.2,
-	"doubao-seed-2-0-mini-260428": 0.2 / 1000 * USD * 1.2,
-	"doubao-seed-2.0-mini":        0.2 / 1000 * USD * 1.2,
+	// 必须使用 RMB，而不是 USD；人民币价格若使用 USD 会在展示/结算时再次乘 7.3。
+	"doubao-seed-2-0-pro-260428":  3.2 / 1000 * RMB * 1.1,
+	"doubao-seed-2.0-pro":         3.2 / 1000 * RMB * 1.1,
+	"doubao-seed-2-0-lite-260428": 0.6 / 1000 * RMB * 1.1,
+	"doubao-seed-2-0-lite-260215": 0.6 / 1000 * RMB * 1.1,
+	"doubao-seed-2.0-lite":        0.6 / 1000 * RMB * 1.1,
+	"doubao-seed-2-0-mini-260428": 0.2 / 1000 * RMB * 1.1,
+	"doubao-seed-2.0-mini":        0.2 / 1000 * RMB * 1.1,
 	// Perplexity online 模型对搜索额外收费，有需要应自行调整，此处不计入搜索费用
 	"llama-3-sonar-small-32k-chat":   0.2 / 1000 * USD,
 	"llama-3-sonar-small-32k-online": 0.2 / 1000 * USD,
@@ -332,6 +339,37 @@ var defaultModelPrice = map[string]float64{
 	"veo-3.0-fast-generate-001":      0.15,
 	"veo-3.1-generate-preview":       0.4,
 	"veo-3.1-fast-generate-preview":  0.15,
+	// MiniMax H3 default UI/request spec: 2K, 5 seconds at CNY 0.40/s.
+	"MiniMax-H3": 2.0,
+	// 阿里云百炼 Qwen-Image 系列（按张计费，单位为人民币元/张：国内北京区成本价 × 2.5 实现 60% 毛利）
+	// 注意：本 fork 的图像 ModelPrice 走 CNY 约定（与 fixedImageBasePriceCNY 同），
+	// hono /api/pricing 快照按 CNY × creditsPerCny(当前为 100) 折算终端积分，切勿写成美元。
+	// 文档: https://help.aliyun.com/zh/model-studio/qwen-image-edit-guide
+	"qwen-image-2.0-pro":              1.25, // 成本 0.5 元/张 → 售价 1.25 元/张
+	"qwen-image-2.0-pro-2026-04-22":   1.25, // 成本 0.5 元/张 → 售价 1.25 元/张
+	"qwen-image-2.0":                  0.5,  // 成本 0.2 元/张 → 售价 0.5 元/张
+	"qwen-image-2.0-2026-03-03":       0.5,  // 成本 0.2 元/张 → 售价 0.5 元/张
+	"qwen-image-edit-max":             1.25, // 成本 0.5 元/张 → 售价 1.25 元/张
+	"qwen-image-edit-max-2026-01-16":  1.25, // 成本 0.5 元/张 → 售价 1.25 元/张
+	"qwen-image-edit-plus":            0.5,  // 成本 0.2 元/张 → 售价 0.5 元/张
+	"qwen-image-edit-plus-2025-12-15": 0.5,  // 成本 0.2 元/张 → 售价 0.5 元/张
+	"qwen-image-edit-plus-2025-10-30": 0.5,  // 成本 0.2 元/张 → 售价 0.5 元/张
+	"qwen-image-edit":                 0.75, // 成本 0.3 元/张 → 售价 0.75 元/张
+	// APIMart 万相 wan2.7-image（本 fork CNY 约定，元/张）：
+	// 成本 ≈ 0.068 USD × 7.3 = ¥0.50，×1.6 加价 = ¥0.79/张。文生图最高 4K、图生图限 2K。
+	// 文档: https://docs.apimart.ai/cn/api-reference/images/wan2.7-image/generation
+	"wan2.7-image-pro":         0.79,
+	"wan2.7-image-pro-apimart": 0.79,
+	// Evolink (api.evolink.ai) 视频模型：new-api 侧按次计费（flat per call，与 APIMart 行为一致），
+	// 取值 = APIMart 等价模型 720p 费率(CNY/s) × 默认 5s（用户指令 2026-06-22「按 apimart 定价」）。
+	// 每秒/分辨率粒度见 model/pricing.go linearVideoPricingRules（/api/pricing 快照用）。
+	"kling-o3-image-to-video":              3.68, // kling-v3 720p 0.7358 × 5s
+	"kling-o3-reference-to-video":          3.68,
+	"kling-o3-video-edit":                  3.68,
+	"seedance-2.0-reference-to-video":      8.55, // doubao-seedance-2.0 720p 1.71 × 5s
+	"seedance-2.0-fast-image-to-video":     6.88, // doubao-seedance-2.0-fast 720p 1.3753 × 5s
+	"seedance-2.0-fast-reference-to-video": 6.88,
+	"seedance-2.0-mini-reference-to-video": 6.88, // no apimart mini tier; use fast
 }
 
 var defaultAudioRatio = map[string]float64{
@@ -362,6 +400,9 @@ var defaultCompletionRatio = map[string]float64{
 	"gpt-4-all":      2,
 	"gpt-image-2":    8,
 	"gpt-4o-image":   8, // 参考 gpt-image-2
+	// DeepSeek V4 错峰价的 output/input = 3.0。
+	"deepseek-v4-flash": 3,
+	"deepseek-v4-pro":   3,
 	// Doubao Seed 2.0 completion ratio = output/input
 	"doubao-seed-2-0-pro-260428":  5,
 	"doubao-seed-2.0-pro":         5,
@@ -476,17 +517,14 @@ func UpdateCompletionRatioByJSONString(jsonStr string) error {
 func GetCompletionRatio(name string) float64 {
 	name = FormatMatchingModelName(name)
 
-	if strings.Contains(name, "/") {
-		if ratio, ok := completionRatioMap.Get(name); ok {
-			return ratio
-		}
+	// Explicit persisted pricing is the authoritative source. Family defaults
+	// only apply when an exact model ratio has not been configured.
+	if ratio, ok := completionRatioMap.Get(name); ok {
+		return ratio
 	}
 	hardCodedRatio, contain := getHardcodedCompletionModelRatio(name)
 	if contain {
 		return hardCodedRatio
-	}
-	if ratio, ok := completionRatioMap.Get(name); ok {
-		return ratio
 	}
 	return hardCodedRatio
 }
@@ -499,12 +537,10 @@ type CompletionRatioInfo struct {
 func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 	name = FormatMatchingModelName(name)
 
-	if strings.Contains(name, "/") {
-		if ratio, ok := completionRatioMap.Get(name); ok {
-			return CompletionRatioInfo{
-				Ratio:  ratio,
-				Locked: false,
-			}
+	if ratio, ok := completionRatioMap.Get(name); ok {
+		return CompletionRatioInfo{
+			Ratio:  ratio,
+			Locked: false,
 		}
 	}
 
@@ -513,13 +549,6 @@ func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 		return CompletionRatioInfo{
 			Ratio:  hardCodedRatio,
 			Locked: true,
-		}
-	}
-
-	if ratio, ok := completionRatioMap.Get(name); ok {
-		return CompletionRatioInfo{
-			Ratio:  ratio,
-			Locked: false,
 		}
 	}
 
@@ -737,6 +766,18 @@ func GetModelPriceCopy() map[string]float64 {
 
 func GetCompletionRatioCopy() map[string]float64 {
 	return completionRatioMap.ReadAll()
+}
+
+func GetImageRatioCopy() map[string]float64 {
+	return imageRatioMap.ReadAll()
+}
+
+func GetAudioRatioCopy() map[string]float64 {
+	return audioRatioMap.ReadAll()
+}
+
+func GetAudioCompletionRatioCopy() map[string]float64 {
+	return audioCompletionRatioMap.ReadAll()
 }
 
 // 转换模型名，减少渠道必须配置各种带参数模型

@@ -143,7 +143,7 @@ const LogsFilters = ({
               size='small'
             >
               <Form.Select.Option value='0'>{t('全部')}</Form.Select.Option>
-              <Form.Select.Option value='1'>{t('充值')}</Form.Select.Option>
+              <Form.Select.Option value='1'>{t('额度入账')}</Form.Select.Option>
               <Form.Select.Option value='2'>{t('消费')}</Form.Select.Option>
               <Form.Select.Option value='3'>{t('管理')}</Form.Select.Option>
               <Form.Select.Option value='4'>{t('系统')}</Form.Select.Option>

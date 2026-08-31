@@ -1,0 +1,62 @@
+.tc-canvas-graph-stats-panel {
+  pointer-events: none;
+}
+
+.tc-canvas-graph-stats {
+  display: flex;
+  width: 104px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  background: rgba(22, 22, 26, 0.95);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  color: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+}
+
+.tc-canvas-graph-stats__metric {
+  display: flex;
+  width: 44px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.tc-canvas-graph-stats__icon {
+  flex: 0 0 auto;
+}
+
+.tc-canvas-graph-stats__value {
+  min-width: 12px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
+}
+
+.tc-canvas-graph-stats__divider {
+  width: 1px;
+  height: 16px;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:root[data-mantine-color-scheme='light'] .tc-canvas-graph-stats {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 18px rgba(17, 18, 21, 0.12);
+  color: rgba(0, 0, 0, 0.56);
+}
+
+:root[data-mantine-color-scheme='light'] .tc-canvas-graph-stats__divider {
+  background: rgba(0, 0, 0, 0.1);
+}
+

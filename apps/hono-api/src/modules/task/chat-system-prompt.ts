@@ -1,16 +1,5 @@
-import {
-	buildChatAssistantSystemPrompt,
-	buildChatSkillSystemPrompt,
-	buildPersonaContextPrompt,
-	extractPersonaIdentity,
-	loadPersonaContextFiles,
-	resolvePersonaRootCandidates,
-	resolvePersonaWorkspaceRoot,
-} from "./chat-persona-prompt";
-import { buildPublicChatBaseSystemPrompt } from "./chat-base-system";
 import { buildPublicChatContextFragment } from "./chat-context-fragment";
-import { buildPublicChatResponsePolicyPrompt } from "./chat-response-policy";
-import { hasPublicChatExecutionContext } from "./chat-persona-prompt";
+import type { PublicChatPromptContext } from "./chat-prompt.types";
 
 export type {
 	ChatPromptSkill,
@@ -20,60 +9,49 @@ export type {
 	PublicChatReferenceImageSlot,
 } from "./chat-prompt.types";
 
-export {
-	buildChatAssistantSystemPrompt,
-	buildChatSkillSystemPrompt,
-	hasPublicChatExecutionContext,
-	buildPersonaContextPrompt,
-	extractPersonaIdentity,
-	resolvePersonaRootCandidates,
-};
-
-export { buildPublicChatBaseSystemPrompt } from "./chat-base-system";
 export { buildPublicChatContextFragment } from "./chat-context-fragment";
-export { buildPublicChatResponsePolicyPrompt } from "./chat-response-policy";
-export { buildPublicChatRuntimeSkillPrompt } from "./chat-runtime-skills";
 
+/**
+ * Structural context presence check only. It deliberately does not infer the
+ * user's intent, select a workflow, or inspect prompt prose.
+ */
+export function hasPublicChatExecutionContext(input: PublicChatPromptContext): boolean {
+	return (
+		Boolean(input.generationProposal?.proposalId?.trim()) ||
+		Boolean(input.skill?.id?.trim()) ||
+		Boolean(input.currentBookId?.trim()) ||
+		Boolean(input.currentChapterId?.trim()) ||
+		input.referenceImageCount > 0 ||
+		input.referenceImageSlots.length > 0 ||
+		input.assetRoleSummary.length > 0 ||
+		input.hasTargetImage ||
+		input.hasSelectedNode ||
+		Boolean(input.selectedNodeId?.trim()) ||
+		Boolean(input.selectedNodeKind?.trim()) ||
+		Boolean(input.selectedNodeTextPreview?.trim()) ||
+		input.selectedReference !== null
+	);
+}
+
+/**
+ * Hono contributes only current, caller-scoped facts to the agents runtime.
+ * Persona, SOP, response policy and skill methodology belong to agents-cli
+ * and its progressively loaded skills, so this builder performs no file IO.
+ */
 export async function buildPublicChatSystemPrompt(input: {
-	chatContext: import("./chat-prompt.types").PublicChatPromptContext;
+	chatContext: PublicChatPromptContext;
 	canvasProjectId: string | null;
 	canvasFlowId: string | null;
 	planOnly: boolean;
 	forceAssetGeneration: boolean;
 }): Promise<string> {
-	const hasExecutionContext = hasPublicChatExecutionContext(input.chatContext);
 	const hasProjectScope = Boolean(input.canvasProjectId?.trim()) || Boolean(input.canvasFlowId?.trim());
-	if (!hasExecutionContext && !hasProjectScope) return "";
-	const personaFiles = await loadPersonaContextFiles();
-	const personaContextPrompt =
-		personaFiles.length > 0
-			? buildPersonaContextPrompt({
-					files: personaFiles,
-					workspaceRoot: resolvePersonaWorkspaceRoot(personaFiles),
-			  })
-			: "";
-	const personaIdentity = extractPersonaIdentity(personaFiles);
-	const skillPrompt = buildChatSkillSystemPrompt(input.chatContext.skill);
-	const baseSystemPrompt = buildPublicChatBaseSystemPrompt({
-		forceAssetGeneration: input.forceAssetGeneration,
-		personaIdentity,
-	});
-	const responsePolicyPrompt = buildPublicChatResponsePolicyPrompt();
-	const contextFragment = buildPublicChatContextFragment({
+	if (!hasProjectScope && !hasPublicChatExecutionContext(input.chatContext)) return "";
+	return buildPublicChatContextFragment({
 		...input.chatContext,
 		canvasProjectId: input.canvasProjectId,
 		canvasFlowId: input.canvasFlowId,
 		planOnly: input.planOnly,
 		forceAssetGeneration: input.forceAssetGeneration,
 	});
-	return [
-		personaContextPrompt,
-		skillPrompt,
-		baseSystemPrompt,
-		responsePolicyPrompt,
-		contextFragment,
-	]
-		.filter(Boolean)
-		.join("\n\n")
-		.trim();
 }

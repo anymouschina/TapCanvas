@@ -6,6 +6,11 @@ export function estimateImageResourceBytes(blobSize: number | null | undefined):
   return Math.trunc(blobSize)
 }
 
+export function estimateDecodedImageBytes(width: number, height: number): number | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
+  return Math.round(width * height * 4)
+}
+
 export function countReadyObjectUrls(entries: Record<string, ImageResourceEntry>): number {
   return Object.values(entries).reduce((count, entry) => {
     if (entry.decoded?.objectUrl && entry.state === 'ready') return count + 1

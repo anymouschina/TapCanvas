@@ -134,6 +134,33 @@ function normalizeCategory(value: unknown): 'scene_prop' | 'spell_fx' | null {
   return null
 }
 
+function readTrimmedStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => readTrimmedString(item).toLowerCase())
+    .filter(Boolean)
+}
+
+function normalizeVisualSemanticKind(value: unknown): 'scene' | 'prop' | null {
+  const normalized = readTrimmedString(value).toLowerCase()
+  if (normalized === 'scene') return 'scene'
+  if (normalized === 'prop') return 'prop'
+  return null
+}
+
+function inferExplicitVisualKind(record: Record<string, unknown>): 'scene' | 'prop' {
+  const explicitKind =
+    normalizeVisualSemanticKind(record.scenePropKind) ||
+    normalizeVisualSemanticKind(record.visualRefKind)
+  if (explicitKind) return explicitKind
+  const tags = new Set([
+    ...readTrimmedStringList(record.visualRefTags),
+    ...readTrimmedStringList(record.tags),
+  ])
+  if (tags.has('prop')) return 'prop'
+  return 'scene'
+}
+
 function createSemanticAnchorBinding(input: AnchorBindingInput): SemanticNodeAnchorBinding | null {
   return normalizePublicFlowAnchorBinding({
     kind: input.kind,
@@ -197,12 +224,7 @@ function buildLegacyVisualAnchorBindings(record: Record<string, unknown>): Seman
   const explicitRefId = readTrimmedString(record.scenePropRefId) || readTrimmedString(record.visualRefId)
   const explicitRefName = readTrimmedString(record.scenePropRefName) || readTrimmedString(record.visualRefName)
   const explicitCategory = normalizeCategory(record.visualRefCategory)
-  const explicitVisualKind = (() => {
-    if (readTrimmedString(record.scenePropRefId) || readTrimmedString(record.scenePropRefName)) {
-      return 'scene' as const
-    }
-    return 'prop' as const
-  })()
+  const explicitVisualKind = inferExplicitVisualKind(record)
   const explicitVisualBinding =
     explicitRefId || explicitRefName || explicitCategory
       ? createSemanticAnchorBinding({
@@ -320,13 +342,22 @@ export function upsertSemanticNodeAnchorBinding(input: {
 }
 
 export function resolveSemanticNodeRoleBinding(data: unknown): SemanticNodeRoleBinding {
+  const record = asRecord(data)
   const binding = pickBestAnchorBinding(resolveSemanticNodeAnchorBindings(data), ['character'])
+  const referenceType = readTrimmedString(record.referenceType).toLowerCase()
+  const fallbackRoleName =
+    readTrimmedString(record.roleName) ||
+    (referenceType === 'character' ? readTrimmedString(record.characterName) : '')
   return {
-    roleName: binding?.label || null,
-    roleCardId: binding?.refId || null,
-    roleId: binding?.entityId || null,
-    sourceBookId: binding?.sourceBookId || null,
-    referenceView: binding?.referenceView || null,
+    roleName: binding?.label || fallbackRoleName || null,
+    roleCardId: binding?.refId || readTrimmedString(record.roleCardId) || null,
+    roleId: binding?.entityId || readTrimmedString(record.roleId) || null,
+    sourceBookId:
+      binding?.sourceBookId ||
+      readTrimmedString(record.sourceBookId) ||
+      readTrimmedString(record.bookId) ||
+      null,
+    referenceView: binding?.referenceView || normalizeReferenceView(record.referenceView),
   }
 }
 

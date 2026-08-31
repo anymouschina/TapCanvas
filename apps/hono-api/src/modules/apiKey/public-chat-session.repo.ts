@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { PrismaClient } from "../../types";
 import { execute, queryAll, queryOne } from "../../db/db";
 import { PUBLIC_CHAT_SESSION_KEY_MAX_LENGTH } from "./public-chat-session.constants";
@@ -55,6 +56,24 @@ export type PublicChatTurnRunRow = {
 
 let schemaEnsured = false;
 let schemaEnsurePromise: Promise<void> | null = null;
+
+export function buildPublicChatTurnEntityId(input: {
+	kind: "user_message" | "assistant_message" | "turn_run" | "reference_provenance" | "memory_rollup";
+	userId: string;
+	sessionKey: string;
+	turnId: string;
+}): string {
+	const userId = input.userId.trim();
+	const sessionKey = normalizePublicChatSessionKey(input.sessionKey);
+	const turnId = input.turnId.trim();
+	if (!userId || !sessionKey || !turnId) {
+		throw new Error(`public_chat_${input.kind}_identity_incomplete`);
+	}
+	const digest = createHash("sha256")
+		.update(JSON.stringify({ kind: input.kind, userId, sessionKey, turnId }))
+		.digest("hex");
+	return `public-chat-${input.kind}:${digest}`;
+}
 
 export async function ensurePublicChatSessionSchema(db: PrismaClient): Promise<void> {
 	if (schemaEnsured) return;
@@ -220,7 +239,15 @@ export async function findPublicChatSessionByKey(
 
 export async function listPublicChatSessionsByPrefix(
 	db: PrismaClient,
-	input: { userId: string; sessionKeyPrefix: string; limit?: number },
+	input: {
+		userId: string;
+		sessionKeyPrefix: string;
+		limit?: number;
+		// 可选：排除 session_key 含某子串的会话。用于把章节会话挡在项目/flow 级列表外——
+		// 裸前缀 `project:<pid>` 的 LIKE 会贪婪命中 `project:<pid>:chapter:<cid>:...`，
+		// 否则项目首页会混进各章节会话（数据隔离串台）。
+		excludeSessionKeyContains?: string;
+	},
 ): Promise<PublicChatSessionRow[]> {
 	await ensurePublicChatSessionSchema(db);
 	const userId = String(input.userId || "").trim();
@@ -229,6 +256,17 @@ export async function listPublicChatSessionsByPrefix(
 	const limit = Number.isFinite(input.limit)
 		? Math.max(1, Math.min(30, Math.trunc(Number(input.limit))))
 		: 10;
+	const exclude = String(input.excludeSessionKeyContains || "").trim();
+	if (exclude) {
+		return queryAll<PublicChatSessionRow>(
+			db,
+			`SELECT * FROM public_chat_sessions
+			 WHERE user_id = ? AND session_key LIKE ? AND session_key NOT LIKE ?
+			 ORDER BY updated_at DESC
+			 LIMIT ?`,
+			[userId, `${sessionKeyPrefix}%`, `%${exclude}%`, limit],
+		);
+	}
 	return queryAll<PublicChatSessionRow>(
 		db,
 		`SELECT * FROM public_chat_sessions
@@ -259,7 +297,8 @@ export async function appendPublicChatMessage(
 	await execute(
 		db,
 		`INSERT INTO public_chat_messages (id, user_id, session_id, role, content, assets_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+	   ON CONFLICT (id) DO NOTHING`,
 		[
 			input.id,
 			userId,
@@ -299,6 +338,35 @@ export async function listPublicChatMessages(
 		[userId, sessionId, limit],
 	);
 	return rows.reverse();
+}
+
+/**
+ * Replace the transcript projection for one canonical session while retaining
+ * the session identity and turn-run audit rows. The chat transcript is a
+ * projection, not the audit ledger; a reset must therefore remove only the
+ * messages that can be recalled as conversation context.
+ */
+export async function resetPublicChatSession(
+	db: PrismaClient,
+	input: { userId: string; sessionKey: string; nowIso?: string },
+): Promise<void> {
+	await ensurePublicChatSessionSchema(db);
+	const userId = String(input.userId || "").trim();
+	const sessionKey = normalizePublicChatSessionKey(input.sessionKey);
+	if (!userId || !sessionKey) return;
+	const session = await findPublicChatSessionByKey(db, { userId, sessionKey });
+	if (!session) return;
+	const nowIso = input.nowIso ?? new Date().toISOString();
+	await execute(
+		db,
+		`DELETE FROM public_chat_messages WHERE user_id = ? AND session_id = ?`,
+		[userId, session.id],
+	);
+	await execute(
+		db,
+		`UPDATE public_chat_sessions SET updated_at = ? WHERE user_id = ? AND id = ?`,
+		[nowIso, userId, session.id],
+	);
 }
 
 export async function appendPublicChatTurnRun(
@@ -349,7 +417,8 @@ export async function appendPublicChatTurnRun(
       turn_verdict_reasons_json, run_outcome, agent_decision_json,
       tool_status_summary_json, diagnostic_flags_json, canvas_plan_json,
       asset_count, canvas_write, run_ms, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT (id) DO NOTHING`,
 		[
 			input.id,
 			userId,
@@ -393,14 +462,15 @@ export async function listPublicChatTurnRuns(
 	const limit = Number.isFinite(input.limit)
 		? Math.max(1, Math.min(100, Math.trunc(Number(input.limit))))
 		: 24;
-	return queryAll<PublicChatTurnRunRow>(
+	const rows = await queryAll<PublicChatTurnRunRow>(
 		db,
 		`SELECT * FROM public_chat_turn_runs
      WHERE user_id = ? AND session_id = ?
-     ORDER BY created_at ASC
+     ORDER BY created_at DESC
      LIMIT ?`,
 		[userId, sessionId, limit],
 	);
+	return rows.reverse();
 }
 
 export async function listPublicChatTurnRunsByWorkflow(

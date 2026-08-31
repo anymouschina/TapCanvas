@@ -68,10 +68,10 @@ export const EDGE_TYPES = {
 export const COLORS = {
   // 类型颜色
   TYPE_COLORS: {
-    image: '#3B82F6',
+    image: '#7a8190',
     audio: '#10B981',
     subtitle: '#EAB308',
-    video: '#8B5CF6',
+    video: '#7c828e',
     text: '#6B7280',
     default: '#9CA3AF',
   },
@@ -81,24 +81,24 @@ export const COLORS = {
     success: '#10B981',
     error: '#EF4444',
     warning: '#F59E0B',
-    info: '#3B82F6',
-    running: '#8B5CF6',
+    info: '#7a8190',
+    running: '#7c828e',
     pending: '#6B7280',
   },
 
   // 边颜色（半透明版本）
   EDGE_COLORS: {
-    image: 'rgba(59,130,246,0.7)',
+    image: 'rgba(122,129,140,0.7)',
     audio: 'rgba(16,185,129,0.7)',
     subtitle: 'rgba(234,179,8,0.7)',
-    video: 'rgba(139,92,246,0.7)',
+    video: 'rgba(124,130,142,0.7)',
     default: 'rgba(156,163,175,0.7)',
   },
 
   // 节点边框颜色
   NODE_BORDER_COLORS: {
-    selected: '#3B82F6',
-    focused: '#8B5CF6',
+    selected: '#7a8190',
+    focused: '#7c828e',
     group: '#10B981',
     default: '#E5E7EB',
   },

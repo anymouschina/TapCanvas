@@ -1,8 +1,35 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
 import { useEffect, useMemo, useState } from 'react';
 import { API, showError, showSuccess } from '../../../../helpers';
+import {
+  parseCompletionRatioMetaMap,
+  parsePricingOptionMap,
+} from '../utils/pricingOptionMaps';
+import {
+  cnyPriceToRatio,
+  ratioToCnyPrice,
+} from '../../../../helpers/cnyPricingUnit';
 
 export const PAGE_SIZE = 10;
-export const PRICE_SUFFIX = '$/1M tokens';
+export const PRICE_SUFFIX = '¥/1M tokens';
 const EMPTY_CANDIDATE_MODEL_NAMES = [];
 
 const EMPTY_MODEL = {
@@ -64,25 +91,6 @@ const toNormalizedNumber = (value) => {
   return formatted === '' ? null : Number(formatted);
 };
 
-const parseOptionJSON = (rawValue) => {
-  if (!rawValue || rawValue.trim() === '') {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(rawValue);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (error) {
-    console.error('JSON解析错误:', error);
-    return {};
-  }
-};
-
-const ratioToBasePrice = (ratio) => {
-  const num = toNumberOrNull(ratio);
-  if (num === null) return '';
-  return formatNumber(num * 2);
-};
-
 const normalizeCompletionRatioMeta = (rawMeta) => {
   if (!rawMeta || typeof rawMeta !== 'object' || Array.isArray(rawMeta)) {
     return {
@@ -111,7 +119,7 @@ const buildModelState = (name, sourceMaps) => {
     sourceMaps.AudioCompletionRatio[name],
   );
   const fixedPrice = toNumericString(sourceMaps.ModelPrice[name]);
-  const inputPrice = ratioToBasePrice(modelRatio);
+  const inputPrice = ratioToCnyPrice(modelRatio);
   const inputPriceNumber = toNumberOrNull(inputPrice);
   const audioInputPrice =
     inputPriceNumber !== null && hasValue(audioRatio)
@@ -245,7 +253,7 @@ export const getModelWarnings = (model, t) => {
 
 export const buildSummaryText = (model, t) => {
   if (model.billingMode === 'per-request' && hasValue(model.fixedPrice)) {
-    return `${t('按次')} $${model.fixedPrice} / ${t('次')}`;
+    return `${t('按次')} ¥${model.fixedPrice} / ${t('次')}`;
   }
 
   if (hasValue(model.inputPrice)) {
@@ -259,7 +267,7 @@ export const buildSummaryText = (model, t) => {
     ].filter(hasValue).length;
     const extraLabel =
       extraCount > 0 ? `，${t('额外价格项')} ${extraCount}` : '';
-    return `${t('输入')} $${model.inputPrice}${extraLabel}`;
+    return `${t('输入')} ¥${model.inputPrice}${extraLabel}`;
   }
 
   return t('未设置价格');
@@ -353,7 +361,7 @@ const serializeModel = (model, t) => {
     return result;
   }
 
-  result.ModelRatio = toNormalizedNumber(inputPrice / 2);
+  result.ModelRatio = toNormalizedNumber(cnyPriceToRatio(inputPrice));
 
   if (!model.completionRatioLocked && completionPrice !== null) {
     result.CompletionRatio = toNormalizedNumber(completionPrice / inputPrice);
@@ -472,7 +480,7 @@ export const buildPreviewRows = (model, t) => {
     {
       key: 'ModelRatio',
       label: 'ModelRatio',
-      value: formatNumber(inputPrice / 2),
+      value: cnyPriceToRatio(inputPrice),
     },
     {
       key: 'CompletionRatio',
@@ -538,21 +546,45 @@ export function useModelPricingEditorState({
   const [searchText, setSearchText] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [pricingLoadError, setPricingLoadError] = useState('');
   const [conflictOnly, setConflictOnly] = useState(false);
   const [optionalFieldToggles, setOptionalFieldToggles] = useState({});
 
   useEffect(() => {
-    const sourceMaps = {
-      ModelPrice: parseOptionJSON(options.ModelPrice),
-      ModelRatio: parseOptionJSON(options.ModelRatio),
-      CompletionRatio: parseOptionJSON(options.CompletionRatio),
-      CompletionRatioMeta: parseOptionJSON(options.CompletionRatioMeta),
-      CacheRatio: parseOptionJSON(options.CacheRatio),
-      CreateCacheRatio: parseOptionJSON(options.CreateCacheRatio),
-      ImageRatio: parseOptionJSON(options.ImageRatio),
-      AudioRatio: parseOptionJSON(options.AudioRatio),
-      AudioCompletionRatio: parseOptionJSON(options.AudioCompletionRatio),
-    };
+    let sourceMaps;
+    try {
+      sourceMaps = {
+        ModelPrice: parsePricingOptionMap('ModelPrice', options.ModelPrice),
+        ModelRatio: parsePricingOptionMap('ModelRatio', options.ModelRatio),
+        CompletionRatio: parsePricingOptionMap(
+          'CompletionRatio',
+          options.CompletionRatio,
+        ),
+        CompletionRatioMeta: parseCompletionRatioMetaMap(
+          options.CompletionRatioMeta,
+        ),
+        CacheRatio: parsePricingOptionMap('CacheRatio', options.CacheRatio),
+        CreateCacheRatio: parsePricingOptionMap(
+          'CreateCacheRatio',
+          options.CreateCacheRatio,
+        ),
+        ImageRatio: parsePricingOptionMap('ImageRatio', options.ImageRatio),
+        AudioRatio: parsePricingOptionMap('AudioRatio', options.AudioRatio),
+        AudioCompletionRatio: parsePricingOptionMap(
+          'AudioCompletionRatio',
+          options.AudioCompletionRatio,
+        ),
+      };
+      setPricingLoadError('');
+    } catch (error) {
+      setPricingLoadError(error.message);
+      setModels([]);
+      setInitialVisibleModelNames([]);
+      setSelectedModelName('');
+      setSelectedModelNames([]);
+      setOptionalFieldToggles({});
+      return;
+    }
 
     const names = new Set([
       ...candidateModelNames,
@@ -902,6 +934,10 @@ export function useModelPricingEditorState({
   };
 
   const handleSubmit = async () => {
+    if (pricingLoadError) {
+      showError(`${t('定价配置无法加载')}: ${pricingLoadError}`);
+      return;
+    }
     setLoading(true);
     try {
       const output = {
@@ -924,18 +960,11 @@ export function useModelPricingEditorState({
         });
       }
 
-      const requestQueue = Object.entries(output).map(([key, value]) =>
-        API.put('/api/option/', {
-          key,
-          value: JSON.stringify(value, null, 2),
-        }),
-      );
-
-      const results = await Promise.all(requestQueue);
-      for (const res of results) {
-        if (!res?.data?.success) {
-          throw new Error(res?.data?.message || t('保存失败，请重试'));
-        }
+      const response = await API.put('/api/models/pricing', {
+        options: output,
+      });
+      if (!response?.data?.success) {
+        throw new Error(response?.data?.message || t('保存失败，请重试'));
       }
 
       showSuccess(t('保存成功'));
@@ -960,6 +989,7 @@ export function useModelPricingEditorState({
     currentPage,
     setCurrentPage,
     loading,
+    pricingLoadError,
     conflictOnly,
     setConflictOnly,
     filteredModels,

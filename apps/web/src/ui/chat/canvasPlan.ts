@@ -3,7 +3,6 @@ import { getProjectBookIndex, type ProjectBookIndexDto } from '../../api/server'
 import { CanvasService } from '../../ai/canvasService'
 import { useRFStore } from '../../canvas/store'
 import { buildTopLevelGroupReflowPositions } from '../../canvas/utils/reflowLayout'
-import { getNodeAbsPosition, getNodeSize } from '../../canvas/utils/nodeBounds'
 import {
   getNodeProductionMeta,
   normalizeProductionLayer,
@@ -304,8 +303,8 @@ type PlanInsertionScope = {
 
 const PLAN_NODE_WIDTH = 420
 const PLAN_NODE_HEIGHT = 240
-const PLAN_GAP_X = 56
-const PLAN_GAP_Y = 40
+const PLAN_GAP_X = 32
+const PLAN_GAP_Y = 32
 const PLAN_MIN_DISTANCE_X = 220
 const PLAN_MIN_DISTANCE_Y = 140
 
@@ -454,65 +453,8 @@ function resolveBatchPlanAnchor(plan: ChatCanvasPlan): PlanPosition {
   return { x: baseX + 480, y: baseY }
 }
 
-function getParentId(node: Node | undefined): string | null {
-  if (!node) return null
-  const raw = typeof node.parentId === 'string' ? node.parentId.trim() : ''
-  return raw || null
-}
-
-function resolveFocusedInsertionScope(): PlanInsertionScope | null {
-  const focusedNodeId = useUIStore.getState().focusedNodeId
-  if (!focusedNodeId) return null
-  const nodes = useRFStore.getState().nodes
-  const focusedNode = nodes.find((node) => node.id === focusedNodeId)
-  if (!focusedNode) return null
-
-  const nodesById = new Map(nodes.map((node) => [node.id, node] as const))
-  const focusedGroup =
-    focusedNode.type === 'groupNode'
-      ? focusedNode
-      : (() => {
-          const parentId = getParentId(focusedNode)
-          return parentId ? nodes.find((node) => node.id === parentId && node.type === 'groupNode') ?? null : null
-        })()
-
-  if (focusedGroup) {
-    const parentId = focusedGroup.id
-    const siblingNodes = nodes.filter((node) => getParentId(node) === parentId)
-    if (!siblingNodes.length) {
-      return {
-        parentId,
-        anchor: { x: 24, y: 24 },
-        existingNodes: siblingNodes,
-      }
-    }
-
-    const maxBottom = siblingNodes.reduce((acc, node) => {
-      const positionY = Number(node.position?.y ?? 0)
-      const size = getNodeSize(node)
-      return Math.max(acc, positionY + size.h)
-    }, 24)
-    return {
-      parentId,
-      anchor: { x: 24, y: maxBottom + 40 },
-      existingNodes: siblingNodes,
-    }
-  }
-
-  const focusedAbsPosition = getNodeAbsPosition(focusedNode, nodesById)
-  const focusedSize = getNodeSize(focusedNode)
-  return {
-    parentId: null,
-    anchor: {
-      x: focusedAbsPosition.x + focusedSize.w + 96,
-      y: focusedAbsPosition.y,
-    },
-    existingNodes: nodes,
-  }
-}
-
 function resolvePlanInsertionScope(plan: ChatCanvasPlan): PlanInsertionScope {
-  return resolveFocusedInsertionScope() ?? {
+  return {
     parentId: null,
     anchor: resolveBatchPlanAnchor(plan),
     existingNodes: useRFStore.getState().nodes,
@@ -539,20 +481,15 @@ function hasDenseOrMissingPlanPositions(plan: ChatCanvasPlan): boolean {
 }
 
 function applyGridPlanLayout(plan: ChatCanvasPlan, anchor: PlanPosition): ChatCanvasPlan {
-  const cols = Math.max(2, Math.ceil(Math.sqrt(plan.nodes.length)))
   return {
     ...plan,
-    nodes: plan.nodes.map((node, index) => {
-      const col = index % cols
-      const row = Math.floor(index / cols)
-      return {
-        ...node,
-        position: {
-          x: anchor.x + col * (PLAN_NODE_WIDTH + PLAN_GAP_X),
-          y: anchor.y + row * (PLAN_NODE_HEIGHT + PLAN_GAP_Y),
-        },
-      }
-    }),
+    nodes: plan.nodes.map((node, index) => ({
+      ...node,
+      position: {
+        x: anchor.x + index * (PLAN_NODE_WIDTH + PLAN_GAP_X),
+        y: anchor.y,
+      },
+    })),
   }
 }
 

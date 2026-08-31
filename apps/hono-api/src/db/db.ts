@@ -1,5 +1,7 @@
 import type { PrismaClient } from "../types";
 
+export type SqlClient = Pick<PrismaClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
+
 export type DbClient = {
 	db: PrismaClient;
 };
@@ -103,6 +105,10 @@ function normalizeBigIntValue(value: unknown): unknown {
 	if (typeof value === "bigint") return Number(value);
 	if (Array.isArray(value)) return value.map((item) => normalizeBigIntValue(item));
 	if (value && typeof value === "object") {
+		if ("toNumber" in value && typeof value.toNumber === "function") {
+			const numeric = value.toNumber();
+			if (Number.isFinite(numeric)) return numeric;
+		}
 		const out: Record<string, unknown> = {};
 		for (const [key, v] of Object.entries(value)) {
 			out[key] = normalizeBigIntValue(v);
@@ -127,7 +133,7 @@ function parsePragmaTableName(sql: string): string {
 }
 
 export async function queryAll<T = unknown>(
-	db: PrismaClient,
+	db: SqlClient,
 	sql: string,
 	bindings: unknown[] = [],
 ): Promise<T[]> {
@@ -164,7 +170,7 @@ export async function queryAll<T = unknown>(
 }
 
 export async function queryOne<T = unknown>(
-	db: PrismaClient,
+	db: SqlClient,
 	sql: string,
 	bindings: unknown[] = [],
 ): Promise<T | null> {
@@ -173,7 +179,7 @@ export async function queryOne<T = unknown>(
 }
 
 export async function execute(
-	db: PrismaClient,
+	db: SqlClient,
 	sql: string,
 	bindings: unknown[] = [],
 ): Promise<void> {
@@ -181,7 +187,7 @@ export async function execute(
 }
 
 export async function executeWithChanges(
-	db: PrismaClient,
+	db: SqlClient,
 	sql: string,
 	bindings: unknown[] = [],
 ): Promise<number> {

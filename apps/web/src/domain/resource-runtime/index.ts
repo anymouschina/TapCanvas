@@ -1,6 +1,8 @@
 export { useImageResource } from './hooks/useImageResource'
 export { ManagedImage } from './components/ManagedImage'
 export { resourceManager } from './services/resourceManager'
+export { useResourceRuntimeStore } from './store/resourceRuntimeStore'
+export { buildImageDeliveryUrl } from './services/imageUrlTransform'
 export {
   ensureNodePreviewReady,
   invalidateResource,

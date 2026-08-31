@@ -2,7 +2,10 @@ package dto
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -29,11 +32,47 @@ type ImageRequest struct {
 	// Stream            bool            `json:"stream,omitempty"`
 	Watermark *bool `json:"watermark,omitempty"`
 	// zhipu 4v
-	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
-	UserId           json.RawMessage `json:"user_id,omitempty"`
-	Image            json.RawMessage `json:"image,omitempty"`
+	WatermarkEnabled json.RawMessage     `json:"watermark_enabled,omitempty"`
+	UserId           json.RawMessage     `json:"user_id,omitempty"`
+	Image            json.RawMessage     `json:"image,omitempty"`
+	Images           []ImageURLReference `json:"images,omitempty"`
+	Mask             *ImageURLReference  `json:"mask,omitempty"`
 	// 用匿名参数接收额外参数
 	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// ImageURLReference is the JSON image reference shape accepted by the G-AISC
+// image edit endpoint. It is deliberately typed so the gateway preserves the
+// images[].image_url and mask.image_url contract without semantic guessing.
+type ImageURLReference struct {
+	ImageURL string `json:"image_url"`
+}
+
+// UnmarshalJSON accepts both the canonical G-AISC object shape and the legacy
+// string-array shape used by existing callers. MarshalJSON remains canonical:
+// every reference is emitted as {"image_url":"..."}.
+func (reference *ImageURLReference) UnmarshalJSON(data []byte) error {
+	var imageURL string
+	if err := common.Unmarshal(data, &imageURL); err == nil {
+		imageURL = strings.TrimSpace(imageURL)
+		if imageURL == "" {
+			return errors.New("image URL must not be empty")
+		}
+		reference.ImageURL = imageURL
+		return nil
+	}
+
+	type imageURLReferenceAlias ImageURLReference
+	var object imageURLReferenceAlias
+	if err := common.Unmarshal(data, &object); err != nil {
+		return err
+	}
+	object.ImageURL = strings.TrimSpace(object.ImageURL)
+	if object.ImageURL == "" {
+		return errors.New("image_url must not be empty")
+	}
+	*reference = ImageURLReference(object)
+	return nil
 }
 
 func (i *ImageRequest) UnmarshalJSON(data []byte) error {
@@ -193,6 +232,209 @@ func (i *ImageRequest) GetTokenCountMeta() *types.TokenCountMeta {
 		CombineText:     i.Prompt,
 		MaxTokens:       1584,
 		ImagePriceRatio: sizeRatio * qualityRatio,
+	}
+}
+
+// ValidateGptImage2Size validates the official GPT Image 2 pixel-dimension
+// contract, while also accepting the frontend's ratio contract. Ratios are
+// normalized to pixel dimensions by NormalizeGptImage2Size before the request
+// is sent upstream.
+func ValidateGptImage2Size(size string) error {
+	size = strings.TrimSpace(size)
+	if size == "" || strings.EqualFold(size, "auto") {
+		return nil
+	}
+	if strings.Contains(size, ":") {
+		parts := strings.Split(size, ":")
+		if len(parts) != 2 {
+			return fmt.Errorf("gpt-image-2 aspect ratio must be WIDTH:HEIGHT, got %q", size)
+		}
+		width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+		height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+			return fmt.Errorf("gpt-image-2 aspect ratio must use positive integers, got %q", size)
+		}
+		longEdge, shortEdge := width, height
+		if shortEdge > longEdge {
+			longEdge, shortEdge = shortEdge, longEdge
+		}
+		if longEdge > shortEdge*3 {
+			return fmt.Errorf("gpt-image-2 aspect ratio must not exceed 3:1, got %q", size)
+		}
+		return nil
+	}
+
+	dimensions := strings.Split(size, "x")
+	if len(dimensions) != 2 {
+		return fmt.Errorf("gpt-image-2 size must be auto or WIDTHxHEIGHT, got %q", size)
+	}
+	width, err := strconv.Atoi(dimensions[0])
+	if err != nil {
+		return fmt.Errorf("gpt-image-2 size width is invalid: %q", dimensions[0])
+	}
+	height, err := strconv.Atoi(dimensions[1])
+	if err != nil {
+		return fmt.Errorf("gpt-image-2 size height is invalid: %q", dimensions[1])
+	}
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("gpt-image-2 size dimensions must be positive, got %q", size)
+	}
+	if width%16 != 0 || height%16 != 0 {
+		return fmt.Errorf("gpt-image-2 size dimensions must be multiples of 16, got %q", size)
+	}
+	if width > 3840 || height > 3840 {
+		return fmt.Errorf("gpt-image-2 size dimensions must not exceed 3840px on either edge, got %q", size)
+	}
+	pixels := width * height
+	if pixels < 655360 || pixels > 8294400 {
+		return fmt.Errorf("gpt-image-2 size must contain 655360 to 8294400 pixels, got %q", size)
+	}
+	longEdge, shortEdge := width, height
+	if shortEdge > longEdge {
+		longEdge, shortEdge = shortEdge, longEdge
+	}
+	if longEdge > shortEdge*3 {
+		return fmt.Errorf("gpt-image-2 size aspect ratio must not exceed 3:1, got %q", size)
+	}
+	return nil
+}
+
+type gptImage2SizeKey struct {
+	AspectRatio string
+	Tier        string
+}
+
+// gptImage2SizePresets are valid OpenAI pixel dimensions selected for the
+// frontend's ratio + resolution controls. The upstream API accepts any size
+// satisfying its constraints; these presets keep the UI semantic (ratio and
+// 1K/2K/4K) while ensuring the wire request is always pixel-based.
+var gptImage2SizePresets = map[gptImage2SizeKey]string{
+	{AspectRatio: "1:1", Tier: "1K"}:  "1024x1024",
+	{AspectRatio: "16:9", Tier: "1K"}: "1536x864",
+	{AspectRatio: "9:16", Tier: "1K"}: "864x1536",
+	{AspectRatio: "4:3", Tier: "1K"}:  "1152x864",
+	{AspectRatio: "3:4", Tier: "1K"}:  "864x1152",
+	{AspectRatio: "3:2", Tier: "1K"}:  "1536x1024",
+	{AspectRatio: "2:3", Tier: "1K"}:  "1024x1536",
+	{AspectRatio: "5:4", Tier: "1K"}:  "1280x1024",
+	{AspectRatio: "4:5", Tier: "1K"}:  "1024x1280",
+	{AspectRatio: "21:9", Tier: "1K"}: "1344x576",
+	{AspectRatio: "1:1", Tier: "2K"}:  "2048x2048",
+	{AspectRatio: "16:9", Tier: "2K"}: "2048x1152",
+	{AspectRatio: "9:16", Tier: "2K"}: "1152x2048",
+	{AspectRatio: "4:3", Tier: "2K"}:  "2048x1536",
+	{AspectRatio: "3:4", Tier: "2K"}:  "1536x2048",
+	{AspectRatio: "3:2", Tier: "2K"}:  "2304x1536",
+	{AspectRatio: "2:3", Tier: "2K"}:  "1536x2304",
+	{AspectRatio: "5:4", Tier: "2K"}:  "2560x2048",
+	{AspectRatio: "4:5", Tier: "2K"}:  "2048x2560",
+	{AspectRatio: "21:9", Tier: "2K"}: "2688x1152",
+	{AspectRatio: "1:1", Tier: "4K"}:  "2880x2880",
+	{AspectRatio: "16:9", Tier: "4K"}: "3840x2160",
+	{AspectRatio: "9:16", Tier: "4K"}: "2160x3840",
+	{AspectRatio: "4:3", Tier: "4K"}:  "3264x2448",
+	{AspectRatio: "3:4", Tier: "4K"}:  "2448x3264",
+	{AspectRatio: "3:2", Tier: "4K"}:  "3456x2304",
+	{AspectRatio: "2:3", Tier: "4K"}:  "2304x3456",
+	{AspectRatio: "5:4", Tier: "4K"}:  "3200x2560",
+	{AspectRatio: "4:5", Tier: "4K"}:  "2560x3200",
+	{AspectRatio: "21:9", Tier: "4K"}: "3696x1584",
+}
+
+// NormalizeGptImage2Size converts the internal frontend ratio + resolution
+// contract into an official pixel size. Explicit WIDTHxHEIGHT and auto are
+// preserved after validation. The resolution tier is read from the existing
+// imageSize/resolution aliases and defaults to 1K when omitted.
+func NormalizeGptImage2Size(request ImageRequest) (ImageRequest, error) {
+	size := strings.TrimSpace(request.Size)
+	if err := ValidateGptImage2Size(size); err != nil {
+		return request, err
+	}
+	if size == "" || strings.EqualFold(size, "auto") || !strings.Contains(size, ":") {
+		return request, nil
+	}
+
+	tier := gptImage2ResolutionTier(request)
+	resolved, ok := gptImage2SizePresets[gptImage2SizeKey{
+		AspectRatio: strings.ToLower(size),
+		Tier:        tier,
+	}]
+	if !ok {
+		return request, fmt.Errorf("gpt-image-2 aspect ratio %q is not supported by the frontend size contract", size)
+	}
+	request.Size = resolved
+	return request, nil
+}
+
+// CanonicalizeGptImage2SizeAliases maps legacy ratio fields into the canonical
+// size field. It is intentionally separate from NormalizeGptImage2Size so
+// channel-specific adaptors can opt in without changing working providers that
+// assign their own semantics to aspect_ratio.
+func CanonicalizeGptImage2SizeAliases(request ImageRequest) ImageRequest {
+	if strings.TrimSpace(request.Size) != "" {
+		return request
+	}
+	for _, key := range []string{"aspect_ratio", "aspectRatio"} {
+		if aspectRatio := stringExtraValue(request.Extra[key]); aspectRatio != "" {
+			request.Size = aspectRatio
+			return request
+		}
+	}
+	if raw := request.Extra["metadata"]; len(raw) > 0 {
+		var metadata map[string]json.RawMessage
+		if err := common.Unmarshal(raw, &metadata); err == nil {
+			for _, key := range []string{"aspect_ratio", "aspectRatio"} {
+				if aspectRatio := stringExtraValue(metadata[key]); aspectRatio != "" {
+					request.Size = aspectRatio
+					return request
+				}
+			}
+		}
+	}
+	return request
+}
+
+func gptImage2ResolutionTier(request ImageRequest) string {
+	for _, key := range []string{"resolution", "imageSize", "image_size"} {
+		if tier := stringExtraValue(request.Extra[key]); tier != "" {
+			return normalizeGptImage2ResolutionTier(tier)
+		}
+	}
+	if raw := request.Extra["metadata"]; len(raw) > 0 {
+		var metadata map[string]json.RawMessage
+		if err := common.Unmarshal(raw, &metadata); err == nil {
+			for _, key := range []string{"resolution", "imageSize", "image_size"} {
+				if tier := stringExtraValue(metadata[key]); tier != "" {
+					return normalizeGptImage2ResolutionTier(tier)
+				}
+			}
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(request.Quality), "high") || strings.EqualFold(strings.TrimSpace(request.Quality), "hd") {
+		return "2K"
+	}
+	return "1K"
+}
+
+func stringExtraValue(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func normalizeGptImage2ResolutionTier(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "2K":
+		return "2K"
+	case "4K":
+		return "4K"
+	default:
+		return "1K"
 	}
 }
 

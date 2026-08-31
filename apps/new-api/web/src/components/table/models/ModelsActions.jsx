@@ -34,6 +34,8 @@ const ModelsActions = ({
   setEditingModel,
   setShowEdit,
   batchDeleteModels,
+  batchUpdateModelStatus,
+  batchStatusUpdating,
   syncing,
   previewing,
   syncUpstream,
@@ -53,6 +55,7 @@ const ModelsActions = ({
   const [conflicts, setConflicts] = useState([]);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncLocale, setSyncLocale] = useState('zh');
+  const [pendingBatchStatus, setPendingBatchStatus] = useState(null);
 
   const handleSyncUpstream = async (locale) => {
     // 先预览
@@ -81,6 +84,12 @@ const ModelsActions = ({
   // Handle clear selection
   const handleClearSelected = () => {
     setSelectedKeys([]);
+  };
+
+  const handleConfirmBatchStatus = async () => {
+    if (pendingBatchStatus === null) return;
+    const success = await batchUpdateModelStatus?.(pendingBatchStatus);
+    if (success) setPendingBatchStatus(null);
   };
 
   // Handle add selected models to prefill group
@@ -186,7 +195,32 @@ const ModelsActions = ({
         onAddPrefill={handleAddToPrefill}
         onClear={handleClearSelected}
         onCopy={handleCopyNames}
+        onEnable={() => setPendingBatchStatus(1)}
+        onDisable={() => setPendingBatchStatus(0)}
+        statusUpdating={batchStatusUpdating}
       />
+
+      <Modal
+        title={pendingBatchStatus === 1 ? t('批量启用模型') : t('批量禁用模型')}
+        visible={pendingBatchStatus !== null}
+        onCancel={() => setPendingBatchStatus(null)}
+        onOk={handleConfirmBatchStatus}
+        confirmLoading={batchStatusUpdating}
+        type={pendingBatchStatus === 1 ? 'info' : 'warning'}
+      >
+        <div>
+          {pendingBatchStatus === 1
+            ? t('确定要启用所选的 {{count}} 个模型吗？', {
+                count: selectedKeys.length,
+              })
+            : t(
+                '确定要禁用所选的 {{count}} 个模型吗？禁用后将阻止这些模型被调用。',
+                {
+                  count: selectedKeys.length,
+                },
+              )}
+        </div>
+      </Modal>
 
       <Modal
         title={t('批量删除模型')}

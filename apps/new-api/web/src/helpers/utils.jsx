@@ -27,6 +27,11 @@ import {
 } from '../constants/playground.constants';
 import { TABLE_COMPACT_MODES_KEY } from '../constants';
 import { MOBILE_BREAKPOINT } from '../hooks/common/useIsMobile';
+import {
+  formatCnyRange,
+  getPriceRange,
+  toPositiveNumber,
+} from './pricingDisplay';
 
 const HTMLToastContent = ({ htmlContent }) => {
   return <div dangerouslySetInnerHTML={{ __html: htmlContent }} />;
@@ -53,9 +58,7 @@ export function getSystemName() {
 }
 
 export function getLogo() {
-  let logo = localStorage.getItem('logo');
-  if (!logo) return '/logo.png';
-  return logo;
+  return '/logo.png';
 }
 
 export function getUserIdFromLocalStorage() {
@@ -615,7 +618,7 @@ export const calculateModelPrice = ({
   tokenUnit,
   displayPrice,
   currency,
-  quotaDisplayType = 'USD',
+  quotaDisplayType = 'CNY',
   precision = 4,
 }) => {
   // 1. 选择实际使用的分组
@@ -649,7 +652,7 @@ export const calculateModelPrice = ({
   if (record.quota_type === 0) {
     // 按量计费
     const isTokensDisplay = quotaDisplayType === 'TOKENS';
-    const inputRatioPriceUSD = record.model_ratio * 2 * usedGroupRatio;
+    const inputRatioPriceCNY = record.model_ratio * 2 * usedGroupRatio;
     const unitDivisor = tokenUnit === 'K' ? 1000 : 1;
     const unitLabel = tokenUnit === 'K' ? 'K' : 'M';
     const hasRatioValue = (value) =>
@@ -677,7 +680,7 @@ export const calculateModelPrice = ({
       };
     }
 
-    let symbol = '$';
+    let symbol = '¥';
     if (currency === 'CNY') {
       symbol = '¥';
     } else if (currency === 'CUSTOM') {
@@ -694,37 +697,39 @@ export const calculateModelPrice = ({
       }
     }
 
-    const formatTokenPrice = (priceUSD) => {
-      const rawDisplayPrice = displayPrice(priceUSD);
+    const formatTokenPrice = (priceCNY) => {
+      const rawDisplayPrice = displayPrice(priceCNY);
       const numericPrice =
         parseFloat(rawDisplayPrice.replace(/[^0-9.]/g, '')) / unitDivisor;
       return `${symbol}${numericPrice.toFixed(precision)}`;
     };
 
-    const inputPrice = formatTokenPrice(inputRatioPriceUSD);
+    const inputPrice = formatTokenPrice(inputRatioPriceCNY);
     const audioInputPrice = hasRatioValue(record.audio_ratio)
-      ? formatTokenPrice(inputRatioPriceUSD * Number(record.audio_ratio))
+      ? formatTokenPrice(inputRatioPriceCNY * Number(record.audio_ratio))
       : null;
 
     return {
       inputPrice,
       completionPrice: formatTokenPrice(
-        inputRatioPriceUSD * Number(record.completion_ratio),
+        inputRatioPriceCNY * Number(record.completion_ratio),
       ),
       cachePrice: hasRatioValue(record.cache_ratio)
-        ? formatTokenPrice(inputRatioPriceUSD * Number(record.cache_ratio))
+        ? formatTokenPrice(inputRatioPriceCNY * Number(record.cache_ratio))
         : null,
       createCachePrice: hasRatioValue(record.create_cache_ratio)
-        ? formatTokenPrice(inputRatioPriceUSD * Number(record.create_cache_ratio))
+        ? formatTokenPrice(
+            inputRatioPriceCNY * Number(record.create_cache_ratio),
+          )
         : null,
       imagePrice: hasRatioValue(record.image_ratio)
-        ? formatTokenPrice(inputRatioPriceUSD * Number(record.image_ratio))
+        ? formatTokenPrice(inputRatioPriceCNY * Number(record.image_ratio))
         : null,
       audioInputPrice,
       audioOutputPrice:
         audioInputPrice && hasRatioValue(record.audio_completion_ratio)
           ? formatTokenPrice(
-              inputRatioPriceUSD *
+              inputRatioPriceCNY *
                 Number(record.audio_ratio) *
                 Number(record.audio_completion_ratio),
             )
@@ -740,17 +745,22 @@ export const calculateModelPrice = ({
   if (record.quota_type === 1) {
     // 视频：linear_by_duration_and_resolution — 展示各分辨率的按秒单价
     const pp = record.param_pricing;
-    if (pp?.billing_mode === 'linear_by_duration_and_resolution' && Array.isArray(pp.results)) {
-      // 按分辨率分组，取第一条记录计算 CNY/秒
+    if (
+      pp?.billing_mode === 'linear_by_duration_and_resolution' &&
+      Array.isArray(pp.results)
+    ) {
+      // 按分辨率分组，取第一条记录计算 CNY/秒；规格价格已是人民币基价，
+      // 仍需乘以当前分组倍率，确保模型广场展示用户实际使用价格。
       const seen = new Set();
       const perSecondRates = [];
       for (const r of pp.results) {
         const res = r.resolution || '';
         if (seen.has(res)) continue;
         seen.add(res);
-        const dur = r.duration_seconds || 0;
-        if (!dur) continue;
-        const cnyPerSec = r.price_cny / dur;
+        const dur = toPositiveNumber(r.duration_seconds);
+        const priceCNY = toPositiveNumber(r.price_cny);
+        if (dur === null || dur === 0 || priceCNY === null) continue;
+        const cnyPerSec = (priceCNY / dur) * usedGroupRatio;
         perSecondRates.push({ resolution: res, cnyPerSec });
       }
       return {
@@ -758,6 +768,9 @@ export const calculateModelPrice = ({
         billingMode: pp.billing_mode,
         currency: pp.currency || 'CNY',
         perSecondRates,
+        priceRange: getPriceRange(
+          perSecondRates.map(({ cnyPerSec }) => cnyPerSec),
+        ),
         isPerToken: false,
         isTokensDisplay: false,
         usedGroup,
@@ -765,18 +778,31 @@ export const calculateModelPrice = ({
       };
     }
 
-    // 图片：fixed_by_image_spec — 展示各规格固定价（CNY，来自 param_pricing.results）
-    if (pp?.billing_mode === 'fixed_by_image_spec' && Array.isArray(pp.results)) {
-      const specPrices = pp.results.map((r) => ({
-        specKey: r.spec_key || '',
-        cny: r.price_cny,
-        display: r.price_display_cny || `¥${r.price_cny?.toFixed(3)}`,
-      }));
+    // 固定规格模型（图片/视频）：展示各规格固定价（CNY，来自 param_pricing.results）。
+    // fixed_by_spec 是视频和部分新模型的统一协议，不能再落入 model_price 最低价兜底。
+    if (
+      (pp?.billing_mode === 'fixed_by_image_spec' ||
+        pp?.billing_mode === 'fixed_by_spec') &&
+      Array.isArray(pp.results)
+    ) {
+      const specPrices = pp.results
+        .map((r) => {
+          const cny = toPositiveNumber(r.price_cny);
+          if (cny === null) return null;
+          const effectiveCny = cny * usedGroupRatio;
+          return {
+            specKey: r.spec_key || '',
+            cny: effectiveCny,
+            display: `¥${effectiveCny.toFixed(4)}`,
+          };
+        })
+        .filter((specPrice) => specPrice !== null);
       return {
         isParamPricing: true,
         billingMode: pp.billing_mode,
         currency: pp.currency || 'CNY',
         specPrices,
+        priceRange: getPriceRange(specPrices.map(({ cny }) => cny)),
         isPerToken: false,
         isTokensDisplay: false,
         usedGroup,
@@ -785,8 +811,8 @@ export const calculateModelPrice = ({
     }
 
     // 普通按次计费
-    const priceUSD = parseFloat(record.model_price) * usedGroupRatio;
-    const displayVal = displayPrice(priceUSD);
+    const priceCNY = parseFloat(record.model_price) * usedGroupRatio;
+    const displayVal = displayPrice(priceCNY);
 
     return {
       price: displayVal,
@@ -807,29 +833,56 @@ export const calculateModelPrice = ({
   };
 };
 
-export const getModelPriceItems = (
-  priceData,
-  t,
-  quotaDisplayType = 'USD',
-) => {
+export const getModelPriceItems = (priceData, t, quotaDisplayType = 'CNY') => {
   // param_pricing 视频：各分辨率按秒单价
-  if (priceData.isParamPricing && priceData.billingMode === 'linear_by_duration_and_resolution') {
-    return (priceData.perSecondRates || []).map((r, i) => ({
+  if (
+    priceData.isParamPricing &&
+    priceData.billingMode === 'linear_by_duration_and_resolution'
+  ) {
+    const detailItems = (priceData.perSecondRates || []).map((r, i) => ({
       key: `pps-${i}`,
       label: r.resolution,
       value: `¥${r.cnyPerSec.toFixed(4)}`,
       suffix: ` / ${t('秒')}`,
     }));
+    const rangeValue = formatCnyRange(priceData.priceRange);
+    return rangeValue
+      ? [
+          {
+            key: 'price-range',
+            label: t('模型价格'),
+            value: rangeValue,
+            suffix: ` / ${t('秒')}`,
+          },
+          ...detailItems,
+        ]
+      : detailItems;
   }
 
-  // param_pricing 图片：各规格固定价
-  if (priceData.isParamPricing && priceData.billingMode === 'fixed_by_image_spec') {
-    return (priceData.specPrices || []).map((s, i) => ({
+  // param_pricing 固定规格：各规格固定价
+  if (
+    priceData.isParamPricing &&
+    (priceData.billingMode === 'fixed_by_image_spec' ||
+      priceData.billingMode === 'fixed_by_spec')
+  ) {
+    const detailItems = (priceData.specPrices || []).map((s, i) => ({
       key: `spec-${i}`,
       label: s.specKey,
       value: s.display,
       suffix: ` / ${t('次')}`,
     }));
+    const rangeValue = formatCnyRange(priceData.priceRange);
+    return rangeValue
+      ? [
+          {
+            key: 'price-range',
+            label: t('模型价格'),
+            value: rangeValue,
+            suffix: ` / ${t('次')}`,
+          },
+          ...detailItems,
+        ]
+      : detailItems;
   }
 
   if (priceData.isPerToken) {
@@ -927,7 +980,10 @@ export const getModelPriceItems = (
         value: priceData.audioOutputPrice,
         suffix: unitSuffix,
       },
-    ].filter((item) => item.value !== null && item.value !== undefined && item.value !== '');
+    ].filter(
+      (item) =>
+        item.value !== null && item.value !== undefined && item.value !== '',
+    );
   }
 
   return [
@@ -937,16 +993,23 @@ export const getModelPriceItems = (
       value: priceData.price,
       suffix: ` / ${t('次')}`,
     },
-  ].filter((item) => item.value !== null && item.value !== undefined && item.value !== '');
+  ].filter(
+    (item) =>
+      item.value !== null && item.value !== undefined && item.value !== '',
+  );
 };
 
 // 格式化价格信息（用于卡片视图）
-export const formatPriceInfo = (priceData, t, quotaDisplayType = 'USD') => {
+export const formatPriceInfo = (priceData, t, quotaDisplayType = 'CNY') => {
   const allItems = getModelPriceItems(priceData, t, quotaDisplayType);
+  const isParamPricing = priceData.isParamPricing === true;
+  const cardItems = isParamPricing ? allItems.slice(0, 1) : allItems;
   // 卡片视图最多展示 3 条，多余的用 +N 提示
   const MAX_CARD_ITEMS = 3;
-  const items = allItems.slice(0, MAX_CARD_ITEMS);
-  const overflow = allItems.length - items.length;
+  const items = cardItems.slice(0, MAX_CARD_ITEMS);
+  const overflow = isParamPricing
+    ? Math.max(allItems.length - 1, 0)
+    : allItems.length - items.length;
   return (
     <>
       {items.map((item) => (
@@ -1016,8 +1079,7 @@ export const createCardProPagination = ({
 // 模型定价筛选条件默认值
 const DEFAULT_PRICING_FILTERS = {
   search: '',
-  showWithRecharge: false,
-  currency: 'USD',
+  currency: 'CNY',
   showRatio: false,
   viewMode: 'card',
   tokenUnit: 'M',
@@ -1033,7 +1095,6 @@ const DEFAULT_PRICING_FILTERS = {
 // 重置模型定价筛选条件
 export const resetPricingFilters = ({
   handleChange,
-  setShowWithRecharge,
   setCurrency,
   setShowRatio,
   setViewMode,
@@ -1047,7 +1108,6 @@ export const resetPricingFilters = ({
   setTokenUnit,
 }) => {
   handleChange?.(DEFAULT_PRICING_FILTERS.search);
-  setShowWithRecharge?.(DEFAULT_PRICING_FILTERS.showWithRecharge);
   setCurrency?.(DEFAULT_PRICING_FILTERS.currency);
   setShowRatio?.(DEFAULT_PRICING_FILTERS.showRatio);
   setViewMode?.(DEFAULT_PRICING_FILTERS.viewMode);

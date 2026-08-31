@@ -1,0 +1,177 @@
+.account-api-key-modal .mantine-Modal-content,
+.account-api-key-create-modal .mantine-Modal-content,
+.account-api-key-edit-modal .mantine-Modal-content {
+  display: flex;
+  max-height: calc(100dvh - 32px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--tc-color-border-subtle);
+  border-radius: var(--tc-radius-modal);
+  background: var(--tc-color-surface);
+  color: var(--tc-color-text-primary);
+  color-scheme: dark;
+  box-shadow: var(--tc-shadow-modal);
+}
+
+.account-api-key-modal .mantine-Modal-header,
+.account-api-key-create-modal .mantine-Modal-header,
+.account-api-key-edit-modal .mantine-Modal-header {
+  z-index: 1;
+  min-height: 56px;
+  flex: 0 0 auto;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--tc-color-border-subtle);
+  background: var(--tc-color-surface);
+  color: var(--tc-color-text-primary);
+}
+
+.account-api-key-modal .mantine-Modal-title,
+.account-api-key-create-modal .mantine-Modal-title,
+.account-api-key-edit-modal .mantine-Modal-title {
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 22px;
+}
+
+.account-api-key-modal .mantine-Modal-close,
+.account-api-key-create-modal .mantine-Modal-close,
+.account-api-key-edit-modal .mantine-Modal-close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--tc-radius-field);
+  color: var(--tc-color-text-secondary);
+}
+
+.account-api-key-modal .mantine-Modal-close:hover,
+.account-api-key-create-modal .mantine-Modal-close:hover,
+.account-api-key-edit-modal .mantine-Modal-close:hover {
+  background: var(--tc-color-surface-inline);
+  color: var(--tc-color-text-primary);
+}
+
+.account-api-key-modal .mantine-Modal-close:focus-visible,
+.account-api-key-create-modal .mantine-Modal-close:focus-visible,
+.account-api-key-edit-modal .mantine-Modal-close:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--tc-color-border-strong);
+}
+
+.account-api-key-modal .mantine-Modal-body,
+.account-api-key-create-modal .mantine-Modal-body,
+.account-api-key-edit-modal .mantine-Modal-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 0 20px 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.account-api-key-modal-stack { gap: 0; }
+.account-api-key-modal-current,
+.account-api-key-modal-quota,
+.account-api-key-modal-list {
+  min-width: 0;
+  padding: 16px 0;
+  background: transparent;
+}
+
+.account-api-key-modal-current + .account-api-key-modal-quota,
+.account-api-key-modal-quota + .account-api-key-modal-list {
+  border-top: 1px solid var(--tc-color-border-subtle);
+}
+
+.account-api-key-modal-section-heading { min-width: 0; }
+.account-api-key-modal-section-title { color: var(--tc-color-text-primary); font-size: 14px; line-height: 20px; }
+.account-api-key-modal-section-description { margin-top: 2px; color: var(--tc-color-text-tertiary); font-size: 12px; line-height: 16px; }
+.account-api-key-modal-quota-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); background: var(--tc-color-surface-inline); }
+.account-api-key-modal-quota-item { display: flex; min-width: 0; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; }
+.account-api-key-modal-quota-item + .account-api-key-modal-quota-item { border-left: 1px solid var(--tc-color-border-subtle); }
+.account-api-key-modal-quota-name { overflow: hidden; color: var(--tc-color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.account-api-key-modal-quota-value { flex: 0 0 auto; color: var(--tc-color-text-primary); font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.account-api-key-modal-quota-error,
+.account-api-key-modal-quota-empty,
+.account-api-key-modal-error-text { line-height: 1.45; }
+.account-api-key-create-modal-stack,
+.account-api-key-create-modal-result,
+.account-api-key-edit-modal-stack { padding-top: 16px; }
+.account-api-key-create-modal-description { margin-bottom: 2px; }
+.account-api-key-modal-create-actions { min-height: 36px; }
+.account-api-key-create-modal-result-heading { min-width: 0; }
+.account-api-key-create-modal-result-title { color: var(--tc-color-text-primary); }
+.account-api-key-create-modal-result-description { margin-top: 2px; line-height: 16px; }
+
+.account-api-key-modal .mantine-Switch-input:checked + .mantine-Switch-track,
+.account-api-key-create-modal .mantine-Switch-input:checked + .mantine-Switch-track,
+.account-api-key-edit-modal .mantine-Switch-input:checked + .mantine-Switch-track {
+  border-color: #45454c;
+  background: #3a3a40;
+}
+
+.account-api-key-modal-open-create,
+.account-api-key-modal-create-submit,
+.account-api-key-modal-created-copy,
+.account-api-key-edit-modal-submit {
+  min-height: 36px;
+  border: 0;
+  border-radius: var(--tc-radius-field);
+  background: #3a3a40;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.account-api-key-modal-open-create:hover,
+.account-api-key-modal-create-submit:hover,
+.account-api-key-modal-created-copy:hover,
+.account-api-key-edit-modal-submit:hover { background: #45454c; }
+
+.account-api-key-modal-open-create:active,
+.account-api-key-modal-create-submit:active,
+.account-api-key-modal-created-copy:active,
+.account-api-key-edit-modal-submit:active { background: #303035; }
+
+.account-api-key-modal-refresh { color: var(--tc-color-text-secondary); }
+.account-api-key-modal-refresh:hover { background: var(--tc-color-surface-inline); color: var(--tc-color-text-primary); }
+.account-api-key-modal-table-wrap,
+.account-api-key-usage__table-wrap { overflow-x: auto; }
+.account-api-key-modal-table { min-width: 1080px; }
+.account-api-key-usage__table { min-width: 920px; }
+.account-api-key-modal-table-head-cell:nth-child(3) { min-width: 160px; }
+.account-api-key-modal-table-head-cell,
+.account-api-key-usage__table-heading { color: var(--tc-color-text-tertiary); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.account-api-key-modal-table-cell,
+.account-api-key-usage__table-cell { color: var(--tc-color-text-secondary); font-size: 12px; vertical-align: middle; }
+.account-api-key-modal-table-head-row { border-bottom: 1px solid var(--tc-color-border-subtle); }
+.account-api-key-modal-table-row { border-bottom-color: var(--tc-color-border-subtle); }
+.account-api-key-modal-table-row:nth-of-type(odd),
+.account-api-key-modal-table-row:nth-of-type(even) { background: transparent; }
+.account-api-key-modal-table-row:hover { background: var(--tc-color-surface-inline-weak); }
+.account-api-key-modal-quota-value-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.account-api-key-modal-usage-panel { background: var(--tc-color-surface-inline); }
+.account-api-key-usage__toolbar { min-height: 32px; }
+.account-api-key-usage__error { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; background: color-mix(in srgb, var(--mantine-color-red-9) 18%, transparent); }
+.account-api-key-usage__method { color: var(--tc-color-text-primary); font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace; font-size: 10px; }
+.account-api-key-usage__summary { gap: 18px; }
+.account-api-key-usage__summary-item { color: var(--tc-color-text-secondary); font-variant-numeric: tabular-nums; }
+.account-api-key-usage__empty { padding: 18px 0; }
+
+@media (max-width: 720px) {
+  .account-api-key-modal .mantine-Modal-content,
+  .account-api-key-create-modal .mantine-Modal-content,
+  .account-api-key-edit-modal .mantine-Modal-content { max-height: calc(100dvh - 16px); }
+  .account-api-key-modal .mantine-Modal-header,
+  .account-api-key-create-modal .mantine-Modal-header,
+  .account-api-key-edit-modal .mantine-Modal-header { padding: 0 12px; }
+  .account-api-key-modal .mantine-Modal-body,
+  .account-api-key-create-modal .mantine-Modal-body,
+  .account-api-key-edit-modal .mantine-Modal-body { padding: 0 12px 12px; }
+  .account-api-key-modal-current,
+  .account-api-key-modal-quota,
+  .account-api-key-modal-list { padding: 14px 0; }
+  .account-api-key-modal-create-actions { align-items: stretch; flex-direction: column; }
+  .account-api-key-create-modal-form-actions { width: 100%; justify-content: flex-end; }
+  .account-api-key-modal-quota-list { grid-template-columns: 1fr; }
+  .account-api-key-modal-quota-item + .account-api-key-modal-quota-item { border-top: 1px solid var(--tc-color-border-subtle); border-left: 0; }
+  .account-api-key-usage__toolbar { align-items: flex-start; flex-direction: column; }
+}

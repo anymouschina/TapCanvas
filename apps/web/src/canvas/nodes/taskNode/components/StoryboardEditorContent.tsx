@@ -32,6 +32,8 @@ import {
   canvasToPngBlob,
 } from '../storyboardCompose'
 import { useUIStore } from '../../../../ui/uiStore'
+import { ManagedImage } from '../../../../domain/resource-runtime'
+import { StoryboardEditorPreview } from './StoryboardEditorPreview'
 
 type StoryboardEditorContentProps = {
   label: string
@@ -52,17 +54,12 @@ type StoryboardEditorContentProps = {
   onCancelRun: () => void
 }
 
-type StoryboardEditorCssVars = React.CSSProperties & {
-  '--tc-storyboard-editor-width'?: string
-  '--tc-storyboard-editor-height'?: string
-}
-
 const normalizeImageFile = (file: File | null | undefined): File | null => {
   if (!file) return null
   return typeof file.type === 'string' && file.type.startsWith('image/') ? file : null
 }
 
-export function StoryboardEditorContent(props: StoryboardEditorContentProps) {
+function StoryboardEditorContent(props: StoryboardEditorContentProps) {
   const {
     label,
     selected,
@@ -86,43 +83,18 @@ export function StoryboardEditorContent(props: StoryboardEditorContentProps) {
   const [composing, setComposing] = React.useState(false)
   const [composeError, setComposeError] = React.useState<string | null>(null)
   const [switcherOpened, setSwitcherOpened] = React.useState(false)
-  const gridConfig = React.useMemo(() => getStoryboardEditorGridConfig(grid), [grid])
   const openPreview = useUIStore((state) => state.openPreview)
-  const filledCount = React.useMemo(
-    () => cells.reduce((count, cell) => {
-      const imageUrl = typeof cell.imageUrl === 'string' ? cell.imageUrl.trim() : ''
-      return imageUrl ? count + 1 : count
-    }, 0),
-    [cells],
-  )
   const normalizedSelectedIndex = React.useMemo(
     () => normalizeStoryboardEditorSelectedIndex(selectedIndex, cells.length),
     [cells.length, selectedIndex],
   )
   const [draftSelectedIndex, setDraftSelectedIndex] = React.useState(normalizedSelectedIndex)
-  const firstCell = cells[0] ?? null
-  const collapsedPreviewUrl = typeof firstCell?.imageUrl === 'string' ? firstCell.imageUrl.trim() : ''
-  const collapsedPreviewTitle = collapsedPreviewUrl
-    ? (typeof firstCell?.label === 'string' && firstCell.label.trim()
-        ? firstCell.label.trim()
-        : '镜头 1')
-    : ''
-  const collapsedRemainingCount = React.useMemo(
-    () => cells.slice(1).reduce((count, cell) => {
-      const imageUrl = typeof cell.imageUrl === 'string' ? cell.imageUrl.trim() : ''
-      return imageUrl ? count + 1 : count
-    }, 0),
-    [cells],
-  )
+  // Active-cell values still needed here for the interaction handlers + Modal passed to the preview.
   const activeCell = cells[normalizedSelectedIndex] ?? null
   const activeCellImageUrl = typeof activeCell?.imageUrl === 'string' ? activeCell.imageUrl.trim() : ''
   const activeCellLabel = typeof activeCell?.label === 'string' && activeCell.label.trim()
     ? activeCell.label.trim()
     : `镜头 ${normalizedSelectedIndex + 1}`
-  const activeCellShotNo = typeof activeCell?.shotNo === 'number' && Number.isFinite(activeCell.shotNo)
-    ? activeCell.shotNo
-    : normalizedSelectedIndex + 1
-  const activeCellPrompt = typeof activeCell?.prompt === 'string' ? activeCell.prompt.trim() : ''
   const modalSelectedCell = cells[draftSelectedIndex] ?? null
   const modalSelectedCellImageUrl = typeof modalSelectedCell?.imageUrl === 'string' ? modalSelectedCell.imageUrl.trim() : ''
   const modalSelectedCellLabel = typeof modalSelectedCell?.label === 'string' && modalSelectedCell.label.trim()
@@ -135,13 +107,6 @@ export function StoryboardEditorContent(props: StoryboardEditorContentProps) {
   const showToolbar = selected
   const resolvedLabel = label.trim() || '分镜编辑'
   const tooltipDisabled = !selected
-  const collapsedClassName = editMode
-    ? 'tc-storyboard-editor__collapsed nodrag'
-    : 'tc-storyboard-editor__collapsed'
-  const rootStyle: StoryboardEditorCssVars = {
-    '--tc-storyboard-editor-width': `${nodeWidth}px`,
-    '--tc-storyboard-editor-height': `${nodeHeight}px`,
-  }
 
   React.useEffect(() => {
     setDraftSelectedIndex(normalizedSelectedIndex)
@@ -284,10 +249,8 @@ export function StoryboardEditorContent(props: StoryboardEditorContentProps) {
     })
   }, [replaceCell])
 
-  return (
-    <div className="tc-storyboard-editor" style={rootStyle}>
-      {showToolbar ? (
-        <NodeToolbar className="tc-storyboard-editor__toolbar-floating" position={Position.Top} align="center" offset={12}>
+  const toolbarNode = showToolbar ? (
+    <NodeToolbar className="tc-storyboard-editor__toolbar-floating" position={Position.Top} align="center" offset={12}>
           <div className="tc-storyboard-editor__toolbar">
             <Menu withinPortal position="bottom-start">
               <Menu.Target>
@@ -402,269 +365,111 @@ export function StoryboardEditorContent(props: StoryboardEditorContentProps) {
             </Tooltip>
           </div>
         </NodeToolbar>
-      ) : null}
+  ) : null
 
-      <div className="tc-storyboard-editor__stage">
-        <div className="tc-storyboard-editor__title-row">
-          <div className="tc-storyboard-editor__title-main">
-            <Text className="tc-storyboard-editor__title-text" size="sm" fw={600}>
-              {resolvedLabel}
-            </Text>
-            <Text className="tc-storyboard-editor__title-subtext" size="xs">
-              {gridConfig.label} · {aspect}
-            </Text>
-          </div>
-          <Group className="tc-storyboard-editor__meta" gap={6} wrap="nowrap">
-            <div className="tc-storyboard-editor__meta-chip">
-              {filledCount}/{cells.length}
-            </div>
-            {editMode ? (
-              <div className="tc-storyboard-editor__meta-chip" data-active="true">
-                编辑中
-              </div>
-            ) : null}
-            {composedImageUrl ? (
-              <Tooltip label="查看合成图" disabled={tooltipDisabled} withArrow>
-                <ActionIcon
-                  className="tc-storyboard-editor__meta-icon"
-                  size="sm"
-                  variant="subtle"
-                  color="gray"
-                  aria-label="查看合成图"
-                  onClick={() => openPreview({ url: composedImageUrl, kind: 'image', name: `${resolvedLabel} · 合成图` })}
-                >
-                  <IconEye size={14} />
-                </ActionIcon>
-              </Tooltip>
-            ) : null}
-          </Group>
-        </div>
-
-        {collapsed ? (
-          <button
-            className={collapsedClassName}
-            type="button"
-            onClick={() => onUpdateNodeData({ storyboardEditorCollapsed: false })}
-          >
-            {collapsedPreviewUrl && collapsedRemainingCount > 0 ? (
-              <div className="tc-storyboard-editor__collapsed-stack-underlay" aria-hidden="true" />
-            ) : null}
-            <div className="tc-storyboard-editor__collapsed-surface">
-              {collapsedPreviewUrl ? (
-                <>
-                  <img
-                    className="tc-storyboard-editor__collapsed-preview"
-                    src={collapsedPreviewUrl}
-                    alt={collapsedPreviewTitle || '分镜首图'}
-                  />
-                  <div className="tc-storyboard-editor__collapsed-overlay" aria-hidden="true" />
-                  <Group
-                    className="tc-storyboard-editor__collapsed-meta"
-                    justify="space-between"
-                    align="center"
-                    gap={8}
-                    wrap="nowrap"
-                  >
-                    <div className="tc-storyboard-editor__collapsed-badge">
-                      首图
-                    </div>
-                    {collapsedRemainingCount > 0 ? (
-                      <div className="tc-storyboard-editor__collapsed-count">
-                        +{collapsedRemainingCount}
-                      </div>
-                    ) : null}
-                  </Group>
-                  <div className="tc-storyboard-editor__collapsed-copy">
-                    <Text className="tc-storyboard-editor__collapsed-title" size="sm" fw={600}>
-                      {collapsedPreviewTitle}
-                    </Text>
-                    <Text className="tc-storyboard-editor__collapsed-subtitle" size="xs">
-                      {resolvedLabel} · {gridConfig.label} · {filledCount}/{cells.length}
-                    </Text>
-                  </div>
-                </>
-              ) : (
-                <Group
-                  className="tc-storyboard-editor__collapsed-empty"
-                  gap={10}
-                  wrap="nowrap"
-                >
-                  <Group className="tc-storyboard-editor__collapsed-left" gap={10}>
-                    <div className="tc-storyboard-editor__collapsed-icon">
-                      <IconLayoutGrid size={18} />
-                    </div>
-                    <div className="tc-storyboard-editor__collapsed-copy">
-                      <Text className="tc-storyboard-editor__collapsed-title" size="sm" fw={600}>
-                        {resolvedLabel}
-                      </Text>
-                      <Text className="tc-storyboard-editor__collapsed-subtitle" size="xs">
-                        {collapsedRemainingCount > 0
-                          ? `${gridConfig.label} · 第 1 格为空 · 其余已填 ${collapsedRemainingCount} 张`
-                          : `${gridConfig.label} · 第 1 格为空，展开后继续拖入镜头图`}
-                      </Text>
-                    </div>
-                  </Group>
-                </Group>
-              )}
-            </div>
-          </button>
-        ) : (
-          <div className="tc-storyboard-editor__preview-shell">
-            <div
-              className="tc-storyboard-editor__preview-panel"
-              data-drop-active={activeDropIndex === normalizedSelectedIndex ? 'true' : 'false'}
-              data-empty={activeCellImageUrl ? 'false' : 'true'}
-              data-editing={editMode ? 'true' : 'false'}
-              onDragOver={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                try {
-                  event.dataTransfer.dropEffect = 'move'
-                } catch {
-                  // ignore
-                }
-                setActiveDropIndex(normalizedSelectedIndex)
-              }}
-              onDragLeave={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                setActiveDropIndex((current) => (current === normalizedSelectedIndex ? null : current))
-              }}
-              onDrop={(event) => { void handleDropOnCell(event, normalizedSelectedIndex) }}
-              onDoubleClick={() => {
-                if (activeCellImageUrl) {
-                  openPreview({ url: activeCellImageUrl, kind: 'image', name: activeCellLabel })
-                }
-              }}
+  const actionsNode = (
+    <>
+      <Button
+        className="tc-storyboard-editor__preview-action"
+        size="xs"
+        variant="subtle"
+        color="gray"
+        leftSection={<IconLayoutGrid size={14} />}
+        onClick={openSwitcher}
+      >
+        切换镜头
+      </Button>
+      {editMode ? (
+        <Menu withinPortal position="bottom-start">
+          <Menu.Target>
+            <Button
+              className="tc-storyboard-editor__preview-action"
+              size="xs"
+              variant="subtle"
+              color="gray"
             >
-              {activeCellImageUrl ? (
-                <img
-                  className="tc-storyboard-editor__preview-image"
-                  src={activeCellImageUrl}
-                  alt={activeCellLabel}
-                  draggable={false}
-                />
-              ) : (
-                <div className="tc-storyboard-editor__preview-empty">
-                  <IconPhotoPlus size={18} />
-                  <Text className="tc-storyboard-editor__preview-empty-title" size="sm" fw={600}>
-                    当前镜头为空
-                  </Text>
-                  <Text className="tc-storyboard-editor__preview-empty-text" size="xs">
-                    {editMode ? '拖入图片到当前选中镜头，或进入弹窗切换其他镜头。' : '点击“切换镜头”查看其他镜头预览。'}
-                  </Text>
-                </div>
-              )}
-
-              <div className="tc-storyboard-editor__preview-overlay">
-                <div className="tc-storyboard-editor__preview-head">
-                  <div className="tc-storyboard-editor__preview-chip-row">
-                    <div className="tc-storyboard-editor__preview-chip">
-                      镜头 {normalizedSelectedIndex + 1}
-                    </div>
-                    <div className="tc-storyboard-editor__preview-chip" data-variant="muted">
-                      #{activeCellShotNo}
-                    </div>
-                    <div className="tc-storyboard-editor__preview-chip" data-variant="muted">
-                      {resolveStoryboardEditorCellAspect(activeCell, aspect)}
-                    </div>
-                  </div>
-                  {activeCellImageUrl ? (
-                    <ActionIcon
-                      className="tc-storyboard-editor__preview-icon"
-                      size="sm"
-                      radius="sm"
-                      variant="filled"
-                      color="dark"
-                      aria-label="预览当前镜头"
-                      onClick={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        openPreview({ url: activeCellImageUrl, kind: 'image', name: activeCellLabel })
-                      }}
-                    >
-                      <IconEye size={12} />
-                    </ActionIcon>
-                  ) : null}
-                </div>
-
-                <div className="tc-storyboard-editor__preview-copy">
-                  <Text className="tc-storyboard-editor__preview-title" size="sm" fw={600}>
-                    {activeCellLabel}
-                  </Text>
-                  <Text className="tc-storyboard-editor__preview-subtitle" size="xs">
-                    {activeCellPrompt || `${resolvedLabel} · ${gridConfig.label} · 已填 ${filledCount}/${cells.length}`}
-                  </Text>
-                </div>
-              </div>
-            </div>
-
-            <div className="tc-storyboard-editor__preview-actions">
-              <Button
-                className="tc-storyboard-editor__preview-action"
-                size="xs"
-                variant="subtle"
-                color="gray"
-                leftSection={<IconLayoutGrid size={14} />}
-                onClick={openSwitcher}
+              当前镜头比例
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown className="tc-storyboard-editor__cell-aspect-dropdown">
+            <Menu.Label className="tc-storyboard-editor__cell-aspect-dropdown-label">
+              单格比例
+            </Menu.Label>
+            <Menu.Item
+              className="tc-storyboard-editor__cell-aspect-dropdown-item"
+              onClick={() => handleCellAspectChange(normalizedSelectedIndex, null)}
+            >
+              跟随整体（当前 {aspect}）
+            </Menu.Item>
+            {STORYBOARD_EDITOR_ASPECT_OPTIONS.map((option) => (
+              <Menu.Item
+                className="tc-storyboard-editor__cell-aspect-dropdown-item"
+                key={`preview-${option.value}`}
+                onClick={() => handleCellAspectChange(normalizedSelectedIndex, option.value)}
               >
-                切换镜头
-              </Button>
-              {editMode ? (
-                <Menu withinPortal position="bottom-start">
-                  <Menu.Target>
-                    <Button
-                      className="tc-storyboard-editor__preview-action"
-                      size="xs"
-                      variant="subtle"
-                      color="gray"
-                    >
-                      当前镜头比例
-                    </Button>
-                  </Menu.Target>
-                  <Menu.Dropdown className="tc-storyboard-editor__cell-aspect-dropdown">
-                    <Menu.Label className="tc-storyboard-editor__cell-aspect-dropdown-label">
-                      单格比例
-                    </Menu.Label>
-                    <Menu.Item
-                      className="tc-storyboard-editor__cell-aspect-dropdown-item"
-                      onClick={() => handleCellAspectChange(normalizedSelectedIndex, null)}
-                    >
-                      跟随整体（当前 {aspect}）
-                    </Menu.Item>
-                    {STORYBOARD_EDITOR_ASPECT_OPTIONS.map((option) => (
-                      <Menu.Item
-                        className="tc-storyboard-editor__cell-aspect-dropdown-item"
-                        key={`preview-${option.value}`}
-                        onClick={() => handleCellAspectChange(normalizedSelectedIndex, option.value)}
-                      >
-                        {option.label}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Dropdown>
-                </Menu>
-              ) : null}
-              {editMode && activeCellImageUrl ? (
-                <ActionIcon
-                  className="tc-storyboard-editor__preview-action-icon"
-                  size="sm"
-                  radius="sm"
-                  variant="subtle"
-                  color="gray"
-                  aria-label="清空当前镜头"
-                  onClick={() => clearCell(normalizedSelectedIndex)}
-                >
-                  <IconX size={14} />
-                </ActionIcon>
-              ) : null}
-            </div>
-          </div>
-        )}
+                {option.label}
+              </Menu.Item>
+            ))}
+          </Menu.Dropdown>
+        </Menu>
+      ) : null}
+      {editMode && activeCellImageUrl ? (
+        <ActionIcon
+          className="tc-storyboard-editor__preview-action-icon"
+          size="sm"
+          radius="sm"
+          variant="subtle"
+          color="gray"
+          aria-label="清空当前镜头"
+          onClick={() => clearCell(normalizedSelectedIndex)}
+        >
+          <IconX size={14} />
+        </ActionIcon>
+      ) : null}
+    </>
+  )
 
-        <Text className="tc-storyboard-editor__footer" size="xs" c="dimmed" ta="center">
-          {composeError ? composeError : (filledCount ? '外部保留当前选中镜头预览；点击“切换镜头”在弹窗内切换并确认回填。' : '当前没有已选镜头，可先拖入图片，或打开弹窗检查镜头列表。')}
-        </Text>
-      </div>
+  return (
+    <>
+      <StoryboardEditorPreview
+        label={label}
+        aspect={aspect}
+        grid={grid}
+        cells={cells}
+        selectedIndex={selectedIndex}
+        nodeWidth={nodeWidth}
+        nodeHeight={nodeHeight}
+        editMode={editMode}
+        collapsed={collapsed}
+        composedImageUrl={composedImageUrl}
+        tooltipDisabled={tooltipDisabled}
+        footerOverride={composeError}
+        toolbar={toolbarNode}
+        actions={actionsNode}
+        onExpand={() => onUpdateNodeData({ storyboardEditorCollapsed: false })}
+        onPreviewActiveCell={activeCellImageUrl ? () => openPreview({ url: activeCellImageUrl, kind: 'image', name: activeCellLabel }) : undefined}
+        onPreviewComposed={composedImageUrl ? () => openPreview({ url: composedImageUrl, kind: 'image', name: `${resolvedLabel} · 合成图` }) : undefined}
+        panelInteraction={{
+          activeDropIndex,
+          onDragOver: (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            try { event.dataTransfer.dropEffect = 'move' } catch { /* ignore */ }
+            setActiveDropIndex(normalizedSelectedIndex)
+          },
+          onDragLeave: (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setActiveDropIndex((current) => (current === normalizedSelectedIndex ? null : current))
+          },
+          onDrop: (event) => { void handleDropOnCell(event, normalizedSelectedIndex) },
+          onDoubleClick: () => {
+            if (activeCellImageUrl) {
+              openPreview({ url: activeCellImageUrl, kind: 'image', name: activeCellLabel })
+            }
+          },
+        }}
+      />
 
       <Modal
         className="tc-storyboard-editor__switcher-modal"
@@ -699,11 +504,14 @@ export function StoryboardEditorContent(props: StoryboardEditorContentProps) {
                   >
                     <div className="tc-storyboard-editor__switcher-item-thumb">
                       {cellImageUrl ? (
-                        <img
+                        <ManagedImage
                           className="tc-storyboard-editor__switcher-item-image"
                           src={cellImageUrl}
                           alt={cellLabel}
                           draggable={false}
+                          priority="visible"
+                          ownerSurface="preview-modal"
+                          ownerRequestKey={`storyboard-editor-switcher-item:${cellImageUrl}`}
                         />
                       ) : (
                         <div className="tc-storyboard-editor__switcher-item-placeholder">
@@ -733,11 +541,14 @@ export function StoryboardEditorContent(props: StoryboardEditorContentProps) {
           <div className="tc-storyboard-editor__switcher-preview">
             <div className="tc-storyboard-editor__switcher-preview-media">
               {modalSelectedCellImageUrl ? (
-                <img
+                <ManagedImage
                   className="tc-storyboard-editor__switcher-preview-image"
                   src={modalSelectedCellImageUrl}
                   alt={modalSelectedCellLabel}
                   draggable={false}
+                  priority="visible"
+                  ownerSurface="preview-modal"
+                  ownerRequestKey={`storyboard-editor-switcher-preview:${modalSelectedCellImageUrl}`}
                 />
               ) : (
                 <div className="tc-storyboard-editor__switcher-preview-empty">
@@ -775,6 +586,9 @@ export function StoryboardEditorContent(props: StoryboardEditorContentProps) {
           </div>
         </div>
       </Modal>
-    </div>
+    </>
   )
 }
+
+const _StoryboardEditorContent = React.memo(StoryboardEditorContent)
+export { _StoryboardEditorContent as StoryboardEditorContent }

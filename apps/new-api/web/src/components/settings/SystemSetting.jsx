@@ -135,9 +135,6 @@ const SystemSetting = () => {
       let newInputs = {};
       data.forEach((item) => {
         switch (item.key) {
-          case 'TopupGroupRatio':
-            item.value = JSON.stringify(JSON.parse(item.value), null, 2);
-            break;
           case 'EmailDomainWhitelist':
             setEmailDomainWhitelist(item.value ? item.value.split(',') : []);
             break;
@@ -207,7 +204,6 @@ const SystemSetting = () => {
             item.value = item.value || 'preferred';
             break;
           case 'Price':
-          case 'MinTopUp':
             item.value = parseFloat(item.value);
             break;
           default:
@@ -724,7 +720,7 @@ const SystemSetting = () => {
                         label={t('服务器地址')}
                         placeholder='https://yourdomain.com'
                         extraText={t(
-                          '该服务器地址将影响支付回调地址以及默认首页展示的地址，请确保正确配置',
+                          '该服务器地址将影响默认首页展示和系统生成的公开链接，请确保正确配置',
                         )}
                       />
                     </Col>

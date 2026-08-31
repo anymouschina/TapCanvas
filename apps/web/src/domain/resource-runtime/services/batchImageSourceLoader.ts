@@ -73,7 +73,7 @@ export async function loadBatchImageSource(
     url,
     priority: options?.priority ?? 'visible',
     owner: {
-      ownerSurface: 'mosaic-runner',
+      ownerSurface: 'reference-sheet',
       ownerRequestKey: `batch:${url}`,
     },
   })

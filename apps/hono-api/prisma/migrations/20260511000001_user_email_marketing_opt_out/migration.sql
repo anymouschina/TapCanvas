@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "email_marketing_opt_out" INTEGER NOT NULL DEFAULT 0;

@@ -2,26 +2,47 @@ export type TaskErrorDisplay = {
   enhancedMsg: string
 }
 
-export function isSafetyBlockedError(err: any): boolean {
-  const message = String(err?.message || '').toLowerCase()
-  const code = String(err?.code || '').toLowerCase()
-  const upstreamCode = String(err?.details?.upstreamData?.error?.code || '').toLowerCase()
-  const upstreamType = String(err?.details?.upstreamData?.error?.type || '').toLowerCase()
-  const upstreamMessage = String(err?.details?.upstreamData?.error?.message || '').toLowerCase()
-  const upstreamText = String(err?.details?.upstreamText || '').toLowerCase()
-  const joined = [message, code, upstreamCode, upstreamType, upstreamMessage, upstreamText].join(' ')
-  return (
-    joined.includes('image_safety') ||
-    joined.includes('safety') ||
-    joined.includes('policy') ||
-    joined.includes('content_filter') ||
-    joined.includes('moderation') ||
-    joined.includes('unsafe')
-  )
+type UnknownRecord = Record<string, unknown>
+
+const MODERATION_ERROR_CODES = new Set([
+  'content_filter',
+  'image_safety',
+  'moderation_rejected',
+  'safety_blocked',
+])
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as UnknownRecord
+    : null
 }
 
-export function resolveTaskErrorDisplay(err: any, fallbackMsg: string): TaskErrorDisplay {
-  const msg = String(err?.message || fallbackMsg || '图像模型调用失败')
+function readErrorCodes(error: unknown): string[] {
+  const record = asRecord(error)
+  if (!record) return []
+  const details = asRecord(record.details)
+  const upstreamData = asRecord(details?.upstreamData)
+  const upstreamError = asRecord(upstreamData?.error)
+  return [record.code, upstreamError?.code, upstreamError?.type]
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+export function isSafetyBlockedError(error: unknown): boolean {
+  return readErrorCodes(error).some((code) => MODERATION_ERROR_CODES.has(code))
+}
+
+export function isModerationFailure(status: unknown, lastError: unknown): boolean {
+  if (String(status || '') !== 'error') return false
+  return isSafetyBlockedError(lastError)
+}
+
+export function resolveTaskErrorDisplay(error: unknown, fallbackMsg: string): TaskErrorDisplay {
+  const record = asRecord(error)
+  const msg = typeof record?.message === 'string' && record.message.trim()
+    ? record.message
+    : fallbackMsg || '图像模型调用失败'
   return {
     enhancedMsg: msg,
   }

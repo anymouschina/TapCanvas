@@ -1,0 +1,49 @@
+.neo-portal-account-actions { display: flex; align-items: center; gap: 8px; color: #f5f5f7; }
+.neo-portal-check-in__target { display: inline-flex; align-items: center; justify-content: center; }
+.neo-portal-check-in { width: 28px; height: 28px; min-width: 28px; padding: 0; color: #f5f5f7; }
+.neo-portal-header__avatar-button { width: 34px; height: 34px; border-radius: 50%; }
+.neo-portal-header__avatar,
+.neo-account-card__avatar { position: relative; display: grid; place-items: center; overflow: hidden; background: #323234; border-radius: 50%; }
+.neo-portal-header__avatar { width: 28px; height: 28px; }
+.neo-portal-header__avatar-image,
+.neo-account-card__avatar-image { width: 100%; height: 100%; }
+.neo-portal-header__avatar-image img,
+.neo-account-card__avatar-image img { width: 100%; height: 100%; object-fit: cover; }
+.neo-portal-header__avatar-fallback { font-size: 11px; font-weight: 600; }
+.neo-portal-header__unread-dot { position: absolute; top: 0; right: 0; width: 7px; height: 7px; background: #e5484d; border: 1px solid #0d0d0f; border-radius: 50%; }
+.neo-portal-user-menu__dropdown { max-height: min(720px, calc(100dvh - 24px)); padding: 0; overflow-x: hidden; overflow-y: auto; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; background: rgba(27, 27, 29, 0.98); color: #f5f5f7; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.52); backdrop-filter: saturate(140%) blur(20px); }
+.neo-account-card { padding: 14px; }
+.neo-account-card__identity { display: flex; align-items: center; gap: 11px; padding: 0 2px 13px; }
+.neo-account-card__avatar { width: 44px; height: 44px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
+.neo-account-card__avatar-fallback { font-size: 14px; font-weight: 600; }
+.neo-account-card__copy { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; }
+.neo-account-card__name { max-width: 205px; overflow: hidden; color: #fff; font-size: 14px; font-weight: 650; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.neo-account-card__uid { max-width: 205px; overflow: hidden; padding: 2px 0 0; border: 0; background: transparent; color: rgba(255, 255, 255, 0.58); font-size: 10px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; cursor: copy; }
+.neo-account-card__uid:hover { color: rgba(255, 255, 255, 0.84); }
+.neo-account-card__state { display: flex; min-height: 50px; align-items: center; justify-content: center; gap: 6px; }
+.neo-account-card__state--error { color: #ff7b81; }
+.neo-account-card__error { max-width: 210px; font-size: 10px; line-height: 1.35; }
+.neo-account-card__summary { padding: 3px 0; background: rgba(255, 255, 255, 0.055); }
+.neo-account-card__summary-row { display: grid; width: 100%; grid-template-columns: 22px minmax(0, 1fr) auto 16px; align-items: center; min-height: 34px; padding: 0 8px; color: inherit; background: transparent; border: 0; text-align: left; cursor: pointer; }
+.neo-account-card__summary-row:hover { background: rgba(255, 255, 255, 0.07); }
+.neo-account-card__summary-row:disabled { cursor: not-allowed; opacity: 0.62; }
+.neo-account-card__summary-icon { color: rgba(255, 255, 255, 0.62); }
+.neo-account-card__membership-icon.is-active { color: #f8ce58; fill: currentColor; }
+.neo-account-card__summary-label,
+.neo-account-card__summary-value,
+.neo-account-card__summary-action { font-size: 11px; }
+.neo-account-card__summary-value { font-weight: 500; }
+.neo-account-card__summary-action { color: #2997ff; }
+.neo-account-card__summary-chevron { color: rgba(255, 255, 255, 0.46); }
+.neo-account-card__guest-notice { padding: 8px 2px 0; color: rgba(255, 255, 255, 0.58); font-size: 10px; }
+.neo-account-card__commands { display: grid; grid-template-columns: 1fr; gap: 2px; margin-top: 9px; }
+.neo-account-card__command { display: flex; min-height: 34px; align-items: center; justify-content: flex-start; gap: 8px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: rgba(255, 255, 255, 0.84); cursor: pointer; }
+.neo-account-card__command:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+.neo-account-card__command:disabled { cursor: not-allowed; opacity: 0.45; }
+.neo-account-card__command--danger { color: #ff7b81; }
+.neo-account-card__command--danger:hover { background: rgba(229, 72, 77, 0.12); color: #ff9b9f; }
+.neo-account-card__command-label { font-size: 11px; }
+.neo-account-card__summary-row:focus-visible,
+.neo-account-card__command:focus-visible,
+.neo-account-card__uid:focus-visible { outline: 2px solid #2997ff; outline-offset: -2px; }
+.neo-account-center-loading { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; background: rgba(0, 0, 0, 0.34); backdrop-filter: blur(4px); }

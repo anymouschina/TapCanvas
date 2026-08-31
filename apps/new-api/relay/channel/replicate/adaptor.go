@@ -42,7 +42,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if requestPath == "" {
 		return info.ChannelBaseUrl, nil
 	}
-	return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestPath, info.ChannelType), nil
+	return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestPath, info.ProtocolID), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
@@ -469,7 +469,7 @@ func uploadFileFromForm(c *gin.Context, info *relaycommon.RelayInfo, fieldCandid
 	if baseURL == "" {
 		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeReplicate]
 	}
-	uploadURL := relaycommon.GetFullRequestURL(baseURL, "/v1/files", info.ChannelType)
+	uploadURL := relaycommon.GetFullRequestURL(baseURL, "/v1/files", info.ProtocolID)
 
 	req, err := http.NewRequest(http.MethodPost, uploadURL, &body)
 	if err != nil {

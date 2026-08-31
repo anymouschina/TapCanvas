@@ -1,12 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
-import { X509Certificate } from "node:crypto";
 
 import { getPrismaClient } from "./prisma";
 import { NodeDurableObjectNamespace } from "./node-durable";
 
 import { ExecutionDO } from "../../modules/execution/execution.do";
-import { handleWorkflowNodeJob } from "../../modules/execution/execution.queue";
+import type { WorkerEnv } from "../../types";
+import {
+	recoverInterruptedWorkflowExecutions,
+	resumeQueuedWorkflowNodes,
+	resumeWaitingWorkflowNodes,
+} from "../../modules/execution/execution.queue";
+import { createRedisWorkflowNodeQueueProducer } from "../../modules/execution/execution.redis-queue";
+import { createRemoteWorkflowRuntimeNamespace } from "./workflow-runtime-remote";
 
 function readSchemaSql(): string {
 	const candidates = [
@@ -109,135 +115,90 @@ async function createRuntimePrismaClient() {
 	return getPrismaClient();
 }
 
-function firstExistingFile(candidates: string[]): string | null {
-	for (const p of candidates) {
-		try {
-			if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
-		} catch {
-			// ignore
-		}
-	}
-	return null;
-}
+type NodeWorkerEnv = WorkerEnv & {
+	WORKFLOW_NODE_QUEUE_CLOSE?: () => Promise<void>;
+};
 
-function readTextFileIfExists(filePath: string | null): string | undefined {
-	if (!filePath) return undefined;
-	try {
-		const raw = fs.readFileSync(filePath, "utf8");
-		const text = raw.trim();
-		return text || undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function resolveFromEnvOrFile(opts: {
-	value?: string;
-	filePath?: string;
-	defaultFiles?: string[];
-}): string | undefined {
-	const inline = (opts.value || "").trim();
-	if (inline) return inline;
-	const byEnvFile = readTextFileIfExists(
-		opts.filePath ? path.resolve(process.cwd(), opts.filePath) : null,
-	);
-	if (byEnvFile) return byEnvFile;
-	const matched = firstExistingFile((opts.defaultFiles || []).map((p) => path.resolve(process.cwd(), p)));
-	return readTextFileIfExists(matched);
-}
-
-function resolveWechatMerchantSerialNo(input: {
-	envSerialNo?: string;
-	mchCertPath?: string;
-	defaultCertFiles?: string[];
-}): string | undefined {
-	const inline = (input.envSerialNo || "").trim();
-	if (inline) return inline;
-	const certByEnv = input.mchCertPath ? path.resolve(process.cwd(), input.mchCertPath) : null;
-	const certPath =
-		firstExistingFile([
-			...(certByEnv ? [certByEnv] : []),
-			...((input.defaultCertFiles || []).map((p) => path.resolve(process.cwd(), p))),
-		]) || null;
-	const pem = readTextFileIfExists(certPath);
-	if (!pem) return undefined;
-	try {
-		const cert = new X509Certificate(pem);
-		const serial = cert.serialNumber?.trim();
-		return serial || undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-export async function createNodeWorkerEnv(): Promise<any> {
+export async function createNodeWorkerEnv(): Promise<NodeWorkerEnv> {
 	const dbClient = await createRuntimePrismaClient();
-	const defaultCertDirCandidates = [
-		"cert",
-		"apps/hono-api/cert",
-	];
-	const wechatPrivateKey = resolveFromEnvOrFile({
-		value: process.env.WECHAT_PAY_PRIVATE_KEY,
-		filePath: process.env.WECHAT_PAY_PRIVATE_KEY_FILE,
-		defaultFiles: defaultCertDirCandidates.map((d) => `${d}/apiclient_key.pem`),
-	});
-	const wechatPlatformPublicKey = resolveFromEnvOrFile({
-		value: process.env.WECHAT_PAY_PLATFORM_PUBLIC_KEY,
-		filePath: process.env.WECHAT_PAY_PLATFORM_PUBLIC_KEY_FILE,
-		defaultFiles: [
-			...defaultCertDirCandidates.map((d) => `${d}/wechatpay_platform_public_key.pem`),
-			...defaultCertDirCandidates.map((d) => `${d}/platform_public_key.pem`),
-		],
-	});
-	const wechatSerialNo = resolveWechatMerchantSerialNo({
-		envSerialNo: process.env.WECHAT_PAY_MCH_SERIAL_NO,
-		mchCertPath: process.env.WECHAT_PAY_MCH_CERT_FILE,
-		defaultCertFiles: defaultCertDirCandidates.map((d) => `${d}/apiclient_cert.pem`),
-	});
-
-	const env: any = {
+	const env = {
 		DB: dbClient,
 		JWT_SECRET: process.env.JWT_SECRET || "dev-secret",
 		INTERNAL_WORKER_TOKEN: process.env.INTERNAL_WORKER_TOKEN,
 		GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
 		GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
 		LOGIN_URL: process.env.LOGIN_URL,
+		CORS_ALLOWED_ORIGINS: process.env.CORS_ALLOWED_ORIGINS,
 		RESEND_API_KEY: process.env.RESEND_API_KEY,
 		RESEND_FROM: process.env.RESEND_FROM,
 		EMAIL_LOGIN_DEBUG: process.env.EMAIL_LOGIN_DEBUG,
-		PHONE_LOGIN_DEBUG: process.env.PHONE_LOGIN_DEBUG,
-		AUTH_PHONE_OTP_TRACE: process.env.AUTH_PHONE_OTP_TRACE,
 		REDIS_URL: process.env.REDIS_URL,
-		PHONE_OTP_REDIS_PREFIX: process.env.PHONE_OTP_REDIS_PREFIX,
-		ALIYUN_SMS_ACCESS_KEY_ID: process.env.ALIYUN_SMS_ACCESS_KEY_ID,
-		ALIYUN_SMS_ACCESS_KEY_SECRET: process.env.ALIYUN_SMS_ACCESS_KEY_SECRET,
-		ALIYUN_SMS_SIGN_NAME: process.env.ALIYUN_SMS_SIGN_NAME,
-		ALIYUN_SMS_TEMPLATE_CODE: process.env.ALIYUN_SMS_TEMPLATE_CODE,
-		ALIYUN_SMS_ENDPOINT: process.env.ALIYUN_SMS_ENDPOINT,
+		CODEX_SOURCE_S3_ACCESS_KEY_ID: process.env.CODEX_SOURCE_S3_ACCESS_KEY_ID,
+		CODEX_SOURCE_S3_SECRET_ACCESS_KEY:
+			process.env.CODEX_SOURCE_S3_SECRET_ACCESS_KEY,
+		CODEX_SOURCE_S3_SESSION_TOKEN:
+			process.env.CODEX_SOURCE_S3_SESSION_TOKEN,
+		CODEX_SOURCE_S3_ENDPOINT_URL: process.env.CODEX_SOURCE_S3_ENDPOINT_URL,
+		CODEX_SOURCE_S3_REGION: process.env.CODEX_SOURCE_S3_REGION,
+		CODEX_SOURCE_S3_BUCKET: process.env.CODEX_SOURCE_S3_BUCKET,
+		CODEX_REMOTE_BUILD_ENVELOPE_KEY:
+			process.env.CODEX_REMOTE_BUILD_ENVELOPE_KEY,
+		CODEX_REMOTE_BUILD_PROVIDER: process.env.CODEX_REMOTE_BUILD_PROVIDER,
+		VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN,
+		VERCEL_TOKEN: process.env.VERCEL_TOKEN,
+		VERCEL_TEAM_ID: process.env.VERCEL_TEAM_ID,
+		VERCEL_PROJECT_ID: process.env.VERCEL_PROJECT_ID,
+		ALIYUN_EMAIL_ACCESS_KEY_ID: process.env.ALIYUN_EMAIL_ACCESS_KEY_ID,
+		ALIYUN_EMAIL_ACCESS_KEY_SECRET: process.env.ALIYUN_EMAIL_ACCESS_KEY_SECRET,
+		ALIYUN_EMAIL_FROM: process.env.ALIYUN_EMAIL_FROM,
+		ALIYUN_EMAIL_FROM_ALIAS: process.env.ALIYUN_EMAIL_FROM_ALIAS,
 		SORA_UNWATERMARK_ENDPOINT: process.env.SORA_UNWATERMARK_ENDPOINT,
 		SORA2API_BASE_URL: process.env.SORA2API_BASE_URL,
 		SORA2API_API_KEY: process.env.SORA2API_API_KEY,
+		OBJECT_STORAGE_PROVIDER: process.env.OBJECT_STORAGE_PROVIDER,
+		TOS_ACCESS_KEY_ID: process.env.TOS_ACCESS_KEY_ID,
+		TOS_SECRET_ACCESS_KEY: process.env.TOS_SECRET_ACCESS_KEY,
+		TOS_SESSION_TOKEN: process.env.TOS_SESSION_TOKEN,
+		VOLC_ARK_ACCESS_KEY: process.env.VOLC_ARK_ACCESS_KEY,
+		VOLC_ARK_SECRET_KEY: process.env.VOLC_ARK_SECRET_KEY,
+		VOLC_ARK_REGION: process.env.VOLC_ARK_REGION,
+		VOLC_ARK_API_HOST: process.env.VOLC_ARK_API_HOST,
+		VOLC_ARK_PROJECT_NAME: process.env.VOLC_ARK_PROJECT_NAME,
+		TOS_ENDPOINT_URL: process.env.TOS_ENDPOINT_URL,
+		TOS_REGION: process.env.TOS_REGION,
+		TOS_BUCKET: process.env.TOS_BUCKET,
+		TOS_PUBLIC_BASE_URL: process.env.TOS_PUBLIC_BASE_URL,
 		R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID,
 		R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,
+		R2_SESSION_TOKEN: process.env.R2_SESSION_TOKEN,
 		R2_ENDPOINT_URL: process.env.R2_ENDPOINT_URL,
 		R2_REGION: process.env.R2_REGION,
 		R2_BUCKET: process.env.R2_BUCKET,
-		R2_BUCKET_URL: process.env.R2_BUCKET_URL,
 		R2_PUBLIC_BASE_URL: process.env.R2_PUBLIC_BASE_URL,
-		RUSTFS_ACCESS_KEY_ID: process.env.RUSTFS_ACCESS_KEY_ID,
-		RUSTFS_SECRET_ACCESS_KEY: process.env.RUSTFS_SECRET_ACCESS_KEY,
-		RUSTFS_ENDPOINT_URL: process.env.RUSTFS_ENDPOINT_URL,
-		RUSTFS_REGION: process.env.RUSTFS_REGION,
-		RUSTFS_BUCKET: process.env.RUSTFS_BUCKET,
-		RUSTFS_PUBLIC_BASE_URL: process.env.RUSTFS_PUBLIC_BASE_URL,
+		LOCAL_ASSET_PUBLIC_BASE_URL: process.env.LOCAL_ASSET_PUBLIC_BASE_URL,
 		DEBUG_HTTP_LOG: process.env.DEBUG_HTTP_LOG,
 		DEBUG_HTTP_LOG_UNSAFE: process.env.DEBUG_HTTP_LOG_UNSAFE,
 		DEBUG_HTTP_LOG_BODY_LIMIT: process.env.DEBUG_HTTP_LOG_BODY_LIMIT,
 		PUBLIC_VENDOR_ROUTING: process.env.PUBLIC_VENDOR_ROUTING,
+		// Node/Hono does not expose arbitrary process variables through `c.env`.
+		// Keep the packaged-desktop allowlist in the explicit WorkerEnv projection;
+		// otherwise the request can carry a valid local_desktop manifest while the
+		// public facade silently evaluates the allowlist as empty.
+		PUBLIC_AGENTS_PRIVILEGED_DESKTOP_USER_IDS:
+			process.env.PUBLIC_AGENTS_PRIVILEGED_DESKTOP_USER_IDS,
 		AGENTS_BRIDGE_BASE_URL: process.env.AGENTS_BRIDGE_BASE_URL,
 		AGENTS_BRIDGE_TOKEN: process.env.AGENTS_BRIDGE_TOKEN,
 		AGENTS_BRIDGE_TIMEOUT_MS: process.env.AGENTS_BRIDGE_TIMEOUT_MS,
+		WORKFLOW_LOCAL_JAVASCRIPT_ENABLED: process.env.WORKFLOW_LOCAL_JAVASCRIPT_ENABLED,
+		VIDEO_SYNC_WAIT_TIMEOUT_MS: process.env.VIDEO_SYNC_WAIT_TIMEOUT_MS,
+		VIDEO_SYNC_POLL_INTERVAL_MS: process.env.VIDEO_SYNC_POLL_INTERVAL_MS,
+		VIDEO_RUN_RECOVERY: process.env.VIDEO_RUN_RECOVERY,
+		VIDEO_RUN_RECOVERY_STALE_MS: process.env.VIDEO_RUN_RECOVERY_STALE_MS,
+		VIDEO_AUTHORING_DRIVE_STALE_MS: process.env.VIDEO_AUTHORING_DRIVE_STALE_MS,
 		TAPCANVAS_API_BASE_URL: process.env.TAPCANVAS_API_BASE_URL,
+		// bridge 容器回调 hono 的内网地址（compose 设 http://api:8788）。MCP/A2A 出图工具
+		// 回调必须用它，不能用请求 Origin（公网域，容器回调不到）。
+		TAPCANVAS_API_INTERNAL_BASE: process.env.TAPCANVAS_API_INTERNAL_BASE,
 		TAPCANVAS_API_KEY: process.env.TAPCANVAS_API_KEY,
 		AGENTS_BRIDGE_USE_REQUEST_AUTH: process.env.AGENTS_BRIDGE_USE_REQUEST_AUTH,
 		TASK_LOCAL_MODE: process.env.TASK_LOCAL_MODE,
@@ -261,47 +222,58 @@ export async function createNodeWorkerEnv(): Promise<any> {
 		TASK_CREDIT_FINALIZER_DISABLED: process.env.TASK_CREDIT_FINALIZER_DISABLED,
 		TASK_CREDIT_FINALIZER_LIMIT: process.env.TASK_CREDIT_FINALIZER_LIMIT,
 		TASK_CREDIT_FINALIZER_ORPHAN_RELEASE_MS: process.env.TASK_CREDIT_FINALIZER_ORPHAN_RELEASE_MS,
-		WECHAT_PAY_MCH_ID:
-			process.env.WECHAT_PAY_MCH_ID ||
-			process.env.WXPAY_MCHID ||
-			process.env.WECHAT_MCH_ID,
-		WECHAT_PAY_APP_ID:
-			process.env.WECHAT_PAY_APP_ID || process.env.WECHAT_APP_ID,
-		WECHAT_PAY_MCH_SERIAL_NO: wechatSerialNo || process.env.WECHAT_PAY_MCH_SERIAL_NO,
-		WECHAT_PAY_PRIVATE_KEY: wechatPrivateKey || process.env.WECHAT_PAY_PRIVATE_KEY,
-		WECHAT_PAY_PLATFORM_PUBLIC_KEY:
-			wechatPlatformPublicKey || process.env.WECHAT_PAY_PLATFORM_PUBLIC_KEY,
-		WECHAT_PAY_API_V3_KEY:
-			process.env.WECHAT_PAY_API_V3_KEY ||
-			process.env.WXPAY_API_V3_KEY ||
-			process.env.WECHAT_API_V3_KEY,
-		OPENCLAW_API_BASE_URL: process.env.OPENCLAW_API_BASE_URL,
-		OPENCLAW_API_TOKEN: process.env.OPENCLAW_API_TOKEN,
-		WECHAT_PAY_NOTIFY_URL:
-			process.env.WECHAT_PAY_NOTIFY_URL || process.env.WECHAT_NOTIFY_URL,
-		WECHAT_PAY_MCH_CERT_FILE: process.env.WECHAT_PAY_MCH_CERT_FILE,
-		WECHAT_PAY_MCH_CERT_PEM: process.env.WECHAT_PAY_MCH_CERT_PEM,
-		WECHAT_PAY_PRIVATE_KEY_FILE: process.env.WECHAT_PAY_PRIVATE_KEY_FILE,
-		WECHAT_PAY_PLATFORM_PUBLIC_KEY_FILE: process.env.WECHAT_PAY_PLATFORM_PUBLIC_KEY_FILE,
+		WECHAT_OFFICIAL_APP_ID: process.env.WECHAT_OFFICIAL_APP_ID,
+		WECHAT_OFFICIAL_APP_SECRET: process.env.WECHAT_OFFICIAL_APP_SECRET,
+		WECHAT_OFFICIAL_TOKEN: process.env.WECHAT_OFFICIAL_TOKEN,
+		WECHAT_OFFICIAL_QR_EXPIRE_SECONDS: process.env.WECHAT_OFFICIAL_QR_EXPIRE_SECONDS,
+		WECHAT_OFFICIAL_LOGIN_MESSAGE: process.env.WECHAT_OFFICIAL_LOGIN_MESSAGE,
 		COMMERCE_PLATFORM_OWNER_ID: process.env.COMMERCE_PLATFORM_OWNER_ID,
-	};
+	} as unknown as NodeWorkerEnv;
 
 	const executionNs = new NodeDurableObjectNamespace(({ state }) => {
 		const doInstance = new ExecutionDO(state as any, env as any);
 		return { fetch: (req: Request) => doInstance.fetch(req) };
 	});
-	env.EXECUTION_DO = executionNs;
+	const remoteWorkflowRuntimeBaseUrl = String(
+		process.env.WORKFLOW_RUNTIME_REMOTE_BASE_URL ?? "",
+	).trim();
+	env.EXECUTION_DO = remoteWorkflowRuntimeBaseUrl
+		? createRemoteWorkflowRuntimeNamespace({
+			baseUrl: remoteWorkflowRuntimeBaseUrl,
+			token: String(process.env.INTERNAL_WORKER_TOKEN ?? ""),
+		})
+		: executionNs as unknown as WorkerEnv["EXECUTION_DO"];
 
+	const workflowNodeQueue = createRedisWorkflowNodeQueueProducer(
+		String(process.env.REDIS_URL ?? "").trim(),
+	);
 	env.WORKFLOW_NODE_QUEUE = {
-		send: async (body: any) => {
-			setTimeout(() => {
-				void handleWorkflowNodeJob(env as any, body).catch((err) => {
-					// eslint-disable-next-line no-console
-					console.warn("[workflow-queue] job failed", err);
-				});
-			}, 0);
+		send: async (body: unknown, options?: { delaySeconds?: number }) => {
+			await workflowNodeQueue.send(body, options);
 		},
-	};
+	} as unknown as WorkerEnv["WORKFLOW_NODE_QUEUE"];
+	env.WORKFLOW_NODE_QUEUE_CLOSE = workflowNodeQueue.close;
 
 	return env;
+}
+
+/**
+ * Restore the durable workflow runtime before the API accepts new executions.
+ *
+ * This must have exactly one process owner. Keeping it out of
+ * createNodeWorkerEnv prevents background processes that only need bindings
+ * from classifying another healthy process's running node as a runtime restart.
+ */
+export async function restorePersistedWorkflowState(env: WorkerEnv): Promise<void> {
+	const recovery = await recoverInterruptedWorkflowExecutions(env);
+	const queuedNodes = await resumeQueuedWorkflowNodes(env);
+	const waitingNodes = await resumeWaitingWorkflowNodes(env);
+	if (recovery.executions > 0 || queuedNodes > 0 || waitingNodes > 0) {
+		// eslint-disable-next-line no-console
+		console.info("[workflow-queue] restored persisted workflow state", {
+			...recovery,
+			queuedNodes,
+			waitingNodes,
+		});
+	}
 }

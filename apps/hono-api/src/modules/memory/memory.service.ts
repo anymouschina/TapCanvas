@@ -2,11 +2,15 @@ import type { AppContext, PrismaClient } from "../../types";
 import {
 	buildMemoryContext,
 	listProjectChatArtifactSessions,
+	listProjectChatSessionSummaries,
 	listExecutionTraces,
 	persistConversationTurn,
 	searchMemoryEntries,
+	supersedeSessionMemoryEntries,
 	writeExecutionTrace,
 	writeMemoryEntries,
+	PUBLIC_CHAT_REFERENCE_PROVENANCE_REQUEST_KIND,
+	type ChatSessionSummary,
 	type ExecutionTraceRow,
 	type MemoryContextResult,
 	type NormalizedMemoryEntry,
@@ -17,9 +21,15 @@ import type {
 	ExecutionTraceWriteRequest,
 	MemoryContextRequest,
 	MemoryProjectChatArtifactSessionsRequest,
+	MemoryProjectSessionsRequest,
 	MemorySearchRequest,
 	MemoryWriteRequest,
 } from "./memory.schemas";
+import { parseAgentExecutionProvenance } from "../task/agent-execution-provenance";
+import {
+	buildPublicChatTurnEntityId,
+	resetPublicChatSession,
+} from "../apiKey/public-chat-session.repo";
 
 function truncateText(value: string, maxLength: number): string {
 	const text = String(value || "").trim();
@@ -65,6 +75,16 @@ export async function buildUserMemoryContext(
 	return buildMemoryContext(c.env.DB, userId, input);
 }
 
+/** Replace all recallable projections for one canonical chat session. */
+export async function resetUserConversation(
+	c: AppContext,
+	input: { userId: string; sessionKey: string },
+): Promise<void> {
+	const nowIso = new Date().toISOString();
+	await resetPublicChatSession(c.env.DB, { ...input, nowIso });
+	await supersedeSessionMemoryEntries(c.env.DB, { ...input, nowIso });
+}
+
 export async function writeUserMemoryEntries(
 	c: AppContext,
 	userId: string,
@@ -92,6 +112,20 @@ export async function listUserProjectChatArtifactSessions(
 		...(input.flowId ? { flowId: input.flowId } : {}),
 		...(typeof input.limitSessions === "number" ? { limitSessions: input.limitSessions } : {}),
 		...(typeof input.limitTurns === "number" ? { limitTurns: input.limitTurns } : {}),
+	});
+}
+
+export async function listUserProjectChatSessions(
+	c: AppContext,
+	userId: string,
+	input: MemoryProjectSessionsRequest,
+): Promise<ChatSessionSummary[]> {
+	return listProjectChatSessionSummaries(c.env.DB, {
+		userId,
+		projectId: input.projectId,
+		...(input.flowId ? { flowId: input.flowId } : {}),
+		...(input.chapterId ? { chapterId: input.chapterId } : {}),
+		...(typeof input.limit === "number" ? { limit: input.limit } : {}),
 	});
 }
 
@@ -123,12 +157,39 @@ export async function persistUserConversationTurn(
 	input: {
 		userId: string;
 		sessionKey: string;
+		turnId: string;
 		userText: string;
 		assistantText: string;
 		assistantAssets?: unknown[];
+		assistantExecutionProvenance?: unknown;
 	},
 ): Promise<PersistConversationTurnResult | null> {
 	const persisted = await persistConversationTurn(c.env.DB, input);
+	const executionProvenance = parseAgentExecutionProvenance(input.assistantExecutionProvenance);
+	if (persisted?.assistantMessageId && executionProvenance) {
+		const tracePersistence = await writeExecutionTrace(c.env.DB, input.userId, {
+			scopeType: "session",
+			scopeId: input.sessionKey,
+			taskId: persisted.assistantMessageId,
+			requestKind: PUBLIC_CHAT_REFERENCE_PROVENANCE_REQUEST_KIND,
+			inputSummary: "assistant reference provenance",
+			meta: { executionProvenance },
+			resultSummary: "assistant reference provenance persisted",
+		}, {
+			traceId: buildPublicChatTurnEntityId({
+				kind: "reference_provenance",
+				userId: input.userId,
+				sessionKey: input.sessionKey,
+				turnId: input.turnId,
+			}),
+			idempotent: true,
+		});
+		if (tracePersistence.status === "degraded") {
+			console.warn(
+				`[memory] assistant reference provenance degraded message=${persisted.assistantMessageId} code=${tracePersistence.errorCode ?? "unknown"}`,
+			);
+		}
+	}
 	const context = await buildMemoryContext(c.env.DB, input.userId, {
 		sessionKey: input.sessionKey,
 		recentConversationLimit: 8,
@@ -162,12 +223,20 @@ export async function persistUserConversationTurn(
 					recentTurns,
 				},
 				sourceKind: "system_extract",
-				sourceId: `conversation_rollup:${Date.now()}`,
+				sourceId: `conversation_rollup:${input.turnId}`,
 				importance: 0.88,
 				status: "active",
 				tags: ["conversation", "rollup", "session"],
 			},
 		],
+	}, {
+		entryIds: [buildPublicChatTurnEntityId({
+			kind: "memory_rollup",
+			userId: input.userId,
+			sessionKey: input.sessionKey,
+			turnId: input.turnId,
+		})],
+		idempotent: true,
 	});
 	return persisted;
 }
@@ -231,6 +300,18 @@ export type ExecutionTraceDto = {
 	errorCode: string | null;
 	errorDetail: string | null;
 	createdAt: string;
+	status: string;
+	sessionKey: string | null;
+	workflowKey: string | null;
+	logicalTaskId: string | null;
+	rootTraceId: string | null;
+	parentTraceId: string | null;
+	physicalRunId: string | null;
+	workflowRunId: string | null;
+	startedAt: string;
+	updatedAt: string;
+	finishedAt: string | null;
+	nextEventSeq: number;
 };
 
 export async function listUserExecutionTraces(
@@ -238,6 +319,8 @@ export async function listUserExecutionTraces(
 	userId: string,
 	input: {
 		limit: number;
+		traceId?: string;
+		traceFamilyId?: string;
 		scopeType?: string;
 		scopeId?: string;
 		requestKindPrefix?: string;
@@ -246,6 +329,8 @@ export async function listUserExecutionTraces(
 	const rows = await listExecutionTraces(c.env.DB, {
 		userId,
 		limit: input.limit,
+		...(input.traceId ? { traceId: input.traceId } : {}),
+		...(input.traceFamilyId ? { traceFamilyId: input.traceFamilyId } : {}),
 		...(input.scopeType ? { scopeType: input.scopeType } : {}),
 		...(input.scopeId ? { scopeId: input.scopeId } : {}),
 		...(input.requestKindPrefix ? { requestKindPrefix: input.requestKindPrefix } : {}),
@@ -254,25 +339,20 @@ export async function listUserExecutionTraces(
 }
 
 function normalizeExecutionTraceRow(row: ExecutionTraceRow): ExecutionTraceDto {
-	const toolCalls = parseJson<Array<Record<string, unknown>>>(row.tool_calls_json, []);
-	const metaFromColumn = (() => {
-		const parsed = parseJson<Record<string, unknown>>(row.meta_json, {});
-		return Object.keys(parsed).length ? parsed : null;
-	})();
-	const derivedMeta = (() => {
-		if (metaFromColumn) return null;
-		if (!Array.isArray(toolCalls) || toolCalls.length === 0) return null;
-		const candidate = toolCalls.find((call) => call && typeof call === "object" && !Array.isArray(call));
-		if (!candidate) return null;
-		const keys = ["projectId", "flowId", "bookId", "chapterId", "label", "sessionId", "requestId", "pagePath", "referrerPath"];
-		const out: Record<string, unknown> = {};
-		for (const key of keys) {
-			const v = (candidate as Record<string, unknown>)[key];
-			if (typeof v === "string" && v.trim()) out[key] = v.trim();
+	const parseTraceJson = <T>(raw: string | null, field: string, fallback: T): T => {
+		if (!raw) return fallback;
+		try {
+			return JSON.parse(raw) as T;
+		} catch (error: unknown) {
+			throw new Error(
+				`execution_trace_invalid_json:${row.id}:${field}:${error instanceof Error ? error.message : String(error)}`,
+			);
 		}
-		if (!Object.keys(out).length) return null;
-		out.__derivedFromToolCalls = true;
-		return out;
+	};
+	const toolCalls = parseTraceJson<Array<Record<string, unknown>>>(row.tool_calls_json, "tool_calls_json", []);
+	const metaFromColumn = (() => {
+		const parsed = parseTraceJson<Record<string, unknown>>(row.meta_json, "meta_json", {});
+		return Object.keys(parsed).length ? parsed : null;
 	})();
 	return {
 		id: row.id,
@@ -281,13 +361,25 @@ function normalizeExecutionTraceRow(row: ExecutionTraceRow): ExecutionTraceDto {
 		taskId: row.task_id,
 		requestKind: row.request_kind,
 		inputSummary: row.input_summary,
-		decisionLog: parseJson<string[]>(row.decision_log_json, []),
+		decisionLog: parseTraceJson<string[]>(row.decision_log_json, "decision_log_json", []),
 		toolCalls,
-		meta: metaFromColumn ?? derivedMeta,
+		meta: metaFromColumn,
 		resultSummary: row.result_summary,
 		errorCode: row.error_code,
 		errorDetail: row.error_detail,
 		createdAt: row.created_at,
+		status: row.status,
+		sessionKey: row.session_key,
+		workflowKey: row.workflow_key,
+		logicalTaskId: row.logical_task_id,
+		rootTraceId: row.root_trace_id,
+		parentTraceId: row.parent_trace_id,
+		physicalRunId: row.physical_run_id,
+		workflowRunId: row.workflow_run_id,
+		startedAt: row.started_at,
+		updatedAt: row.updated_at,
+		finishedAt: row.finished_at,
+		nextEventSeq: Number(row.next_event_seq),
 	};
 }
 export async function persistStoryboardChunkMemory(

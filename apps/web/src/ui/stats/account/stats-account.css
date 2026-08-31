@@ -1,0 +1,51 @@
+.stats-account { display: flex; flex-direction: column; gap: 12px; }
+.stats-account__header { display: flex; align-items: center; justify-content: space-between; }
+.stats-account__heading { display: flex; align-items: center; gap: 8px; }
+.stats-account__title { margin: 0; font-size: 18px; letter-spacing: 0; }
+.stats-account__status { color: var(--mantine-color-dimmed); font-size: 11px; }
+.stats-account__status.is-configured { color: #248a3d; }
+.stats-account__status.is-unconfigured { color: #d92d3a; }
+.stats-account__state { display: flex; min-height: 240px; align-items: center; justify-content: center; gap: 8px; }
+.stats-account__state--error { flex-direction: column; color: var(--mantine-color-red-6); }
+.stats-account__content { display: grid; gap: 24px; }
+.stats-account-section { display: block; }
+.stats-account-section__title { margin: 0 0 10px; font-size: 14px; letter-spacing: 0; }
+.stats-account-section__empty { padding: 22px 0; color: var(--mantine-color-dimmed); font-size: 12px; text-align: center; }
+.stats-account-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 10px 16px; max-width: 720px; }
+.stats-account-settings__toggle { align-self: center; }
+.stats-account-settings__field input,
+.stats-account-message-form__field input,
+.stats-account-message-form__field textarea { border: 0; background: light-dark(#f5f5f7, #242426); }
+.stats-account-settings__save { width: 120px; border-radius: 6px; }
+.stats-account-message-form { display: grid; gap: 10px; max-width: 720px; }
+.stats-account-message-form__audience { width: 240px; }
+.stats-account-message-form__send { width: 110px; border-radius: 6px; }
+.stats-account-session-list,
+.stats-account-notification-list { display: flex; flex-direction: column; }
+.stats-account-session { display: grid; grid-template-columns: minmax(150px, 0.8fr) minmax(220px, 1fr) 34px; align-items: center; gap: 12px; min-height: 58px; }
+.stats-account-session + .stats-account-session,
+.stats-account-notification + .stats-account-notification { border-top: 1px solid light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.06)); }
+.stats-account-session__user,
+.stats-account-session__device,
+.stats-account-notification__content,
+.stats-account-notification__meta { display: flex; min-width: 0; flex-direction: column; }
+.stats-account-session__name,
+.stats-account-session__label,
+.stats-account-notification__title { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.stats-account-session__id,
+.stats-account-session__time,
+.stats-account-notification__body,
+.stats-account-notification__user,
+.stats-account-notification__time,
+.stats-account-notification__read { color: var(--mantine-color-dimmed); font-size: 10px; }
+.stats-account-notification { display: grid; grid-template-columns: minmax(0, 1fr) 160px; align-items: center; gap: 16px; min-height: 62px; }
+.stats-account-notification__body { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats-account-notification__meta { align-items: flex-end; }
+@media (max-width: 720px) {
+  .stats-account-settings { grid-template-columns: 1fr; }
+  .stats-account-session { grid-template-columns: minmax(0, 1fr) 34px; }
+  .stats-account-session__device { grid-column: 1; }
+  .stats-account-session__tooltip { grid-column: 2; grid-row: 1 / span 2; }
+  .stats-account-notification { grid-template-columns: 1fr; padding: 8px 0; }
+  .stats-account-notification__meta { align-items: flex-start; }
+}

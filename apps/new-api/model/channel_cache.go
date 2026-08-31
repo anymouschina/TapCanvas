@@ -18,18 +18,22 @@ var group2model2channels map[string]map[string][]int // enabled channel
 var channelsIDM map[int]*Channel                     // all channels include disabled
 var channelSyncLock sync.RWMutex
 
-func InitChannelCache() {
+func RefreshChannelCache() error {
 	if !common.MemoryCacheEnabled {
-		return
+		return nil
 	}
 	newChannelId2channel := make(map[int]*Channel)
 	var channels []*Channel
-	DB.Find(&channels)
+	if err := DB.Find(&channels).Error; err != nil {
+		return fmt.Errorf("读取渠道缓存源数据失败: %w", err)
+	}
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
 	}
 	var abilities []*Ability
-	DB.Find(&abilities)
+	if err := DB.Find(&abilities).Error; err != nil {
+		return fmt.Errorf("读取渠道能力缓存源数据失败: %w", err)
+	}
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true
@@ -90,13 +94,16 @@ func InitChannelCache() {
 	channelsIDM = newChannelId2channel
 	channelSyncLock.Unlock()
 	common.SysLog("channels synced from database")
+	return nil
 }
 
 func SyncChannelCache(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Second)
 		common.SysLog("syncing channels from database")
-		InitChannelCache()
+		if err := RefreshChannelCache(); err != nil {
+			common.SysError("periodic channel cache refresh failed: " + err.Error())
+		}
 	}
 }
 
@@ -256,6 +263,43 @@ func CacheGetChannel(id int) (*Channel, error) {
 		return nil, fmt.Errorf("渠道# %d，已不存在", id)
 	}
 	return c, nil
+}
+
+// CacheGetUniqueChannelByNameAndType resolves an operationally named channel
+// without relying on a database id that differs between deployments. Duplicate
+// names are rejected because a global forced route must have exactly one target.
+func CacheGetUniqueChannelByNameAndType(name string, channelType int) (*Channel, error) {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" || channelType <= 0 {
+		return nil, errors.New("channel name and type are required")
+	}
+	if !common.MemoryCacheEnabled {
+		var channels []*Channel
+		if err := DB.Where("name = ? AND type = ?", trimmedName, channelType).Limit(2).Find(&channels).Error; err != nil {
+			return nil, fmt.Errorf("读取渠道 %q 失败: %w", trimmedName, err)
+		}
+		if len(channels) != 1 {
+			return nil, fmt.Errorf("渠道 %q(type=%d) 数量为 %d，必须且只能配置一个", trimmedName, channelType, len(channels))
+		}
+		return channels[0], nil
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	var matched *Channel
+	for _, channel := range channelsIDM {
+		if channel == nil || channel.Name != trimmedName || channel.Type != channelType {
+			continue
+		}
+		if matched != nil {
+			return nil, fmt.Errorf("渠道 %q(type=%d) 配置重复", trimmedName, channelType)
+		}
+		matched = channel
+	}
+	if matched == nil {
+		return nil, fmt.Errorf("渠道 %q(type=%d) 不存在", trimmedName, channelType)
+	}
+	return matched, nil
 }
 
 func CacheGetChannelInfo(id int) (*ChannelInfo, error) {

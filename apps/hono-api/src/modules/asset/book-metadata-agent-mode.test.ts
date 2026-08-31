@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveBookMetadataAgentExecutionMode } from "./book-metadata-agent-mode";
+import {
+	resolveBookMetadataAgentExecutionMode,
+	resolveBookMetadataTargetChapterNumbers,
+} from "./book-metadata-agent-mode";
 
 describe("resolveBookMetadataAgentExecutionMode", () => {
 	it("uses single-turn mode when explicitly requested", () => {
@@ -42,5 +45,39 @@ describe("resolveBookMetadataAgentExecutionMode", () => {
 				batchCount: 1,
 			}),
 		).toBe("team");
+	});
+});
+
+describe("resolveBookMetadataTargetChapterNumbers", () => {
+	it("refreshes only missing chapters by default", () => {
+		expect(
+			resolveBookMetadataTargetChapterNumbers({
+				windowChapterNumbers: [5, 6, 7],
+				missingChapterNumbers: [6],
+				safeChapter: 7,
+			}),
+		).toEqual([6]);
+	});
+
+	it("forces current chapter refresh even when metadata is already complete", () => {
+		expect(
+			resolveBookMetadataTargetChapterNumbers({
+				windowChapterNumbers: [7],
+				missingChapterNumbers: [],
+				safeChapter: 7,
+				forceRefreshChapter: true,
+			}),
+		).toEqual([7]);
+	});
+
+	it("merges missing chapters with forced current chapter without duplicates", () => {
+		expect(
+			resolveBookMetadataTargetChapterNumbers({
+				windowChapterNumbers: [7, 8],
+				missingChapterNumbers: [7, 8],
+				safeChapter: 7,
+				forceRefreshChapter: true,
+			}),
+		).toEqual([7, 8]);
 	});
 });

@@ -257,7 +257,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	}
 
 	if channel.Type == constant.ChannelTypeGemini {
-		key, _, apiErr := channel.GetNextEnabledKey()
+		key, _, apiErr := channel.GetNextEnabledKey(nil)
 		if apiErr != nil {
 			return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
 		}
@@ -295,7 +295,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		url = fmt.Sprintf("%s/v1/models", baseURL)
 	}
 
-	key, _, apiErr := channel.GetNextEnabledKey()
+	key, _, apiErr := channel.GetNextEnabledKey(nil)
 	if apiErr != nil {
 		return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
 	}
@@ -386,18 +386,9 @@ func checkAndPersistChannelUpstreamModelUpdates(
 	return modelsChanged, autoAdded, nil
 }
 
-func refreshChannelRuntimeCache() {
-	if common.MemoryCacheEnabled {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					common.SysLog(fmt.Sprintf("InitChannelCache panic: %v", r))
-				}
-			}()
-			model.InitChannelCache()
-		}()
-	}
+func refreshChannelRuntimeCache() error {
 	service.ResetProxyClientCache()
+	return rebuildChannelRuntimeCaches()
 }
 
 func shouldSendUpstreamModelUpdateNotification(now int64, changedChannels int, failedChannels int) bool {
@@ -588,7 +579,9 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 	}
 
 	if refreshNeeded {
-		refreshChannelRuntimeCache()
+		if err := refreshChannelRuntimeCache(); err != nil {
+			common.SysError("upstream model update task saved changes but runtime cache refresh failed: " + err.Error())
+		}
 	}
 
 	if checkedChannels > 0 || common.DebugEnabled {
@@ -694,7 +687,10 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	}
 
 	if modelsChanged {
-		refreshChannelRuntimeCache()
+		if err := refreshChannelRuntimeCache(); err != nil {
+			common.ApiErrorMsg(c, "上游模型变更已保存，但刷新运行时缓存失败: "+err.Error())
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -740,7 +736,10 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 		return
 	}
 	if modelsChanged {
-		refreshChannelRuntimeCache()
+		if err := refreshChannelRuntimeCache(); err != nil {
+			common.ApiErrorMsg(c, "上游模型检测结果已保存，但刷新运行时缓存失败: "+err.Error())
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -889,7 +888,10 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 	}
 
 	if refreshNeeded {
-		refreshChannelRuntimeCache()
+		if err := refreshChannelRuntimeCache(); err != nil {
+			common.ApiErrorMsg(c, "批量上游模型变更已保存，但刷新运行时缓存失败: "+err.Error())
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -962,7 +964,10 @@ func DetectAllChannelUpstreamModelUpdates(c *gin.Context) {
 	}
 
 	if refreshNeeded {
-		refreshChannelRuntimeCache()
+		if err := refreshChannelRuntimeCache(); err != nil {
+			common.ApiErrorMsg(c, "批量上游模型检测结果已保存，但刷新运行时缓存失败: "+err.Error())
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

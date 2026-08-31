@@ -1,0 +1,118 @@
+.stats-knowledge-management {
+  min-width: 0;
+}
+
+.stats-knowledge-management__description {
+  max-width: 860px;
+}
+
+.stats-knowledge-management__model {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+}
+
+.stats-knowledge-management__actions {
+  flex: 0 0 auto;
+}
+
+.stats-knowledge-management__filters {
+  min-width: 0;
+}
+
+.stats-knowledge-management__search {
+  flex: 1 1 320px;
+  min-width: 240px;
+}
+
+.stats-knowledge-management__collection-filter,
+.stats-knowledge-management__domain-filter,
+.stats-knowledge-management__role-filter {
+  flex: 0 1 180px;
+  min-width: 150px;
+}
+
+.stats-knowledge-management__facet-filter {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.stats-knowledge-management__list {
+  overflow: hidden;
+}
+
+.stats-knowledge-management__table {
+  min-width: 1120px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-knowledge-management__scroll {
+  width: 100%;
+}
+
+.stats-knowledge-management__header-cell {
+  color: var(--tc-color-text-tertiary, #73839a);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stats-knowledge-management__cell {
+  border-color: var(--tc-color-border-subtle, rgba(226, 232, 240, 0.08));
+  vertical-align: top;
+}
+
+.stats-knowledge-management__card-title,
+.stats-knowledge-management__card-id,
+.stats-knowledge-management__facet,
+.stats-knowledge-management__updated-at {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-knowledge-management__body-size,
+.stats-knowledge-management__roles {
+  white-space: nowrap;
+}
+
+.stats-knowledge-management__cell--actions,
+.stats-knowledge-management__header-cell--actions {
+  width: 64px;
+  text-align: right;
+}
+
+.stats-knowledge-management__pagination {
+  min-height: 44px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--tc-color-border-subtle, rgba(226, 232, 240, 0.08));
+}
+
+.stats-knowledge-management__page-size {
+  width: 108px;
+}
+
+.stats-knowledge-management__editor-actions {
+  padding-top: 8px;
+}
+
+@media (max-width: 760px) {
+  .stats-knowledge-management__header,
+  .stats-knowledge-management__actions,
+  .stats-knowledge-management__editor-row {
+    align-items: stretch;
+  }
+
+  .stats-knowledge-management__actions {
+    width: 100%;
+  }
+
+  .stats-knowledge-management__filters > *,
+  .stats-knowledge-management__pagination,
+  .stats-knowledge-management__pagination-actions {
+    width: 100%;
+  }
+
+  .stats-knowledge-management__pagination-actions {
+    justify-content: space-between;
+  }
+}

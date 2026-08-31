@@ -23,7 +23,8 @@ function toScreenRect(rect: ScreenRect | DOMRect): ScreenRect {
   }
 }
 
-function isPointInsideRect(point: ScreenPoint, rect: ScreenRect): boolean {
+export function isPointInsideRect(point: ScreenPoint, rectInput: ScreenRect | DOMRect): boolean {
+  const rect = toScreenRect(rectInput)
   return (
     point.x >= rect.left &&
     point.x <= rect.right &&

@@ -45,14 +45,11 @@ export default function GeneralSettings(props) {
   const [loading, setLoading] = useState(false);
   const [showQuotaWarning, setShowQuotaWarning] = useState(false);
   const [inputs, setInputs] = useState({
-    TopUpLink: '',
-    'general_setting.docs_link': '',
-    'general_setting.quota_display_type': 'USD',
+    'general_setting.quota_display_type': 'CNY',
     'general_setting.custom_currency_symbol': '¤',
     'general_setting.custom_currency_exchange_rate': '',
     QuotaPerUnit: '',
     RetryTimes: 3,
-    USDExchangeRate: '',
     DisplayTokenStatEnabled: false,
     DefaultCollapseSidebar: false,
     DemoSiteEnabled: false,
@@ -103,11 +100,9 @@ export default function GeneralSettings(props) {
       });
   }
 
-  // 计算展示在输入框中的“1 USD = X <currency>”中的 X
+  // 计算当前展示单位对应的换算系数
   const combinedRate = useMemo(() => {
     const type = inputs['general_setting.quota_display_type'];
-    if (type === 'USD') return '1';
-    if (type === 'CNY') return String(inputs['USDExchangeRate'] || '');
     if (type === 'TOKENS') return String(inputs['QuotaPerUnit'] || '');
     if (type === 'CUSTOM')
       return String(
@@ -118,9 +113,7 @@ export default function GeneralSettings(props) {
 
   const onCombinedRateChange = (val) => {
     const type = inputs['general_setting.quota_display_type'];
-    if (type === 'CNY') {
-      handleFieldChange('USDExchangeRate')(val);
-    } else if (type === 'TOKENS') {
+    if (type === 'TOKENS') {
       handleFieldChange('QuotaPerUnit')(val);
     } else if (type === 'CUSTOM') {
       handleFieldChange('general_setting.custom_currency_exchange_rate')(val);
@@ -145,8 +138,7 @@ export default function GeneralSettings(props) {
 
   const quotaDisplayTypeDesc = useMemo(() => {
     const descMap = {
-      USD: t('站点所有额度将以美元 ($) 显示'),
-      CNY: t('站点所有额度将按汇率换算为人民币 (¥) 显示'),
+      CNY: t('站点所有金额以人民币 (¥) 原值显示'),
       TOKENS: t('站点所有额度将以原始 Token 数显示，不做货币换算'),
       CUSTOM: t('站点所有额度将按汇率换算为自定义货币显示'),
     };
@@ -154,14 +146,12 @@ export default function GeneralSettings(props) {
   }, [quotaDisplayType, t]);
 
   const rateLabel = useMemo(() => {
-    if (quotaDisplayType === 'CNY') return t('汇率');
-    if (quotaDisplayType === 'TOKENS') return t('每美元对应 Token 数');
+    if (quotaDisplayType === 'TOKENS') return t('每计费单位对应 Token 数');
     if (quotaDisplayType === 'CUSTOM') return t('汇率');
     return '';
   }, [quotaDisplayType, t]);
 
   const rateSuffix = useMemo(() => {
-    if (quotaDisplayType === 'CNY') return 'CNY (¥)';
     if (quotaDisplayType === 'TOKENS') return 'Tokens';
     if (quotaDisplayType === 'CUSTOM')
       return inputs['general_setting.custom_currency_symbol'] || '¤';
@@ -169,31 +159,26 @@ export default function GeneralSettings(props) {
   }, [quotaDisplayType, inputs]);
 
   const rateExtraText = useMemo(() => {
-    if (quotaDisplayType === 'CNY')
-      return t(
-        '系统内部以美元 (USD) 为基准计价。用户余额、充值金额、模型定价、用量日志等所有金额显示均按此汇率换算为人民币，不影响内部计费',
-      );
     if (quotaDisplayType === 'TOKENS')
       return t(
         '系统内部计费精度，默认 500000，修改可能导致计费异常，请谨慎操作',
       );
     if (quotaDisplayType === 'CUSTOM')
       return t(
-        '系统内部以美元 (USD) 为基准计价。用户余额、充值金额、模型定价、用量日志等所有金额显示均按此汇率换算为自定义货币，不影响内部计费',
+        '用户额度、模型定价和用量日志均按此系数换算为自定义货币显示',
       );
     return '';
   }, [quotaDisplayType, t]);
 
   const previewText = useMemo(() => {
-    if (quotaDisplayType === 'USD') return '$1.00';
+    if (quotaDisplayType === 'CNY') return t('¥1.00 按 ¥1.00 展示');
     const rate = parseFloat(combinedRate);
     if (!rate || isNaN(rate)) return t('请输入汇率');
-    if (quotaDisplayType === 'CNY') return `$1.00 → ¥${rate.toFixed(2)}`;
     if (quotaDisplayType === 'TOKENS')
-      return `$1.00 → ${Number(rate).toLocaleString()} Tokens`;
+      return `${t('每计费单位')} ${Number(rate).toLocaleString()} Tokens`;
     if (quotaDisplayType === 'CUSTOM') {
       const symbol = inputs['general_setting.custom_currency_symbol'] || '¤';
-      return `$1.00 → ${symbol}${rate.toFixed(2)}`;
+      return `${t('自定义货币换算系数')}：${symbol}${rate.toFixed(2)}`;
     }
     return '';
   }, [quotaDisplayType, combinedRate, inputs, t]);
@@ -212,8 +197,11 @@ export default function GeneralSettings(props) {
     ) {
       currentInputs['general_setting.quota_display_type'] = props.options
         .DisplayInCurrencyEnabled
-        ? 'USD'
+        ? 'CNY'
         : 'TOKENS';
+    }
+    if (currentInputs['general_setting.quota_display_type'] === 'USD') {
+      currentInputs['general_setting.quota_display_type'] = 'CNY';
     }
     // 回填自定义货币相关字段（如果后端已存在）
     if (props.options['general_setting.custom_currency_symbol'] !== undefined) {
@@ -242,27 +230,7 @@ export default function GeneralSettings(props) {
         >
           <Form.Section text={t('通用设置')}>
             <Row gutter={16}>
-              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
-                <Form.Input
-                  field={'TopUpLink'}
-                  label={t('充值链接')}
-                  initValue={''}
-                  placeholder={t('例如发卡网站的购买链接')}
-                  onChange={handleFieldChange('TopUpLink')}
-                  showClear
-                />
-              </Col>
-              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
-                <Form.Input
-                  field={'general_setting.docs_link'}
-                  label={t('文档地址')}
-                  initValue={''}
-                  placeholder={t('例如 https://docs.neoSparkMart.pro')}
-                  onChange={handleFieldChange('general_setting.docs_link')}
-                  showClear
-                />
-              </Col>
-              {/* 单位美元额度已合入汇率组合控件（TOKENS 模式下编辑），不再单独展示 */}
+              {/* 额度换算已合入组合控件（TOKENS 模式下编辑），不再单独展示 */}
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Input
                   field={'RetryTimes'}
@@ -282,12 +250,7 @@ export default function GeneralSettings(props) {
                     'general_setting.quota_display_type',
                   )}
                 >
-                  <Form.Select.Option value='USD'>
-                    USD ($)
-                  </Form.Select.Option>
-                  <Form.Select.Option value='CNY'>
-                    CNY (¥)
-                  </Form.Select.Option>
+                  <Form.Select.Option value='CNY'>CNY (¥)</Form.Select.Option>
                   {showTokensOption && (
                     <Form.Select.Option value='TOKENS'>
                       Tokens
@@ -298,11 +261,11 @@ export default function GeneralSettings(props) {
                   </Form.Select.Option>
                 </Form.Select>
               </Col>
-              {quotaDisplayType !== 'USD' && (
+              {quotaDisplayType !== 'CNY' && (
                 <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                   <Form.Slot label={rateLabel}>
                     <Input
-                      prefix='1 USD = '
+                      prefix={`${t('换算系数')} `}
                       suffix={rateSuffix}
                       value={combinedRate}
                       onChange={onCombinedRateChange}
@@ -398,7 +361,9 @@ export default function GeneralSettings(props) {
                   field={'token_setting.max_user_tokens'}
                   step={1}
                   min={1}
-                  extraText={t('每个用户最多可创建的令牌数量，默认 1000，设置过大可能会影响性能')}
+                  extraText={t(
+                    '每个用户最多可创建的令牌数量，默认 1000，设置过大可能会影响性能',
+                  )}
                   placeholder={'1000'}
                   onChange={handleFieldChange('token_setting.max_user_tokens')}
                 />

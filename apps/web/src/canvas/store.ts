@@ -1,24 +1,52 @@
-import { create } from 'zustand'
+import { createWithEqualityFn } from 'zustand/traditional'
 import type { Edge, Node, OnConnect, OnEdgesChange, OnNodesChange, Connection } from '@xyflow/react'
 import { addEdge, applyEdgeChanges, applyNodeChanges } from '@xyflow/react'
 import { runNodeMock } from '../runner/mockRunner'
 import { runNodeDagToTarget } from '../runner/dag'
 import { runFlowDag } from '../runner/dag'
-import { getTaskNodeCoreType, getTaskNodeSchema, normalizeTaskNodeKind } from './nodes/taskNodeSchema'
+import {
+  createTaskNodeInitialData,
+  getTaskNodeCoreType,
+  getTaskNodeSchema,
+  normalizeTaskNodeKind,
+} from './nodes/taskNodeSchema'
+import type { TaskNodeData } from './nodes/taskNodeSchema'
+import {
+  TEXT_NODE_DEFAULT_HEIGHT,
+  TEXT_NODE_DEFAULT_WIDTH,
+  getVisualNodeDefaults,
+  clampVisualDimension,
+  fitVisualSizeToNatural,
+} from './nodes/taskNodeHelpers'
 import { formatErrorMessage } from './utils/formatErrorMessage'
 import { getNodeAbsPosition, getNodeSize } from './utils/nodeBounds'
 import type { NodeRect, NodeSize, XY } from './utils/nodeBounds'
 import { validateWorkflowIoForRun } from './workflowIo'
+import { isValidConnectionType } from './utils/validation'
 import { normalizeWorkflowEdgeMeta, normalizeWorkflowNodeMeta } from './workflowMeta'
 import { normalizeProductionNodeMeta, normalizeProductionNodeMetaRecord } from './productionMeta'
 import { sanitizeFlowValueForPersistence } from './utils/persistenceSanitizer'
 import { useUIStore } from '../ui/uiStore'
 import { extractCanvasGraph, type CanvasImportData, type SerializedCanvas } from './utils/serialization'
 import { normalizeStoryboardNodeData } from './nodes/taskNode/storyboardEditor'
-import { getDefaultModel } from '../config/models'
 import { buildVideoDurationPatch, readVideoDurationSeconds } from '../utils/videoDuration'
+import { createDefaultDirectorConsoleData } from './nodes/directorConsole/types'
+import { addCharacter as dcAddCharacter, addCamera as dcAddCamera, selectObject as dcSelectObject } from './nodes/directorConsole/state/scene'
+import { shouldVirtualizeCanvas } from './canvasPerformancePolicy'
+import { prepareVirtualizedTaskNodes } from './prepareVirtualizedTaskNodes'
+import { readWorkflowCanvasPorts, workflowPortHandleId } from './workflowCanvasPorts'
+import { remapImportedWorkflowInstanceData } from './reusableWorkflowGraph'
+import {
+  WORKFLOW_EDGE_RAIL_GUTTER,
+  WORKFLOW_ICON_NODE_FLOW_GAP_X,
+  WORKFLOW_ICON_NODE_FLOW_GAP_Y,
+  resolveWorkflowNodeCanvasSize,
+} from './workflowNodeGeometry'
+import { computeWorkflowFlowLayout } from './workflowFlowLayout'
+import { derivedApplyGuard } from './sync/remoteApplyGuard'
 
 type GroupArrangeDirection = 'grid' | 'column' | 'flow'
+export type CanvasTidyOptions = Readonly<{ arrangeWorkflowGroups?: boolean }>
 
 type RFState = {
   nodes: Node[]
@@ -30,12 +58,27 @@ type RFState = {
   onEdgesChange: OnEdgesChange
   onConnect: OnConnect
   addNode: (type: string, label?: string, extra?: Record<string, any>) => void
+  addDirectorConsoleNode: (opts?: { id?: string; panoramaUrl?: string; position?: { x: number; y: number } }) => string
+  addNodesAsGroup: (specs: { label?: string; extra?: Record<string, any> }[], groupName?: string) => { groupId: string | null; nodeIds: string[] }
   reset: () => void
   load: (data: { nodes: Node[]; edges: Edge[] } | null) => void
+  // 画布内容归属标记（'flow:<flowId>' / 'chapter:<chapterId>' / null=未知）。
+  // useRFStore 是全局单例，SPA 导航后整图自动保存若不校验归属，会把上一页面的
+  // 陈旧内容固化进另一资源行（主画布↔章节互相串台的根因），保存前必须比对。
+  graphProvenanceKey: string | null
+  setGraphProvenance: (key: string | null) => void
   removeSelected: () => void
   updateNodeLabel: (id: string, label: string) => void
   updateNodeData: (id: string, patch: Record<string, any>) => void
+  updateNodesDataAtomically: (patches: ReadonlyMap<string, Readonly<Record<string, unknown>>>) => void
+  applyMediaNaturalSize: (id: string, size: {
+    width: number
+    height: number
+    url: string
+    persistDimensions?: boolean
+  }) => void
   copySelected: () => void
+  copyNode: (id: string) => void
   pasteFromClipboard: () => void
   clipboard: { nodes: Node[]; edges: Edge[] } | null
   // history
@@ -45,6 +88,8 @@ type RFState = {
   redo: () => void
   // mock run
   runSelected: () => Promise<void>
+  /** 批量分支执行：克隆 count-1 个同节点（继承上下游连线、剥离旧结果）并行运行 */
+  runNodeBranchClones: (id: string, count: number) => Promise<void>
   runDag: (concurrency: number) => Promise<void>
   setNodeStatus: (id: string, status: 'idle'|'queued'|'running'|'success'|'error', patch?: Record<string, unknown>) => void
   appendLog: (id: string, line: string) => void
@@ -55,6 +100,7 @@ type RFState = {
   deleteNode: (id: string) => void
   deleteEdge: (id: string) => void
   reorderEdgeForTarget: (edgeId: string, direction: 'left' | 'right') => void
+  inheritUpstreamConnections: (nodeId: string) => void
   duplicateNode: (id: string) => void
   pasteFromClipboardAt: (pos: { x: number; y: number }) => void
   importWorkflow: (workflowData: CanvasImportData | SerializedCanvas | null | undefined, position?: { x: number; y: number }) => void
@@ -75,6 +121,17 @@ type RFState = {
   formatTree: () => void
   autoLayoutAllDagVertical: () => void
   autoLayoutForParent: (parentId: string|null) => void
+  // 一键整理：未打组的根节点 + 组容器，按语义类别分列
+  // （文本→角色→场景→道具→技能→其它图片→视频，从左到右）排布
+  tidyByCategory: (options?: CanvasTidyOptions) => void
+  commitTidyNodes: (nodes: Node[], movedNodeIds: readonly string[]) => void
+  // 图片编辑覆盖层激活时锁定画布平移/缩放
+  canvasViewLocked: boolean
+  setCanvasViewLocked: (locked: boolean) => void
+  // 新增节点后需要居中定位的节点 id
+  pendingFocusNodeId: string | null
+  clearPendingFocusNodeId: () => void
+  userMovedNodeIds: Set<string>
 }
 
 // 生成节点唯一 ID，优先使用浏览器原生 UUID
@@ -102,6 +159,30 @@ function cloneGraph(nodes: Node[], edges: Edge[]) {
     return structuredClone(snapshot) as { nodes: Node[]; edges: Edge[] }
   }
   return JSON.parse(JSON.stringify(snapshot)) as { nodes: Node[]; edges: Edge[] }
+}
+
+// 撤销栈快照：本 store 全程不可变更新（autosave 引用快速路径、sync diff 快速路径同赖此约），
+// 历史条目存引用即等价——undo/redo 本来就按引用消费（nodes: previous.nodes）。
+// 旧版在此深克隆整图，updateNodeData 等高频入口每次调用都要 structuredClone 全部节点，
+// 大画布上是主线程可观的常驻成本。深克隆仅剪贴板复制（copyNodesToClipboard）仍需要。
+function snapshotGraph(nodes: Node[], edges: Edge[]) {
+  return { nodes, edges }
+}
+
+function copyNodesToClipboard(s: { nodes: Node[]; edges: Edge[] }, targets: Node[]) {
+  const ids = new Set(targets.map((n) => n.id))
+  // 组节点：连同其子节点一起复制，粘贴时由 parentId 重映射保持成组关系。
+  const withChildren = s.nodes.filter((n) => ids.has(n.id) || (getNodeParentId(n) && ids.has(getNodeParentId(n)!)))
+  const finalIds = new Set(withChildren.map((n) => n.id))
+  const internalEdges = s.edges.filter((e) => finalIds.has(e.source) && finalIds.has(e.target))
+  const graph = cloneGraph(withChildren, internalEdges)
+  // 尝试同时复制到系统剪贴板，便于粘贴到外部文档
+  try {
+    void navigator.clipboard?.writeText(JSON.stringify(graph, null, 2))
+  } catch {
+    // ignore clipboard errors
+  }
+  return { clipboard: graph }
 }
 
 function computeNextGroupId(nodes: Node[]): number {
@@ -162,14 +243,6 @@ function compareNodesByCanvasPosition(left: Node, right: Node, nodesById: Map<st
   const rightPos = getNodeAbsPosition(right, nodesById)
   if (leftPos.y !== rightPos.y) return leftPos.y - rightPos.y
   if (leftPos.x !== rightPos.x) return leftPos.x - rightPos.x
-  return String(getNodeDataRecord(left).label || left.id).localeCompare(String(getNodeDataRecord(right).label || right.id))
-}
-
-function compareNodesByHorizontalPriority(left: Node, right: Node, nodesById: Map<string, Node>): number {
-  const leftPos = getNodeAbsPosition(left, nodesById)
-  const rightPos = getNodeAbsPosition(right, nodesById)
-  if (leftPos.x !== rightPos.x) return leftPos.x - rightPos.x
-  if (leftPos.y !== rightPos.y) return leftPos.y - rightPos.y
   return String(getNodeDataRecord(left).label || left.id).localeCompare(String(getNodeDataRecord(right).label || right.id))
 }
 
@@ -246,6 +319,13 @@ function getTaskNodeHandles(node: Node): { targets: Set<string>; sources: Set<st
   if (!node || node.type !== 'taskNode') return null
   const data = (node as { data?: Record<string, unknown> }).data
   const kind = typeof data?.kind === 'string' ? data.kind : null
+  const workflowPorts = data ? readWorkflowCanvasPorts(data) : null
+  if (workflowPorts) {
+    return {
+      targets: new Set(workflowPorts.inputs.map((portId) => workflowPortHandleId('input', portId))),
+      sources: new Set(workflowPorts.outputs.map((portId) => workflowPortHandleId('output', portId))),
+    }
+  }
   const schema = getTaskNodeSchema(kind)
   const handles = schema.handles
   if (!handles || (typeof handles === 'object' && 'dynamic' in handles && handles.dynamic)) {
@@ -327,6 +407,36 @@ function normalizeImportedEdgeHandles(nodes: Node[], edges: Edge[]): Edge[] {
       ...(typeof nextSourceHandle === 'string' ? { sourceHandle: nextSourceHandle } : {}),
       ...(typeof normalizedTargetHandle === 'string' ? { targetHandle: normalizedTargetHandle } : {}),
     }
+  })
+}
+
+export function computeInheritableUpstreamIds(
+  nodeId: string,
+  nodes: Node[],
+  edges: Edge[],
+): string[] {
+  const currentNode = nodes.find((n) => n.id === nodeId)
+  if (!currentNode) return []
+  const currentKind = String(((currentNode.data as Record<string, unknown>)?.kind) || '').trim()
+
+  const level1Ids = new Set(
+    edges.filter((e) => e.target === nodeId).map((e) => e.source),
+  )
+  const alreadyConnected = new Set(level1Ids)
+  alreadyConnected.add(nodeId)
+
+  const level2Ids = new Set(
+    edges
+      .filter((e) => level1Ids.has(e.target) && !alreadyConnected.has(e.source))
+      .map((e) => e.source),
+  )
+
+  const nodeById = new Map(nodes.map((n) => [n.id, n]))
+  return Array.from(level2Ids).filter((id) => {
+    const n = nodeById.get(id)
+    if (!n) return false
+    const kind = String(((n.data as Record<string, unknown>)?.kind) || '').trim()
+    return isValidConnectionType(kind, currentKind)
   })
 }
 
@@ -581,7 +691,12 @@ export function sanitizeGraphForCanvas(input: CanvasImportData | SerializedCanva
     rawEdges.filter((e) => finalNodeIds.has(e.source) && finalNodeIds.has(e.target)),
   )
   const edges = sanitizeEdgesForNodes(nodes, edgesByNode).map(normalizeWorkflowEdgeMeta)
-  return { nodes: ensureParentFirstOrder(nodes), edges }
+  const orderedNodes = ensureParentFirstOrder(nodes)
+  const preparedNodes = prepareVirtualizedTaskNodes(
+    orderedNodes,
+    shouldVirtualizeCanvas(orderedNodes.length),
+  )
+  return { nodes: preparedNodes, edges }
 }
 
 type TreeLayoutPoint = { x: number; y: number }
@@ -617,74 +732,18 @@ function getNodeParentId(node: Node): string | null {
   return trimmed || null
 }
 
+// `locked` is a graph-level deletion contract. It must not change meaning
+// according to the current route or whether the node happens to be grouped.
+function isNodeDeleteProtected(node: Node): boolean {
+  return (node.data as TaskNodeData | undefined)?.locked === true
+}
+
 function shouldExcludeNodeFromGroupArrange(node: Node): boolean {
   if (!node || node.type === 'groupNode') return true
   const data = (node as any)?.data as Record<string, unknown> | undefined
   const source = String(data?.source || '').trim()
   if (source && LAYOUT_EXCLUDED_GROUP_SOURCES.has(source)) return true
   return false
-}
-
-function buildFlowArrangeColumns(nodes: Node[], edges: Edge[]): Node[][] {
-  const nodesById = new Map(nodes.map((node) => [node.id, node] as const))
-  const targetIds = new Set(nodes.map((node) => node.id))
-  const outgoing = new Map<string, Set<string>>()
-  const incomingCount = new Map<string, number>()
-
-  for (const node of nodes) {
-    outgoing.set(node.id, new Set<string>())
-    incomingCount.set(node.id, 0)
-  }
-
-  for (const edge of edges) {
-    if (!targetIds.has(edge.source) || !targetIds.has(edge.target) || edge.source === edge.target) continue
-    const nextTargets = outgoing.get(edge.source)
-    if (!nextTargets || nextTargets.has(edge.target)) continue
-    nextTargets.add(edge.target)
-    incomingCount.set(edge.target, (incomingCount.get(edge.target) || 0) + 1)
-  }
-
-  const compare = (leftId: string, rightId: string): number => {
-    const leftNode = nodesById.get(leftId)
-    const rightNode = nodesById.get(rightId)
-    if (!leftNode || !rightNode) return leftId.localeCompare(rightId)
-    return compareNodesByHorizontalPriority(leftNode, rightNode, nodesById)
-  }
-
-  const roots = nodes
-    .filter((node) => (incomingCount.get(node.id) || 0) === 0)
-    .sort((left, right) => compareNodesByHorizontalPriority(left, right, nodesById))
-  const visited = new Set<string>()
-  const columns: Node[][] = []
-
-  const visitChain = (startId: string): void => {
-    if (visited.has(startId)) return
-    const queue: string[] = [startId]
-    const orderedIds: string[] = []
-
-    while (queue.length > 0) {
-      const currentId = queue.shift()
-      if (!currentId || visited.has(currentId)) continue
-      visited.add(currentId)
-      orderedIds.push(currentId)
-      const nextIds = Array.from(outgoing.get(currentId) || []).sort(compare)
-      for (const nextId of nextIds) {
-        if (!visited.has(nextId)) queue.push(nextId)
-      }
-    }
-
-    if (!orderedIds.length) return
-    columns.push(orderedIds.map((id) => nodesById.get(id)).filter((node): node is Node => Boolean(node)))
-  }
-
-  for (const root of roots) visitChain(root.id)
-
-  const remaining = nodes
-    .filter((node) => !visited.has(node.id))
-    .sort((left, right) => compareNodesByHorizontalPriority(left, right, nodesById))
-  for (const node of remaining) visitChain(node.id)
-
-  return columns
 }
 
 function arrangeGroupChildrenInNodes(
@@ -697,7 +756,22 @@ function arrangeGroupChildrenInNodes(
   const group = nodes.find((n) => n.id === groupId && n.type === 'groupNode')
   if (!group) return nodes
 
-  const allChildren = nodes.filter((n) => getNodeParentId(n) === groupId && !shouldExcludeNodeFromGroupArrange(n))
+  const groupData = getNodeDataRecord(group)
+  const workflowInstanceId = typeof groupData.workflowInstanceId === 'string'
+    ? groupData.workflowInstanceId.trim()
+    : ''
+  const isWorkflowGroup = groupData.adminWorkflow === true && workflowInstanceId.length > 0
+  const belongsToWorkflowGroup = (node: Node): boolean => {
+    if (getNodeParentId(node) === groupId) return true
+    if (!isWorkflowGroup || node.type === 'groupNode') return false
+    const data = getNodeDataRecord(node)
+    return data.adminWorkflow === true
+      && data.workflowInstanceId === workflowInstanceId
+      && (data.kind === 'workflowStage' || data.kind === 'workflowTrigger')
+  }
+  const allChildren = nodes.filter((node) => (
+    belongsToWorkflowGroup(node) && !shouldExcludeNodeFromGroupArrange(node)
+  ))
   if (allChildren.length < 2) return nodes
 
   const targetIds =
@@ -716,6 +790,16 @@ function arrangeGroupChildrenInNodes(
       return String(a.id).localeCompare(String(b.id))
     })
   if (targets.length < 2) return nodes
+  const primaryTargets = targets.filter((node) => (
+    getNodeDataRecord(node).workflowRuntimeReference !== true
+  ))
+  const referenceTargets = targets.filter((node) => (
+    getNodeDataRecord(node).workflowRuntimeReference === true
+  ))
+  const isWorkflowFlow = primaryTargets.length > 0 && primaryTargets.every((node) => {
+    const data = getNodeDataRecord(node)
+    return data.kind === 'workflowStage' || data.kind === 'workflowTrigger'
+  })
 
   const padding = GROUP_PADDING
   const gapX = 12
@@ -733,21 +817,49 @@ function arrangeGroupChildrenInNodes(
       cursorY += (nodeSizeById.get(node.id)?.h ?? 0) + gapY
     }
   } else if (direction === 'flow') {
-    const targetIdSet = new Set(targets.map((node) => node.id))
+    const flowTargets = isWorkflowFlow ? primaryTargets : targets
+    const targetIdSet = new Set(flowTargets.map((node) => node.id))
     const scopedEdges = edges.filter((edge) => targetIdSet.has(edge.source) && targetIdSet.has(edge.target))
-    const columns = buildFlowArrangeColumns(targets, scopedEdges)
-    let cursorX = padding
-
-    for (const column of columns) {
-      let cursorY = padding
-      let columnWidth = 0
-      for (const node of column) {
-        const size = nodeSizeById.get(node.id) || { w: 0, h: 0 }
-        layoutPos.set(node.id, { x: cursorX, y: cursorY })
-        cursorY += size.h + gapY
-        columnWidth = Math.max(columnWidth, size.w)
+    const flowPositions = isWorkflowFlow
+      ? computeWorkflowFlowLayout(
+          flowTargets.map((node) => {
+            const size = getNodeSizeForLayout(node)
+            return {
+              id: node.id,
+              position: node.position,
+              size: { width: size.w, height: size.h },
+            }
+          }),
+          scopedEdges,
+          WORKFLOW_ICON_NODE_FLOW_GAP_X,
+          WORKFLOW_ICON_NODE_FLOW_GAP_Y,
+        )
+      : computeTreeLayout(targets, scopedEdges, 32, 32).positions
+    const minFlowX = Math.min(...Array.from(flowPositions.values(), (position) => position.x))
+    const minFlowY = Math.min(...Array.from(flowPositions.values(), (position) => position.y))
+    for (const node of flowTargets) {
+      const position = flowPositions.get(node.id)
+      if (!position) continue
+      layoutPos.set(node.id, {
+        x: position.x - minFlowX + padding,
+        y: position.y - minFlowY + padding,
+      })
+    }
+    if (isWorkflowFlow) {
+      for (const node of referenceTargets) {
+        const data = getNodeDataRecord(node)
+        const ownerNodeId = typeof data.workflowRuntimeReferenceOwnerNodeId === 'string'
+          ? data.workflowRuntimeReferenceOwnerNodeId.trim()
+          : ''
+        const ownerPosition = layoutPos.get(ownerNodeId)
+        const ownerSize = nodeSizeById.get(ownerNodeId)
+        if (!ownerPosition || !ownerSize) continue
+        const kind = data.workflowRuntimeReferenceKind === 'skill' ? 'skill' : 'knowledge'
+        layoutPos.set(node.id, {
+          x: ownerPosition.x + (kind === 'skill' ? -44 : 44),
+          y: ownerPosition.y + ownerSize.h + 48,
+        })
       }
-      cursorX += columnWidth + gapX
     }
   } else {
     const cols = Math.max(1, Math.ceil(Math.sqrt(targets.length)))
@@ -787,10 +899,29 @@ function arrangeGroupChildrenInNodes(
     const next = layoutPos.get(node.id)
     if (!next) return node
     const stripped = stripNodePositionInternals(node)
-    return { ...stripped, position: next }
+    return belongsToWorkflowGroup(node) && getNodeParentId(node) !== groupId
+      ? {
+          ...normalizeNodeParentId(stripped),
+          parentId: groupId,
+          extent: undefined,
+          position: next,
+        }
+      : { ...stripped, position: next }
   })
 
-  return autoFitSingleGroupNode(laidOutNodes, groupId, new Set(allChildren.map((n) => n.id)))
+  return autoFitSingleGroupNode(
+    laidOutNodes,
+    groupId,
+    new Set(allChildren.map((n) => n.id)),
+    direction === 'flow' && isWorkflowFlow
+      ? {
+          left: GROUP_PADDING,
+          right: GROUP_PADDING,
+          top: WORKFLOW_EDGE_RAIL_GUTTER,
+          bottom: WORKFLOW_EDGE_RAIL_GUTTER,
+        }
+      : undefined,
+  )
 }
 
 function normalizeNodeParentId(node: Node): Node {
@@ -891,7 +1022,7 @@ export function computeContextAwarePosition(nodes: Node[], preferredSize?: { w: 
   const view = getFlowViewRect()
   if (!view) return { x: 80, y: 80 }
   const margin = 24
-  const gap = 28
+  const gap = 32
   const size = preferredSize || { w: 420, h: 240 }
   const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
 
@@ -937,6 +1068,58 @@ export function computeContextAwarePosition(nodes: Node[], preferredSize?: { w: 
   return {
     x: clamp(view.right - size.w - margin, view.left + margin, view.right - size.w - margin),
     y: clamp(view.bottom - size.h - margin, view.top + margin, view.bottom - size.h - margin),
+  }
+}
+
+// 为批量添加的节点组找到视图右侧的空闲位置
+function computeRightSideGroupPosition(nodes: Node[], groupSize: { w: number; h: number }): XY {
+  const view = getFlowViewRect()
+  if (!view) return { x: 80, y: 80 }
+
+  const margin = 24
+  const gap = 28
+  const nodesById = new Map(nodes.map((n) => [n.id, n] as const))
+  const rects = nodes
+    .filter((n) => n.type !== 'groupNode')
+    .map((n) => {
+      const p = getNodeAbsPosition(n, nodesById)
+      const s = getNodeSize(n)
+      return { x: p.x, y: p.y, w: s.w, h: s.h }
+    })
+    .filter((r) => Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.w) && Number.isFinite(r.h))
+  const visible = rects.filter((r) => !(r.x + r.w < view.left || r.x > view.right || r.y + r.h < view.top || r.y > view.bottom))
+
+  if (!visible.length) {
+    return {
+      x: Math.max(view.left + margin, view.right - groupSize.w - margin),
+      y: view.top + margin,
+    }
+  }
+
+  const maxX = Math.max(...visible.map((r) => r.x + r.w))
+  const minY = Math.min(...visible.map((r) => r.y))
+  const maxY = Math.max(...visible.map((r) => r.y + r.h))
+  const minX = Math.min(...visible.map((r) => r.x))
+  const centerY = (minY + maxY) / 2 - groupSize.h / 2
+
+  // 优先放右侧
+  const rightX = maxX + gap
+  if (rightX + groupSize.w <= view.right - margin) {
+    const y = Math.max(view.top + margin, Math.min(view.bottom - groupSize.h - margin, centerY))
+    return { x: rightX, y }
+  }
+
+  // 右侧放不下则放下方
+  const belowY = maxY + gap
+  if (belowY + groupSize.h <= view.bottom - margin) {
+    const x = Math.max(view.left + margin, Math.min(view.right - groupSize.w - margin, minX))
+    return { x, y: belowY }
+  }
+
+  // 最后兜底：靠近视图右下角
+  return {
+    x: Math.max(view.left + margin, view.right - groupSize.w - margin),
+    y: Math.max(view.top + margin, view.bottom - groupSize.h - margin),
   }
 }
 
@@ -1004,17 +1187,23 @@ function clampPositionToView(position: XY, size: NodeSize, view: ReturnType<type
   }
 }
 
-function collectOccupiedRects(nodes: Node[], parentId: string | null): NodeRect[] {
+function collectOccupiedRects(
+  nodes: Node[],
+  parentId: string | null,
+  excludeIds?: Set<string>,
+): NodeRect[] {
   const nodesById = new Map(nodes.map((node) => [node.id, node] as const))
   if (parentId) {
     return nodes
       .filter((node) => node.type !== 'groupNode' && String(node.parentId || '').trim() === parentId)
+      .filter((node) => !excludeIds?.has(node.id))
       .map((node) => toNodeRect({ x: Number(node.position?.x ?? 0), y: Number(node.position?.y ?? 0) }, getNodeSize(node)))
       .filter((rect) => [rect.x, rect.y, rect.w, rect.h].every((value) => Number.isFinite(value)))
   }
 
   return nodes
     .filter((node) => node.type !== 'groupNode')
+    .filter((node) => !excludeIds?.has(node.id))
     .map((node) => toNodeRect(getNodeAbsPosition(node, nodesById), getNodeSize(node)))
     .filter((rect) => [rect.x, rect.y, rect.w, rect.h].every((value) => Number.isFinite(value)))
 }
@@ -1024,8 +1213,9 @@ export function resolveNonOverlappingPosition(
   preferredPosition: XY,
   preferredSize: NodeSize,
   parentId: string | null,
+  excludeMovedIds?: Set<string>,
 ): XY {
-  const occupiedRects = collectOccupiedRects(nodes, parentId)
+  const occupiedRects = collectOccupiedRects(nodes, parentId, excludeMovedIds)
   if (!occupiedRects.length) return preferredPosition
 
   const collisionPadding = 32
@@ -1033,31 +1223,43 @@ export function resolveNonOverlappingPosition(
   const stepY = Math.max(140, Math.round(preferredSize.h + collisionPadding))
   const view = parentId ? null : getFlowViewRect()
   const origin = parentId ? preferredPosition : clampPositionToView(preferredPosition, preferredSize, view)
-  const offsets: XY[] = [{ x: 0, y: 0 }]
 
-  for (let radius = 1; radius <= 8; radius += 1) {
-    for (let dy = -radius; dy <= radius; dy += 1) {
-      for (let dx = -radius; dx <= radius; dx += 1) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue
-        offsets.push({ x: dx, y: dy })
-      }
-    }
+  const tryCandidate = (raw: XY): { pos: XY; free: boolean } => {
+    const pos = parentId ? raw : clampPositionToView(raw, preferredSize, view)
+    const free = !occupiedRects.some((rect) => rectsOverlap(toNodeRect(pos, preferredSize), rect, collisionPadding))
+    return { pos, free }
   }
 
-  for (const offset of offsets) {
-    const rawCandidate = {
-      x: origin.x + offset.x * stepX,
-      y: origin.y + offset.y * stepY,
+  // 首先尝试首选位置
+  const preferred = tryCandidate(origin)
+  if (preferred.free) return preferred.pos
+
+  // 优先向下搜索（保持 x 不变，逐步增大 y）
+  for (let dy = 1; dy <= 12; dy += 1) {
+    const { pos, free } = tryCandidate({ x: origin.x, y: origin.y + dy * stepY })
+    if (free) return pos
+  }
+
+  // 向下找不到时，用螺旋扩展兜底（跳过 dy<=0 的行，避免往上叠）
+  for (let radius = 1; radius <= 8; radius += 1) {
+    for (let dy = 1; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.max(Math.abs(dx), dy) !== radius) continue
+        const { pos, free } = tryCandidate({ x: origin.x + dx * stepX, y: origin.y + dy * stepY })
+        if (free) return pos
+      }
     }
-    const candidate = parentId ? rawCandidate : clampPositionToView(rawCandidate, preferredSize, view)
-    const candidateRect = toNodeRect(candidate, preferredSize)
-    const overlaps = occupiedRects.some((rect) => rectsOverlap(candidateRect, rect, collisionPadding))
-    if (!overlaps) return candidate
+    // 同行（dy=0）最后考虑
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      if (Math.abs(dx) !== radius) continue
+      const { pos, free } = tryCandidate({ x: origin.x + dx * stepX, y: origin.y })
+      if (free) return pos
+    }
   }
 
   return parentId
-    ? { x: origin.x, y: origin.y + stepY * 2 }
-    : clampPositionToView({ x: origin.x, y: origin.y + stepY * 2 }, preferredSize, view)
+    ? { x: origin.x, y: origin.y + stepY * 13 }
+    : clampPositionToView({ x: origin.x, y: origin.y + stepY * 13 }, preferredSize, view)
 }
 
 function applyGroupMembershipOnDragStop(nodes: Node[], movedNodeIds: Set<string>): Node[] {
@@ -1228,7 +1430,26 @@ function autoFitGroupNodes(nodes: Node[]): Node[] {
   return nodes.map(n => updates.get(n.id) || n)
 }
 
-function autoFitSingleGroupNode(nodes: Node[], groupId: string, childIds?: Set<string>): Node[] {
+type GroupFitPadding = Readonly<{
+  left: number
+  right: number
+  top: number
+  bottom: number
+}>
+
+const DEFAULT_GROUP_FIT_PADDING: GroupFitPadding = {
+  left: GROUP_PADDING,
+  right: GROUP_PADDING,
+  top: GROUP_PADDING,
+  bottom: GROUP_PADDING,
+}
+
+function autoFitSingleGroupNode(
+  nodes: Node[],
+  groupId: string,
+  childIds?: Set<string>,
+  fitPadding: GroupFitPadding = DEFAULT_GROUP_FIT_PADDING,
+): Node[] {
   const group = nodes.find((n) => n.id === groupId && n.type === 'groupNode')
   if (!group) return nodes
 
@@ -1259,12 +1480,12 @@ function autoFitSingleGroupNode(nodes: Node[], groupId: string, childIds?: Set<s
   }
 
   const desiredPos = {
-    x: (group.position?.x ?? 0) + (minX - GROUP_PADDING),
-    y: (group.position?.y ?? 0) + (minY - GROUP_PADDING),
+    x: (group.position?.x ?? 0) + (minX - fitPadding.left),
+    y: (group.position?.y ?? 0) + (minY - fitPadding.top),
   }
   const desiredSize = {
-    w: Math.max(GROUP_MIN_WIDTH, (maxX - minX) + GROUP_PADDING * 2),
-    h: Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + GROUP_PADDING * 2),
+    w: Math.max(GROUP_MIN_WIDTH, (maxX - minX) + fitPadding.left + fitPadding.right),
+    h: Math.max(GROUP_MIN_HEIGHT, (maxY - minY) + fitPadding.top + fitPadding.bottom),
   }
   const currentSize = getNodeSize(group, { w: desiredSize.w, h: desiredSize.h })
   const dx = desiredPos.x - (group.position?.x ?? 0)
@@ -1281,6 +1502,14 @@ function autoFitSingleGroupNode(nodes: Node[], groupId: string, childIds?: Set<s
           position: { x: desiredPos.x, y: desiredPos.y },
           width: desiredSize.w,
           height: desiredSize.h,
+          // One-click tidy runs immediately after workflow arrangement and reads
+          // measured geometry first. Keep every geometry source atomic so the
+          // outer layout cannot place creation nodes inside the fitted group.
+          measured: {
+            ...node.measured,
+            width: desiredSize.w,
+            height: desiredSize.h,
+          },
           data: {
             ...(node.data || {}),
             nodeWidth: desiredSize.w,
@@ -1619,15 +1848,6 @@ function upgradeVideoKind(node: Node): Node {
 
   if (normalizedKind === 'video') {
     Object.assign(nextData, buildVideoDurationPatch(readVideoDurationSeconds(data, 5)))
-    if (typeof nextData.videoModel !== 'string' || !nextData.videoModel.trim()) {
-      nextData.videoModel = 'veo3.1-fast'
-    }
-  }
-
-  if (normalizedKind === 'image' || normalizedKind === 'imageEdit') {
-    if (typeof nextData.imageModel !== 'string' || !nextData.imageModel.trim()) {
-      nextData.imageModel = getDefaultModel(normalizedKind === 'imageEdit' ? 'imageEdit' : 'image')
-    }
   }
 
   return { ...node, data: nextData }
@@ -1635,6 +1855,34 @@ function upgradeVideoKind(node: Node): Node {
 
 function upgradeImageFissionModel(node: Node): Node {
   return node
+}
+
+// On full-graph load, normalize each AUTO-sized image/video node to the unified target size for its
+// natural aspect — writing BOTH data.nodeWidth/nodeHeight AND node.style (React Flow's wrapper reads
+// style). This makes legacy nodes (created before the unified sizing, e.g. 212×119 storyboards) show
+// the unified size BY DEFAULT, without needing a per-node focus pass to trigger the body's on-load
+// fit. Idempotent. Skips manually-resized nodes (data.nodeSizeManual) and nodes without a measured
+// mediaNaturalSize. Runs inside load() so every full load (local snapshot + server) applies it.
+function normalizeNodeSize(node: Node): Node {
+  const data = node.data as any
+  if (node.type !== 'taskNode' || !data || data.nodeSizeManual === true) return node
+  const kind = normalizeTaskNodeKind(typeof data.kind === 'string' ? data.kind : null) || 'text'
+  const coreKind = getTaskNodeCoreType(kind)
+  if (coreKind !== 'image' && coreKind !== 'video') return node
+  const mns = data.mediaNaturalSize
+  const naturalW = Number(mns?.width)
+  const naturalH = Number(mns?.height)
+  if (!Number.isFinite(naturalW) || !Number.isFinite(naturalH) || naturalW <= 0 || naturalH <= 0) return node
+  const defaults = getVisualNodeDefaults(kind, coreKind, false)
+  const curW = clampVisualDimension(data.nodeWidth, defaults.minWidth, defaults.maxWidth, defaults.width)
+  const curH = clampVisualDimension(data.nodeHeight, defaults.minHeight, defaults.maxHeight, defaults.height)
+  const fitted = fitVisualSizeToNatural(curW, curH, naturalW, naturalH, defaults)
+  if (Math.abs(fitted.width - curW) <= 1 && Math.abs(fitted.height - curH) <= 1) return node
+  return {
+    ...node,
+    data: { ...data, nodeWidth: fitted.width, nodeHeight: fitted.height },
+    style: { ...(node.style as Record<string, unknown> | undefined), width: fitted.width, height: fitted.height },
+  }
 }
 
 function enforceNodeSelectability(node: Node): Node {
@@ -1706,10 +1954,89 @@ function getRemixTargetIdFromNode(node?: Node) {
 // - snapshot history only once per drag (better perf + better undo UX)
 // - avoid expensive group auto-fit work during drag moves
 const activeDragNodeIds = new Set<string>()
+type CanvasTidyExecutor = { run: (options?: CanvasTidyOptions) => void; cancel: () => void }
+let canvasTidyExecutor: CanvasTidyExecutor | null = null
 
-export const useRFStore = create<RFState>((set, get) => ({
+export function applyTidyPosition(node: Node, position: { x: number; y: number }): Node {
+  const {
+    positionAbsolute: _positionAbsolute,
+    dragging: _dragging,
+    parentId: _parentId,
+    parentNode: _parentNode,
+    extent: _extent,
+    ...rest
+  } = node as Node & {
+    positionAbsolute?: unknown
+    dragging?: unknown
+    parentNode?: unknown
+    extent?: unknown
+  }
+  return { ...rest, position }
+}
+
+export function registerCanvasTidyExecutor(executor: CanvasTidyExecutor): () => void {
+  canvasTidyExecutor = executor
+  return () => {
+    if (canvasTidyExecutor === executor) canvasTidyExecutor = null
+  }
+}
+
+/**
+ * Read-only interaction fact for subscribers whose derived data is unrelated
+ * to node positions. Such work can stay frozen during drag frames and refresh
+ * once when the drag-stop change clears this set.
+ */
+export function isCanvasNodeDragActive(): boolean {
+  return activeDragNodeIds.size > 0
+}
+
+export function clearCanvasNodeDragActivity(): void {
+  activeDragNodeIds.clear()
+}
+
+type PendingMediaNaturalSize = Readonly<{
+  id: string
+  width: number
+  height: number
+  url: string
+  persistDimensions: boolean
+  graphProvenanceKey: string | null
+}>
+
+const pendingMediaNaturalSizes = new Map<string, PendingMediaNaturalSize>()
+let cancelScheduledMediaNaturalSizeFlush: (() => void) | null = null
+
+function clearPendingMediaNaturalSizes(): void {
+  pendingMediaNaturalSizes.clear()
+  cancelScheduledMediaNaturalSizeFlush?.()
+  cancelScheduledMediaNaturalSizeFlush = null
+}
+
+function scheduleMediaNaturalSizeFlush(flush: (patches: readonly PendingMediaNaturalSize[]) => void): void {
+  if (cancelScheduledMediaNaturalSizeFlush) return
+
+  const run = (): void => {
+    cancelScheduledMediaNaturalSizeFlush = null
+    const patches = Array.from(pendingMediaNaturalSizes.values())
+    pendingMediaNaturalSizes.clear()
+    if (patches.length > 0) flush(patches)
+  }
+
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    const frameId = window.requestAnimationFrame(run)
+    cancelScheduledMediaNaturalSizeFlush = () => window.cancelAnimationFrame(frameId)
+    return
+  }
+
+  const timeoutId = setTimeout(run, 0)
+  cancelScheduledMediaNaturalSizeFlush = () => clearTimeout(timeoutId)
+}
+
+export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
   nodes: [],
   edges: [],
+  graphProvenanceKey: null,
+  setGraphProvenance: (key) => set({ graphProvenanceKey: key }),
   nextId: 1,
   nextGroupId: 1,
   lastGroupArrangeDirection: 'grid',
@@ -1717,6 +2044,39 @@ export const useRFStore = create<RFState>((set, get) => ({
   historyFuture: [],
   clipboard: null,
   onNodesChange: (changes) => set((s) => {
+    // Pure-selection fast path. Selecting a node used to fall through the full pipeline below —
+    // applyNodeChanges + a per-node stripNodePositionInternals map + two ensureParentFirstOrder
+    // passes + a history snapshot — which replaced EVERY node object's identity. That made one click
+    // cost an O(N) graph rebuild, a full React Flow reconcile, a re-run of the whole styling/
+    // virtualization memo chain, and (because the autosave subscription just compares `state.nodes`
+    // by reference) a debounced whole-graph JSON.stringify + PUT + IndexedDB snapshot. None of that
+    // is warranted by a selection: selection isn't persisted, isn't undoable, and can't affect
+    // parent ordering or edge validity. Here we touch only the nodes whose `selected` actually
+    // flipped and keep every other node's reference intact.
+    let selectionOnly = changes.length > 0
+    for (const change of changes as { type?: unknown }[]) {
+      if (!change || typeof change !== 'object' || change.type !== 'select') {
+        selectionOnly = false
+        break
+      }
+    }
+    if (selectionOnly) {
+      const desired = new Map<string, boolean>()
+      for (const change of changes as { id?: unknown; selected?: unknown }[]) {
+        if (typeof change.id === 'string') desired.set(change.id, Boolean(change.selected))
+      }
+      let changed = false
+      const nextNodes = s.nodes.map((node) => {
+        const next = desired.get(node.id)
+        if (next === undefined || Boolean(node.selected) === next) return node
+        changed = true
+        return { ...node, selected: next }
+      })
+      // No-op selection (React Flow re-asserting current state): keep the array reference so the
+      // autosave subscription and every downstream memo see "nothing changed".
+      return changed ? { nodes: nextNodes } : {}
+    }
+
     const dimChanges = new Map<string, { width?: number; height?: number }>()
     const safeEdgeInvariantChangeTypes = new Set(['position', 'select', 'dimensions'])
     // Dimension changes can come from:
@@ -1814,7 +2174,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       if (!isDragStart) {
         return { nodes: updatedWithDims }
       }
-      const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+      const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
       return { nodes: updatedWithDims, historyPast: past, historyFuture: [] }
     }
 
@@ -1889,20 +2249,35 @@ export const useRFStore = create<RFState>((set, get) => ({
 	      : updatedAfterMembershipLayout
 	    const updated = ensureParentFirstOrder(updatedBeforeSanitize.map(stripNodePositionInternals))
 
+	    const userMovedUpdate: { userMovedNodeIds?: Set<string> } =
+	      hasDragStop && dragStopNodeIds.size > 0
+	        ? {
+	            userMovedNodeIds: new Set([
+	              ...s.userMovedNodeIds,
+	              ...[...dragStopNodeIds].filter((id) => {
+	                const n = updated.find((x) => x.id === id)
+	                return n && n.type !== 'groupNode'
+	              }),
+	            ]),
+	          }
+	        : {}
+
 	    const isDragRelated = hasDragMove || hasDragStop
 	    const shouldCaptureHistory = hasNonDragRelatedChange || !isDragRelated || isDragStart
     const sanitizedEdges = needsEdgeSanitize ? sanitizeEdgesForNodes(updated, s.edges) : s.edges
     if (!shouldCaptureHistory) {
-      return sanitizedEdges === s.edges ? { nodes: updated } : { nodes: updated, edges: sanitizedEdges }
+      return sanitizedEdges === s.edges
+        ? { nodes: updated, ...userMovedUpdate }
+        : { nodes: updated, edges: sanitizedEdges, ...userMovedUpdate }
     }
 
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: updated, edges: sanitizedEdges, historyPast: past, historyFuture: [] }
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
+    return { nodes: updated, edges: sanitizedEdges, historyPast: past, historyFuture: [], ...userMovedUpdate }
   }),
   onEdgesChange: (changes) => set((s) => {
     const updated = applyEdgeChanges(changes, s.edges)
     const sanitized = sanitizeEdgesForNodes(s.nodes, updated)
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return { edges: sanitized, historyPast: past, historyFuture: [] }
   }),
   onConnect: (connection: Connection) => set((s) => {
@@ -1923,7 +2298,7 @@ export const useRFStore = create<RFState>((set, get) => ({
           s.edges,
         )
     const sanitizedEdges = sanitizeEdgesForNodes(s.nodes, nextEdges)
-    const past = exists ? s.historyPast : [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = exists ? s.historyPast : [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     if (exists) {
       return { edges: sanitizedEdges }
     }
@@ -1958,9 +2333,18 @@ export const useRFStore = create<RFState>((set, get) => ({
   }),
   addNode: (type, label, extra) => set((s) => {
     if (type === 'groupNode') return {}
-    const id = genNodeId()
     const rawExtra = extra || {}
-    const { label: extraLabel, autoLabel, position: preferredPosition, parentId: requestedParentIdRaw, ...restExtra } = rawExtra
+    const {
+      label: extraLabel,
+      autoLabel,
+      position: preferredPosition,
+      parentId: requestedParentIdRaw,
+      nodeId: requestedNodeIdRaw,
+      ...restExtra
+    } = rawExtra
+    const requestedNodeId = typeof requestedNodeIdRaw === 'string' ? requestedNodeIdRaw.trim() : ''
+    const id = requestedNodeId || genNodeId()
+    if (s.nodes.some((node) => node.id === id)) return {}
     const requestedParentId =
       typeof requestedParentIdRaw === 'string' && requestedParentIdRaw.trim()
         ? requestedParentIdRaw.trim()
@@ -2070,48 +2454,19 @@ export const useRFStore = create<RFState>((set, get) => ({
         )
       const kindValue =
         normalizeTaskNodeKind(typeof dataExtra.kind === 'string' ? dataExtra.kind : null) || null
-      if (kindValue && kindValue !== dataExtra.kind) {
+      if (kindValue) {
         dataExtra = {
+          ...createTaskNodeInitialData(kindValue),
           ...dataExtra,
           kind: kindValue,
         }
       }
-      if (kindValue === 'video' && !isReferenceOnlyTaskNode && (dataExtra as any).videoModel == null) {
-        dataExtra = {
-          ...dataExtra,
-          videoModel: 'veo3.1-fast',
-          videoModelVendor:
-            (dataExtra as any).videoModelVendor ?? 'veo',
-        }
-      }
-
       if (kindValue === 'video' && !isReferenceOnlyTaskNode) {
         dataExtra = {
           ...dataExtra,
           ...buildVideoDurationPatch(
             readVideoDurationSeconds(dataExtra as Record<string, unknown>, 5),
           ),
-        }
-      }
-
-      if (kindValue === 'imageEdit' && !isReferenceOnlyTaskNode && (dataExtra as any).imageModel == null) {
-        dataExtra = {
-          ...dataExtra,
-          imageModel: getDefaultModel('imageEdit'),
-          imageModelVendor:
-            (dataExtra as any).imageModelVendor ?? null,
-        }
-      }
-
-      if (kindValue === 'workflowInput' || kindValue === 'workflowOutput') {
-        const hasNodeWidth =
-          typeof (dataExtra as any).nodeWidth === 'number' && Number.isFinite((dataExtra as any).nodeWidth)
-        const hasNodeHeight =
-          typeof (dataExtra as any).nodeHeight === 'number' && Number.isFinite((dataExtra as any).nodeHeight)
-        dataExtra = {
-          ...dataExtra,
-          ...(hasNodeWidth ? null : { nodeWidth: 260 }),
-          ...(hasNodeHeight ? null : { nodeHeight: 140 }),
         }
       }
 
@@ -2122,8 +2477,8 @@ export const useRFStore = create<RFState>((set, get) => ({
           typeof (dataExtra as any).nodeHeight === 'number' && Number.isFinite((dataExtra as any).nodeHeight)
         dataExtra = {
           ...dataExtra,
-          ...(hasNodeWidth ? null : { nodeWidth: 380 }),
-          ...(hasNodeHeight ? null : { nodeHeight: 360 }),
+          ...(hasNodeWidth ? null : { nodeWidth: TEXT_NODE_DEFAULT_WIDTH }),
+          ...(hasNodeHeight ? null : { nodeHeight: TEXT_NODE_DEFAULT_HEIGHT }),
         }
       }
 
@@ -2135,12 +2490,14 @@ export const useRFStore = create<RFState>((set, get) => ({
         const hasNodeHeight =
           typeof (dataExtra as any).nodeHeight === 'number' && Number.isFinite((dataExtra as any).nodeHeight)
         const defaults = kindCoreType === 'video'
-          ? { nodeWidth: 400, nodeHeight: 220 }
+          ? { nodeWidth: 622, nodeHeight: 350 }
           : kindCoreType === 'storyboard'
             ? { nodeWidth: 560, nodeHeight: 470 }
             : kindValue === 'imageEdit'
-              ? { nodeWidth: 320, nodeHeight: 220 }
-            : { nodeWidth: 120, nodeHeight: 210 }
+              ? { nodeWidth: 622, nodeHeight: 350 }
+            // Unified base for image nodes (16:9 target area) — kept in sync with getVisualNodeDefaults
+            // so all generated image nodes start and normalize to the same on-canvas size.
+            : { nodeWidth: 622, nodeHeight: 350 }
         dataExtra = {
           ...dataExtra,
           ...(hasNodeWidth ? null : { nodeWidth: defaults.nodeWidth }),
@@ -2162,10 +2519,138 @@ export const useRFStore = create<RFState>((set, get) => ({
     }
     const nextNodesRaw = [...s.nodes, enforceNodeSelectability(node)]
     const nextNodes = ensureParentFirstOrder(nextNodesRaw)
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: nextNodes, nextId: s.nextId + 1, historyPast: past, historyFuture: [] }
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
+    return { nodes: nextNodes, nextId: s.nextId + 1, historyPast: past, historyFuture: [], pendingFocusNodeId: id }
   }),
-  reset: () => set({ nodes: [], edges: [], nextId: 1, nextGroupId: 1, lastGroupArrangeDirection: 'grid' }),
+  addDirectorConsoleNode: (opts) => {
+    const id = opts?.id ?? genNodeId()
+    if (get().nodes.some((n) => n.id === id)) return id
+    set((s) => {
+      // 与普通节点一致：未指定坐标时按当前视图上下文摆放，并标记 pendingFocusNodeId 让画布聚焦+跟随
+      const position = opts?.position ?? computeContextAwarePosition(s.nodes, { w: 320, h: 220 })
+      return {
+        nodes: [
+          ...s.nodes,
+          enforceNodeSelectability({
+            id,
+            type: 'directorConsole',
+            position,
+            data: (() => {
+              // 默认场景：机位1 + 角色A（对齐 liblib，打开即可取景截图）
+              let d = createDefaultDirectorConsoleData(opts?.panoramaUrl)
+              d = dcAddCharacter(d, { id: `${id}-char-a`, modelId: 'male' })
+              d = dcAddCamera(d, { id: `${id}-cam-1` })
+              d = dcSelectObject(d, undefined)
+              return d as Record<string, unknown>
+            })(),
+            style: { width: 320 },
+          }),
+        ],
+        pendingFocusNodeId: id,
+      }
+    })
+    return id
+  },
+  addNodesAsGroup: (specs, groupName) => {
+    if (!specs.length) return { groupId: null, nodeIds: [] }
+    let createdGroupId: string | null = null
+    const collectedNodeIds: string[] = []
+    set((s) => {
+      const GAP_Y = 12
+      const PADDING = GROUP_PADDING
+
+      // 为每条 spec 推算节点尺寸
+      const specWithSize = specs.map((spec) => {
+        const extra = spec.extra || {}
+        const kind = typeof extra.kind === 'string' ? normalizeTaskNodeKind(extra.kind) : null
+        const coreType = kind ? getTaskNodeCoreType(kind) : null
+        const w = coreType === 'text'
+          ? TEXT_NODE_DEFAULT_WIDTH
+          : coreType === 'storyboard'
+            ? 560
+            : coreType === 'image' || coreType === 'video'
+              ? 622
+              : 360
+        const h = coreType === 'text'
+          ? TEXT_NODE_DEFAULT_HEIGHT
+          : coreType === 'storyboard'
+            ? 470
+            : coreType === 'image' || coreType === 'video'
+              ? 350
+              : 220
+        return { spec, w, h }
+      })
+
+      const groupW = Math.max(...specWithSize.map((s) => s.w)) + PADDING * 2
+      const groupH = specWithSize.reduce((sum, s) => sum + s.h, 0) + GAP_Y * (specWithSize.length - 1) + PADDING * 2
+
+      // 在视图右侧找空闲区域放置整个组
+      const groupOrigin = computeRightSideGroupPosition(s.nodes, { w: groupW, h: groupH })
+
+      // 单列排布：从组左上角往下堆叠
+      let cursorY = PADDING
+      const newIds: string[] = []
+      let workingNodes = s.nodes
+
+      for (const { spec, h } of specWithSize) {
+        const id = genNodeId()
+        newIds.push(id)
+        const extra = spec.extra || {}
+        const { label: extraLabel, autoLabel: _autoLabel, position: _pos, parentId: _pid, ...restExtra } = extra as Record<string, any>
+        const kind = typeof restExtra.kind === 'string' ? normalizeTaskNodeKind(restExtra.kind) : null
+        if (kind && kind !== restExtra.kind) restExtra.kind = kind
+        const finalLabel = spec.label ?? extraLabel ?? '节点'
+        const absPos = { x: groupOrigin.x + PADDING, y: groupOrigin.y + cursorY }
+        const node: Node = {
+          id,
+          type: 'taskNode' as const,
+          position: absPos,
+          data: normalizeProductionNodeMetaRecord({ label: finalLabel, ...restExtra }, { kind: restExtra.kind ?? 'taskNode' }),
+        }
+        workingNodes = [...workingNodes, enforceNodeSelectability(node)]
+        cursorY += h + GAP_Y
+      }
+
+      collectedNodeIds.push(...newIds)
+      const historyEntry = snapshotGraph(s.nodes, s.edges)
+      const ordered = ensureParentFirstOrder(workingNodes)
+      const result = createGroupForNodeIdsInNodes(ordered, s.nextGroupId, newIds, groupName, { preserveLayout: true })
+
+      if (!result.groupId) {
+        const past = [...s.historyPast, historyEntry].slice(-50)
+        return { nodes: ordered, historyPast: past, historyFuture: [] }
+      }
+
+      createdGroupId = result.groupId
+      const past = [...s.historyPast, historyEntry].slice(-50)
+      return {
+        nodes: result.nodes,
+        nextGroupId: result.nextGroupId,
+        historyPast: past,
+        historyFuture: [],
+        pendingFocusNodeId: result.groupId,
+      }
+    })
+    return { groupId: createdGroupId, nodeIds: collectedNodeIds }
+  },
+  reset: () => {
+    clearCanvasNodeDragActivity()
+    clearPendingMediaNaturalSizes()
+    set({
+      nodes: [],
+      edges: [],
+      nextId: 1,
+      nextGroupId: 1,
+      lastGroupArrangeDirection: 'grid',
+      historyPast: [],
+      historyFuture: [],
+      clipboard: null,
+      canvasViewLocked: false,
+      pendingFocusNodeId: null,
+      userMovedNodeIds: new Set<string>(),
+      graphProvenanceKey: null,
+    })
+  },
   load: (data) => {
     if (!data) return
     const sanitized = sanitizeGraphForCanvas(data)
@@ -2175,20 +2660,28 @@ export const useRFStore = create<RFState>((set, get) => ({
 	      .map(normalizeNodeParentId)
 	      .map(upgradeVideoKind)
 	      .map(upgradeImageFissionModel)
+	      .map(normalizeNodeSize)
         .map(normalizeWorkflowNodeMeta)
 	      .map(normalizeProductionNodeMeta)
 	      .map(enforceNodeSelectability)
-	    set((s) => ({
+	    set(() => ({
       nodes: upgradedNodes,
       edges: sanitized.edges,
       nextId: upgradedNodes.length + 1,
       nextGroupId: computeNextGroupId(upgradedNodes),
-      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      // `load` replaces the active resource with a server/cache snapshot. The
+      // previous graph must not enter the new resource's undo stack, otherwise
+      // Undo can restore another project/chapter under the new provenance.
+      historyPast: [],
       historyFuture: [],
+      canvasViewLocked: false,
+      pendingFocusNodeId: null,
+      userMovedNodeIds: new Set<string>(),
+      graphProvenanceKey: null,
     }))
   },
   removeSelected: () => set((s) => {
-    const selectedNodes = s.nodes.filter(n => n.selected)
+    const selectedNodes = s.nodes.filter((n) => n.selected && !isNodeDeleteProtected(n))
     const selectedIds = new Set(selectedNodes.map(n => n.id))
 
     // 收集所有需要删除的节点ID：包括选中的节点和它们的子节点
@@ -2223,6 +2716,13 @@ export const useRFStore = create<RFState>((set, get) => ({
       }
     })
 
+    // 防御性：受保护的 locked 节点不允许被级联删除（例如作为 groupNode 子节点被裹挟）
+    s.nodes.forEach((n) => {
+      if (isNodeDeleteProtected(n)) idsToDelete.delete(n.id)
+    })
+
+    if (idsToDelete.size === 0) return s
+
     // 删除节点和相关边
     const remainingNodes = s.nodes.filter(n => !idsToDelete.has(n.id))
     const remainingEdges = s.edges.filter(e =>
@@ -2233,16 +2733,18 @@ export const useRFStore = create<RFState>((set, get) => ({
     return {
       nodes: nextNodes,
       edges: remainingEdges,
-      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
   }),
   updateNodeLabel: (id, label) => set((s) => ({
     nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, label } } : n)),
-    historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+    historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
     historyFuture: [],
   })),
   updateNodeData: (id, patch) => set((s) => {
+    const target = s.nodes.find((n) => n.id === id)
+    if (target && (target.data as TaskNodeData | undefined)?.readOnly === true) return s
     const normalizedPatch =
       patch && typeof patch === 'object'
         ? { ...(patch as Record<string, unknown>) }
@@ -2283,9 +2785,19 @@ export const useRFStore = create<RFState>((set, get) => ({
         changed = true
       }
       if (!changed) return node
-      return {
+      const nextNode = {
         ...node,
         data: nextData,
+      }
+      const nextKind = typeof nextData.kind === 'string' ? nextData.kind : ''
+      if (nextKind !== 'workflowStage' && nextKind !== 'workflowTrigger') return nextNode
+      const canvasSize = resolveWorkflowNodeCanvasSize(nextData)
+      return {
+        ...nextNode,
+        initialWidth: canvasSize.width,
+        initialHeight: canvasSize.height,
+        measured: { ...node.measured, width: canvasSize.width, height: canvasSize.height },
+        style: { ...node.style, width: canvasSize.width, height: canvasSize.height },
       }
     })
 
@@ -2293,10 +2805,124 @@ export const useRFStore = create<RFState>((set, get) => ({
 
     return {
       nodes: nextNodes,
-      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
   }),
+  updateNodesDataAtomically: (patches) => set((s) => {
+    if (patches.size === 0) return s
+    let changed = false
+    const nextNodes = s.nodes.map((node) => {
+      const patch = patches.get(node.id)
+      if (!patch) return node
+      const currentData = node.data && typeof node.data === 'object'
+        ? node.data as Record<string, unknown>
+        : {}
+      const nextData = { ...currentData, ...patch }
+      const patchChangesData = Object.entries(patch).some(([key, value]) => !Object.is(currentData[key], value))
+      if (!patchChangesData) return node
+      changed = true
+      return { ...node, data: nextData }
+    })
+    if (!changed) return s
+    return {
+      nodes: nextNodes,
+      historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
+      historyFuture: [],
+    }
+  }),
+  // Eagerly fit a visual node to its media's true aspect WITHOUT requiring focus. The lightweight
+  // shell's ManagedImage reports its natural size on load and calls this, so freshly-generated (and
+  // legacy) image/video nodes snap to their real aspect immediately — instead of sitting at the
+  // generic default box (e.g. 320×180) until first focused, which is when the focused body's
+  // handleMediaNaturalSize used to run. Writes BOTH data.nodeWidth/nodeHeight AND node.style (React
+  // Flow's wrapper reads style). Original-image measurements also record mediaNaturalSize; width-limited
+  // shell variants can opt out and contribute only their authoritative aspect ratio. Idempotent;
+  // skips manual /
+  // readOnly nodes and non-image/video kinds. NOT pushed to history — derived layout normalization,
+  // not a user edit (avoids undo-stack spam when many shells measure on bulk load).
+  applyMediaNaturalSize: (id, size) => {
+    const naturalW = Number(size?.width)
+    const naturalH = Number(size?.height)
+    const url = String(size?.url || '').trim()
+    if (!url || !Number.isFinite(naturalW) || !Number.isFinite(naturalH) || naturalW <= 0 || naturalH <= 0) return
+    pendingMediaNaturalSizes.set(id, {
+      id,
+      width: naturalW,
+      height: naturalH,
+      url,
+      persistDimensions: size.persistDimensions !== false,
+      graphProvenanceKey: get().graphProvenanceKey,
+    })
+    scheduleMediaNaturalSizeFlush((patches) => {
+      const patchById = new Map(patches.map((patch) => [patch.id, patch]))
+      const refitParentIds = new Set<string>()
+      const activeProvenanceKey = get().graphProvenanceKey
+
+      derivedApplyGuard.run(() => {
+        set((s) => {
+          let changed = false
+          const nextNodes = s.nodes.map((node) => {
+            const patch = patchById.get(node.id)
+            if (!patch || patch.graphProvenanceKey !== activeProvenanceKey || node.type !== 'taskNode') return node
+            const data = node.data as Record<string, unknown>
+            if (data.readOnly === true || data.nodeSizeManual === true) return node
+            const kind = normalizeTaskNodeKind(typeof data.kind === 'string' ? data.kind : null) || 'text'
+            const coreKind = getTaskNodeCoreType(kind)
+            if (coreKind !== 'image' && coreKind !== 'video') return node
+            const defaults = getVisualNodeDefaults(kind, coreKind, false)
+            const curW = clampVisualDimension(data.nodeWidth, defaults.minWidth, defaults.maxWidth, defaults.width)
+            const curH = clampVisualDimension(data.nodeHeight, defaults.minHeight, defaults.maxHeight, defaults.height)
+            const fitted = fitVisualSizeToNatural(curW, curH, patch.width, patch.height, defaults)
+            const mediaNaturalSize = data.mediaNaturalSize
+            const recordedUrl = mediaNaturalSize && typeof mediaNaturalSize === 'object' && !Array.isArray(mediaNaturalSize)
+              ? String((mediaNaturalSize as Record<string, unknown>).url || '').trim()
+              : ''
+            // Ratio-based idempotency: a recorded measurement for THIS url + correct geometry means done.
+            // Don't compare exact pixels — CDN and original variants can differ while sharing an aspect.
+            const alreadyRecorded = recordedUrl === patch.url
+            const sizeUnchanged = Math.abs(fitted.width - curW) <= 1 && Math.abs(fitted.height - curH) <= 1
+            if (sizeUnchanged && (!patch.persistDimensions || alreadyRecorded)) return node
+            changed = true
+            if (!sizeUnchanged && node.parentId) refitParentIds.add(node.parentId)
+            const mediaNaturalSizePatch = patch.persistDimensions
+              ? {
+                  mediaNaturalSize: {
+                    width: Math.round(patch.width),
+                    height: Math.round(patch.height),
+                    url: patch.url,
+                  },
+                }
+              : {}
+            return {
+              ...node,
+              data: {
+                ...data,
+                nodeWidth: fitted.width,
+                nodeHeight: fitted.height,
+                ...mediaNaturalSizePatch,
+              },
+              style: {
+                ...(node.style as Record<string, unknown> | undefined),
+                width: fitted.width,
+                height: fitted.height,
+              },
+            }
+          })
+          return changed ? { nodes: nextNodes } : s
+        })
+      })
+
+      // Grow may overflow parent groups. Keep this delayed normalization in the same
+      // derived-mutation lane so it cannot re-enter full-save or collaboration loops.
+      for (const parentId of refitParentIds) {
+        setTimeout(() => {
+          if (get().graphProvenanceKey !== activeProvenanceKey) return
+          derivedApplyGuard.run(() => get().fitGroupToChildren(parentId))
+        }, 80)
+      }
+    })
+  },
   setNodeStatus: (id, status, patch) => {
     const sanitizedPatch: Record<string, unknown> =
       patch && typeof patch === 'object'
@@ -2318,8 +2944,11 @@ export const useRFStore = create<RFState>((set, get) => ({
       if (!hasOwn('httpStatus')) sanitizedPatch.httpStatus = null
       if (!hasOwn('isQuotaExceeded')) sanitizedPatch.isQuotaExceeded = false
     }
-    set((s) => ({
-      nodes: s.nodes.map((n) => {
+    // 任务轮询（4s tick / updateTaskPollingProgress）会在进度未变时反复调用本函数——
+    // 逐键比对，完全无变化时不产生新 nodes 引用，避免空转触发整画布重渲染 + 自动保存链。
+    set((s) => {
+      let changed = false
+      const nextNodes = s.nodes.map((n) => {
         if (n.id !== id) return n
         const currentData =
           n.data && typeof n.data === 'object'
@@ -2330,18 +2959,30 @@ export const useRFStore = create<RFState>((set, get) => ({
           status,
           ...sanitizedPatch,
         }
+        if (status === 'success' || status === 'error') delete nextDataBase.draftByAgent
         const nextKind = normalizeTaskNodeKind(typeof nextDataBase.kind === 'string' ? nextDataBase.kind : undefined)
-        return {
-          ...n,
-          data: nextKind === 'storyboard'
-            ? normalizeStoryboardNodeData({
-                ...nextDataBase,
-                kind: 'storyboard',
-              })
-            : nextDataBase,
+        const nextData = nextKind === 'storyboard'
+          ? normalizeStoryboardNodeData({
+              ...nextDataBase,
+              kind: 'storyboard',
+            })
+          : nextDataBase
+        const nextEntries = Object.entries(nextData)
+        let nodeChanged = nextEntries.length !== Object.keys(currentData).length
+        if (!nodeChanged) {
+          for (const [key, value] of nextEntries) {
+            if (!Object.is(currentData[key], value)) {
+              nodeChanged = true
+              break
+            }
+          }
         }
+        if (!nodeChanged) return n
+        changed = true
+        return { ...n, data: nextData }
       })
-    }))
+      return changed ? { nodes: nextNodes } : s
+    })
 
     // 当任务成功完成时，静默保存项目状态
     if (status === 'success') {
@@ -2406,11 +3047,62 @@ export const useRFStore = create<RFState>((set, get) => ({
     if (!kind) return
     const coreType = getTaskNodeCoreType(kind)
     if (coreType === 'text') return
-    if (coreType === 'image' || coreType === 'video' || coreType === 'storyboard') {
+    if (coreType === 'image' || coreType === 'video' || coreType === 'storyboard' || coreType === 'audio') {
       await runNodeDagToTarget(selected.id, get, set, { concurrency: 1 })
       return
     }
     await runNodeMock(selected.id, get, set)
+  },
+  runNodeBranchClones: async (id, count) => {
+    const total = Math.max(1, Math.min(8, Math.floor(count || 1)))
+    const cloneIds: string[] = []
+    if (total > 1) {
+      // 克隆 N-1 个同节点作为并行分支：继承上下游全部连线，剥离上一次的执行结果。
+      const RESULT_FIELDS = [
+        'status', 'progress', 'lastError',
+        'videoResults', 'videoPrimaryIndex', 'videoUrl',
+        'imageResults', 'imagePrimaryIndex',
+        'taskId', 'remoteTaskId', 'runId',
+      ]
+      set((s) => {
+        const src = s.nodes.find((n) => n.id === id)
+        if (!src) return {}
+        const newNodes: Node[] = []
+        const newEdges: Edge[] = []
+        for (let i = 1; i < total; i++) {
+          const newId = genNodeId()
+          cloneIds.push(newId)
+          const data: Record<string, unknown> = { ...(src.data as any) }
+          for (const key of RESULT_FIELDS) delete data[key]
+          newNodes.push(enforceNodeSelectability({
+            ...src,
+            id: newId,
+            data,
+            selected: false,
+            position: { x: src.position.x + 48 * i, y: src.position.y + 48 * i },
+          } as Node))
+          for (const e of s.edges) {
+            const rand = Math.random().toString(36).slice(2, 6)
+            if (e.target === id && e.source !== id) {
+              newEdges.push({ ...e, id: `${e.source}-${newId}-${rand}`, target: newId, selected: false })
+            } else if (e.source === id && e.target !== id) {
+              newEdges.push({ ...e, id: `${newId}-${e.target}-${rand}`, source: newId, selected: false })
+            }
+          }
+        }
+        if (!newNodes.length) return {}
+        return {
+          nodes: ensureParentFirstOrder([...s.nodes, ...newNodes]),
+          edges: [...s.edges, ...newEdges],
+          nextId: s.nextId + newNodes.length,
+          historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
+          historyFuture: [],
+        }
+      })
+    }
+    await Promise.allSettled(
+      [id, ...cloneIds].map((targetId) => runNodeDagToTarget(targetId, get, set, { concurrency: 1 })),
+    )
   },
   runDag: async (concurrency: number) => {
     const workflowIoValidation = validateWorkflowIoForRun({
@@ -2425,17 +3117,17 @@ export const useRFStore = create<RFState>((set, get) => ({
   copySelected: () => set((s) => {
     const selNodes = s.nodes.filter((n) => n.selected)
     if (!selNodes.length) return { clipboard: null }
-    const selIds = new Set(selNodes.map((n) => n.id))
-    const selEdges = s.edges.filter((e) => selIds.has(e.source) && selIds.has(e.target) && e.selected)
-    const graph = { nodes: selNodes, edges: selEdges }
-    // 尝试同时复制到系统剪贴板，便于粘贴到外部文档
-    try {
-      const text = JSON.stringify(graph, null, 2)
-      void navigator.clipboard?.writeText(text)
-    } catch {
-      // ignore clipboard errors
-    }
-    return { clipboard: graph }
+    return copyNodesToClipboard(s, selNodes)
+  }),
+  copyNode: (id) => set((s) => {
+    // 右键节点未必处于选中态：若该节点在当前选区内则复制整个选区，否则只复制该节点。
+    const selNodes = s.nodes.filter((n) => n.selected)
+    const inSelection = selNodes.some((n) => n.id === id)
+    const targets = inSelection
+      ? selNodes
+      : s.nodes.filter((n) => n.id === id)
+    if (!targets.length) return {}
+    return copyNodesToClipboard(s, targets)
   }),
   pasteFromClipboard: () => set((s) => {
     if (!s.clipboard || !s.clipboard.nodes.length) return {}
@@ -2468,37 +3160,42 @@ export const useRFStore = create<RFState>((set, get) => ({
       nodes: nextNodes,
       edges: [...s.edges, ...newEdges],
       nextId: s.nextId + newNodes.length,
-      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
   }),
-  undo: () => set((s) => {
+  undo: () => {
+    canvasTidyExecutor?.cancel()
+    return set((s) => {
     if (!s.historyPast.length) return {}
     const previous = s.historyPast[s.historyPast.length - 1]
     const rest = s.historyPast.slice(0, -1)
-    const future = [cloneGraph(s.nodes, s.edges), ...s.historyFuture].slice(0, 50)
+    const future = [snapshotGraph(s.nodes, s.edges), ...s.historyFuture].slice(0, 50)
     return { nodes: previous.nodes, edges: previous.edges, historyPast: rest, historyFuture: future }
-  }),
+    })
+  },
   redo: () => set((s) => {
     if (!s.historyFuture.length) return {}
     const next = s.historyFuture[0]
     const future = s.historyFuture.slice(1)
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: next.nodes, edges: next.edges, historyPast: past, historyFuture: future }
   }),
   deleteNode: (id) => set((s) => {
+    const target = s.nodes.find((n) => n.id === id)
+    if (target && isNodeDeleteProtected(target)) return s
     const nextNodesRaw = s.nodes.filter(n => n.id !== id)
     const nextNodes = ensureParentFirstOrder(nextNodesRaw)
     return {
       nodes: nextNodes,
       edges: s.edges.filter(e => e.source !== id && e.target !== id),
-      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
   }),
   deleteEdge: (id) => set((s) => ({
     edges: s.edges.filter(e => e.id !== id),
-    historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+    historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
     historyFuture: [],
   })),
   reorderEdgeForTarget: (edgeId, direction) => set((s) => {
@@ -2532,9 +3229,47 @@ export const useRFStore = create<RFState>((set, get) => ({
 
     return {
       edges: nextEdges,
-      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
+  }),
+  inheritUpstreamConnections: (nodeId) => set((s) => {
+    const candidates = computeInheritableUpstreamIds(nodeId, s.nodes, s.edges)
+    if (candidates.length === 0) return {}
+
+    const targetNode = s.nodes.find((n) => n.id === nodeId)
+    const targetHandles = targetNode ? getTaskNodeHandles(targetNode) : null
+    const targetHandle = targetHandles
+      ? pickLegacyCompatibleHandle(targetHandles.targets, 'in-')
+      : null
+
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
+    let edges = s.edges
+
+    for (const srcId of candidates) {
+      const srcNode = s.nodes.find((n) => n.id === srcId)
+      const srcHandles = srcNode ? getTaskNodeHandles(srcNode) : null
+      const sourceHandle = srcHandles
+        ? pickLegacyCompatibleHandle(srcHandles.sources, 'out-')
+        : null
+
+      const exists = edges.some((e) => e.source === srcId && e.target === nodeId)
+      if (!exists) {
+        const conn: Connection = {
+          source: srcId,
+          target: nodeId,
+          sourceHandle: sourceHandle ?? null,
+          targetHandle: targetHandle ?? null,
+        }
+        edges = addEdge(
+          { ...conn, animated: false, type: 'typed' },
+          edges,
+        )
+      }
+    }
+
+    const sanitized = sanitizeEdgesForNodes(s.nodes, edges)
+    return { edges: sanitized, historyPast: past, historyFuture: [] }
   }),
   duplicateNode: (id) => set((s) => {
     const n = s.nodes.find(n => n.id === id)
@@ -2548,7 +3283,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     }
     const nextNodesRaw = [...s.nodes, enforceNodeSelectability(dup)]
     const nextNodes = ensureParentFirstOrder(nextNodesRaw)
-    return { nodes: nextNodes, nextId: s.nextId + 1, historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50), historyFuture: [] }
+    return { nodes: nextNodes, nextId: s.nextId + 1, historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50), historyFuture: [] }
   }),
   pasteFromClipboardAt: (pos) => set((s) => {
     if (!s.clipboard || !s.clipboard.nodes.length) return {}
@@ -2588,7 +3323,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       nodes: nextNodes,
       edges: [...s.edges, ...newEdges],
       nextId: s.nextId + newNodes.length,
-      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
   }),
@@ -2606,6 +3341,18 @@ export const useRFStore = create<RFState>((set, get) => ({
     const shift = { x: pos.x - anchor.x, y: pos.y - anchor.y }
 
     const idMap = new Map<string, string>()
+    const workflowInstanceIds = new Map<string, string>()
+    for (const node of sanitized.nodes) {
+      const data = node.data && typeof node.data === 'object' && !Array.isArray(node.data)
+        ? node.data as Record<string, unknown>
+        : {}
+      const workflowInstanceId = typeof data.workflowInstanceId === 'string'
+        ? data.workflowInstanceId.trim()
+        : ''
+      if (workflowInstanceId && !workflowInstanceIds.has(workflowInstanceId)) {
+        workflowInstanceIds.set(workflowInstanceId, `workflow-${genNodeId()}`)
+      }
+    }
     const newNodes: Node[] = sanitized.nodes.map((n) => {
       const newId = genNodeId()
       idMap.set(n.id, newId)
@@ -2624,7 +3371,7 @@ export const useRFStore = create<RFState>((set, get) => ({
           : { x: basePos.x + shift.x, y: basePos.y + shift.y },
         // 清理状态相关的数据
         data: {
-          ...upgraded.data,
+          ...remapImportedWorkflowInstanceData(upgraded.data, workflowInstanceIds),
           status: undefined,
           progress: undefined,
           logs: undefined,
@@ -2648,7 +3395,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       edges: [...s.edges, ...newEdges],
       nextId: s.nextId + newNodes.length,
       nextGroupId: Math.max(s.nextGroupId, computeNextGroupId([...s.nodes, ...newNodes])),
-      historyPast: [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50),
+      historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
     }
   }),
@@ -2742,7 +3489,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     }
 
     const nextNodes = ensureParentFirstOrder(nextNodesRaw)
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return {
       nodes: nextNodes,
       edges: nextEdges,
@@ -2848,7 +3595,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       } as Node)
     })
 
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     const firstSelectedIndex = s.nodes.findIndex((n) => selectedIds.has(n.id))
     const insertIndex = firstSelectedIndex >= 0 ? firstSelectedIndex : 0
     const nextNodesWithGroup = [
@@ -2870,7 +3617,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       const result = createGroupForNodeIdsInNodes(s.nodes, s.nextGroupId, nodeIds, name, options)
       if (!result.groupId || result.nodes === s.nodes) return {}
       createdGroupId = result.groupId
-      const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+      const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
       return {
         nodes: result.nodes,
         nextGroupId: result.nextGroupId,
@@ -2896,7 +3643,7 @@ export const useRFStore = create<RFState>((set, get) => ({
     const idsToDelete = new Set<string>([id, ...childIds])
     const nextNodes = s.nodes.filter((n) => !idsToDelete.has(n.id))
     const nextEdges = s.edges.filter((e) => !idsToDelete.has(e.source) && !idsToDelete.has(e.target))
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return {
       nodes: nextNodes,
       edges: nextEdges,
@@ -2940,7 +3687,7 @@ export const useRFStore = create<RFState>((set, get) => ({
         ? { ...n, data: { ...(n.data || {}), label: nextName } }
         : n,
     )
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return {
       nodes: nextNodes,
       historyPast: past,
@@ -2970,7 +3717,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       } as Node))
     }
 
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return {
       nodes: nextNodes,
       historyPast: past,
@@ -2983,7 +3730,7 @@ export const useRFStore = create<RFState>((set, get) => ({
       if (s.lastGroupArrangeDirection === direction) return {}
       return { lastGroupArrangeDirection: direction }
     }
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return {
       nodes: arranged,
       historyPast: past,
@@ -3032,7 +3779,7 @@ export const useRFStore = create<RFState>((set, get) => ({
           }
         })
       })
-      const past = [...state.historyPast, cloneGraph(state.nodes, state.edges)].slice(-50)
+      const past = [...state.historyPast, snapshotGraph(state.nodes, state.edges)].slice(-50)
       return { nodes: updated, historyPast: past, historyFuture: [] }
     })
   },
@@ -3057,7 +3804,7 @@ export const useRFStore = create<RFState>((set, get) => ({
         }
       })
     })
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
 	  }),
 	  autoLayoutForParent: (parentId) => set((s) => {
@@ -3079,10 +3826,41 @@ export const useRFStore = create<RFState>((set, get) => ({
         // Do not overwrite node size here; layout is adaptive based on current measurements.
       }
     })
-    const past = [...s.historyPast, cloneGraph(s.nodes, s.edges)].slice(-50)
+    const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return { nodes: updated, historyPast: past, historyFuture: [] }
   }),
+  // 一键整理：把【未打组的根节点 + 组容器】按节点 schema 的核心媒体类型分列重排——从左到右：
+  // 文本 → 音频 → 导演台 → 图片 → 视频；组容器按子节点主流类别归类（见 tidyByCategory.ts）。
+  // 以这些单元当前包围盒左上角为锚点，整理后整体不远离原位。
+  // 组内子节点相对父容器、随组容器自动跟随，不单独移动；io 节点不动。
+  tidyByCategory: (options) => {
+    if (!canvasTidyExecutor) {
+      throw new Error('canvas_tidy_executor_unavailable')
+    }
+    canvasTidyExecutor.run(options)
+  },
+  commitTidyNodes: (nodes, movedNodeIds) => set((state) => ({
+    nodes,
+    historyPast: [...state.historyPast, snapshotGraph(state.nodes, state.edges)].slice(-50),
+    historyFuture: [],
+    userMovedNodeIds: new Set([...state.userMovedNodeIds, ...movedNodeIds]),
+  })),
+  canvasViewLocked: false,
+  setCanvasViewLocked: (locked) => set({ canvasViewLocked: locked }),
+  pendingFocusNodeId: null,
+  clearPendingFocusNodeId: () => set({ pendingFocusNodeId: null }),
+  userMovedNodeIds: new Set<string>(),
 }))
+
+export function beginCanvasNodeDrag(nodeId: string): void {
+  const normalizedNodeId = nodeId.trim()
+  if (!normalizedNodeId || activeDragNodeIds.has(normalizedNodeId)) return
+  activeDragNodeIds.add(normalizedNodeId)
+  useRFStore.setState((state) => ({
+    historyPast: [...state.historyPast, snapshotGraph(state.nodes, state.edges)].slice(-50),
+    historyFuture: [],
+  }))
+}
 
 export function persistToLocalStorage(key = 'tapcanvas-flow') {
   const state = useRFStore.getState()
@@ -3119,3 +3897,24 @@ export function restoreFromLocalStorage(key = 'tapcanvas-flow') {
     return null
   }
 }
+
+// Fine-grained selectors — use these in node components to avoid re-rendering on
+// every unrelated node change.
+//
+// nodesById: O(1) Map lookup, rebuilt only when the nodes array reference changes.
+let _cachedNodes: Node[] | null = null
+let _cachedNodesById: ReadonlyMap<string, Node> = new Map()
+
+export function selectNodesById(state: RFState): ReadonlyMap<string, Node> {
+  if (state.nodes !== _cachedNodes) {
+    _cachedNodes = state.nodes
+    _cachedNodesById = new Map(state.nodes.map((n) => [n.id, n]))
+  }
+  return _cachedNodesById
+}
+
+export const selectNodeById = (nodeId: string) =>
+  (state: RFState): Node | undefined => selectNodesById(state).get(nodeId)
+
+export const selectNodeData = (nodeId: string) =>
+  (state: RFState): Node['data'] | undefined => selectNodesById(state).get(nodeId)?.data

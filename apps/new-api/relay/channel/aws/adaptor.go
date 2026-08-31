@@ -123,7 +123,8 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	// 原有的Claude模型处理逻辑
-	claudeReq, err := claude.RequestOpenAI2ClaudeMessage(c, *request)
+	// AWS Bedrock 需要图片字节，不支持 url 图片源，必须下载转 base64。
+	claudeReq, err := claude.RequestOpenAI2ClaudeMessage(c, *request, false)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to convert openai request to claude request")
 	}

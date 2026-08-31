@@ -207,6 +207,9 @@ func AddToken(c *gin.Context) {
 		common.SysLog("failed to generate token key: " + err.Error())
 		return
 	}
+	if token.DisplayRatio <= 0 {
+		token.DisplayRatio = 1
+	}
 	cleanToken := model.Token{
 		UserId:             c.GetInt("id"),
 		Name:               token.Name,
@@ -221,6 +224,7 @@ func AddToken(c *gin.Context) {
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
+		DisplayRatio:       token.DisplayRatio,
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -299,6 +303,10 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		if token.DisplayRatio <= 0 {
+			token.DisplayRatio = 1
+		}
+		cleanToken.DisplayRatio = token.DisplayRatio
 	}
 	err = cleanToken.Update()
 	if err != nil {

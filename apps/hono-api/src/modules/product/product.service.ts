@@ -1,6 +1,9 @@
 import { AppError } from "../../middleware/error";
 import { getProductEntitlement } from "../commerce/commerce.repo";
-import type { CommerceEntitlementType } from "../commerce/commerce.schemas";
+import {
+	CommerceEntitlementTypeSchema,
+	type CommerceEntitlementType,
+} from "../commerce/commerce.schemas";
 import type { AppContext } from "../../types";
 import {
 	countProducts,
@@ -43,6 +46,19 @@ async function mapProductRowToDto(c: AppContext, row: ProductRow): Promise<Produ
 		listProductSkus(c.env.DB, { productId: row.id, ownerId: row.owner_id }),
 		getProductEntitlement(c.env.DB, row.owner_id, row.id),
 	]);
+	const entitlementType = entitlement
+		? CommerceEntitlementTypeSchema.safeParse(entitlement.entitlement_type)
+		: null;
+	if (entitlementType && !entitlementType.success) {
+		throw new AppError("Product uses an unsupported entitlement type", {
+			status: 409,
+			code: "product_entitlement_type_unsupported",
+			details: {
+				productId: row.id,
+				entitlementType: entitlement.entitlement_type,
+			},
+		});
+	}
 	return {
 		id: row.id,
 		title: row.title,
@@ -52,7 +68,7 @@ async function mapProductRowToDto(c: AppContext, row: ProductRow): Promise<Produ
 		priceCents: Number(row.price_cents ?? 0) || 0,
 		stock: Number(row.stock ?? 0) || 0,
 		status: row.status as ProductDto["status"],
-		entitlementType: (entitlement?.entitlement_type as CommerceEntitlementType | undefined) ?? "none",
+		entitlementType: entitlementType?.data ?? "none",
 		entitlementConfigJson: entitlement?.config_json ?? null,
 		coverImageUrl: row.cover_image_url,
 		images,
@@ -88,25 +104,31 @@ async function ensureCatalogMerchant(
 }
 
 export async function listProductsForCatalog(c: AppContext, input: {
+	ownerId?: string;
 	keyword?: string;
 	status?: "draft" | "active" | "inactive";
 	entitlementType?: Exclude<CommerceEntitlementType, "none">;
+	excludedCurrency?: string;
 	page: number;
 	size: number;
 }) {
 	const offset = (input.page - 1) * input.size;
 	const [rows, total] = await Promise.all([
 		listProducts(c.env.DB, {
+			ownerId: input.ownerId,
 			keyword: input.keyword,
 			status: input.status,
 			entitlementType: input.entitlementType,
+			excludedCurrency: input.excludedCurrency,
 			limit: input.size,
 			offset,
 		}),
 		countProducts(c.env.DB, {
+			ownerId: input.ownerId,
 			keyword: input.keyword,
 			status: input.status,
 			entitlementType: input.entitlementType,
+			excludedCurrency: input.excludedCurrency,
 		}),
 	]);
 	const items = await Promise.all(rows.map((row) => mapProductRowToDto(c, row)));

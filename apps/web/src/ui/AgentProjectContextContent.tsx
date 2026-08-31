@@ -31,7 +31,7 @@ type ContextFileOption = {
   label: string
 }
 
-type ProjectEditableFileName = 'PROJECT.md' | 'RULES.md' | 'CHARACTERS.md' | 'STORY_STATE.md'
+type ProjectEditableFileName = 'PROJECT.md' | 'CREATIVE_BRIEF.md' | 'RULES.md' | 'CHARACTERS.md' | 'STORY_STATE.md'
 
 export default function AgentProjectContextContent(props: AgentProjectContextContentProps): JSX.Element {
   const { className, opened, projectId, selection, canEditGlobal = false, canEditProject = false } = props
@@ -213,7 +213,7 @@ export default function AgentProjectContextContent(props: AgentProjectContextCon
         <TextInput className="agent-project-context-panel-book-input" label="书籍 ID" placeholder="可选" value={bookId} onChange={(event) => setBookId(event.currentTarget.value)} w={220} />
         <TextInput className="agent-project-context-panel-chapter-input" label="章节" placeholder="可选" value={chapter} onChange={(event) => setChapter(event.currentTarget.value)} w={120} />
         <Button className="agent-project-context-panel-load-button" variant="light" onClick={() => void load(false)} loading={loading}>查看</Button>
-        <Button className="agent-project-context-panel-refresh-button" variant="light" color="grape" onClick={() => void load(true)} loading={loading}>刷新生成</Button>
+        <Button className="agent-project-context-panel-refresh-button" variant="light" color="gray" onClick={() => void load(true)} loading={loading}>刷新生成</Button>
         <Button className="agent-project-context-panel-verify-button" variant="light" color="teal" onClick={() => void handleVerify()} loading={verifyLoading}>
           规则自检
         </Button>
@@ -223,9 +223,9 @@ export default function AgentProjectContextContent(props: AgentProjectContextCon
         <Text className="agent-project-context-panel-root" size="sm" c="dimmed">全局：{data?.globalContextDir || '.tapcanvas/context'}</Text>
         <Text className="agent-project-context-panel-root" size="sm" c="dimmed">项目：{data?.projectContextDir || '暂无项目上下文目录'}</Text>
         <Badge className="agent-project-context-panel-global-count" variant="light" color="gray">全局 {data?.globalFiles.length || 0}</Badge>
-        <Badge className="agent-project-context-panel-project-count" variant="light" color="blue">项目 {data?.projectFiles.length || 0}</Badge>
-        {selection?.traceId ? <Badge className="agent-project-context-panel-trace-badge" variant="light" color="blue">trace {selection.traceId.slice(0, 8)}</Badge> : null}
-        {selection?.label ? <Badge className="agent-project-context-panel-label-badge" variant="light" color="grape">{selection.label}</Badge> : null}
+        <Badge className="agent-project-context-panel-project-count" variant="light" color="gray">项目 {data?.projectFiles.length || 0}</Badge>
+        {selection?.traceId ? <Badge className="agent-project-context-panel-trace-badge" variant="light" color="gray">trace {selection.traceId.slice(0, 8)}</Badge> : null}
+        {selection?.label ? <Badge className="agent-project-context-panel-label-badge" variant="light" color="gray">{selection.label}</Badge> : null}
       </Group>
 
       <Select className="agent-project-context-panel-file-select" label="上下文文件" placeholder="选择文件" data={fileOptions} value={activeFile?.path || null} onChange={(value) => setActivePath(value || '')} searchable nothingFoundMessage="暂无文件" />
@@ -235,14 +235,14 @@ export default function AgentProjectContextContent(props: AgentProjectContextCon
       {activeFile ? (
         <Group className="agent-project-context-panel-meta" gap="xs" wrap="wrap">
           <Badge className="agent-project-context-panel-updated-at" variant="light" color="teal">更新时间 {activeFile.updatedAt || '—'}</Badge>
-          <Badge className="agent-project-context-panel-updated-by" variant="light" color="cyan">修改人 {activeFile.updatedBy || '—'}</Badge>
-          <Badge className="agent-project-context-panel-history-count" variant="light" color="violet">历史 {activeFile.history.length}</Badge>
+          <Badge className="agent-project-context-panel-updated-by" variant="light" color="gray">修改人 {activeFile.updatedBy || '—'}</Badge>
+          <Badge className="agent-project-context-panel-history-count" variant="light" color="gray">历史 {activeFile.history.length}</Badge>
         </Group>
       ) : null}
 
       <Group className="agent-project-context-panel-actions" gap="sm" justify="space-between" wrap="wrap">
         <Text className="agent-project-context-panel-editability" size="sm" c="dimmed">{canEditActiveFile ? '当前文件可编辑' : '当前文件只读'}</Text>
-        <Button className="agent-project-context-panel-save-button" variant="light" color="blue" onClick={() => void handleSave()} loading={saving} disabled={!canEditActiveFile || !hasDraftChanged}>保存修改</Button>
+        <Button className="agent-project-context-panel-save-button" variant="light" color="gray" onClick={() => void handleSave()} loading={saving} disabled={!canEditActiveFile || !hasDraftChanged}>保存修改</Button>
       </Group>
 
       {activeFile?.history.length ? (
@@ -286,7 +286,7 @@ export default function AgentProjectContextContent(props: AgentProjectContextCon
           {versionData ? (
             <>
               <Group className="agent-project-context-panel-version-meta" gap="xs" wrap="wrap">
-                <Badge className="agent-project-context-panel-version-id" variant="light" color="violet">{versionData.versionId}</Badge>
+                <Badge className="agent-project-context-panel-version-id" variant="light" color="gray">{versionData.versionId}</Badge>
                 <Badge className="agent-project-context-panel-version-file" variant="light">{versionData.fileName}</Badge>
                 <Badge className="agent-project-context-panel-version-layer" variant="outline">{versionData.layer}</Badge>
                 <Text className="agent-project-context-panel-version-time" size="xs" c="dimmed">{versionData.updatedAt}</Text>
@@ -348,7 +348,7 @@ export default function AgentProjectContextContent(props: AgentProjectContextCon
                 <Badge className="agent-project-context-panel-verify-budget" variant="light" color="gray">
                   maxCharsPerFile {verifyData.budgets.maxCharsPerFile}
                 </Badge>
-                <Badge className="agent-project-context-panel-verify-files" variant="light" color="blue">
+                <Badge className="agent-project-context-panel-verify-files" variant="light" color="gray">
                   files {verifyData.files.length}
                 </Badge>
               </Group>
@@ -412,5 +412,5 @@ function getFileNameFromPath(filePath: string): string {
 }
 
 function isProjectEditableFileName(value: string): value is ProjectEditableFileName {
-  return value === 'PROJECT.md' || value === 'RULES.md' || value === 'CHARACTERS.md' || value === 'STORY_STATE.md'
+  return value === 'PROJECT.md' || value === 'CREATIVE_BRIEF.md' || value === 'RULES.md' || value === 'CHARACTERS.md' || value === 'STORY_STATE.md'
 }

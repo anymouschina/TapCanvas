@@ -16,6 +16,9 @@ import (
 
 var traceBase64RE = regexp.MustCompile(`"([A-Za-z0-9+/\r\n]{500,}={0,2})"`)
 
+// 单个纯文本（或单个字符串字段）的存储上限（字节）
+const maxPlainTextLogChars = 8192
+
 func truncateTraceBase64(s string) string {
 	return SanitizeLargeTextForLog(s)
 }
@@ -26,11 +29,16 @@ func SanitizeLargeTextForLog(s string) string {
 	}
 	var payload any
 	if err := json.Unmarshal([]byte(s), &payload); err == nil {
-		if sanitized, changed := sanitizeLogValue(payload); changed {
+		// 合法 JSON 只做逐字段净化（base64 打码、超长字段截断），体量控制由逐字段上限负责。
+		// 绝不落入下方整体纯文本截断：那会把 URL 等短字段拦腰截断，且产物不再是合法 JSON
+		// （曾导致日志媒体预览丢参考图）。
+		sanitized, changed := sanitizeLogValue(payload)
+		if changed {
 			if encoded, marshalErr := json.Marshal(sanitized); marshalErr == nil {
 				return string(encoded)
 			}
 		}
+		return s
 	}
 	sanitized := traceBase64RE.ReplaceAllStringFunc(s, func(match string) string {
 		inner := match[1 : len(match)-1]
@@ -91,7 +99,6 @@ func sanitizeLogString(s string) (string, bool) {
 }
 
 func sanitizeLongLogString(s string) (string, bool) {
-	const maxPlainTextLogChars = 8192
 	if marker, ok := stripDataURLBase64(s); ok {
 		return marker, true
 	}
@@ -99,9 +106,20 @@ func sanitizeLongLogString(s string) (string, bool) {
 		return fmt.Sprintf("[base64 ~%d chars]", len(strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", ""))), true
 	}
 	if len(s) > maxPlainTextLogChars {
-		return fmt.Sprintf("%s...[truncated %d chars]", s[:maxPlainTextLogChars], len(s)-maxPlainTextLogChars), true
+		return fmt.Sprintf("%s...[truncated %d chars]", trimToRuneBoundary(s, maxPlainTextLogChars), len(s)-maxPlainTextLogChars), true
 	}
 	return s, false
+}
+
+// trimToRuneBoundary 把 s 截到不超过 max 字节，且不落在多字节字符中间。
+func trimToRuneBoundary(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && s[max]&0xC0 == 0x80 {
+		max--
+	}
+	return s[:max]
 }
 
 func stripDataURLBase64(s string) (string, bool) {
@@ -337,24 +355,4 @@ func UpsertRequestTraceAttempt(c *gin.Context, info *relaycommon.RelayInfo, patc
 	trace.UpdatedAt = common.GetTimestamp()
 	trace.persistAttempts()
 	return LOG_DB.Save(trace).Error
-}
-
-func GetRequestTraceByRequestID(requestId string) (*RequestTrace, error) {
-	trace, err := loadRequestTraceByRequestID(requestId)
-	if err != nil {
-		return nil, err
-	}
-	return trace, nil
-}
-
-func GetUserRequestTraceByRequestID(userId int, requestId string) (*RequestTrace, error) {
-	var trace RequestTrace
-	err := LOG_DB.Where("request_id = ? AND user_id = ?", requestId, userId).First(&trace).Error
-	if err != nil {
-		return nil, err
-	}
-	if err := trace.hydrateAttempts(); err != nil {
-		return nil, err
-	}
-	return &trace, nil
 }

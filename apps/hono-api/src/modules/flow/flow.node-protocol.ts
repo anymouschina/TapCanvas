@@ -3,7 +3,7 @@ type PublicFlowNodeLike = {
 	data?: unknown;
 };
 
-type PublicFlowTaskNodeCoreType = "text" | "image" | "video" | "storyboard";
+type PublicFlowTaskNodeCoreType = "text" | "image" | "video" | "storyboard" | "audio";
 
 type PublicFlowNodeHandles = {
 	targets: ReadonlySet<string>;
@@ -12,15 +12,19 @@ type PublicFlowNodeHandles = {
 
 const PUBLIC_FLOW_TASK_NODE_KIND_TO_CORE: Record<string, PublicFlowTaskNodeCoreType> = {
 	text: "text",
+	codex: "text",
 	noveldoc: "text",
 	scriptdoc: "text",
 	storyboardscript: "text",
 	workflowinput: "text",
 	workflowoutput: "text",
 	cameraref: "text",
-	tts: "text",
 	subtitlealign: "text",
 	subflow: "text",
+
+	audio: "audio",
+	tts: "audio",
+	speech: "audio",
 
 	image: "image",
 	imageedit: "image",
@@ -30,7 +34,6 @@ const PUBLIC_FLOW_TASK_NODE_KIND_TO_CORE: Record<string, PublicFlowTaskNodeCoreT
 	novelstoryboard: "image",
 	storyboardshot: "image",
 	imagefission: "image",
-	mosaic: "image",
 
 	video: "video",
 	composevideo: "video",
@@ -60,11 +63,40 @@ const PUBLIC_FLOW_NODE_HANDLES_BY_CORE: Record<
 		targets: new Set<string>(["in-image", "in-image-wide"]),
 		sources: new Set<string>(["out-image", "out-image-wide"]),
 	},
+	audio: {
+		targets: new Set<string>(["in-text", "in-text-wide"]),
+		sources: new Set<string>(["out-audio", "out-audio-wide"]),
+	},
 };
 
 function asObject(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	return value as Record<string, unknown>;
+}
+
+function workflowPorts(
+	data: Record<string, unknown>,
+	direction: "input" | "output",
+): string[] | null {
+	const spec = asObject(data.workflowAtomicSpec);
+	const value = spec?.[direction === "input" ? "inputPorts" : "outputPorts"]
+		?? data[direction === "input" ? "workflowInputPorts" : "workflowOutputPorts"];
+	if (!Array.isArray(value)) return null;
+	return value.flatMap((port) => (
+		typeof port === "string" && port.trim()
+			? [port.trim()]
+			: []
+	));
+}
+
+function workflowHandles(data: Record<string, unknown>): PublicFlowNodeHandles | null {
+	const inputs = workflowPorts(data, "input");
+	const outputs = workflowPorts(data, "output");
+	if (!inputs && !outputs) return null;
+	return {
+		targets: new Set((inputs ?? []).map((port) => `in-workflow:${encodeURIComponent(port)}`)),
+		sources: new Set((outputs ?? []).map((port) => `out-workflow:${encodeURIComponent(port)}`)),
+	};
 }
 
 export function getPublicFlowTaskNodeCoreType(
@@ -80,7 +112,16 @@ export function getPublicFlowNodeHandles(
 ): PublicFlowNodeHandles | null {
 	if (!node || node.type !== "taskNode") return null;
 	const data = asObject(node.data);
+	if (!data) return null;
+	const declaredWorkflowHandles = workflowHandles(data);
+	if (declaredWorkflowHandles) return declaredWorkflowHandles;
 	const kind = typeof data?.kind === "string" ? data.kind : null;
+	if (kind?.trim().toLowerCase() === "codex") {
+		return {
+			targets: new Set<string>(["in-any", "in-any-wide"]),
+			sources: new Set<string>(["out-text", "out-text-wide"]),
+		};
+	}
 	const coreType = getPublicFlowTaskNodeCoreType(kind);
 	if (!coreType) return null;
 	return PUBLIC_FLOW_NODE_HANDLES_BY_CORE[coreType];

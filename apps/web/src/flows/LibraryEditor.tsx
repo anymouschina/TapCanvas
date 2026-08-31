@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlow, Background, BackgroundVariant, Controls, MiniMap, ReactFlowProvider, ConnectionLineType, addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TaskNode from '../canvas/nodes/TaskNode'
+import TaskNode from '../canvas/nodes/TaskNodeCard'
 import { type FlowIO } from './registry'
-import { listServerFlows, getServerFlow, saveServerFlow, deleteServerFlow, listFlowVersions, rollbackFlow, type FlowDto } from '../api/server'
+import { createFlowVersionSnapshot, listServerFlows, getServerFlow, saveServerFlow, deleteServerFlow, listFlowVersionsPage, rollbackFlow, type FlowDto } from '../api/server'
 import { Button, Group, Title, TextInput, Stack, Text, Divider, Select, Modal } from '@mantine/core'
 import { usePreventBrowserSwipeNavigation } from '../utils/usePreventBrowserSwipeNavigation'
 
@@ -35,7 +35,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
         setIo({ inputs: [], outputs: [] })
         setCurrentId(flowId)
         setDirty(false)
-        try { setVersions(await listFlowVersions(flowId)) } catch { setVersions([]) }
+        try { setVersions((await listFlowVersionsPage({ flowId, limit: 100 })).items) } catch { setVersions([]) }
       } catch {}
     })()
   }, [flowId])
@@ -51,6 +51,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
 
   const saveAll = async () => {
     const saved = await saveServerFlow({ id: currentId, name, nodes, edges })
+    await createFlowVersionSnapshot(saved.id)
     setServerList(await listServerFlows())
     setCurrentId(saved.id)
     setDirty(false)
@@ -80,7 +81,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
     setEdges(Array.isArray(data.edges) ? data.edges : [])
     setName(r?.name || '')
     setIo({ inputs: [], outputs: [] })
-    try { setVersions(await listFlowVersions(id)) } catch { setVersions([]) }
+    try { setVersions((await listFlowVersionsPage({ flowId: id, limit: 100 })).items) } catch { setVersions([]) }
   }
 
   const addPort = (dir: 'inputs'|'outputs') => {
@@ -100,7 +101,7 @@ export default function LibraryEditor({ flowId, onClose }: Props) {
               <Select className="tc-library-editor__select" size="xs" placeholder="选择服务端工作流" data={serverList.map(f=>({ value: f.id, label: f.name }))} value={currentId} onChange={(v)=> v && loadById(v)} searchable clearable style={{ width: 260 }} />
               <Button className="tc-library-editor__action" size="xs" onClick={saveAll}>保存</Button>
               <Button className="tc-library-editor__action" size="xs" variant="light" onClick={saveAs}>另存为</Button>
-              <Button className="tc-library-editor__action" size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions(await listFlowVersions(currentId)) } catch { setVersions([]) } }}>历史</Button>
+              <Button className="tc-library-editor__action" size="xs" variant="light" onClick={async ()=>{ setShowHistory(true); try { setVersions((await listFlowVersionsPage({ flowId: currentId, limit: 100 })).items) } catch { setVersions([]) } }}>历史</Button>
               <Button className="tc-library-editor__action" size="xs" variant="light" color="red" onClick={removeCurrent}>删除</Button>
               <Button className="tc-library-editor__action" size="xs" variant="light" onClick={()=>{ if (dirty && !confirm('有未保存更改，确定关闭？')) return; onClose() }}>关闭</Button>
             </Group>

@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
 	hasRealAuthTestEnv,
 	loginAndGetRealToken,
-	requestWithRealEnv,
+	requestRealAuthApi,
 } from "../../test-utils/real-auth";
 
 describe.skipIf(!hasRealAuthTestEnv())("real auth token integration", () => {
@@ -18,7 +18,7 @@ describe.skipIf(!hasRealAuthTestEnv())("real auth token integration", () => {
 	});
 
 	it("returns the same real account identity in auth payload", async () => {
-		const response = await requestWithRealEnv("http://localhost/auth/session", {
+		const response = await requestRealAuthApi("/auth/session", {
 			method: "GET",
 			headers: {
 				authorization: `Bearer ${result.token}`,
@@ -41,7 +41,7 @@ describe.skipIf(!hasRealAuthTestEnv())("real auth token integration", () => {
 	});
 
 	it("uses the real token to access protected project api", async () => {
-		const response = await requestWithRealEnv("http://localhost/projects", {
+		const response = await requestRealAuthApi("/projects", {
 			method: "GET",
 			headers: {
 				authorization: `Bearer ${result.token}`,

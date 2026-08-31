@@ -3,7 +3,16 @@ import path from "node:path";
 
 import { AppError } from "../../middleware/error";
 import type { AppContext } from "../../types";
+import { BookIndexStoreError, readBookIndex, type BookIndexRecord } from "../asset/book-index-store";
+import { resolveProjectDataRepoRoot } from "../asset/project-data-root";
 import { getProjectForOwner } from "../project/project.repo";
+import { readStoryFactsLedger } from "./story-facts.store";
+import type { StoryFactRecord, StoryFactsLedger, StoryPoint } from "./story-facts.schemas";
+import {
+  projectStoryFactForAudience,
+  type AudienceStoryFactProjection,
+} from "./story-facts.projection";
+import { isStoryFactActiveAt } from "./story-facts.timeline";
 
 export type ProjectWorkspaceContextFileVersionDto = {
   versionId: string;
@@ -93,6 +102,20 @@ type CharacterStateSummary = {
   updatedAt?: string;
 };
 
+type CharacterBibleSummary = {
+  characterBibleId: string;
+  name: string;
+  sourceCharacterId?: string;
+  identityHint?: string;
+  outfit?: string;
+  distinctiveFeatures?: string;
+  era?: string;
+  timePeriod?: string;
+  scene?: string;
+  hasFullBody: boolean;
+  hasThreeView: boolean;
+};
+
 type BookContextSnapshot = {
   bookId: string;
   title?: string;
@@ -104,9 +127,12 @@ type BookContextSnapshot = {
   styleConsistencyRules: string[];
   styleNegativeDirectives: string[];
   characters: NamedSummary[];
+  characterBibles: CharacterBibleSummary[];
   storyboardLatest?: StoryboardChunkSummary;
   recentSemanticAssets: SemanticAssetSummary[];
   latestCharacterStates: CharacterStateSummary[];
+  storyFactsRevision: number;
+  storyFacts: StoryFactRecord[];
 };
 
 type ContextFileMeta = {
@@ -119,7 +145,13 @@ type UnknownRecord = Record<string, unknown>;
 const PROJECT_CONTEXT_DIR = path.join(".tapcanvas", "context");
 const GLOBAL_CONTEXT_DIR = path.join(process.cwd(), ".tapcanvas", "context");
 const GLOBAL_HISTORY_DIR = path.join(process.cwd(), ".tapcanvas", "context-history");
-const PROJECT_CONTEXT_FILE_NAMES = ["PROJECT.md", "RULES.md", "CHARACTERS.md", "STORY_STATE.md"] as const;
+const PROJECT_CONTEXT_FILE_NAMES = [
+  "PROJECT.md",
+  "CREATIVE_BRIEF.md",
+  "RULES.md",
+  "CHARACTERS.md",
+  "STORY_STATE.md",
+] as const;
 const GLOBAL_CONTEXT_FILE_NAMES = ["GLOBAL_RULES.md"] as const;
 const HISTORY_LIMIT = 12;
 
@@ -400,8 +432,8 @@ function sanitizePathSegment(value: string): string {
 }
 
 function buildProjectDataRoot(projectId: string, ownerId: string): string {
-  return path.join(
-    process.cwd(),
+	return path.join(
+		resolveProjectDataRepoRoot(),
     "project-data",
     "users",
     sanitizePathSegment(ownerId),
@@ -410,16 +442,28 @@ function buildProjectDataRoot(projectId: string, ownerId: string): string {
   );
 }
 
-function buildLegacyProjectDataRoot(projectId: string): string {
-  return path.join(process.cwd(), "project-data", sanitizePathSegment(projectId));
+export function resolveProjectWorkspaceContextDir(projectId: string, ownerId: string): string {
+  return path.join(buildProjectDataRoot(projectId, ownerId), PROJECT_CONTEXT_DIR);
 }
 
 function buildBooksRoot(projectId: string, ownerId: string): string {
   return path.join(buildProjectDataRoot(projectId, ownerId), "books");
 }
 
-function buildLegacyBooksRoot(projectId: string): string {
-  return path.join(buildLegacyProjectDataRoot(projectId), "books");
+async function readBookIndexForContext(indexPath: string): Promise<BookIndexRecord | null> {
+  try {
+    return await readBookIndex(indexPath);
+  } catch (error) {
+    if (error instanceof BookIndexStoreError && error.code === "book_index_not_found") return null;
+    if (error instanceof BookIndexStoreError) {
+      throw new AppError(error.message, {
+        status: 500,
+        code: error.code,
+        details: error.details,
+      });
+    }
+    throw error;
+  }
 }
 
 async function resolveBookContextSnapshot(input: {
@@ -435,11 +479,16 @@ async function resolveBookContextSnapshot(input: {
 			})
 		: await resolveLatestReadableBookIndexPath(input.projectId, input.ownerId);
   if (!indexPath) return null;
-  const raw = await fs.readFile(indexPath, "utf8").catch(() => "");
-  if (!raw.trim()) return null;
-  const parsed = parseJsonRecord(raw);
+  const parsed = await readBookIndexForContext(indexPath);
   if (!parsed) return null;
-  return toBookContextSnapshot(parsed);
+  const bookId = readText(parsed.bookId);
+  const projectId = readText(parsed.projectId);
+  const storyFacts = await readStoryFactsLedger({
+    filePath: path.join(path.dirname(indexPath), "story-facts.json"),
+    projectId,
+    bookId,
+  });
+  return toBookContextSnapshot(parsed, storyFacts);
 }
 
 async function resolveReadableBookIndexPath(input: {
@@ -449,10 +498,7 @@ async function resolveReadableBookIndexPath(input: {
 }): Promise<string | null> {
   const safeBookId = sanitizePathSegment(input.bookId);
   const scopedPath = path.join(buildBooksRoot(input.projectId, input.ownerId), safeBookId, "index.json");
-  if (await pathExists(scopedPath)) return scopedPath;
-  const legacyPath = path.join(buildLegacyBooksRoot(input.projectId), safeBookId, "index.json");
-  if (await pathExists(legacyPath)) return legacyPath;
-  return null;
+  return (await readBookIndexForContext(scopedPath)) ? scopedPath : null;
 }
 
 async function resolveLatestReadableBookIndexPath(projectId: string, ownerId: string): Promise<string | null> {
@@ -470,7 +516,7 @@ async function collectBookIndexCandidates(
   projectId: string,
   ownerId: string,
 ): Promise<Array<{ path: string; updatedAt: string }>> {
-  const roots = [buildBooksRoot(projectId, ownerId), buildLegacyBooksRoot(projectId)];
+  const roots = [buildBooksRoot(projectId, ownerId)];
   const candidates: Array<{ path: string; updatedAt: string }> = [];
   const seenPaths = new Set<string>();
   for (const booksRoot of roots) {
@@ -480,9 +526,7 @@ async function collectBookIndexCandidates(
       const indexPath = path.join(booksRoot, entry.name, "index.json");
       if (seenPaths.has(indexPath)) continue;
       seenPaths.add(indexPath);
-      const raw = await fs.readFile(indexPath, "utf8").catch(() => "");
-      if (!raw.trim()) continue;
-      const parsed = parseJsonRecord(raw);
+      const parsed = await readBookIndexForContext(indexPath);
       if (!parsed) continue;
       candidates.push({
         path: indexPath,
@@ -493,13 +537,21 @@ async function collectBookIndexCandidates(
   return candidates;
 }
 
-function toBookContextSnapshot(data: UnknownRecord): BookContextSnapshot {
+function toBookContextSnapshot(
+  data: UnknownRecord,
+  storyFacts: StoryFactsLedger,
+): BookContextSnapshot {
   const chapters = normalizeChapters(data.chapters);
   const assets = readRecord(data.assets);
   const styleBible = readRecord(assets?.styleBible);
   const storyboardChunks = normalizeStoryboardChunks(assets?.storyboardChunks);
   const semanticAssets = normalizeSemanticAssets(assets?.semanticAssets);
+  const characterBibles = normalizeCharacterBibleSummaries(assets?.characterBibles);
   const characters = normalizeNamedSummaries([
+    ...characterBibles.map((item) => ({
+      name: item.name,
+      description: [item.identityHint, item.outfit, item.distinctiveFeatures].filter(Boolean).join(" / "),
+    })),
     ...(Array.isArray(assets?.characterProfiles) ? assets.characterProfiles : []),
     ...(Array.isArray(assets?.characters) ? assets.characters : []),
   ]);
@@ -514,9 +566,12 @@ function toBookContextSnapshot(data: UnknownRecord): BookContextSnapshot {
     styleConsistencyRules: readTextArray(styleBible?.consistencyRules, 8),
     styleNegativeDirectives: readTextArray(styleBible?.negativeDirectives, 8),
     characters,
+    characterBibles,
     storyboardLatest: storyboardChunks[0],
     recentSemanticAssets: semanticAssets,
     latestCharacterStates: normalizeLatestCharacterStates(semanticAssets),
+    storyFactsRevision: storyFacts.revision,
+    storyFacts: storyFacts.facts,
   };
 }
 
@@ -667,6 +722,39 @@ function normalizeNamedSummaries(items: unknown[]): NamedSummary[] {
   return out;
 }
 
+function normalizeCharacterBibleSummaries(value: unknown): CharacterBibleSummary[] {
+  if (!Array.isArray(value)) return [];
+  const out: CharacterBibleSummary[] = [];
+  const seenIds = new Set<string>();
+  for (const item of value) {
+    const record = readRecord(item);
+    if (!record) continue;
+    const characterBibleId = readText(record.id);
+    const name = readText(record.name);
+    if (!characterBibleId || !name || seenIds.has(characterBibleId)) continue;
+    seenIds.add(characterBibleId);
+    const sourceImages = readRecord(record.sourceImages);
+    const importedImages = readRecord(record.importedImages);
+    const fullBody = readText(sourceImages?.fullBody) || readText(importedImages?.fullBody);
+    const threeView = readText(sourceImages?.threeView) || readText(importedImages?.threeView);
+    out.push({
+      characterBibleId,
+      name,
+      sourceCharacterId: readText(record.sourceCharacterId) || undefined,
+      identityHint: readText(record.identityHint) || undefined,
+      outfit: readText(record.outfit) || undefined,
+      distinctiveFeatures: readText(record.distinctiveFeatures) || undefined,
+      era: readText(record.era) || undefined,
+      timePeriod: readText(record.timePeriod) || undefined,
+      scene: readText(record.scene) || undefined,
+      hasFullBody: !!fullBody,
+      hasThreeView: !!threeView,
+    });
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
 function renderProjectMarkdown(input: {
   ownerId: string;
   projectId: string;
@@ -719,12 +807,31 @@ function renderRulesMarkdown(input: { book: BookContextSnapshot | null }): strin
 
 function renderCharactersMarkdown(input: { book: BookContextSnapshot | null }): string {
   const lines = ["# Character Context", ""];
-  if (!input.book || input.book.characters.length === 0) {
+  if (!input.book || (input.book.characters.length === 0 && input.book.characterBibles.length === 0)) {
     lines.push("- 当前 book index 未提取到角色卡，请以章节脚本与已生成分镜为准。", "");
     return `${lines.join("\n")}\n`;
   }
+  if (input.book.characterBibles.length > 0) {
+    lines.push("## Character Bibles", "");
+    for (const item of input.book.characterBibles) {
+      lines.push(`### ${item.name}`, "");
+      lines.push(`- characterBibleId: ${item.characterBibleId}`);
+      if (item.sourceCharacterId) lines.push(`- sourceCharacterId: ${item.sourceCharacterId}`);
+      if (item.identityHint) lines.push(`- identityHint: ${item.identityHint}`);
+      if (item.outfit) lines.push(`- outfit: ${item.outfit}`);
+      if (item.distinctiveFeatures) lines.push(`- distinctiveFeatures: ${item.distinctiveFeatures}`);
+      if (item.era) lines.push(`- era: ${item.era}`);
+      if (item.timePeriod) lines.push(`- timePeriod: ${item.timePeriod}`);
+      if (item.scene) lines.push(`- sceneHint: ${item.scene}`);
+      lines.push(`- references: fullBody=${item.hasFullBody ? "yes" : "no"} / threeView=${item.hasThreeView ? "yes" : "no"}`);
+      lines.push("");
+    }
+  }
+  if (input.book.characters.length > 0) {
+    lines.push("## Character Summaries", "");
+  }
   for (const character of input.book.characters) {
-    lines.push(`## ${character.name}`, "");
+    lines.push(`### ${character.name}`, "");
     lines.push(character.description ? `- ${character.description}` : "- 无补充描述");
     lines.push("");
   }
@@ -757,11 +864,34 @@ function renderStoryStateMarkdown(input: {
       `- latestStoryboardChunk: chunk=${String(input.book.storyboardLatest.chunkIndex)} shots=${String(input.book.storyboardLatest.shotStart || "?")}-${String(input.book.storyboardLatest.shotEnd || "?")}${input.book.storyboardLatest.tailFrameUrl ? ` tailFrameUrl=${input.book.storyboardLatest.tailFrameUrl}` : ""}`,
     );
   }
+  const projectedStoryFacts = selectStoryFactsForProjection({
+    facts: input.book.storyFacts,
+    chapter: input.chapter,
+    limit: 120,
+  });
+  lines.push("", "## Authoritative Story Facts", "");
+  lines.push(`- ledgerRevision: ${String(input.book.storyFactsRevision)}`);
+  lines.push("- 本节由 book/story-facts.json 自动投影；结构化账本与其来源/revision 是权威层，本 Markdown 只供人读与快速检索。");
+  if (projectedStoryFacts.length === 0) {
+    lines.push("- 当前作用域尚无已提交的跨章事实。", "");
+  } else {
+    for (const fact of projectedStoryFacts) {
+      lines.push(renderStoryFactProjectionLine(fact));
+    }
+  }
   if (input.book.latestCharacterStates.length) {
     lines.push("", "## Latest Character States", "");
     for (const item of input.book.latestCharacterStates) {
       lines.push(
         `- ${item.name}${typeof item.chapter === "number" ? ` | chapter=${String(item.chapter)}` : ""}${typeof item.shotNo === "number" ? ` | shot=${String(item.shotNo)}` : ""}${item.stateDescription ? ` | state=${item.stateDescription}` : ""}${item.imageUrl ? ` | image=${item.imageUrl}` : ""}`,
+      );
+    }
+  }
+  if (input.book.characterBibles.length) {
+    lines.push("", "## Character Bible Coverage", "");
+    for (const item of input.book.characterBibles) {
+      lines.push(
+        `- ${item.name} | bible=${item.characterBibleId}${item.identityHint ? ` | identity=${item.identityHint}` : ""} | fullBody=${item.hasFullBody ? "yes" : "no"} | threeView=${item.hasThreeView ? "yes" : "no"}`,
       );
     }
   }
@@ -795,6 +925,64 @@ function renderStoryStateMarkdown(input: {
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+function selectStoryFactsForProjection(input: {
+  facts: StoryFactRecord[];
+  chapter: number | null;
+  limit: number;
+}): AudienceStoryFactProjection[] {
+  const at: StoryPoint | null = input.chapter === null
+    ? null
+    : { chapter: input.chapter, sequence: 0, label: "chapter_start_context" };
+  const filtered = input.facts.filter((fact) => {
+    if (at) return isStoryFactActiveAt(fact, at);
+    return fact.validUntil === null;
+  });
+  return filtered
+    .slice(Math.max(0, filtered.length - input.limit))
+    .map((fact) => {
+      if (at) return projectStoryFactForAudience({ fact, at });
+      if (fact.disclosure.mode === "immediate") {
+        return { ...structuredClone(fact), audienceVisibility: "visible" };
+      }
+      return {
+        audienceVisibility: "hidden",
+        factId: fact.factId,
+        category: fact.subject.kind,
+        status: fact.status,
+        disclosure: structuredClone(fact.disclosure),
+      };
+    });
+}
+
+function renderStoryFactProjectionLine(fact: AudienceStoryFactProjection): string {
+  if (fact.audienceVisibility === "hidden") {
+    return `- [${fact.status}] [hidden] category=${fact.category} | revealAt=${renderStoryPoint(fact.disclosure.revealAt)} | factId=${fact.factId}`;
+  }
+  const validFrom = renderStoryPoint(fact.validFrom);
+  const validUntil = fact.validUntil ? renderStoryPoint(fact.validUntil) : "open";
+  const sourceParts: string[] = [fact.source.kind];
+  if (typeof fact.source.chapter === "number") sourceParts.push(`chapter=${String(fact.source.chapter)}`);
+  if (fact.source.chapterId) sourceParts.push(`chapterId=${fact.source.chapterId}`);
+  if (fact.source.nodeId) sourceParts.push(`nodeId=${fact.source.nodeId}`);
+  if (fact.source.field) sourceParts.push(`field=${fact.source.field}`);
+  if (fact.source.fileName) sourceParts.push(`file=${fact.source.fileName}`);
+  sourceParts.push(`sha256=${fact.source.contentSha256.slice(0, 12)}`);
+  const disclosure = fact.disclosure.mode === "immediate"
+    ? "immediate"
+    : `gated@${renderStoryPoint(fact.disclosure.revealAt)}`;
+  return `- [${fact.status}] ${fact.subject.name} (${fact.subject.key}) | ${fact.predicate} | ${renderStoryFactValue(fact.value)} | valid=${validFrom}..${validUntil} | disclosure=${disclosure} | source=${sourceParts.join("/")} | factId=${fact.factId}`;
+}
+
+function renderStoryPoint(point: StoryFactRecord["validFrom"]): string {
+  return `ch${String(point.chapter)}:${String(point.sequence)}${point.label ? `(${point.label})` : ""}`;
+}
+
+function renderStoryFactValue(value: StoryFactRecord["value"]): string {
+  const rendered = typeof value === "string" ? value : JSON.stringify(value);
+  if (rendered.length <= 240) return rendered;
+  return `${rendered.slice(0, 239).trimEnd()}…`;
 }
 
 async function loadContextFilesFromDir(input: {
@@ -973,24 +1161,6 @@ async function writeTextIfChanged(filePath: string, content: string): Promise<vo
   const current = await fs.readFile(filePath, "utf8").catch(() => "");
   if (current === content) return;
   await fs.writeFile(filePath, content, "utf8");
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function parseJsonRecord(raw: string): UnknownRecord | null {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return readRecord(parsed);
-  } catch {
-    return null;
-  }
 }
 
 function readRecord(value: unknown): UnknownRecord | null {

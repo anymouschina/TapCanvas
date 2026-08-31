@@ -51,6 +51,8 @@ var canonicalModelAliasMap = map[string]string{
 	"kling-motion-control":                  "kling-v2-6-motion-control",
 	"kling-motion-control-apimart":          "kling-v2-6-motion-control",
 	"wan2.7-videoedit-apimart":              "wan2.7-videoedit",
+	"pixverse-v6-apimart":                   "pixverse-v6",
+	"grok-imagine-1.5-video-apimart":        "grok-imagine-1.5-video",
 	"doubao-seedance-2.0-apimart":           "doubao-seedance-2.0",
 	"doubao-seedance-2.0-fast-apimart":      "doubao-seedance-2.0-fast",
 	"doubao-seedance-2.0-face-apimart":      "doubao-seedance-2.0-face",
@@ -60,6 +62,8 @@ var canonicalModelAliasMap = map[string]string{
 	// both are candidates for the same request and can serve as each other's fallback.
 	"doubao-seedance-2-0-260128":      "doubao-seedance-2.0",
 	"doubao-seedance-2-0-fast-260128": "doubao-seedance-2.0-fast",
+	"doubao-seedance-2-5":             "doubao-seedance-2.5",
+	"doubao-seedance-2-5-260628":      "doubao-seedance-2.5",
 	// Doubao Seedream 5.0 (image) — ARK date-suffixed names → canonical
 	"doubao-seedream-5-0-260128":      "doubao-seedream-5-0",
 	"doubao-seedream-5-0-lite-260128": "doubao-seedream-5-0-lite",
@@ -75,6 +79,10 @@ var canonicalModelAliasMap = map[string]string{
 	// ultra = beqlee 极速渠道对外名称，identity-mapped 以保留独立定价，不合并到普通渠道。
 	"gemini-3-pro-image-preview-ultra":     "gemini-3-pro-image-preview-ultra",
 	"gemini-3.1-flash-image-preview-ultra": "gemini-3.1-flash-image-preview-ultra",
+	// saver = mlai-gemini 特价渠道对外名称，同上：必须 identity-mapped，否则
+	// 一旦日后把 "-saver" 加进 canonicalModelAliasSuffixes，它会被剥成底模键、
+	// 与普通渠道的 ¥0.7/0.7/0.9 合并，特价定价静默失效。
+	"gemini-3-pro-image-preview-saver": "gemini-3-pro-image-preview-saver",
 }
 
 var strictCanonicalRoutingModels = map[string]struct{}{
@@ -189,6 +197,12 @@ func BuildImplicitModelMapping(channel *Channel) string {
 		for _, candidate := range RoutingModelCandidates(internalModel) {
 			candidate = strings.TrimSpace(candidate)
 			if candidate == "" || candidate == internalModel {
+				continue
+			}
+			// An explicit upstream mapping is authoritative. Do not synthesize its
+			// reverse edge: A -> B combined with an implicit B -> A forms a cycle
+			// and prevents the request from reaching the selected adaptor.
+			if explicitTarget, exists := base[internalModel]; exists && explicitTarget == candidate {
 				continue
 			}
 			if _, exists := channelModelSet[candidate]; exists {

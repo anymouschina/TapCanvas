@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/relay/channel/volcengine"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -36,7 +37,7 @@ import (
 	_ "net/http/pprof"
 )
 
-//go:embed web/dist
+//go:embed web/dist docs/openapi
 var buildFS embed.FS
 
 //go:embed web/dist/index.html
@@ -66,6 +67,11 @@ func main() {
 		}
 	}()
 
+	if *common.MigrateOnly {
+		common.SysLog("database schema migration completed; migrate-only process exiting")
+		return
+	}
+
 	if common.RedisEnabled {
 		// for compatibility with old versions
 		common.MemoryCacheEnabled = true
@@ -74,22 +80,17 @@ func main() {
 		common.SysLog("memory cache enabled")
 		common.SysLog(fmt.Sprintf("sync frequency: %d seconds", common.SyncFrequency))
 
-		// Add panic recovery and retry for InitChannelCache
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					common.SysLog(fmt.Sprintf("InitChannelCache panic: %v, retrying once", r))
-					// Retry once
-					_, _, fixErr := model.FixAbility()
-					if fixErr != nil {
-						common.FatalLog(fmt.Sprintf("InitChannelCache failed: %s", fixErr.Error()))
-					}
-				}
-			}()
-			model.InitChannelCache()
-		}()
+		if err := model.RefreshChannelCache(); err != nil {
+			common.FatalLog("failed to initialize channel cache: " + err.Error())
+		}
 
 		go model.SyncChannelCache(common.SyncFrequency)
+
+		// 模型目录"已禁用模型"集合：启动时加载 + 周期性跨副本同步
+		if err := model.RefreshModelCatalogCache(); err != nil {
+			common.FatalLog("failed to initialize model catalog cache: " + err.Error())
+		}
+		go model.SyncModelCatalogCache(common.SyncFrequency)
 	}
 
 	// 热更新配置
@@ -110,12 +111,25 @@ func main() {
 
 	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartCodexCredentialAutoRefreshTask()
+	// Codex account usage guard: persist quota windows, cool accounts below 5%, and restore after reset.
+	service.StartCodexUsageLifecycleTask()
+	// Claude (Anthropic) OAuth credential auto-refresh check every 10 minutes, refresh when expires within 1 day
+	service.StartClaudeCredentialAutoRefreshTask()
+	// Gemini OAuth credential auto-refresh check every 10 minutes, refresh when expires within 15 minutes
+	service.StartGeminiCredentialAutoRefreshTask()
+	// Claude OAuth account rate-limit cooldown recovery, re-enables cooled keys every minute
+	service.StartClaudeKeyCooldownRecoveryTask()
+	// Gemini OAuth account rate-limit cooldown recovery, re-enables cooled keys every minute
+	service.StartGeminiKeyCooldownRecoveryTask()
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
 	// Auto-cleanup logs and tasks older than 3 days, runs every hour
 	service.StartLogCleanupTask()
+
+	// ARK 素材审核组定时清理（火山官渠 seedance 闭环审核遗留的 asset group）
+	volcengine.StartArkAssetGroupCleanup()
 
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
@@ -302,19 +316,28 @@ func InitResources() error {
 	// Initialize options, should after model.InitDB()
 	model.InitOptionMap()
 
-	// Load WeChat Pay credentials from environment (shared with hono-api)
-	setting.InitWxPayFromEnv()
-
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()
-
-	// 初始化模型
-	model.GetPricing()
 
 	// Initialize SQL Database
 	err = model.InitLogDB()
 	if err != nil {
 		return err
+	}
+
+	// Schema initialization is a separate deployment gate. It must not require
+	// Redis, start background jobs, or open an HTTP listener. Data patches run
+	// only after this process exits successfully.
+	if *common.MigrateOnly {
+		return nil
+	}
+
+	// Pricing is a runtime catalog, not a schema prerequisite. Historical
+	// channel rows are allowed to be reported as compatibility warnings by the
+	// cache refresh; they must never turn the schema-only deployment gate into a
+	// service outage.
+	if _, err := model.GetPricingWithError(); err != nil {
+		return fmt.Errorf("failed to initialize pricing: %w", err)
 	}
 
 	// Initialize Redis

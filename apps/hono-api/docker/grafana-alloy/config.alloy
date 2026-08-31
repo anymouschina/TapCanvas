@@ -1,0 +1,73 @@
+// ── Logging ─────────────────────────────────────────────────────────────────
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// ── Docker container log discovery ──────────────────────────────────────────
+discovery.docker "all_containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+// Map Docker metadata to Loki stream labels
+discovery.relabel "container_labels" {
+  targets = discovery.docker.all_containers.targets
+
+  // container name (strip leading "/")
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // stdout vs stderr
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "logstream"
+  }
+
+  // docker compose service name
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // docker compose project name
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+}
+
+// Tail all Docker container logs via Docker daemon
+loki.source.docker "docker_logs" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.container_labels.output
+  forward_to = [loki.write.gateway.receiver]
+
+  refresh_interval = "30s"
+}
+
+// ── new-api file logs ────────────────────────────────────────────────────────
+// new-api writes rotating log files; tail them in addition to stdout
+local.file_match "new_api_logs" {
+  path_targets = [{
+    __path__ = "/new-api-logs/*.log",
+    job      = "new-api-files",
+    service  = "new-api",
+  }]
+  sync_period = "15s"
+}
+
+loki.source.file "new_api_file_logs" {
+  targets    = local.file_match.new_api_logs.targets
+  forward_to = [loki.write.gateway.receiver]
+}
+
+// ── Loki destination ─────────────────────────────────────────────────────────
+loki.write "gateway" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -29,28 +29,30 @@ import { useIsAdmin } from '../auth/isAdmin'
 import { confirmLeaveForProjectChange } from './pendingUploadGuard'
 import { stopPanelWheelPropagation } from './utils/panelWheel'
 import { spaNavigate } from '../utils/spaNavigate'
+import { buildStudioUrl } from '../utils/appRoutes'
+import { useRouteNavigationLease } from '../utils/useRouteNavigationLease'
 import { PanelCard } from './PanelCard'
 import { InlinePanel } from './InlinePanel'
 
 export default function ProjectPanel(): JSX.Element | null {
+  const acquireRouteNavigationLease = useRouteNavigationLease()
   const active = useUIStore(s => s.activePanel)
   const setActivePanel = useUIStore(s => s.setActivePanel)
   const anchorY = useUIStore(s => s.panelAnchorY)
   const currentProject = useUIStore(s => s.currentProject)
-  const setCurrentProject = useUIStore(s => s.setCurrentProject)
   const mounted = active === 'project'
   const isAdmin = useIsAdmin()
   const { colorScheme } = useMantineColorScheme()
   const isDarkTheme = colorScheme === 'dark'
-  const projectCardBorder = isDarkTheme ? '1px solid rgba(59, 130, 246, 0.1)' : '1px solid rgba(148, 163, 184, 0.35)'
-  const projectCardBackground = isDarkTheme ? 'rgba(15, 23, 42, 0.6)' : 'rgba(255, 255, 255, 0.92)'
-  const projectCardHoverBackground = isDarkTheme ? 'rgba(15, 23, 42, 0.8)' : '#f4f7ff'
-  const projectCardHoverBorder = isDarkTheme ? '#3b82f6' : '#2563eb'
-  const projectCardHoverShadow = isDarkTheme ? '0 4px 20px rgba(59, 130, 246, 0.15)' : '0 10px 24px rgba(15, 23, 42, 0.12)'
-  const accentHoverColor = isDarkTheme ? '#60a5fa' : '#2563eb'
+  const projectCardBorder = isDarkTheme ? '1px solid rgba(122, 129, 140, 0.1)' : '1px solid rgba(132, 136, 142, 0.35)'
+  const projectCardBackground = isDarkTheme ? 'rgba(17, 18, 21, 0.6)' : 'rgba(255, 255, 255, 0.92)'
+  const projectCardHoverBackground = isDarkTheme ? 'rgba(17, 18, 21, 0.8)' : '#f4f7ff'
+  const projectCardHoverBorder = isDarkTheme ? '#7a8190' : '#5c636e'
+  const projectCardHoverShadow = isDarkTheme ? '0 4px 20px rgba(122, 129, 140, 0.15)' : '0 10px 24px rgba(17, 18, 21, 0.12)'
+  const accentHoverColor = isDarkTheme ? '#989ea8' : '#5c636e'
   const publicBadgeShadow = isDarkTheme ? '0 2px 8px rgba(34, 197, 94, 0.15)' : '0 2px 8px rgba(16, 185, 129, 0.3)'
   const togglePublicBorder = isDarkTheme ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid rgba(16, 185, 129, 0.35)'
-  const togglePrivateBorder = isDarkTheme ? '1px solid rgba(107, 114, 128, 0.2)' : '1px solid rgba(148, 163, 184, 0.35)'
+  const togglePrivateBorder = isDarkTheme ? '1px solid rgba(107, 114, 128, 0.2)' : '1px solid rgba(132, 136, 142, 0.35)'
   const deleteActionBorder = isDarkTheme ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(248, 113, 113, 0.45)'
   const [myProjects, setMyProjects] = React.useState<ProjectDto[]>([])
   const [publicProjects, setPublicProjects] = React.useState<ProjectDto[]>([])
@@ -260,7 +262,9 @@ export default function ProjectPanel(): JSX.Element | null {
   const handleCloneProject = async (project: ProjectDto) => {
     try {
       if (!confirmLeaveForProjectChange({ nextProjectName: project.name || '克隆项目' })) return
+      const navigationLease = acquireRouteNavigationLease()
       const clonedProject = await cloneProject(project.id, $t('克隆项目 - {{name}}', { name: project.name }))
+      if (!navigationLease.isCurrent()) return
       setMyProjects(prev => [clonedProject, ...prev])
       notifications.show({
         id: `clone-success-${project.id}`,
@@ -283,8 +287,12 @@ export default function ProjectPanel(): JSX.Element | null {
         }
       })
       if (clonedProject?.id) {
-        setCurrentProject({ id: clonedProject.id, name: clonedProject.name })
         setActivePanel(null)
+        spaNavigate(buildStudioUrl({
+          projectId: clonedProject.id,
+          ownerType: 'project',
+          ownerId: clonedProject.id,
+        }))
       }
     } catch (error) {
       console.error('克隆项目失败:', error)
@@ -331,8 +339,8 @@ export default function ProjectPanel(): JSX.Element | null {
         </motion.div>,
         style: {
           backdropFilter: 'blur(10px)',
-          backgroundColor: isPublic ? 'rgba(34, 197, 94, 0.12)' : 'rgba(59, 130, 246, 0.12)',
-          border: `1px solid ${isPublic ? 'rgba(34, 197, 94, 0.2)' : 'rgba(59, 130, 246, 0.2)'}`,
+          backgroundColor: isPublic ? 'rgba(34, 197, 94, 0.12)' : 'rgba(122, 129, 140, 0.12)',
+          border: `1px solid ${isPublic ? 'rgba(34, 197, 94, 0.2)' : 'rgba(122, 129, 140, 0.2)'}`,
         }
       })
     } catch (error) {
@@ -401,7 +409,8 @@ export default function ProjectPanel(): JSX.Element | null {
       await deleteProject(project.id)
       setMyProjects(prev => prev.filter(p => p.id !== project.id))
       if (currentProject?.id === project.id) {
-        setCurrentProject(null)
+        setActivePanel(null)
+        spaNavigate('/projects')
       }
       notifications.show({
         id: `delete-project-${project.id}`,
@@ -547,11 +556,11 @@ export default function ProjectPanel(): JSX.Element | null {
                     </Button>
                     <motion.div className="project-panel-create-motion" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                       <Button className="project-panel-create-button" size="xs" variant="light" onClick={async () => {
-                        if (!confirmLeaveForProjectChange({ nextProjectName: '上传原文创建项目' })) return
+                        if (!confirmLeaveForProjectChange({ nextProjectName: '新建项目' })) return
                         setActivePanel(null)
                         spaNavigate('/projects')
                       }}>
-                        {$('上传原文')}
+                        {$('新建项目')}
                       </Button>
                     </motion.div>
                   </Group>
@@ -635,7 +644,7 @@ export default function ProjectPanel(): JSX.Element | null {
                     </Stack>
                   </InlinePanel>
                 ) : null}
-                <Tabs className="project-panel-tabs" value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')} color="blue">
+                <Tabs className="project-panel-tabs" value={activeTab} onChange={(value) => value && handleTabChange(value as 'my' | 'public')}>
                   <Tabs.List className="project-panel-tab-list">
                     <motion.div
                       className="project-panel-tab-motion"
@@ -715,7 +724,7 @@ export default function ProjectPanel(): JSX.Element | null {
                           whileHover={{ scale: 1.03 }}
                           whileTap={{ scale: 0.97 }}
                         >
-                          <Badge className="project-panel-hot-badge" color="blue" variant="outline">{$('热门')}</Badge>
+                          <Badge className="project-panel-hot-badge" color="gray" variant="outline">{$('热门')}</Badge>
                         </motion.div>
                       </Group>
                     </motion.div>
@@ -883,14 +892,14 @@ export default function ProjectPanel(): JSX.Element | null {
                                       className="project-panel-share-action"
                                       size="sm"
                                       variant="subtle"
-                                      color="blue"
+                                      color="gray"
                                       onClick={async (e) => {
                                         e.preventDefault()
                                         e.stopPropagation()
                                         await handleCopyShareLink(p.id)
                                       }}
                                       style={{
-                                        border: isDarkTheme ? '1px solid rgba(59, 130, 246, 0.18)' : '1px solid rgba(37, 99, 235, 0.25)'
+                                        border: isDarkTheme ? '1px solid rgba(122, 129, 140, 0.18)' : '1px solid rgba(92, 99, 110, 0.25)'
                                       }}
                                     >
                                       <IconLink className="project-panel-share-icon" size={14} />
@@ -964,10 +973,14 @@ export default function ProjectPanel(): JSX.Element | null {
                                   className="project-panel-select-button"
                                   size="xs"
                                   variant="light"
-                                  onClick={async () => {
+                                  onClick={() => {
                                     if (!confirmLeaveForProjectChange({ nextProjectName: p.name })) return
-                                    setCurrentProject({ id: p.id, name: p.name })
                                     setActivePanel(null)
+                                    spaNavigate(buildStudioUrl({
+                                      projectId: p.id,
+                                      ownerType: 'project',
+                                      ownerId: p.id,
+                                    }))
                                   }}
                                   style={{
                                     fontWeight: 500,
@@ -1123,7 +1136,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                         animate={{ scale: 1 }}
                                         transition={{ type: "spring", stiffness: 600, delay: index * 0.02 + 0.05 }}
                                       >
-                                        <Badge className="project-panel-public-badge" size="xs" color="blue" variant="light">{$('公开')}</Badge>
+                                        <Badge className="project-panel-public-badge" size="xs" color="gray" variant="light">{$('公开')}</Badge>
                                       </motion.div>
                                     </Group>
                                     {p.ownerName && (
@@ -1147,7 +1160,7 @@ export default function ProjectPanel(): JSX.Element | null {
                                             className="project-panel-public-edit-action"
                                             size="sm"
                                             variant="subtle"
-                                            color="blue"
+                                            color="gray"
                                             onClick={() => handleOpenTemplateEdit(p)}
                                           >
                                             <IconPencil className="project-panel-public-edit-icon" size={14} />

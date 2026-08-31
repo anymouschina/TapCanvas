@@ -14,6 +14,7 @@ export type OrderedUpstreamVideoTailSource = {
   edgeId: string
   node: Node
   previewUrl: string
+  videoUrl: string
 }
 
 export type OrderedUpstreamReferenceItem = {
@@ -22,6 +23,7 @@ export type OrderedUpstreamReferenceItem = {
   sourceKind: 'image' | 'imageEdit' | 'video'
   label: string
   previewUrl: string
+  videoUrl?: string
 }
 
 export type NodePrimaryAssetReference = {
@@ -31,7 +33,9 @@ export type NodePrimaryAssetReference = {
   displayName: string
 }
 
-const IMAGE_REFERENCE_NODE_KINDS = new Set(['image', 'imageEdit', 'storyboard'])
+// storyboardImage 是 image-core 节点（大故事板母板/子板单图），生成结果落在 imageResults/imageUrl，
+// 必须能作为下游节点（video 等）的参考图被收集——否则大故事板拆板后「子板→视频」喂图断链。
+const IMAGE_REFERENCE_NODE_KINDS = new Set(['image', 'imageEdit', 'storyboard', 'storyboardImage'])
 
 function isVideoReferenceNodeKind(kind: string): boolean {
   return kind === 'video' || kind === 'composeVideo'
@@ -150,6 +154,14 @@ export function pickVideoTailFrameFromNode(node: Node | null | undefined): strin
   return fromResults || fromNode || ''
 }
 
+export function pickVideoUrlFromNode(node: Node | null | undefined): string {
+  const data = getNodeDataRecord(node)
+  const results = getRecordArray(data.videoResults)
+  const primaryIndex = resolvePrimaryIndex(results.length, data.videoPrimaryIndex)
+  const fromResults = getTrimmedString(results[primaryIndex]?.url) || getTrimmedString(results[0]?.url)
+  return fromResults || getTrimmedString(data.videoUrl) || ''
+}
+
 export function collectPoseReferenceUrlsFromNode(node: Node | null | undefined): string[] {
   const data = getNodeDataRecord(node)
   const output: string[] = []
@@ -196,12 +208,14 @@ export function collectOrderedUpstreamMediaSources(
 
     if (!videoTailSource && isVideoReferenceNodeKind(kind)) {
       const previewUrl = pickVideoTailFrameFromNode(sourceNode)
+      const videoUrl = pickVideoUrlFromNode(sourceNode)
       seen.add(sourceNode.id)
-      if (isRemoteUrl(previewUrl)) {
+      if (isRemoteUrl(previewUrl) || isRemoteUrl(videoUrl)) {
         videoTailSource = {
           edgeId: edge.id,
           node: sourceNode,
           previewUrl,
+          videoUrl,
         }
       }
       continue
@@ -214,7 +228,6 @@ export function collectOrderedUpstreamMediaSources(
       edgeId: edge.id,
       node: sourceNode,
     })
-    if (imageSources.length >= 3) break
   }
 
   const referenceOrder = getReferenceOrderForTargetNode(nodes, targetId)
@@ -250,6 +263,7 @@ export function collectOrderedUpstreamReferenceItems(
       sourceKind: 'video',
       label: getNodeLabel(videoTailSource.node),
       previewUrl: videoTailSource.previewUrl,
+      videoUrl: videoTailSource.videoUrl,
     })
   }
 

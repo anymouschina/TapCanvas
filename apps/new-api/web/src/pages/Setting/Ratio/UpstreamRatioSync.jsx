@@ -52,6 +52,10 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import ChannelSelectorModal from '../../../components/settings/ChannelSelectorModal';
+import {
+  MODEL_PRICING_OPTION_KEYS,
+  parsePricingOptionMaps,
+} from './utils/pricingOptionMaps';
 
 const OFFICIAL_RATIO_PRESET_ID = -100;
 const OFFICIAL_RATIO_PRESET_NAME = '官方倍率预设';
@@ -62,6 +66,12 @@ const MODELS_DEV_PRESET_ID = -101;
 const MODELS_DEV_PRESET_NAME = 'models.dev 价格预设';
 const MODELS_DEV_PRESET_BASE_URL = 'https://models.dev';
 const MODELS_DEV_PRESET_ENDPOINT = 'https://models.dev/api.json';
+const SYNC_RATIO_TYPE_TO_OPTION_KEY = {
+  model_price: 'ModelPrice',
+  model_ratio: 'ModelRatio',
+  completion_ratio: 'CompletionRatio',
+  cache_ratio: 'CacheRatio',
+};
 
 function ConflictConfirmModal({ t, visible, items, onOk, onCancel }) {
   const isMobile = useIsMobile();
@@ -289,23 +299,25 @@ export default function UpstreamRatioSync(props) {
   );
 
   const applySync = async () => {
-    const currentRatios = {
-      ModelRatio: JSON.parse(props.options.ModelRatio || '{}'),
-      CompletionRatio: JSON.parse(props.options.CompletionRatio || '{}'),
-      CacheRatio: JSON.parse(props.options.CacheRatio || '{}'),
-      ModelPrice: JSON.parse(props.options.ModelPrice || '{}'),
-    };
+    let currentRatios;
+    try {
+      currentRatios = parsePricingOptionMaps(props.options);
+    } catch (error) {
+      showError(`${t('本地定价配置无法读取')}: ${error.message}`);
+      return;
+    }
 
     const conflicts = [];
 
     const getLocalBillingCategory = (model) => {
       if (currentRatios.ModelPrice[model] !== undefined) return 'price';
       if (
-        currentRatios.ModelRatio[model] !== undefined ||
-        currentRatios.CompletionRatio[model] !== undefined ||
-        currentRatios.CacheRatio[model] !== undefined
-      )
+        MODEL_PRICING_OPTION_KEYS.filter(
+          (optionKey) => optionKey !== 'ModelPrice',
+        ).some((optionKey) => currentRatios[optionKey][model] !== undefined)
+      ) {
         return 'ratio';
+      }
       return null;
     };
 
@@ -362,80 +374,100 @@ export default function UpstreamRatioSync(props) {
 
   const performSync = useCallback(
     async (currentRatios) => {
-      const finalRatios = {
-        ModelRatio: { ...currentRatios.ModelRatio },
-        CompletionRatio: { ...currentRatios.CompletionRatio },
-        CacheRatio: { ...currentRatios.CacheRatio },
-        ModelPrice: { ...currentRatios.ModelPrice },
-      };
-
-      Object.entries(resolutions).forEach(([model, ratios]) => {
-        const selectedTypes = Object.keys(ratios);
-        const hasPrice = selectedTypes.includes('model_price');
-        const hasRatio = selectedTypes.some((rt) => rt !== 'model_price');
-
-        if (hasPrice) {
-          delete finalRatios.ModelRatio[model];
-          delete finalRatios.CompletionRatio[model];
-          delete finalRatios.CacheRatio[model];
-        }
-        if (hasRatio) {
-          delete finalRatios.ModelPrice[model];
-        }
-
-        Object.entries(ratios).forEach(([ratioType, value]) => {
-          const optionKey = ratioType
-            .split('_')
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join('');
-          finalRatios[optionKey][model] = parseFloat(value);
-        });
-      });
-
       setLoading(true);
       try {
-        const updates = Object.entries(finalRatios).map(([key, value]) =>
-          API.put('/api/option/', {
+        const finalRatios = Object.fromEntries(
+          MODEL_PRICING_OPTION_KEYS.map((key) => [
             key,
-            value: JSON.stringify(value, null, 2),
-          }),
+            { ...currentRatios[key] },
+          ]),
         );
 
-        const results = await Promise.all(updates);
+        Object.entries(resolutions).forEach(([model, ratios]) => {
+          const normalizedModel = model.trim();
+          if (!normalizedModel) {
+            throw new Error(t('同步结果包含空模型名'));
+          }
+          const selectedTypes = Object.keys(ratios);
+          const hasPrice = selectedTypes.includes('model_price');
+          const hasRatio = selectedTypes.some(
+            (ratioType) => ratioType !== 'model_price',
+          );
+          if (hasPrice && hasRatio) {
+            throw new Error(
+              t('模型 {{model}} 同时选择了按次价格与倍率', {
+                model: normalizedModel,
+              }),
+            );
+          }
 
-        if (results.every((res) => res.data.success)) {
-          showSuccess(t('同步成功'));
-          props.refresh();
-
-          setDifferences((prevDifferences) => {
-            const newDifferences = { ...prevDifferences };
-
-            Object.entries(resolutions).forEach(([model, ratios]) => {
-              Object.keys(ratios).forEach((ratioType) => {
-                if (newDifferences[model] && newDifferences[model][ratioType]) {
-                  delete newDifferences[model][ratioType];
-
-                  if (Object.keys(newDifferences[model]).length === 0) {
-                    delete newDifferences[model];
-                  }
-                }
-              });
+          if (hasPrice) {
+            MODEL_PRICING_OPTION_KEYS.filter(
+              (key) => key !== 'ModelPrice',
+            ).forEach((key) => {
+              delete finalRatios[key][normalizedModel];
             });
+          } else if (hasRatio) {
+            delete finalRatios.ModelPrice[normalizedModel];
+          }
 
-            return newDifferences;
+          Object.entries(ratios).forEach(([ratioType, rawValue]) => {
+            const optionKey = SYNC_RATIO_TYPE_TO_OPTION_KEY[ratioType];
+            if (!optionKey) {
+              throw new Error(
+                t('模型 {{model}} 包含不支持的倍率类型 {{ratioType}}', {
+                  model: normalizedModel,
+                  ratioType,
+                }),
+              );
+            }
+            const value = Number(rawValue);
+            if (!Number.isFinite(value) || value < 0) {
+              throw new Error(
+                t('模型 {{model}} 的 {{ratioType}} 必须是非负有限数字', {
+                  model: normalizedModel,
+                  ratioType,
+                }),
+              );
+            }
+            finalRatios[optionKey][normalizedModel] = value;
+          });
+        });
+
+        const response = await API.put('/api/models/pricing', {
+          options: finalRatios,
+        });
+        if (!response?.data?.success) {
+          throw new Error(response?.data?.message || t('同步保存失败'));
+        }
+
+        await props.refresh();
+        showSuccess(t('同步成功'));
+        setDifferences((prevDifferences) => {
+          const newDifferences = { ...prevDifferences };
+
+          Object.entries(resolutions).forEach(([model, ratios]) => {
+            Object.keys(ratios).forEach((ratioType) => {
+              if (newDifferences[model] && newDifferences[model][ratioType]) {
+                delete newDifferences[model][ratioType];
+
+                if (Object.keys(newDifferences[model]).length === 0) {
+                  delete newDifferences[model];
+                }
+              }
+            });
           });
 
-          setResolutions({});
-        } else {
-          showError(t('部分保存失败'));
-        }
+          return newDifferences;
+        });
+        setResolutions({});
       } catch (error) {
-        showError(t('保存失败'));
+        showError(`${t('同步失败')}: ${error.message}`);
       } finally {
         setLoading(false);
       }
     },
-    [resolutions, props.options, props.refresh],
+    [resolutions, props.refresh, t],
   );
 
   const getCurrentPageData = (dataSource) => {
@@ -876,13 +908,11 @@ export default function UpstreamRatioSync(props) {
         items={conflictItems}
         onOk={async () => {
           setConfirmVisible(false);
-          const curRatios = {
-            ModelRatio: JSON.parse(props.options.ModelRatio || '{}'),
-            CompletionRatio: JSON.parse(props.options.CompletionRatio || '{}'),
-            CacheRatio: JSON.parse(props.options.CacheRatio || '{}'),
-            ModelPrice: JSON.parse(props.options.ModelPrice || '{}'),
-          };
-          await performSync(curRatios);
+          try {
+            await performSync(parsePricingOptionMaps(props.options));
+          } catch (error) {
+            showError(`${t('本地定价配置无法读取')}: ${error.message}`);
+          }
         }}
         onCancel={() => setConfirmVisible(false)}
       />

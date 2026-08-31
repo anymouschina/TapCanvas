@@ -19,6 +19,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/keyconcurrency"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -197,10 +198,33 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.RetryIndex = 0
 		relayInfo.LastError = nil
 
-		for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+		// triedKeysByChannel records which (channelId -> keyIndex) accounts were already
+		// attempted this request. A multi-key channel stays eligible (not excluded) until
+		// all its accounts are exhausted, so a single disabled account never breaks the
+		// request — we rotate to a sibling account and resend. These account switches do
+		// not consume the cross-channel RetryTimes budget; only channel-level fallback does.
+		triedKeysByChannel := make(map[int]map[int]bool)
+		// crossChannelRetry counts only channel-level retries (the RetryTimes budget).
+		crossChannelRetry := 0
+		// oauthRefreshTried[channelId] 记录本请求已为该 claude OAuth 渠道刷新过几次凭证，
+		// 每渠道最多刷新+重试一次，防止「刷新→仍401→再刷新」死循环。
+		oauthRefreshTried := make(map[int]int)
+		var retryWithinChannel *model.Channel
+
+		for {
+			retryParam.SetRetry(crossChannelRetry)
 			retryParam.ExcludeChannelIds = triedChannelIds
-			relayInfo.RetryIndex = retryParam.GetRetry()
-			channel, channelErr := getChannel(c, relayInfo, retryParam)
+			relayInfo.RetryIndex = crossChannelRetry
+			common.SetContextKey(c, constant.ContextKeyRetryTriedKeys, triedKeysByChannel)
+			var channel *model.Channel
+			var channelErr *types.NewAPIError
+			if retryWithinChannel != nil {
+				channel = retryWithinChannel
+				retryWithinChannel = nil
+				channelErr = middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName)
+			} else {
+				channel, channelErr = getChannel(c, relayInfo, retryParam)
+			}
 			if channelErr != nil {
 				logger.LogError(c, channelErr.Error())
 				// When channels are exhausted during retry, surface the real upstream
@@ -214,7 +238,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 
 			addUsedChannel(c, channel.Id)
-			triedChannelIds = appendUniqueInt(triedChannelIds, channel.Id)
+			// Record the (channel, key) account about to be used so a retry skips it.
+			usedKeyIndex := 0
+			if channel.ChannelInfo.IsMultiKey {
+				usedKeyIndex = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+			}
+			if triedKeysByChannel[channel.Id] == nil {
+				triedKeysByChannel[channel.Id] = make(map[int]bool)
+			}
+			triedKeysByChannel[channel.Id][usedKeyIndex] = true
 			bodyStorage, bodyErr := common.GetBodyStorage(c)
 			if bodyErr != nil {
 				// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
@@ -227,16 +259,60 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			c.Request.Body = io.NopCloser(bodyStorage)
 
-			switch relayFormat {
-			case types.RelayFormatOpenAIRealtime:
-				NewAPIError = relay.WssHelper(c, relayInfo)
-			case types.RelayFormatClaude:
-				NewAPIError = relay.ClaudeHelper(c, relayInfo)
-			case types.RelayFormatGemini:
-				NewAPIError = geminiRelayHandler(c, relayInfo)
-			default:
-				NewAPIError = relayHandler(c, relayInfo)
+			// 每账号(每 OAuth key)并发闸——Claude/Gemini OAuth 渠道生效。发上游前
+			// 预留一个在飞槽位,relay helper 返回(流式则流播完)后归还。账号并发已满时
+			// 不触上游、不计入错误/禁号,直接换同渠道其他空槽账号;全部满则 surface 429
+			// all_accounts_at_capacity,交由调用方退避重试。
+			var releaseKeySlot func()
+			usingKey := common.GetContextKeyString(c, constant.ContextKeyChannelKey)
+			isPerAccountOAuth := (channel.Type == constant.ChannelTypeAnthropic && service.IsClaudeOAuthKey(usingKey)) ||
+				(channel.Type == constant.ChannelTypeGemini && service.IsGeminiOAuthKey(usingKey))
+			if isPerAccountOAuth {
+				if limit := channel.GetSetting().OAuthKeyConcurrency; limit > 0 {
+					release, ok := keyconcurrency.TryAcquire(channel.Id, usedKeyIndex, limit)
+					if !ok {
+						capErr := types.NewErrorWithStatusCode(
+							errors.New("all OAuth accounts are at their configured concurrency limit"),
+							types.ErrorCodeChannelAllAccountsAtCapacity,
+							http.StatusTooManyRequests,
+							types.ErrOptionWithNoRecordErrorLog(),
+						)
+						NewAPIError = capErr
+						relayInfo.LastError = capErr
+						// 优先换同渠道其他未试账号(getChannel 下轮读 tried keys 自动跳过本账号)。
+						if channelHasUntriedKey(channel, triedKeysByChannel[channel.Id]) {
+							logger.LogInfo(c, fmt.Sprintf("渠道 #%d 账号 #%d 并发已满，切换同渠道其他账号（不计入重试次数）", channel.Id, usedKeyIndex))
+							continue
+						}
+						// 本渠道账号全满:排除本渠道,花一次跨渠道重试预算另寻渠道;耗尽则退出。
+						triedChannelIds = appendUniqueInt(triedChannelIds, channel.Id)
+						if !shouldRetry(c, capErr, common.RetryTimes-crossChannelRetry) {
+							break
+						}
+						crossChannelRetry++
+						continue
+					}
+					releaseKeySlot = release
+				}
 			}
+
+			// 用闭包 + defer 保证槽位在每次迭代结束(含 panic 展开)必被归还;不能 defer 到
+			// 整个函数返回,否则重试多轮会累积占槽。
+			func() {
+				if releaseKeySlot != nil {
+					defer releaseKeySlot()
+				}
+				switch relayFormat {
+				case types.RelayFormatOpenAIRealtime:
+					NewAPIError = relay.WssHelper(c, relayInfo)
+				case types.RelayFormatClaude:
+					NewAPIError = relay.ClaudeHelper(c, relayInfo)
+				case types.RelayFormatGemini:
+					NewAPIError = geminiRelayHandler(c, relayInfo)
+				default:
+					NewAPIError = relayHandler(c, relayInfo)
+				}
+			}()
 
 			if NewAPIError == nil {
 				relayInfo.LastError = nil
@@ -246,15 +322,82 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			NewAPIError = service.NormalizeViolationFeeError(NewAPIError)
 			relayInfo.LastError = NewAPIError
 
-			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), NewAPIError, false)
+			processChannelError(c, *types.NewChannelErrorWithKeyIndex(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan(), usedKeyIndex), NewAPIError, false)
+
+			// Claude/Gemini 订阅(OAuth)账号 429 = 触发限额窗口:该账号进入冷却(自动禁用+
+			// 记录解封时刻,对应 provider recovery task 到点自动解禁),随后照常换号/换渠道。
+			// 渠道 setting oauth_key_cooldown_seconds: -1 关闭;0/缺省用默认时长;>0 自定义秒数。
+			if NewAPIError.StatusCode == http.StatusTooManyRequests && channel.ChannelInfo.IsMultiKey {
+				usingKey := common.GetContextKeyString(c, constant.ContextKeyChannelKey)
+				cooldownSeconds := channel.GetSetting().OAuthKeyCooldownSeconds
+				switch {
+				case channel.Type == constant.ChannelTypeAnthropic && service.IsClaudeOAuthKey(usingKey) && cooldownSeconds >= 0:
+					service.CooldownClaudeChannelKey(channel.Id, usedKeyIndex, cooldownSeconds, NewAPIError.Error())
+				case channel.Type == constant.ChannelTypeGemini && service.IsGeminiOAuthKey(usingKey) && cooldownSeconds >= 0:
+					service.CooldownGeminiChannelKey(channel.Id, usedKeyIndex, cooldownSeconds, NewAPIError)
+				}
+			}
+			if NewAPIError.StatusCode == http.StatusTooManyRequests &&
+				channel.Type == constant.ChannelTypeCodex &&
+				channel.ChannelInfo.IsMultiKey {
+				service.RefreshCodexUsageAfterLimit(channel.Id)
+			}
 
 			if c.Writer.Written() {
 				break
 			}
 
-			if !shouldRetry(c, NewAPIError, common.RetryTimes-retryParam.GetRetry()) {
+			// Claude/Gemini 订阅(OAuth)渠道 401 = access token 一时过期。先刷新凭证(ResetCaches 会 InitChannelCache
+			// 失效渠道缓存，让下一轮 getChannel 读到新 token)，再重试同一账号一次——不计入重试预算、不禁渠道。
+			// 每渠道每请求最多刷新一次(oauthRefreshTried)防死循环；刷新失败则照常走下面的换号/换渠道。
+			if oauthRefreshTried[channel.Id] < 1 &&
+				NewAPIError.StatusCode == 401 &&
+				channel.Type == constant.ChannelTypeAnthropic &&
+				service.IsClaudeOAuthKey(common.GetContextKeyString(c, constant.ContextKeyChannelKey)) {
+				oauthRefreshTried[channel.Id]++
+				if _, _, rErr := service.RefreshClaudeChannelCredential(c.Request.Context(), channel.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true}); rErr == nil {
+					delete(triedKeysByChannel[channel.Id], usedKeyIndex) // 允许用刷新后的 token 重选同账号
+					logger.LogInfo(c, fmt.Sprintf("渠道 #%d Claude OAuth 401，已刷新凭证并重试同账号（不计入重试次数）", channel.Id))
+					continue
+				} else {
+					logger.LogError(c, fmt.Sprintf("渠道 #%d Claude OAuth 401 刷新凭证失败: %v", channel.Id, rErr))
+				}
+			}
+
+			if oauthRefreshTried[channel.Id] < 1 &&
+				NewAPIError.StatusCode == 401 &&
+				channel.Type == constant.ChannelTypeGemini &&
+				service.IsGeminiOAuthKey(common.GetContextKeyString(c, constant.ContextKeyChannelKey)) {
+				oauthRefreshTried[channel.Id]++
+				if _, _, rErr := service.RefreshGeminiChannelKeyCredential(c.Request.Context(), channel.Id, usedKeyIndex, service.GeminiCredentialRefreshOptions{ResetCaches: true}); rErr == nil {
+					delete(triedKeysByChannel[channel.Id], usedKeyIndex)
+					logger.LogInfo(c, fmt.Sprintf("渠道 #%d Gemini OAuth 401，已刷新凭证并重试同账号（不计入重试次数）", channel.Id))
+					continue
+				} else {
+					logger.LogError(c, fmt.Sprintf("渠道 #%d Gemini OAuth 401 刷新凭证失败: %v", channel.Id, rErr))
+					if service.IsGeminiPermanentCredentialRefreshError(rErr) {
+						service.DisableGeminiChannelKey(channel.Id, usedKeyIndex, "Gemini OAuth refresh token is permanently invalid: "+rErr.Error())
+					}
+				}
+			}
+
+			// Prefer rotating to a sibling account within the SAME multi-key channel before
+			// falling back to another channel. This keeps the request alive when one Claude
+			// account is disabled mid-flight, without consuming the cross-channel retry budget.
+			if channelHasUntriedKey(channel, triedKeysByChannel[channel.Id]) &&
+				shouldSwitchAccount(c, NewAPIError) {
+				logger.LogInfo(c, fmt.Sprintf("渠道 #%d 当前账号失败，切换同渠道其他未尝试账号重发（不计入跨渠道重试次数）", channel.Id))
+				retryWithinChannel = channel
+				continue
+			}
+
+			// This channel's accounts are exhausted (or it is single-key): exclude it and
+			// spend one unit of the cross-channel retry budget.
+			triedChannelIds = appendUniqueInt(triedChannelIds, channel.Id)
+			if !shouldRetry(c, NewAPIError, common.RetryTimes-crossChannelRetry) {
 				break
 			}
+			crossChannelRetry++
 		}
 
 		if NewAPIError == nil {
@@ -372,14 +515,16 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
+	// A forced channel may still rotate across sibling keys before reaching
+	// this decision, but it must never leave that channel afterwards.
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
 	if retryTimes <= 0 {
 		return false
 	}
 	if types.IsChannelError(openaiErr) {
 		return true
-	}
-	if _, ok := c.Get("specific_channel_id"); ok {
-		return false
 	}
 	code := openaiErr.StatusCode
 	if code >= 200 && code < 300 {
@@ -397,11 +542,66 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
+// channelHasUntriedKey reports whether a multi-key channel still has at least one enabled
+// account (key) that has not been tried this request. tried is the set of key indices already
+// attempted for this channel. The just-failed account is in tried, so even though its status
+// may not be marked disabled yet (auto-disable is async), it is correctly excluded here.
+func channelHasUntriedKey(channel *model.Channel, tried map[int]bool) bool {
+	if channel == nil || !channel.ChannelInfo.IsMultiKey {
+		return false
+	}
+	keys := channel.GetKeys()
+	statusList := channel.ChannelInfo.MultiKeyStatusList
+	for i := range keys {
+		status := common.ChannelStatusEnabled
+		if statusList != nil {
+			if s, ok := statusList[i]; ok {
+				status = s
+			}
+		}
+		if status == common.ChannelStatusEnabled && !tried[i] {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldSwitchAccount reports whether the error means the current account/key is the problem
+// (disabled, auth-rejected, rate-limited, or a transient upstream failure) such that retrying
+// the same request with a sibling account is worthwhile. A forced channel still permits
+// sibling-account rotation; it only forbids leaving that channel. Skip-retry errors never rotate.
+func shouldSwitchAccount(c *gin.Context, err *types.NewAPIError) bool {
+	if err == nil || types.IsSkipRetryError(err) {
+		return false
+	}
+	// A forced channel forbids cross-channel fallback, but it must not forbid rotating
+	// between accounts inside that same channel. triedKeysByChannel guarantees that each
+	// account is attempted at most once, so exhausting every enabled sibling cannot loop.
+	// ShouldDisableChannel catches bad-account errors (401/403/429/keyword) that
+	// shouldRetry's status-code list may not; shouldRetry catches transient 5xx/timeouts.
+	if service.ShouldDisableChannel(err) {
+		return true
+	}
+	if _, forced := c.Get("specific_channel_id"); forced {
+		return operation_setting.ShouldRetryByStatusCode(err.StatusCode)
+	}
+	return shouldRetry(c, err, 1)
+}
+
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, recordErrorLog bool) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
+	// Claude 订阅(OAuth)渠道的 401 是「access token 一时过期」，不是渠道死亡——刷新即恢复。
+	// 绝不能据此自动禁用：一禁，自动刷新任务就跳过它(只刷 status=1)→ token 烂掉 → 重新启用又 401
+	// → 又禁，形成 401→禁用→token腐烂→401 死循环。OAuth 401 的恢复交给 relay 循环里的「刷新+重试」。
+	isClaudeOAuthAuthError := err.StatusCode == 401 &&
+		channelError.ChannelType == constant.ChannelTypeAnthropic &&
+		service.IsClaudeOAuthKey(channelError.UsingKey)
+	isGeminiOAuthAuthError := err.StatusCode == 401 &&
+		channelError.ChannelType == constant.ChannelTypeGemini &&
+		service.IsGeminiOAuthKey(channelError.UsingKey)
+	if !isClaudeOAuthAuthError && !isGeminiOAuthAuthError && service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})
@@ -430,6 +630,10 @@ func recordFinalRelayErrorLog(c *gin.Context, err *types.NewAPIError) {
 	other["error_type"] = err.GetErrorType()
 	other["error_code"] = err.GetErrorCode()
 	other["status_code"] = err.StatusCode
+	if retryAt, retrySource, ok := err.GetRetryAt(); ok {
+		other["upstream_retry_at"] = retryAt
+		other["upstream_retry_source"] = retrySource
+	}
 	other["channel_id"] = channelId
 	other["channel_name"] = c.GetString("channel_name")
 	other["channel_type"] = c.GetInt("channel_type")
@@ -622,8 +826,8 @@ func RelayTask(c *gin.Context) {
 
 			if !taskErr.LocalError {
 				processChannelError(c,
-					*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
-						common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+					*types.NewChannelErrorWithKeyIndex(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
+						common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan(), common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)),
 					types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode), true)
 			}
 
@@ -667,6 +871,7 @@ func RelayTask(c *gin.Context) {
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			UserPriceRatio:  relayInfo.PriceData.UserPriceRatio,
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData
@@ -674,7 +879,10 @@ func RelayTask(c *gin.Context) {
 		// Surface request spec (size/resolution/aspect_ratio/duration/...) into
 		// task_log.properties so admins and 3rd-party integrators can debug
 		// against task logs without reading channel-side request bodies.
-		if submitReq, err := relaycommon.GetTaskRequest(c); err == nil {
+		// 关联本次请求的 request_trace，便于任务日志回看「原始请求体」(其中参考图仍是真实 https，
+		// 不受送审 http→asset:// 转换污染)。
+		task.Properties.RequestId = c.GetString(common.RequestIdKey)
+		if submitReq, err := relaycommon.GetTaskRequestOriginal(c); err == nil {
 			task.Properties.Input = submitReq.Prompt
 			task.Properties.Size = submitReq.Size
 			task.Properties.Resolution = submitReq.Resolution
@@ -716,9 +924,17 @@ func RelayTask(c *gin.Context) {
 			}
 			addRefUrl(submitReq.Image)
 			addRefUrl(submitReq.InputReference)
+			// 续写/参考媒体路径：参考图在 metadata.content 里（绕过 req.Images），一并提取。
+			for _, u := range extractReferenceImageUrlsFromMetadataContent(submitReq.Metadata) {
+				addRefUrl(u)
+			}
 			task.Properties.ReferenceCount = len(refUrls)
 			if len(refUrls) > 0 {
 				task.Properties.ReferenceUrls = refUrls
+			}
+			// 参考音频（metadata.content audio_url 条目）单列展示，不并入 ReferenceCount（那是图片口径）。
+			if audioUrls := extractReferenceAudioUrlsFromMetadataContent(submitReq.Metadata); len(audioUrls) > 0 {
+				task.Properties.ReferenceAudioUrls = audioUrls
 			}
 			if submitReq.Metadata != nil {
 				if v, ok := submitReq.Metadata["negative_prompt"].(string); ok && strings.TrimSpace(v) != "" {
@@ -772,6 +988,79 @@ func extractVideoUrlFromMetadataContent(metadata map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// extractReferenceImageUrlsFromMetadataContent 从 metadata.content 数组中按序提取所有
+// image_url 条目的 URL。续写/参考媒体路径下 hono 把参考图塞进 metadata.content（绕过
+// req.Images），任务日志「入参」需要把这些图也提取出来，否则控制台展示为空。
+// 支持 {"type":"image_url","image_url":{"url":"..."}} 与 {"image_url":"..."} 两种格式；
+// video_url 条目跳过（参考视频另行展示）。
+func extractReferenceImageUrlsFromMetadataContent(metadata map[string]any) []string {
+	if metadata == nil {
+		return nil
+	}
+	contentRaw, ok := metadata["content"]
+	if !ok {
+		return nil
+	}
+	contentSlice, ok := contentRaw.([]any)
+	if !ok {
+		return nil
+	}
+	var urls []string
+	for _, item := range contentSlice {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		// {"type":"image_url","image_url":{"url":"..."}}
+		if inner, ok := m["image_url"].(map[string]any); ok {
+			if u, ok := inner["url"].(string); ok && u != "" {
+				urls = append(urls, u)
+			}
+			continue
+		}
+		// {"image_url":"..."}
+		if u, ok := m["image_url"].(string); ok && u != "" {
+			urls = append(urls, u)
+		}
+	}
+	return urls
+}
+
+// extractReferenceAudioUrlsFromMetadataContent 从 metadata.content 数组中按序提取所有
+// audio_url 条目的 URL（seedance 原生对白的音色参考音频）。此前任务日志只提取图片/视频，
+// 音频条目被静默省略——调用方对照日志误判「配音卡音频没发出去」。
+// 支持 {"type":"audio_url","audio_url":{"url":"..."}} 与 {"audio_url":"..."} 两种格式。
+func extractReferenceAudioUrlsFromMetadataContent(metadata map[string]any) []string {
+	if metadata == nil {
+		return nil
+	}
+	contentRaw, ok := metadata["content"]
+	if !ok {
+		return nil
+	}
+	contentSlice, ok := contentRaw.([]any)
+	if !ok {
+		return nil
+	}
+	var urls []string
+	for _, item := range contentSlice {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if inner, ok := m["audio_url"].(map[string]any); ok {
+			if u, ok := inner["url"].(string); ok && u != "" {
+				urls = append(urls, u)
+			}
+			continue
+		}
+		if u, ok := m["audio_url"].(string); ok && u != "" {
+			urls = append(urls, u)
+		}
+	}
+	return urls
 }
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）

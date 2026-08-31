@@ -12,6 +12,7 @@ web/dist
 !web/dist/
 !web/dist/**
 .env
+.env.local
 one-api
 new-api
 /__debug_bin*
@@ -21,7 +22,7 @@ tiktoken_cache
 .gocache
 .gomodcache/
 .cache
-web/bun.lock
+# web/bun.lock 必须进 git：CI/deploy 用 --frozen-lockfile 防依赖漂移(semi-ui 2.101曾砍掉css子路径炸构建)
 plans
 .claude
 

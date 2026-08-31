@@ -232,3 +232,15 @@ func getTencentSign(req TencentChatRequest, adaptor *Adaptor, secId, secKey stri
 		signature)
 	return authorization
 }
+
+// tencentImageResponseHandler parses the synthetic OpenAI image response
+// returned by the Tencent VOD image generation path and writes it to the client.
+func tencentImageResponseHandler(c *gin.Context, resp *http.Response) (any, *types.NewAPIError) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeReadResponseBodyFailed)
+	}
+	c.Data(http.StatusOK, "application/json", body)
+	// Return a minimal Usage so image_handler.go type-asserts safely.
+	return &dto.Usage{PromptTokens: 1, TotalTokens: 1}, nil
+}

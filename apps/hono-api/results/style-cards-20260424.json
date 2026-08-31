@@ -1,0 +1,452 @@
+[
+  {
+    "id": "s01",
+    "title": "日式热血少年漫",
+    "description": "粗线条、强力感、夸张表情，适合动作/冒险题材",
+    "styleDirective": "日式热血少年漫画，粗线条，充满力量感，夸张动态，高对比度，男主角半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/839321d7-8288-469b-99eb-6a4c87fa8402.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：日式热血少年漫画，粗线条，充满力量感，夸张动态，高对比度，男主角半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s02",
+    "title": "日式少女恋爱漫",
+    "description": "柔和线条、星形瞳孔、粉色调，适合恋爱/青春题材",
+    "styleDirective": "日式少女漫画，柔和线条，星形瞳孔，粉色蜜桃色调，花朵光效，女主角半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/4bf30414-665a-42c2-b594-e40b2204d54f.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：日式少女漫画，柔和线条，星形瞳孔，粉色蜜桃色调，花朵光效，女主角半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s04",
+    "title": "日式赛博科幻漫",
+    "description": "霓虹灯+机械，适合近未来科幻题材",
+    "styleDirective": "日式赛博朋克科幻漫画，霓虹灯光，机械义肢，雨夜城市背景，角色半身像，高饱和色",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/5c7f2710-6de8-4835-bb6c-7ec1d7f0100e.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：日式赛博朋克科幻漫画，霓虹灯光，机械义肢，雨夜城市背景，角色半身像，高饱和色",
+    "status": "ok"
+  },
+  {
+    "id": "s05",
+    "title": "日式奇幻魔法漫",
+    "description": "魔法阵、宝石色系，适合奇幻/异世界题材",
+    "styleDirective": "日式奇幻魔法漫画，华丽魔法阵背景，宝石色系服装，魔法师角色，半身像，光芒特效",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/d3da7a69-9d18-402f-a2d2-4b333335e859.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：日式奇幻魔法漫画，华丽魔法阵背景，宝石色系服装，魔法师角色，半身像，光芒特效",
+    "status": "ok"
+  },
+  {
+    "id": "s06",
+    "title": "日式温馨日常漫",
+    "description": "淡彩暖色、圆润线条，适合治愈/日常题材",
+    "styleDirective": "日式温馨日常漫画，淡彩暖色调，圆润柔和线条，咖啡馆背景，日常服装，微笑角色半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/ff323898-e5ad-46dd-b916-801b7cdb3ebe.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：日式温馨日常漫画，淡彩暖色调，圆润柔和线条，咖啡馆背景，日常服装，微笑角色半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s07",
+    "title": "Q版萌系漫画",
+    "description": "2头身比例、超大眼睛，适合轻松/卖萌题材",
+    "styleDirective": "日式Q版萌系漫画，2头身比例，超大闪亮眼睛，圆润可爱造型，表情包式表情，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/77376280-3c42-4d1c-820c-9c8b8c046eae.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：日式Q版萌系漫画，2头身比例，超大闪亮眼睛，圆润可爱造型，表情包式表情，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s09",
+    "title": "少女系水彩插画",
+    "description": "水彩晕染、梦幻透明感，适合抒情/诗意场景",
+    "styleDirective": "日式少女风水彩插画，水彩晕染透明感，花卉与蝴蝶装饰，梦幻柔美色调，女性角色半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/5427e338-e6d8-4738-a4d6-ca2c9637f7d9.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：日式少女风水彩插画，水彩晕染透明感，花卉与蝴蝶装饰，梦幻柔美色调，女性角色半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s08",
+    "title": "80年代复古手绘漫",
+    "description": "怀旧手绘感、印刷网点，适合复古/穿越题材",
+    "styleDirective": "80年代复古手绘日漫风格，印刷网点纹理，分格线条，老旧黄化纸张感，复古配色，角色半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/5100cc4a-303a-4920-a3a7-7acd2a0f6f0c.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：80年代复古手绘日漫风格，印刷网点纹理，分格线条，老旧黄化纸张感，复古配色，角色半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s03",
+    "title": "日式克苏鲁恐怖",
+    "description": "诡异构图、暗色渲染、触手元素，适合恐怖/悬疑题材",
+    "styleDirective": "日式克苏鲁恐怖漫画，诡异构图，暗黑压抑色调，触手与异形元素，角色痛苦表情，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/17d63f19-c2aa-49a6-b602-27785965cdd2.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：日式克苏鲁恐怖漫画，诡异构图，暗黑压抑色调，触手与异形元素，角色痛苦表情，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s11",
+    "title": "鬼灭大正复古风",
+    "description": "大正和风、拼布图案，适合日式历史/武士题材",
+    "styleDirective": "鬼灭之刃大正时代和风漫画，拼布和服图案，民俗纹样，炭焰特效，武士角色全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/5661f90e-eec0-4504-af45-b771dd247767.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：鬼灭之刃大正时代和风漫画，拼布和服图案，民俗纹样，炭焰特效，武士角色全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s12",
+    "title": "格斗动作漫画",
+    "description": "速度线、碎裂特效，适合武斗/格斗竞技题材",
+    "styleDirective": "格斗动漫风格，速度线，碎裂岩石特效，肌肉张力，战斗姿势，对比色背景，角色全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/dc212d84-8494-4683-ae73-bcb5817a3111.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：格斗动漫风格，速度线，碎裂岩石特效，肌肉张力，战斗姿势，对比色背景，角色全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s13",
+    "title": "赛马娘卡牌风",
+    "description": "闪卡质感、竞技感，适合运动/竞技题材",
+    "styleDirective": "赛马娘式运动女子漫画卡牌风格，闪亮反光卡面，彩虹光泽，运动服装，活力动态造型，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/8bf117e1-65fb-49d9-a204-c91dfc04045a.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：赛马娘式运动女子漫画卡牌风格，闪亮反光卡面，彩虹光泽，运动服装，活力动态造型，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s14",
+    "title": "进击的巨人写实漫",
+    "description": "写实阴影、战争感，适合黑暗/战争题材",
+    "styleDirective": "进击的巨人风格写实漫画，写实人体比例，强烈明暗对比，破损服装，严峻表情，战场背景，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/59ba34ea-f291-4b1c-a37b-c2966837e18f.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：进击的巨人风格写实漫画，写实人体比例，强烈明暗对比，破损服装，严峻表情，战场背景，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s10",
+    "title": "新海诚电影风",
+    "description": "超精细光影、蓝色天空背景，适合青春/情感题材",
+    "styleDirective": "新海诚动画电影风格，超精细光影渲染，蓝色光晕天空，高饱和度自然环境，青春角色侧身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/9822ec94-29b7-4a89-ae5a-243f1b066f73.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：新海诚动画电影风格，超精细光影渲染，蓝色光晕天空，高饱和度自然环境，青春角色侧身像",
+    "status": "ok"
+  },
+  {
+    "id": "s15",
+    "title": "恶魔城哥特暗黑",
+    "description": "蜡烛烛光、哥特建筑背景，适合恐怖游戏改编题材",
+    "styleDirective": "哥特暗黑风格漫画，烛光渲染，哥特城堡背景，华丽暗色服装，吸血鬼气质角色，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/f9285624-4ca7-4478-bb96-1b43741258fa.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：哥特暗黑风格漫画，烛光渲染，哥特城堡背景，华丽暗色服装，吸血鬼气质角色，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s17",
+    "title": "国风水墨写意",
+    "description": "水墨浓淡、留白意境，适合诗意/禅意题材",
+    "styleDirective": "中国水墨写意画风格，墨色浓淡变化，大量留白，意境深远，古风人物，文人气质，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/bed0ba60-449e-4052-badb-252da9361074.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国水墨写意画风格，墨色浓淡变化，大量留白，意境深远，古风人物，文人气质，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s16",
+    "title": "国风工笔画",
+    "description": "精细勾线、矿物色，适合古典/宫廷题材",
+    "styleDirective": "中国工笔画风格，精细勾线，矿物色彩，古典服饰，宫廷背景，女性角色半身像，典雅精致",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/979b6bc5-bb0e-441a-879a-ab540f80621c.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国工笔画风格，精细勾线，矿物色彩，古典服饰，宫廷背景，女性角色半身像，典雅精致",
+    "status": "ok"
+  },
+  {
+    "id": "s18",
+    "title": "仙侠修炼风",
+    "description": "仙气灵光、飞剑云雾，适合玄幻/修仙题材",
+    "styleDirective": "中国仙侠漫画风格，仙气灵光效果，飞剑云雾，道袍仙服，修炼者角色，全身立绘，飘逸感",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/866fb079-59b0-4372-8f48-8c5813e139da.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国仙侠漫画风格，仙气灵光效果，飞剑云雾，道袍仙服，修炼者角色，全身立绘，飘逸感",
+    "status": "ok"
+  },
+  {
+    "id": "s19",
+    "title": "民国旗袍风",
+    "description": "老上海美学、复古暖色，适合民国/谍战题材",
+    "styleDirective": "民国风格漫画插画，旗袍女性造型，老上海街景背景，复古暖褐色调，蕾丝与绸缎质感，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/a504840b-9648-4cac-a308-0bc37e3b1601.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：民国风格漫画插画，旗袍女性造型，老上海街景背景，复古暖褐色调，蕾丝与绸缎质感，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s20",
+    "title": "国潮嘻哈风",
+    "description": "潮流汉字设计、饶舌感，适合现代国风/青年文化",
+    "styleDirective": "国潮嘻哈风格，汉字图形设计，潮牌涂鸦元素，国风与街头文化融合，年轻男性角色，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/e249ab5a-ba61-4448-b314-7869a409c6d6.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：国潮嘻哈风格，汉字图形设计，潮牌涂鸦元素，国风与街头文化融合，年轻男性角色，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s21",
+    "title": "敦煌壁画风",
+    "description": "飞天造型、赭石色调，适合丝绸之路/历史奇幻题材",
+    "styleDirective": "敦煌壁画艺术风格，飞天造型，赭石与青金石色调，莲花与云纹装饰，历史人物，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/495c13ed-7bc3-4bee-8fa6-575670d8eb5c.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：敦煌壁画艺术风格，飞天造型，赭石与青金石色调，莲花与云纹装饰，历史人物，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s23",
+    "title": "三国战国风",
+    "description": "铠甲战马、战旗，适合历史战争题材",
+    "styleDirective": "三国战争漫画风格，汉代铠甲，战旗猎猎，战场烽烟，武将角色，全身立绘，威武气势",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/57e1a501-6ed8-4885-8f33-b79302dd306d.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：三国战争漫画风格，汉代铠甲，战旗猎猎，战场烽烟，武将角色，全身立绘，威武气势",
+    "status": "ok"
+  },
+  {
+    "id": "s22",
+    "title": "武侠江湖风",
+    "description": "武馆与竹林背景、侠气，适合武侠小说改编题材",
+    "styleDirective": "中国武侠漫画风格，竹林或茶楼背景，武侠服饰，剑气挥洒，侠客气质，全身动作立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/23ea3fe3-e13c-4883-bcf1-3cbeae9a8e56.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：中国武侠漫画风格，竹林或茶楼背景，武侠服饰，剑气挥洒，侠客气质，全身动作立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s24",
+    "title": "现代都市国漫",
+    "description": "都市霓虹、时尚青年，适合现实题材国漫",
+    "styleDirective": "现代都市中国漫画风格，城市霓虹背景，时尚年轻人服装，高饱和流行色，当代青年角色，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/c1052326-7199-470f-bed4-7f32b576aed5.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：现代都市中国漫画风格，城市霓虹背景，时尚年轻人服装，高饱和流行色，当代青年角色，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s25",
+    "title": "玄幻道门风",
+    "description": "道符术法、阴阳八卦，适合东方玄幻题材",
+    "styleDirective": "东方玄幻道门风格，阴阳八卦背景，道符特效，黑白阴阳色调，道士角色，全身立绘，神秘感",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/daeffb45-8f73-4a4a-a29f-c6fec2dda18d.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：东方玄幻道门风格，阴阳八卦背景，道符特效，黑白阴阳色调，道士角色，全身立绘，神秘感",
+    "status": "ok"
+  },
+  {
+    "id": "s27",
+    "title": "欧洲写实线稿漫",
+    "description": "精细写实素描、老漫画感，适合历史/冒险题材",
+    "styleDirective": "欧洲写实风格漫画，精细铅笔素描线稿，立体明暗，历史题材服装，成熟男性角色，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/f9ecd07c-b292-4835-9553-8d2db9f9a3ff.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：欧洲写实风格漫画，精细铅笔素描线稿，立体明暗，历史题材服装，成熟男性角色，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s26",
+    "title": "美式超级英雄漫",
+    "description": "夸张肌肉、动态构图，适合超能力/英雄题材",
+    "styleDirective": "美式超级英雄漫画风格，夸张肌肉线条，强烈透视动态，超英服装，城市背景，全身动作立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/c5412a46-8f36-4744-beda-f936c7742691.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：美式超级英雄漫画风格，夸张肌肉线条，强烈透视动态，超英服装，城市背景，全身动作立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s29",
+    "title": "蒸汽朋克维多利亚",
+    "description": "齿轮与气球、雾都背景，适合架空历史题材",
+    "styleDirective": "蒸汽朋克维多利亚风格，铜质齿轮与飞艇，雾都伦敦背景，蒸汽机械服装，英伦绅士气质，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/25284865-162e-4208-be16-af2f93907e7e.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：蒸汽朋克维多利亚风格，铜质齿轮与飞艇，雾都伦敦背景，蒸汽机械服装，英伦绅士气质，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s28",
+    "title": "赛博朋克写实风",
+    "description": "照片级渲染、赛博贫民窟，适合近未来题材",
+    "styleDirective": "赛博朋克写实风格，照片级CG渲染，贫民窟背景，机械改造身体，雨中霓虹，角色半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/5a83b410-7876-4e02-b5e0-b3ff9bdece14.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：赛博朋克写实风格，照片级CG渲染，贫民窟背景，机械改造身体，雨中霓虹，角色半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s30",
+    "title": "史诗奇幻魔法风",
+    "description": "史诗龙与地下城感，适合高魔幻/西方奇幻题材",
+    "styleDirective": "西方奇幻史诗风格，中世纪魔法背景，龙族元素，宝甲圣骑士，华丽魔法特效，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/e5dea530-0244-41d0-b7a5-34adc1bab55a.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：西方奇幻史诗风格，中世纪魔法背景，龙族元素，宝甲圣骑士，华丽魔法特效，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s32",
+    "title": "波普艺术风",
+    "description": "网点色块、安迪沃霍感，适合流行文化题材",
+    "styleDirective": "波普艺术风格插画，网点色块，原色平涂，安迪沃霍式重复图案，当代偶像角色，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/8cf6f959-f63d-4f79-bd65-3b8f7cb5bf50.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：波普艺术风格插画，网点色块，原色平涂，安迪沃霍式重复图案，当代偶像角色，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s33",
+    "title": "迪士尼动画风",
+    "description": "大眼、圆润、童话色彩，适合童话/亲子题材",
+    "styleDirective": "迪士尼动画风格，大圆眼，圆润造型，童话糖果色调，公主服装，表情生动，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/69971f13-7fd5-4dee-abb9-d070d20026cc.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：迪士尼动画风格，大圆眼，圆润造型，童话糖果色调，公主服装，表情生动，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s31",
+    "title": "黑色电影诺瓦尔",
+    "description": "高反差黑白、烟雾探侦感，适合黑色电影/悬疑题材",
+    "styleDirective": "黑色电影诺瓦尔风格，高对比度黑白，烟雾与阴影，硬汉侦探角色，雨夜街道，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/c29a9af0-b400-4469-abaa-defeafff3a97.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：黑色电影诺瓦尔风格，高对比度黑白，烟雾与阴影，硬汉侦探角色，雨夜街道，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s34",
+    "title": "卡通网络风格",
+    "description": "夸张变形、实验性设计，适合搞笑/成人动画题材",
+    "styleDirective": "卡通网络动画风格，夸张变形造型，荧光色调，实验性线条，搞怪成人动画气质，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/795ba0ae-12c2-4a98-b2dd-6ea641be454c.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：卡通网络动画风格，夸张变形造型，荧光色调，实验性线条，搞怪成人动画气质，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s35",
+    "title": "漫威CG概念艺术",
+    "description": "电影级概念艺术质感，适合宇宙英雄题材",
+    "styleDirective": "漫威电影宇宙概念艺术风格，影视级CG渲染，超级英雄战甲，宇宙星云背景，角色全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/174b8d73-6b26-4d60-8ad5-61b3bc35fd14.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：漫威电影宇宙概念艺术风格，影视级CG渲染，超级英雄战甲，宇宙星云背景，角色全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s36",
+    "title": "水彩梦幻插画",
+    "description": "水彩晕染、蝴蝶与花卉，适合奇幻/抒情题材",
+    "styleDirective": "梦幻水彩插画风格，柔和晕染，蝴蝶与花卉装饰，梦境般色彩，精灵气质角色，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/8f2c279a-8ab6-4e29-aa00-72b744086c73.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：梦幻水彩插画风格，柔和晕染，蝴蝶与花卉装饰，梦境般色彩，精灵气质角色，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s37",
+    "title": "油画厚涂写实",
+    "description": "厚重笔触、古典肖像感，适合传记/历史题材",
+    "styleDirective": "油画厚涂写实风格，厚重笔触质感，古典肖像画构图，丰富光影，历史人物气质，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/3a519c44-1429-4492-b523-3e9402c4e97a.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：油画厚涂写实风格，厚重笔触质感，古典肖像画构图，丰富光影，历史人物气质，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s38",
+    "title": "极简线条风格",
+    "description": "极简单线、留白大量，适合现代/商务题材",
+    "styleDirective": "极简线条插画风格，最少笔画，大量留白，单色或双色，现代简约，角色轮廓半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/4a378c22-54ea-4a72-86e3-2d03521fa86f.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：极简线条插画风格，最少笔画，大量留白，单色或双色，现代简约，角色轮廓半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s39",
+    "title": "扁平设计风格",
+    "description": "几何形状、无阴影，适合APP/互联网内容",
+    "styleDirective": "扁平设计风格插画，几何造型，无阴影无渐变，纯色色块，现代化配色，角色全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/ae072883-47ec-419f-a333-6a5cd6baa63b.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：扁平设计风格插画，几何造型，无阴影无渐变，纯色色块，现代化配色，角色全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s40",
+    "title": "像素游戏风格",
+    "description": "像素颗粒感、8bit配色，适合游戏题材",
+    "styleDirective": "像素游戏风格艺术，16x16或32x32像素颗粒，复古8bit配色，游戏角色精灵图，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/10e92ed5-bedf-40ea-a865-a6faafe511a8.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：像素游戏风格艺术，16x16或32x32像素颗粒，复古8bit配色，游戏角色精灵图，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s41",
+    "title": "霓虹发光赛博风",
+    "description": "霓虹光效、黑暗底色，适合科幻/音乐题材",
+    "styleDirective": "霓虹发光赛博风格插画，黑色底色，霓虹紫蓝粉发光线条，电子音乐感，DJ角色，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/07af9294-bc25-40fd-b2a9-5f1b85ed50c1.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：霓虹发光赛博风格插画，黑色底色，霓虹紫蓝粉发光线条，电子音乐感，DJ角色，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s42",
+    "title": "哥特暗黑荧光风",
+    "description": "暗色+荧光撞色，适合暗黑/摇滚题材",
+    "styleDirective": "哥特暗黑荧光风格，暗色调与荧光绿紫撞色，骷髅与玫瑰装饰，摇滚朋克服装，角色全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/97fd7e74-7e39-4dc5-9b98-f0cb0431f28c.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：哥特暗黑荧光风格，暗色调与荧光绿紫撞色，骷髅与玫瑰装饰，摇滚朋克服装，角色全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s43",
+    "title": "水彩童话绘本",
+    "description": "手绘暖色、儿童插图感，适合童话/儿童故事",
+    "styleDirective": "水彩童话绘本风格，手绘暖色调，质朴线条，儿童故事氛围，小精灵角色，全身可爱立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/2b64e02f-e7ab-419d-bea9-58823bdcdd7f.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：水彩童话绘本风格，手绘暖色调，质朴线条，儿童故事氛围，小精灵角色，全身可爱立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s44",
+    "title": "超现实主义插画",
+    "description": "梦境变形、达利感，适合艺术/文学题材",
+    "styleDirective": "超现实主义插画风格，达利式梦境变形，不合逻辑的空间，精细写实与荒诞结合，人物半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/a0d4dc6f-43c7-4c68-ab09-aea97d5809af.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：超现实主义插画风格，达利式梦境变形，不合逻辑的空间，精细写实与荒诞结合，人物半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s45",
+    "title": "复古海报宣传画",
+    "description": "苏联或民国海报感，适合历史/宣传题材",
+    "styleDirective": "复古宣传海报风格，苏联或民国海报美学，平涂色块，粗体字配图，英雄主义构图，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/239d713e-ecce-4951-aed5-ef0d863b00b3.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：复古宣传海报风格，苏联或民国海报美学，平涂色块，粗体字配图，英雄主义构图，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s46",
+    "title": "末日废土风格",
+    "description": "破败环境、求生感，适合末日/废土题材",
+    "styleDirective": "末日废土风格漫画，破败城市背景，求生装备，尘土与锈迹，硬汉角色，全身立绘，棕灰色调",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/496d93c3-6c85-413f-b3c2-436bf3f06604.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：末日废土风格漫画，破败城市背景，求生装备，尘土与锈迹，硬汉角色，全身立绘，棕灰色调",
+    "status": "ok"
+  },
+  {
+    "id": "s48",
+    "title": "都市精英商战风",
+    "description": "西装笔挺、商务感，适合职场/商战题材",
+    "styleDirective": "都市商战精英风格，定制西装，摩天大楼背景，商务冷感配色，强势精英角色，半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/45defe95-6539-4d28-a411-65e600479df1.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：都市商战精英风格，定制西装，摩天大楼背景，商务冷感配色，强势精英角色，半身像",
+    "status": "ok"
+  },
+  {
+    "id": "s47",
+    "title": "校园偶像青春风",
+    "description": "制服、校园青春光感，适合青春偶像题材",
+    "styleDirective": "校园青春偶像风格，学生制服，樱花飘散背景，青春阳光色调，帅气男生角色，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/7c90b055-5816-43d0-985f-5deb90c7d81f.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：校园青春偶像风格，学生制服，樱花飘散背景，青春阳光色调，帅气男生角色，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s49",
+    "title": "星际宇宙科幻风",
+    "description": "宇航服、星云背景，适合太空科幻题材",
+    "styleDirective": "星际宇宙科幻风格，宇航员太空服，星云与行星背景，零重力飘浮感，宇宙探险家角色，全身立绘",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/0aef05d9-75d8-47ab-aef9-50adb7bb2ac5.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：星际宇宙科幻风格，宇航员太空服，星云与行星背景，零重力飘浮感，宇宙探险家角色，全身立绘",
+    "status": "ok"
+  },
+  {
+    "id": "s50",
+    "title": "洛夫克拉夫特宇宙恐怖",
+    "description": "古神异形、非欧几何，适合克苏鲁恐怖题材",
+    "styleDirective": "洛夫克拉夫特宇宙恐怖风格，古神与触手，非欧几里得几何空间，深海与宇宙恐怖，角色半身像",
+    "imageUrl": "https://file.beqlee.icu/gen/images/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260424/adc82840-5dfe-4fad-a354-c0318d6e7418.png",
+    "prompt": "一个年轻角色，角色卡格式，干净留白背景，高细节精绘，半身正面像\n风格设计：洛夫克拉夫特宇宙恐怖风格，古神与触手，非欧几里得几何空间，深海与宇宙恐怖，角色半身像",
+    "status": "ok"
+  }
+]

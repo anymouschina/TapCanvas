@@ -52,6 +52,8 @@ model agent_skills {
   name        String
   description String?
   content     String
+  logo_url    String?
+  category    String  @default("系统技能")
   enabled     Int     @default(1)
   visible     Int     @default(1)
   sort_order  Int?
@@ -59,6 +61,119 @@ model agent_skills {
   updated_at  String
 
   @@index([enabled, visible, sort_order], map: "idx_agent_skills_enabled_visible_sort")
+}
+
+model user_skill_assets {
+  id                            String  @id
+  owner_id                      String
+  file_name                     String
+  name                          String
+  description                   String?
+  content                       String
+  logo_url                      String?
+  force_full_context            Int     @default(0)
+  size_bytes                    Int
+  sha256                        String
+  marketplace_product_id        String?
+  marketplace_price_cents       Int?
+  marketplace_currency          String?
+  marketplace_listed_at         String?
+  source_marketplace_product_id String?
+  created_at                    String
+  updated_at                    String
+  users                         users   @relation(fields: [owner_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([owner_id, file_name], map: "idx_user_skill_assets_owner_file")
+  @@index([owner_id, updated_at(sort: Desc)], map: "idx_user_skill_assets_owner_updated")
+  @@index([marketplace_product_id], map: "idx_user_skill_assets_marketplace_product")
+  @@index([source_marketplace_product_id], map: "idx_user_skill_assets_source_product")
+}
+
+model agent_capability_attachments {
+  id                       String @id
+  user_id                  String
+  capability_kind          String
+  source_id                String
+  source_version_id        String
+  descriptor_json          String
+  descriptor_sha256        String
+  conflict_report_json     String
+  route_decisions_json     String?
+  conflict_report_revision Int    @default(1)
+  scope                    String @default("current_user")
+  created_at               String
+  updated_at               String
+  users                     users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, capability_kind, source_id], map: "uq_agent_capability_attachments_user_source")
+  @@index([user_id, updated_at(sort: Desc)], map: "idx_agent_capability_attachments_user_updated")
+  @@index([source_version_id], map: "idx_agent_capability_attachments_source_version")
+  @@index([scope], map: "idx_agent_capability_attachments_scope")
+}
+
+model agent_capability_preferences {
+  id                        String @id
+  user_id                   String
+  capability_kind           String
+  capability_id             String
+  enabled                   Int    @default(1)
+  disabled_reason           String?
+  replaced_by_capability_id String?
+  created_at                String
+  updated_at                String
+  users                     users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, capability_kind, capability_id], map: "uq_agent_capability_preferences_user_capability")
+  @@index([user_id, enabled, updated_at(sort: Desc)], map: "idx_agent_capability_preferences_user_enabled")
+  @@index([replaced_by_capability_id], map: "idx_agent_capability_preferences_replaced_by")
+}
+
+model agent_builtin_capability_settings {
+  capability_id     String @id
+  enabled           Int    @default(1)
+  updated_by_user_id String
+  created_at        String
+  updated_at        String
+  users             users  @relation(fields: [updated_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([enabled, updated_at(sort: Desc)], map: "idx_agent_builtin_capability_settings_enabled")
+  @@index([updated_by_user_id], map: "idx_agent_builtin_capability_settings_updated_by")
+}
+
+model agent_capability_invocations {
+  id                    String              @id
+  user_id               String
+  attachment_id         String
+  capability_id         String
+  capability_name       String
+  source_id             String
+  source_version_id     String
+  descriptor_sha256     String
+  workflow_execution_id String              @unique(map: "uq_agent_capability_invocations_execution")
+  agent_execution_id    String?
+  session_id            String?
+  tool_call_id          String?
+  input_json            String?
+  created_at            String
+  updated_at            String
+  users                 users               @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workflow_executions   workflow_executions @relation(fields: [workflow_execution_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([user_id, created_at(sort: Desc)], map: "idx_agent_capability_invocations_user_created")
+  @@index([attachment_id, created_at(sort: Desc)], map: "idx_agent_capability_invocations_attachment_created")
+  @@index([agent_execution_id], map: "idx_agent_capability_invocations_agent_execution")
+  @@index([session_id], map: "idx_agent_capability_invocations_session")
+}
+
+model skill_favorites {
+  id         String @id
+  user_id    String
+  skill_key  String
+  created_at String
+  users      users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, skill_key], map: "idx_skill_favorites_user_skill")
+  @@index([user_id, created_at(sort: Desc)], map: "idx_skill_favorites_user_created")
 }
 
 model api_keys {
@@ -69,6 +184,12 @@ model api_keys {
   key_hash        String  @unique(map: "idx_api_keys_hash")
   allowed_origins String
   enabled         Int     @default(1)
+  kind            String  @default("user")
+  billing_team_id String?
+  scopes          String  @default("[\"public:read\"]")
+  expires_at      String?
+  revoked_at      String?
+  rotated_from_id String?
   last_used_at    String?
   created_at      String
   updated_at      String
@@ -241,6 +362,7 @@ model flows {
   project_id          String?
   created_at          String
   updated_at          String
+  canvas_revision     Int                   @default(0) // 乐观锁版本号，source:'user' 保存成功 +1
   flow_versions       flow_versions[]
   users               users?                @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   projects            projects?             @relation(fields: [project_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -268,6 +390,10 @@ model chapters {
   last_worked_at         String?
   created_at             String
   updated_at             String
+  canvas_flow            String? // 章节画布 flow JSON 序列化字符串，null 表示尚未初始化
+  canvas_flow_revision   Int      @default(0) // 乐观锁版本号，每次 PUT 成功 +1
+  adaptation_contract    String? // 【编排域 P2·2026-07-11】章级改编合同（reversals/cuts/hook JSON）——run 只引用；重制 run 声明与它 diff，弱化/删项确定性告警
+  film_spec              String? // 【章级交付范围】仅持久化 deliveryScope/targetDurationSeconds/adaptationMode/notes/filmGenre；模型规格来自本轮生成合同，质量复盘不作为出片门禁
   users                  users    @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   projects               projects @relation(fields: [project_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -284,6 +410,7 @@ model llm_node_presets {
   title       String
   prompt      String
   description String?
+  meta        String?
   enabled     Int     @default(1)
   sort_order  Int?
   created_at  String
@@ -302,7 +429,6 @@ model merchants {
   created_at   String
   updated_at   String
   users        users          @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  orders       orders[]
   product_skus product_skus[]
   products     products[]
 
@@ -461,157 +587,30 @@ model model_tokens {
   @@index([user_id], map: "idx_model_tokens_user_id")
 }
 
-model order_entitlements {
-  id               String      @id
-  owner_id         String
-  order_id         String
-  order_item_id    String
-  product_id       String
-  entitlement_type String
-  status           String
-  result_json      String?
-  created_at       String
-  updated_at       String
-  orders           orders      @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  order_items      order_items @relation(fields: [order_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users            users       @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  products         products    @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+/// 公众号带参二维码扫码登录会话。前端建会话拿二维码 → 用户扫码 → 微信把事件推到公众号后台
+/// 配置的那个【唯一】URL（现指向 Tanva，由它按 scene 前缀 tclogin_ 转发过来）→ 落 open_id
+/// → 前端轮询本表拿登录态。scene_key 前缀必须与 Tanva 的 wxlogin_ 区分开，否则两个项目抢事件。
+model wechat_login_sessions {
+  id            String  @id
+  scene_key     String  @unique(map: "idx_wechat_login_sessions_scene_key")
+  /// pending | unlinked | authorized | consumed
+  status        String
+  qr_ticket     String?
+  qr_code_url   String?
+  open_id       String?
+  union_id      String?
+  nickname      String?
+  avatar_url    String?
+  user_id       String?
+  return_to     String?
+  authorized_at String?
+  consumed_at   String?
+  expires_at    String
+  created_at    String
+  updated_at    String
 
-  @@unique([order_item_id, entitlement_type])
-  @@index([owner_id, created_at(sort: Desc)], map: "idx_order_entitlements_owner_created")
-}
-
-model order_items {
-  id                       String               @id
-  order_id                 String
-  product_id               String
-  sku_id                   String?
-  title_snapshot           String
-  sku_name_snapshot        String?
-  unit_price_cents         Int                  @default(0)
-  quantity                 Int                  @default(1)
-  total_price_cents        Int                  @default(0)
-  cover_image_url_snapshot String?
-  created_at               String
-  updated_at               String
-  order_entitlements       order_entitlements[]
-  orders                   orders               @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  products                 products             @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  product_skus             product_skus?        @relation(fields: [sku_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([order_id], map: "idx_order_items_order")
-  @@index([product_id], map: "idx_order_items_product")
-}
-
-model order_status_events {
-  id           String  @id
-  order_id     String
-  owner_id     String
-  from_status  String?
-  to_status    String
-  event_type   String
-  reason       String?
-  payload_json String?
-  created_at   String
-  orders       orders  @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users        users   @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([order_id, created_at], map: "idx_order_status_events_order_created")
-  @@index([owner_id, created_at(sort: Desc)], map: "idx_order_status_events_owner_created")
-}
-
-model orders {
-  id                  String                @id
-  owner_id            String
-  merchant_id         String
-  order_no            String                @unique
-  status              String                @default("pending_payment")
-  payment_status      String                @default("unpaid")
-  currency            String                @default("CNY")
-  total_amount_cents  Int                   @default(0)
-  paid_amount_cents   Int                   @default(0)
-  refund_amount_cents Int                   @default(0)
-  refund_status       String?
-  refund_reason       String?
-  buyer_note          String?
-  paid_at             String?
-  canceled_at         String?
-  created_at          String
-  updated_at          String
-  order_entitlements  order_entitlements[]
-  order_items         order_items[]
-  order_status_events order_status_events[]
-  merchants           merchants             @relation(fields: [merchant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users               users                 @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  payments            payments[]
-  subscriptions       subscriptions[]
-
-  @@index([merchant_id, created_at(sort: Desc)], map: "idx_orders_merchant_created")
-  @@index([owner_id, created_at(sort: Desc)], map: "idx_orders_owner_created")
-  @@index([owner_id, payment_status, created_at(sort: Desc)], map: "idx_orders_owner_payment_status")
-  @@index([owner_id, status, created_at(sort: Desc)], map: "idx_orders_owner_status")
-}
-
-model payment_callbacks {
-  id              String    @id
-  payment_id      String?
-  provider        String
-  event_type      String
-  out_trade_no    String?
-  transaction_id  String?
-  signature_valid Int       @default(0)
-  payload_json    String
-  headers_json    String?
-  error_message   String?
-  created_at      String
-  payments        payments? @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([out_trade_no, created_at(sort: Desc)], map: "idx_payment_callbacks_out_trade_created")
-  @@index([payment_id, created_at(sort: Desc)], map: "idx_payment_callbacks_payment_created")
-}
-
-model payments {
-  id                  String              @id
-  owner_id            String
-  order_id            String
-  provider            String
-  trade_type          String
-  out_trade_no        String              @unique
-  prepay_id           String?
-  transaction_id      String?
-  status              String              @default("created")
-  total_amount_cents  Int                 @default(0)
-  currency            String              @default("CNY")
-  refund_amount_cents Int                 @default(0)
-  refund_status       String?
-  refund_reason       String?
-  raw_request_json    String?
-  raw_response_json   String?
-  created_at          String
-  updated_at          String
-  succeeded_at        String?
-  closed_at           String?
-  payment_callbacks   payment_callbacks[]
-  orders              orders              @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users               users               @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([order_id, created_at(sort: Desc)], map: "idx_payments_order_created")
-  @@index([owner_id, status, created_at(sort: Desc)], map: "idx_payments_owner_status_created")
-  @@index([transaction_id], map: "idx_payments_transaction_id")
-}
-
-model phone_login_codes {
-  id         String  @id
-  phone      String
-  code_salt  String
-  code_hash  String
-  expires_at String
-  used_at    String?
-  created_at String
-  updated_at String
-
-  @@index([phone, created_at], map: "idx_phone_login_codes_phone_created_at")
-  @@index([phone, expires_at], map: "idx_phone_login_codes_phone_expires_at")
+  @@index([expires_at], map: "idx_wechat_login_sessions_expires_at")
+  @@index([open_id], map: "idx_wechat_login_sessions_open_id")
 }
 
 model points_accounts {
@@ -633,10 +632,12 @@ model points_ledger {
   note            String?
   idempotency_key String
   created_at      String
+  api_key_id      String?
   users           users   @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([owner_id, idempotency_key])
   @@index([owner_id, created_at(sort: Desc)], map: "idx_points_ledger_owner_created")
+  @@index([api_key_id, created_at(sort: Desc)], map: "idx_points_ledger_api_key_created")
 }
 
 model product_entitlements {
@@ -681,7 +682,6 @@ model product_skus {
   status      String        @default("active")
   created_at  String
   updated_at  String
-  order_items order_items[]
   merchants   merchants     @relation(fields: [merchant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users       users         @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   products    products      @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -704,8 +704,6 @@ model products {
   cover_image_url      String?
   created_at           String
   updated_at           String
-  order_entitlements   order_entitlements[]
-  order_items          order_items[]
   product_entitlements product_entitlements[]
   product_images       product_images[]
   product_skus         product_skus[]
@@ -722,17 +720,35 @@ model projects {
   name                       String
   is_public                  Int                          @default(0)
   owner_id                   String?
+  clone_count                Int                          @default(0)
+  sort_weight                Int                          @default(0)
   created_at                 String
   updated_at                 String
+  active_workflow            String                       @default("free_canvas")
+  project_kind               String                       @default("creative")
+  channel_slug               String?
+  cover_url                  String?
+  description                String?
+  published_at               String?
+  view_count                 Int                          @default(0)
+  like_count                 Int                          @default(0)
+  favorite_count             Int                          @default(0)
+  comment_count              Int                          @default(0)
+  hot_score                  Float                        @default(0)
+  forked_from_project_id     String?
   agent_pipeline_runs        agent_pipeline_runs[]
   assets                     assets[]
   chapters                   chapters[]
   flows                      flows[]
+  team_project_shares        team_project_shares[]
   users                      users?                       @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   video_generation_histories video_generation_histories[]
 
   @@index([is_public], map: "idx_projects_is_public")
   @@index([owner_id], map: "idx_projects_owner_id")
+  @@index([channel_slug, hot_score(sort: Desc)], map: "idx_projects_channel_hot")
+  @@index([channel_slug, published_at(sort: Desc)], map: "idx_projects_channel_published")
+  @@index([forked_from_project_id], map: "idx_projects_forked_from")
 }
 
 model prompt_evolution_runs {
@@ -851,22 +867,53 @@ model subscriptions {
   id                        String                      @id
   owner_id                  String
   plan_code                 String
-  source_order_id           String?
   status                    String                      @default("active")
   start_at                  String
   end_at                    String
   duration_days             Int
   daily_limit               Int
+  billing_team_id           String?
+  billing_cycle             String                      @default("monthly")
+  monthly_credits           Int                         @default(0)
+  daily_gift_credits        Int                         @default(0)
+  concurrency_limit         Int                         @default(1)
+  capacity_label            String                      @default("")
+  credit_grant_count        Int                         @default(1)
+  credit_grants_issued      Int                         @default(0)
+  next_credit_grant_at      String?
   timezone                  String                      @default("Asia/Shanghai")
   created_at                String
   updated_at                String
   canceled_at               String?
   subscription_daily_quotas subscription_daily_quotas[]
   subscription_quota_events subscription_quota_events[]
+  membership_credit_grants  membership_credit_grants[]
   users                     users                       @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  orders                    orders?                     @relation(fields: [source_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([owner_id, status, start_at, end_at], map: "idx_subscriptions_owner_status_time")
+  @@index([status, next_credit_grant_at], map: "idx_subscriptions_membership_credit_due")
+}
+
+model membership_credit_grants {
+  id              String        @id
+  subscription_id String
+  owner_id        String
+  team_id         String
+  grant_type      String
+  grant_key       String
+  amount          Int
+  granted_at      String
+  expires_at      String?
+  expired_amount  Int           @default(0)
+  processed_at    String?
+  subscriptions   subscriptions @relation(fields: [subscription_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users           users         @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teams           teams         @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([subscription_id, grant_type, grant_key])
+  @@index([owner_id, granted_at(sort: Desc)], map: "idx_membership_credit_grants_owner_time")
+  @@index([team_id, granted_at(sort: Desc)], map: "idx_membership_credit_grants_team_time")
+  @@index([grant_type, expires_at, processed_at], map: "idx_membership_credit_grants_expiry")
 }
 
 model task_results {
@@ -879,6 +926,8 @@ model task_results {
   created_at   String
   updated_at   String
   completed_at String?
+  chapter_id   String?
+  node_id      String?
   users        users   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@id([user_id, task_id])
@@ -900,8 +949,48 @@ model task_statuses {
 
   @@unique([task_id, provider])
   @@index([created_at], map: "idx_task_statuses_created_at")
+  @@index([provider, status, created_at], map: "idx_task_statuses_provider_status_created")
+  @@index([provider, status, updated_at], map: "idx_task_statuses_provider_status_updated")
   @@index([status], map: "idx_task_statuses_status")
   @@index([user_id, provider], map: "idx_task_statuses_user_provider")
+}
+
+model workflow_plugin_versions {
+  id                 String                      @id
+  plugin_id          String
+  plugin_version     String
+  publisher_kind     String
+  publisher_id       String
+  manifest_json      String
+  manifest_sha256    String
+  runtime_owner_kind String
+  runtime_owner_id   String
+  runtime_version    String
+  created_by_actor   String
+  created_at         String
+  admission          workflow_plugin_admissions?
+
+  @@unique([plugin_id, plugin_version], map: "uq_workflow_plugin_versions_identity")
+  @@index([manifest_sha256], map: "idx_workflow_plugin_versions_manifest_sha256")
+  @@index([publisher_kind, publisher_id, created_at(sort: Desc)], map: "idx_workflow_plugin_versions_publisher")
+  @@index([runtime_owner_kind, runtime_owner_id, runtime_version], map: "idx_workflow_plugin_versions_runtime_owner")
+}
+
+model workflow_plugin_admissions {
+  id                       String                   @id
+  plugin_version_id        String                   @unique(map: "uq_workflow_plugin_admissions_version")
+  status                   String
+  granted_permissions_json String
+  decision_revision        Int                      @default(1)
+  decided_by_actor         String
+  reason                   String?
+  admitted_at              String
+  revoked_at               String?
+  created_at               String
+  updated_at               String
+  plugin_version           workflow_plugin_versions @relation(fields: [plugin_version_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([status, updated_at(sort: Desc)], map: "idx_workflow_plugin_admissions_status_updated")
 }
 
 model task_token_mappings {
@@ -939,11 +1028,45 @@ model team_credit_ledger {
   actor_user_id String?
   note          String?
   created_at    String
+  api_key_id    String?
   users         users?  @relation(fields: [actor_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   teams         teams   @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([team_id, entry_type, task_id])
   @@index([team_id, created_at], map: "idx_team_credit_ledger_team_created_at")
+  @@index([api_key_id, created_at], map: "idx_team_credit_ledger_api_key_created")
+}
+
+model team_credit_batches {
+  id               String  @id
+  team_id          String
+  source_type      String
+  source_key       String
+  original_amount  Int
+  remaining_amount Int
+  reserved_amount  Int     @default(0)
+  expires_at       String?
+  granted_at       String
+  created_at       String
+  updated_at       String
+
+  @@unique([team_id, source_type, source_key])
+  @@index([team_id, expires_at, granted_at], map: "idx_team_credit_batches_spend_order")
+}
+
+model team_credit_allocations {
+  id              String @id
+  team_id         String
+  ledger_entry_id String
+  batch_id        String
+  priority        Int
+  amount          Int
+  expired_amount  Int    @default(0)
+  created_at      String
+
+  @@unique([ledger_entry_id, batch_id])
+  @@index([team_id, ledger_entry_id, priority], map: "idx_team_credit_allocations_ledger_priority")
+  @@index([batch_id], map: "idx_team_credit_allocations_batch")
 }
 
 model team_invites {
@@ -969,7 +1092,7 @@ model team_invites {
 
 model team_memberships {
   team_id    String
-  user_id    String @unique(map: "idx_team_memberships_user_id")
+  user_id    String
   role       String @default("member")
   created_at String
   updated_at String
@@ -981,15 +1104,72 @@ model team_memberships {
 }
 
 model teams {
-  id                 String               @id
-  name               String
-  credits            Int                  @default(0)
-  credits_frozen     Int                  @default(0)
-  created_at         String
-  updated_at         String
-  team_credit_ledger team_credit_ledger[]
-  team_invites       team_invites[]
-  team_memberships   team_memberships[]
+  id                       String                     @id
+  name                     String
+  credits                  Int                        @default(0)
+  credits_frozen           Int                        @default(0)
+  max_members              Int                        @default(1)
+  created_at               String
+  updated_at               String
+  team_credit_ledger       team_credit_ledger[]
+  membership_credit_grants membership_credit_grants[]
+  team_invites             team_invites[]
+  team_memberships         team_memberships[]
+  team_project_shares      team_project_shares[]
+  team_plan_subscriptions  team_plan_subscriptions[]
+}
+
+model team_subscription_plans {
+  id                         String                    @id
+  name                       String
+  tier                       String
+  max_seats                  Int                       @default(20)
+  min_seats                  Int                       @default(1)
+  features_json              String?
+  sort_weight                Int                       @default(0)
+  enabled                    Int                       @default(1)
+  created_at                 String
+  updated_at                 String
+  team_plan_subscriptions    team_plan_subscriptions[]
+
+  @@index([enabled, sort_weight], map: "idx_team_subscription_plans_enabled_sort")
+}
+
+model team_plan_subscriptions {
+  id                      String                  @id
+  team_id                 String
+  plan_id                 String
+  billing_cycle           String                  @default("monthly")
+  seat_count              Int                     @default(1)
+  status                  String                  @default("active")
+  current_period_start    String
+  current_period_end      String
+  next_credit_renewal_at  String
+  last_renewed_at         String?
+  credits_per_renewal     Int                     @default(0)
+  cancelled_at            String?
+  created_at              String
+  updated_at              String
+  teams                   teams                   @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  team_subscription_plans team_subscription_plans @relation(fields: [plan_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([team_id, status], map: "idx_team_plan_subscriptions_team_status")
+  @@index([status, next_credit_renewal_at], map: "idx_team_plan_subscriptions_renewal")
+}
+
+model team_project_shares {
+  project_id        String
+  team_id           String
+  access            String   @default("edit")
+  shared_by_user_id String
+  created_at        String
+  updated_at        String
+  projects          projects @relation(fields: [project_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teams             teams    @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users             users    @relation(fields: [shared_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([project_id, team_id])
+  @@index([team_id, updated_at], map: "idx_team_project_shares_team")
 }
 
 model user_activity_days {
@@ -1018,9 +1198,23 @@ model users {
   deleted_at                                        String?
   last_seen_at                                      String?
   guest                                             Int                          @default(0)
+  email_marketing_opt_out                           Int                          @default(0)
+  // 用户全局生成偏好（生图模型/视频模型/规格）JSON 文本；null=全走系统默认。
+  generation_prefs                                  String?
+  invite_code                                       String?                      @unique(map: "idx_users_invite_code")
+  // 公众号扫码登录身份。与 Tanva 共用同一个公众号但账号体系各自独立（同一微信在两边是两个账号）。
+  wechat_official_open_id                           String?                      @unique(map: "idx_users_wechat_official_open_id")
+  wechat_official_union_id                          String?
+  referrer_user_id                                  String?
+  referrer_bound_at                                 String?
   created_at                                        String
   updated_at                                        String
   agent_pipeline_runs                               agent_pipeline_runs[]
+  agent_capability_attachments                      agent_capability_attachments[]
+  agent_capability_preferences                      agent_capability_preferences[]
+  agent_builtin_capability_settings                 agent_builtin_capability_settings[]
+  agent_capability_invocations                      agent_capability_invocations[]
+  auth_sessions                                     auth_sessions[]
   api_keys                                          api_keys[]
   assets                                            assets[]
   chapters                                          chapters[]
@@ -1033,13 +1227,10 @@ model users {
   flows                                             flows[]
   llm_node_presets                                  llm_node_presets[]
   merchants                                         merchants?
+  membership_credit_grants                          membership_credit_grants[]
   model_profiles                                    model_profiles[]
   model_providers                                   model_providers[]
   model_tokens                                      model_tokens[]
-  order_entitlements                                order_entitlements[]
-  order_status_events                               order_status_events[]
-  orders                                            orders[]
-  payments                                          payments[]
   points_accounts                                   points_accounts?
   points_ledger                                     points_ledger[]
   product_entitlements                              product_entitlements[]
@@ -1048,23 +1239,93 @@ model users {
   products                                          products[]
   projects                                          projects[]
   prompt_samples                                    prompt_samples[]
+  prompt_library_likes                              prompt_library_likes[]
+  prompt_library_comments                           prompt_library_comments[]
   proxy_providers                                   proxy_providers[]
   sora_saved_characters                             sora_saved_characters[]
+  skill_favorites                                   skill_favorites[]
   subscription_daily_quotas                         subscription_daily_quotas[]
   subscription_quota_events                         subscription_quota_events[]
   subscriptions                                     subscriptions[]
+  asset_uris                                        asset_uris[]
   task_results                                      task_results[]
   task_statuses                                     task_statuses[]
   task_token_mappings                               task_token_mappings[]
   team_credit_ledger                                team_credit_ledger[]
   team_invites_team_invites_accepted_user_idTousers team_invites[]               @relation("team_invites_accepted_user_idTousers")
   team_invites_team_invites_inviter_user_idTousers  team_invites[]               @relation("team_invites_inviter_user_idTousers")
-  team_memberships                                  team_memberships?
+  team_project_shares                               team_project_shares[]
+  team_memberships                                  team_memberships[]
   user_activity_days                                user_activity_days[]
+  user_notifications                                user_notifications[]
+  user_skill_assets                                 user_skill_assets[]
   vendor_api_call_logs                              vendor_api_call_logs[]
   vendor_task_refs                                  vendor_task_refs[]
   video_generation_histories                        video_generation_histories[]
   workflow_executions                               workflow_executions[]
+
+  @@index([referrer_user_id], map: "idx_users_referrer_user_id")
+}
+
+model auth_sessions {
+  id             String  @id
+  user_id        String
+  device_label   String
+  user_agent     String?
+  network_hash   String?
+  created_at     String
+  last_seen_at   String
+  expires_at     String
+  revoked_at     String?
+  revoked_reason String?
+  users          users   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, last_seen_at(sort: Desc)], map: "idx_auth_sessions_user_last_seen")
+  @@index([user_id, revoked_at, expires_at], map: "idx_auth_sessions_user_active")
+  @@index([expires_at], map: "idx_auth_sessions_expires")
+}
+
+model user_notifications {
+  id            String  @id
+  user_id       String
+  type          String
+  title         String
+  body          String
+  action_url    String?
+  metadata_json String?
+  read_at       String?
+  created_at    String
+  users         users   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, created_at(sort: Desc)], map: "idx_user_notifications_user_created")
+  @@index([user_id, read_at, created_at(sort: Desc)], map: "idx_user_notifications_user_read_created")
+}
+
+model referral_config {
+  id                             Int     @id @default(1)
+  enabled                        Int     @default(0)
+  title                          String  @default("邀请好友，注册赠送")
+  body                           String  @default("好友完成注册后获得欢迎额度")
+  cta_text                       String  @default("复制我的邀请链接")
+  image_url                      String?
+  anti_self_check                Int     @default(1)
+  anti_self_window_days          Int     @default(30)
+  invitee_welcome_credits        Int     @default(1000)
+  updated_at                     String
+}
+
+model referral_grant_log {
+  id                     String @id
+  source_topup_ledger_id String
+  referrer_user_id       String
+  invitee_user_id        String
+  kind                   String
+  granted_credits        Int
+  ledger_entry_id        String
+  created_at             String
+
+  @@unique([source_topup_ledger_id, referrer_user_id, kind])
+  @@index([referrer_user_id, created_at], map: "idx_referral_grant_log_referrer")
 }
 
 model vendor_api_call_logs {
@@ -1138,6 +1399,194 @@ model video_generation_histories {
   @@index([user_id], map: "idx_video_history_user")
 }
 
+// 视频整片后台自主驱动：持久化一次整章 run 的状态，供后台 worker 续跑到 concatenated。
+model video_runs {
+  id                  String  @id
+  owner_id            String
+  flow_id             String?
+  project_id          String?
+  chapter_id          String?
+  recipe_id           String?
+  state               String  @default("scheduled")
+  story_plan          String?
+  // run 级全片圣经（directorTone/visualBible/hardRules·JSON 文本）：随首批 add_clips 落库，api 重启不丢（2026-07-04 小说→分镜改造）。
+  film_bible          String?
+  // 改编策略（reversals/cuts/hook·JSON 文本）：与 film_bible 同机制随首批提交持久化，供 critic 第21维「改编胆量」审读。
+  adaptation_strategy String?
+  // 【编排域状态机 P1·2026-07-11】BeatSheet 原子产物（JSON 文本·commit_beats 写入即校验后落库）。
+  // 有值=该 run 走统一 delivery graph；null 只允许没有 BeatSheet 的独立 direct-video run。
+  beat_sheet          String?
+  // authoring 创作态（adapting/beats_committed/writing_dispatched/assembled/reviewing/script_approved/
+  // deriving_assets/assets_ready/estimate_ready/authoring_failed）。与生产态 state 正交：state 仍从
+  // collecting→scheduled→…走原状态机，authoring_state 只管 start 之前的创作半场。
+  authoring_state     String?
+  total_clips         Int     @default(0)
+  clips_done          Int     @default(0)
+  error_message       String?
+  last_drive_at       String?
+  created_at          String
+  updated_at          String
+  completed_at        String?
+
+  @@index([state, updated_at], map: "idx_video_runs_state_updated")
+  @@index([flow_id, state], map: "idx_video_runs_flow_state")
+  @@index([authoring_state, updated_at], map: "idx_video_runs_authoring_state")
+}
+
+// 【编排域状态机·8.1 build-system 底座·2026-07-11】创作半场原子产物登记：内容 hash + 依赖边。
+// artifact_key 形如 "beat_sheet" / "batch:0" / "clip:4" / "review:1" / "asset:character:孟川"。
+// 修改某产物=失效其下游闭包（derived_from 反向遍历），只重算被污染子图——「改镜4台词」只重做镜4。
+model authoring_artifacts {
+  id           String  @id
+  run_id       String
+  artifact_key String
+  content_hash String
+  // JSON 数组：上游 artifact_key 列表（依赖边）。
+  derived_from String  @default("[]")
+  // pending|running|waiting_external|ready|failed|stale
+  status       String  @default("pending")
+  // 小型产物内容/指针（JSON 文本·大产物只存引用如 story_plan 内 clipIndex）。
+  payload      String?
+  error        String?
+  created_at   String
+  updated_at   String
+
+  @@unique([run_id, artifact_key], map: "uq_authoring_artifacts_run_key")
+  @@index([run_id, status], map: "idx_authoring_artifacts_run_status")
+}
+
+// 外部副作用账本。每个 revision 永久保留；provider 已受理或资产已物化后只允许向前推进，
+// 不得由重试、替换或后处理覆盖。production_workflow_events 保存每次状态变化的追加式事实。
+model production_effects {
+  id               String  @id
+  run_id           String
+  workflow_node_id String
+  effect_key       String
+  revision         Int     @default(1)
+  operation        String
+  input_hash       String
+  status           String  @default("reserved")
+  provider         String?
+  provider_task_id String?
+  provider_receipt String?
+  asset_url        String?
+  error_code       String?
+  error_message    String?
+  created_at       String
+  updated_at       String
+  accepted_at      String?
+  materialized_at  String?
+  finished_at      String?
+
+  @@unique([run_id, effect_key, revision], map: "uq_production_effects_run_key_revision")
+  @@index([run_id, workflow_node_id, status], map: "idx_production_effects_run_node_status")
+  @@index([provider, provider_task_id], map: "idx_production_effects_provider_task")
+}
+
+model production_workflow_events {
+  id               String  @id
+  run_id           String
+  seq              Int
+  workflow_node_id String
+  event_kind       String
+  payload_ref      String?
+  artifact_ids     String  @default("[]")
+  effect_ids       String  @default("[]")
+  created_at       String
+
+  @@unique([run_id, seq], map: "uq_production_workflow_events_run_seq")
+  @@index([run_id, workflow_node_id, seq], map: "idx_production_workflow_events_run_node_seq")
+}
+
+// Durable public-chat execution root. user_id is a logical tenant partition
+// and may be a host-composite identity, so it intentionally has no users FK.
+model execution_traces {
+  id                String                   @id
+  user_id           String
+  scope_type        String
+  scope_id          String
+  task_id           String?
+  request_kind      String
+  input_summary     String
+  decision_log_json String?
+  tool_calls_json   String?
+  meta_json         String?
+  result_summary    String?
+  error_code        String?
+  error_detail      String?
+  created_at        String
+  status            String                   @default("succeeded")
+  session_key       String?
+  workflow_key      String?
+  started_at        String
+  updated_at        String
+  finished_at       String?
+  next_event_seq    BigInt                   @default(0)
+  logical_task_id   String?
+  root_trace_id     String?
+  parent_trace_id   String?
+  physical_run_id   String?
+  workflow_run_id   String?
+  events            execution_trace_events[]
+
+  @@index([user_id, scope_type, scope_id, created_at(sort: Desc)], map: "idx_execution_traces_user_scope")
+  @@index([user_id, root_trace_id, started_at], map: "idx_execution_traces_root_started")
+  @@index([user_id, logical_task_id, started_at], map: "idx_execution_traces_logical_task")
+  @@index([user_id, status, updated_at], map: "idx_execution_traces_user_status_updated")
+  @@index([user_id, parent_trace_id], map: "idx_execution_traces_parent")
+}
+
+model execution_trace_events {
+  id                 String           @id
+  trace_id           String
+  user_id            String
+  seq                BigInt
+  producer_event_id  String
+  event_type         String
+  event_class        String
+  event_key          String
+  phase              String?
+  status             String?
+  logical_task_id    String?
+  root_trace_id      String?
+  parent_trace_id    String?
+  physical_run_id    String?
+  workflow_run_id    String?
+  workflow_node_id   String?
+  agent_id           String?
+  parent_agent_id    String?
+  tool_call_id       String?
+  effect_id          String?
+  provider_task_id   String?
+  span_id            String?
+  parent_span_id     String?
+  attempt            Int?
+  payload_json       String
+  payload_size_bytes Int
+  payload_truncated  Boolean          @default(false)
+  created_at         String
+  trace              execution_traces @relation(fields: [trace_id], references: [id], onDelete: Cascade)
+
+  @@unique([trace_id, seq], map: "uq_execution_trace_events_trace_seq")
+  @@unique([trace_id, producer_event_id], map: "uq_execution_trace_events_trace_producer")
+  @@index([trace_id, seq], map: "idx_execution_trace_events_trace_seq")
+  @@index([user_id, created_at(sort: Desc)], map: "idx_execution_trace_events_user_created")
+  @@index([workflow_run_id, workflow_node_id, seq], map: "idx_execution_trace_events_workflow_node")
+  @@index([tool_call_id, seq], map: "idx_execution_trace_events_tool_call")
+}
+
+// PostgreSQL is the only run-drive lease authority. BullMQ may redeliver a wake,
+// but a lease key can have only one unexpired holder across every API/worker process.
+model production_run_leases {
+  lease_key   String   @id
+  token       String
+  acquired_at DateTime @db.Timestamptz(3)
+  expires_at  DateTime @db.Timestamptz(3)
+  updated_at  DateTime @db.Timestamptz(3)
+
+  @@index([expires_at], map: "idx_production_run_leases_expires_at")
+}
+
 model workflow_execution_events {
   id                  String              @id
   execution_id        String
@@ -1164,6 +1613,17 @@ model workflow_executions {
   concurrency               Int                         @default(1)
   trigger                   String?
   error_message             String?
+  error_code                String?
+  failure_stage             String?
+  project_id                String?
+  canvas_id                 String?
+  user_input                String?
+  project_context           String?
+  asset_snapshot            String?
+  retry_count               Int                         @default(0)
+  recovery_of_execution_id  String?
+  execution_family_id       String
+  uses_project_assets       Boolean                     @default(false)
   created_at                String
   started_at                String?
   finished_at               String?
@@ -1172,12 +1632,17 @@ model workflow_executions {
   flow_versions             flow_versions               @relation(fields: [flow_version_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                     users                       @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   workflow_node_runs        workflow_node_runs[]
+  workflow_node_attempts    workflow_node_attempts[]
+  agent_capability_invocations agent_capability_invocations?
 
   @@index([created_at], map: "idx_workflow_executions_created_at")
   @@index([flow_id], map: "idx_workflow_executions_flow_id")
   @@index([flow_version_id], map: "idx_workflow_executions_flow_version_id")
   @@index([owner_id], map: "idx_workflow_executions_owner_id")
   @@index([status], map: "idx_workflow_executions_status")
+  @@index([project_id], map: "idx_workflow_executions_project_id")
+  @@index([recovery_of_execution_id], map: "idx_workflow_executions_recovery_of")
+  @@index([execution_family_id, created_at, id], map: "idx_workflow_executions_family_created")
 }
 
 model workflow_node_runs {
@@ -1187,13 +1652,338 @@ model workflow_node_runs {
   status              String
   attempt             Int                 @default(1)
   error_message       String?
+  error_code          String?
+  failure_stage       String?
+  input_refs          String?
   output_refs         String?
+  tool_calls          String?
+  retry_count         Int                 @default(0)
+  node_type           String?
+  tool_name           String?
+  model_key           String?
   created_at          String
   started_at          String?
   finished_at         String?
   workflow_executions workflow_executions @relation(fields: [execution_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workflow_node_attempts workflow_node_attempts[]
 
   @@unique([execution_id, node_id], map: "idx_workflow_node_runs_execution_node")
   @@index([execution_id], map: "idx_workflow_node_runs_execution_id")
   @@index([status], map: "idx_workflow_node_runs_status")
+}
+
+model workflow_node_attempts {
+  id                    String              @id
+  execution_family_id   String
+  execution_id          String
+  node_run_id           String
+  node_id               String
+  attempt               Int
+  trigger               String
+  status                String
+  semantics_snapshot    String
+  input_refs            String?
+  output_refs           String?
+  tool_calls            String?
+  provider_receipts     String?
+  token_usage           String?
+  credit_usage          String?
+  error_message         String?
+  error_code            String?
+  failure_stage         String?
+  node_type             String?
+  tool_name             String?
+  model_key             String?
+  created_at            String
+  started_at            String?
+  finished_at           String?
+  workflow_executions   workflow_executions @relation(fields: [execution_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workflow_node_runs    workflow_node_runs   @relation(fields: [node_run_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([node_run_id, attempt], map: "uq_workflow_node_attempts_run_attempt")
+  @@index([execution_family_id, created_at, id], map: "idx_workflow_node_attempts_family_created")
+  @@index([execution_id, node_id, attempt], map: "idx_workflow_node_attempts_execution_node")
+}
+
+model agent_sessions {
+  id               String                   @id @default(cuid())
+  user_id          String
+  session_key      String                   @unique
+  last_response_id String?
+  last_sync_index  Int                      @default(0)
+  meta             Json?
+  history_snapshot Json?
+  updated_at       DateTime                 @updatedAt
+  messages         agent_session_messages[]
+
+  @@index([user_id])
+  @@index([session_key])
+}
+
+model agent_session_messages {
+  session_id String
+  seq        Int
+  message    Json
+
+  session agent_sessions @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@id([session_id, seq])
+  @@index([session_id])
+}
+
+model user_lark_apps {
+  id         String   @id @default(cuid())
+  user_id    String   @unique
+  app_id     String
+  app_secret String
+  brand      String   @default("feishu")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([user_id])
+}
+
+model asset_uris {
+  id         String  @id
+  type       String
+  cdn_url    String
+  task_id    String?
+  node_id    String?
+  user_id    String
+  created_at String
+  users      users   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_asset_uris_user")
+  @@index([task_id], map: "idx_asset_uris_task")
+}
+
+// ===== Community (P1): channels / tags / likes / favorites / comments / follows / profiles =====
+
+model content_channels {
+  id          String  @id
+  slug        String  @unique(map: "idx_content_channels_slug")
+  name        String
+  description String?
+  icon        String?
+  sort_order  Int     @default(0)
+  enabled     Int     @default(1)
+  created_at  String
+  updated_at  String
+
+  @@index([enabled, sort_order], map: "idx_content_channels_enabled_sort")
+}
+
+model tags {
+  id          String @id
+  name        String @unique(map: "idx_tags_name")
+  slug        String @unique(map: "idx_tags_slug")
+  usage_count Int    @default(0)
+  created_at  String
+}
+
+model project_tags {
+  project_id String
+  tag_id     String
+
+  @@id([project_id, tag_id])
+  @@index([tag_id], map: "idx_project_tags_tag")
+}
+
+model project_likes {
+  id         String @id
+  project_id String
+  user_id    String
+  created_at String
+
+  @@unique([project_id, user_id], map: "idx_project_likes_unique")
+  @@index([user_id], map: "idx_project_likes_user")
+}
+
+model project_favorites {
+  id         String @id
+  project_id String
+  user_id    String
+  created_at String
+
+  @@unique([project_id, user_id], map: "idx_project_favorites_unique")
+  @@index([user_id], map: "idx_project_favorites_user")
+}
+
+model project_comments {
+  id         String  @id
+  project_id String
+  user_id    String
+  parent_id  String?
+  body       String
+  like_count Int     @default(0)
+  created_at String
+  updated_at String
+  deleted_at String?
+
+  @@index([project_id, created_at], map: "idx_project_comments_project")
+  @@index([parent_id], map: "idx_project_comments_parent")
+}
+
+model user_follows {
+  id           String @id
+  follower_id  String
+  following_id String
+  created_at   String
+
+  @@unique([follower_id, following_id], map: "idx_user_follows_unique")
+  @@index([following_id], map: "idx_user_follows_following")
+}
+
+model user_profiles {
+  user_id         String  @id
+  bio             String?
+  banner_url      String?
+  links_json      String?
+  follower_count  Int     @default(0)
+  following_count Int     @default(0)
+  created_at      String
+  updated_at      String
+}
+
+// ===== Public prompt library / provenance-preserving web collection =====
+
+model prompt_library_entries {
+  id                   String @id
+  canonical_hash       String @unique(map: "idx_prompt_library_entries_hash")
+  title                String
+  description          String?
+  prompt_text          String
+  prompt_text_original String?
+  media_type           String
+  author_label         String @default("搜集自网络")
+  published_at         String?
+  latest_source_at     String
+  created_at           String
+  updated_at           String
+  community_like_count Int      @default(0)
+  community_comment_count Int   @default(0)
+  prompt_library_likes prompt_library_likes[]
+  prompt_library_comments prompt_library_comments[]
+
+  @@index([media_type, latest_source_at], map: "idx_prompt_library_entries_media_latest")
+  @@index([updated_at], map: "idx_prompt_library_entries_updated")
+}
+
+model prompt_library_likes {
+  id         String @id
+  entry_id   String
+  user_id    String
+  created_at String
+  prompt_library_entries prompt_library_entries @relation(fields: [entry_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  users users @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([entry_id, user_id], map: "idx_prompt_library_likes_entry_user")
+  @@index([entry_id], map: "idx_prompt_library_likes_entry")
+  @@index([user_id], map: "idx_prompt_library_likes_user")
+}
+
+model prompt_library_comments {
+  id         String @id
+  entry_id   String
+  user_id    String
+  content    String
+  created_at String
+  updated_at String
+  prompt_library_entries prompt_library_entries @relation(fields: [entry_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  users users @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([entry_id, created_at], map: "idx_prompt_library_comments_entry_created")
+  @@index([user_id], map: "idx_prompt_library_comments_user")
+}
+
+model prompt_library_sources {
+  id                  String @id
+  entry_id            String
+  source_site         String
+  source_prompt_id    String
+  source_url          String @unique(map: "idx_prompt_library_sources_url")
+  source_author       String?
+  source_author_url   String?
+  original_language   String?
+  model_slug          String
+  model_name          String
+  original_source_url String?
+  categories_json     String?
+  like_count          Int    @default(0)
+  view_count          Int    @default(0)
+  share_count         Int    @default(0)
+  comment_count       Int    @default(0)
+  bookmark_count      Int    @default(0)
+  quote_count         Int    @default(0)
+  fetched_at          String
+  content_hash        String
+  created_at          String
+  updated_at          String
+
+  @@index([entry_id], map: "idx_prompt_library_sources_entry")
+  @@index([model_slug, fetched_at], map: "idx_prompt_library_sources_model_fetched")
+}
+
+model prompt_library_models {
+  id         String @id
+  entry_id   String
+  model_slug String
+  model_name String
+  created_at String
+
+  @@unique([entry_id, model_slug], map: "idx_prompt_library_models_entry_slug")
+  @@index([model_slug], map: "idx_prompt_library_models_slug")
+}
+
+model prompt_library_media {
+  id            String @id
+  entry_id      String
+  source_id     String?
+  media_kind    String
+  media_url     String
+  thumbnail_url String?
+  width         Int?
+  height        Int?
+  sort_order    Int    @default(0)
+  created_at    String
+
+  @@unique([entry_id, media_url], map: "idx_prompt_library_media_entry_url")
+  @@index([entry_id, sort_order], map: "idx_prompt_library_media_entry_order")
+}
+
+model prompt_library_crawl_runs {
+  id                 String  @id
+  target_site        String
+  status             String
+  actor_user_id      String?
+  discovered_count   Int     @default(0)
+  processed_count    Int     @default(0)
+  imported_count     Int     @default(0)
+  deduplicated_count Int     @default(0)
+  skipped_count      Int     @default(0)
+  failed_count       Int     @default(0)
+  current_url        String?
+  error_message      String?
+  started_at         String?
+  finished_at        String?
+  created_at         String
+  updated_at         String
+
+  @@index([status, created_at], map: "idx_prompt_library_crawl_runs_status_created")
+}
+
+model prompt_library_crawl_targets {
+  id               String  @id
+  run_id           String
+  source_url       String
+  source_prompt_id String
+  status           String
+  attempts         Int     @default(0)
+  entry_id         String?
+  error_message    String?
+  created_at       String
+  updated_at       String
+
+  @@unique([run_id, source_url], map: "idx_prompt_library_crawl_targets_run_url")
+  @@index([run_id, status, created_at], map: "idx_prompt_library_crawl_targets_run_status")
 }

@@ -2,6 +2,8 @@ package constant
 
 type ContextKey string
 
+const ContextKeyForceOfficialGeminiChannel ContextKey = "force_official_gemini_channel"
+
 const (
 	ContextKeyTokenCountMeta  ContextKey = "token_count_meta"
 	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
@@ -38,6 +40,8 @@ const (
 	ContextKeyChannelIsMultiKey        ContextKey = "channel_is_multi_key"
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
+	ContextKeyChannelProtocol          ContextKey = "channel_protocol"
+	ContextKeyChannelProtocolBinding   ContextKey = "channel_protocol_binding"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
@@ -67,4 +71,10 @@ const (
 	// ContextKeyLanguage stores the user's language preference for i18n
 	ContextKeyLanguage ContextKey = "language"
 	ContextKeyIsStream ContextKey = "is_stream"
+
+	// ContextKeyRetryTriedKeys stores the per-request set of (channelId -> keyIndex -> tried)
+	// account/key combinations already attempted during retry. It lets multi-key channels
+	// rotate to a sibling account (key) within the same request instead of failing outright
+	// when one account is disabled mid-flight. Value type: map[int]map[int]bool.
+	ContextKeyRetryTriedKeys ContextKey = "retry_tried_keys"
 )

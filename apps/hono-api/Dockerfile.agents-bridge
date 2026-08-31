@@ -1,0 +1,32 @@
+# syntax=docker.m.daocloud.io/docker/dockerfile:1.7
+
+ARG DOCKERHUB_REGISTRY=docker.io
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+FROM ${DOCKERHUB_REGISTRY}/node:22.19.0-bookworm-slim
+
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="${PNPM_HOME}:${PATH}"
+ENV COREPACK_NPM_REGISTRY="${NPM_REGISTRY}"
+ENV npm_config_registry="${NPM_REGISTRY}"
+ENV PNPM_CONFIG_REGISTRY="${NPM_REGISTRY}"
+ENV npm_config_proxy=""
+ENV npm_config_https_proxy=""
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV NO_PROXY=""
+
+WORKDIR /runtime/workspace
+
+# agents-bridge 运行 DeepSeek Harness，并为内置 Office Skills 提供轻量 Python OOXML
+# 工具链。画布媒体处理、ffmpeg、OpenCV、Chromium/HyperFrames 与 yt-dlp 仍属于
+# hono-api/media-worker 能力，不进入本镜像。
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+  npm config set registry "${NPM_REGISTRY}" \
+  && npm install -g pnpm@10.8.1 \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends python3 python-is-python3 python3-openpyxl unzip file \
+  && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 8799

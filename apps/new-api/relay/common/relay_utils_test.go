@@ -7,9 +7,34 @@ import (
 	"testing"
 
 	neoSparkMartcommon "github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetFullRequestURLUsesProtocolForCloudflareGatewayPath(t *testing.T) {
+	const baseURL = "https://gateway.ai.cloudflare.com/v1/account/gateway/provider"
+
+	require.Equal(
+		t,
+		baseURL+"/chat/completions",
+		GetFullRequestURL(baseURL, "/v1/chat/completions", constant.ProtocolOpenAI),
+	)
+	require.Equal(
+		t,
+		baseURL+"/deployment-a/chat/completions",
+		GetFullRequestURL(
+			baseURL,
+			"/openai/deployments/deployment-a/chat/completions",
+			constant.ProtocolAzureOpenAI,
+		),
+	)
+	require.Equal(
+		t,
+		baseURL+"/v1/chat/completions",
+		GetFullRequestURL(baseURL, "/v1/chat/completions", constant.ProtocolAnthropic),
+	)
+}
 
 func TestTaskSubmitReqUnmarshalAndNormalizeTopLevelVideoFields(t *testing.T) {
 	t.Parallel()
@@ -98,4 +123,48 @@ func TestValidateMultipartTaskRequestCapturesInputReferenceFile(t *testing.T) {
 	require.Contains(t, parsed.InputReference, "data:")
 	require.Len(t, parsed.Images, 1)
 	require.Equal(t, parsed.InputReference, parsed.Images[0])
+}
+
+// 任务日志「入参」必须反映客户端发起请求前的原始请求体。adaptor 在审核阶段会用
+// SetTaskRequest 把 http 参考图覆盖成 asset://（seedance-2.0 ARK 预上传），该改写后的
+// 版本不能污染日志展示——storeTaskRequest 首次写入时另存一份不可变原始快照。
+func TestTaskRequestOriginalSnapshotSurvivesAdaptorMutation(t *testing.T) {
+	t.Parallel()
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	original := TaskSubmitReq{
+		Prompt: "动起来",
+		Model:  "doubao-seedance-2.0",
+		Images: []string{"https://cdn.example.com/ref-a.png"},
+	}
+	storeTaskRequest(c, &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}, "generate", original)
+
+	// adaptor 审核后覆盖 task_request 为 asset:// 版本
+	mutated := original
+	mutated.Images = []string{"asset://abc123"}
+	SetTaskRequest(c, mutated)
+
+	// task_request 反映改写后的值（供 BuildRequestBody 使用）
+	got, err := GetTaskRequest(c)
+	require.NoError(t, err)
+	require.Equal(t, []string{"asset://abc123"}, got.Images)
+
+	// 原始快照仍是 http URL（供日志「入参」展示）
+	orig, err := GetTaskRequestOriginal(c)
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://cdn.example.com/ref-a.png"}, orig.Images)
+}
+
+// 没有原始快照时（理论上不该发生），GetTaskRequestOriginal 回退到 GetTaskRequest，
+// 保证调用方拿到的不是空结构。
+func TestGetTaskRequestOriginalFallsBackToCurrent(t *testing.T) {
+	t.Parallel()
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	SetTaskRequest(c, TaskSubmitReq{Prompt: "fallback", Images: []string{"asset://x"}})
+
+	orig, err := GetTaskRequestOriginal(c)
+	require.NoError(t, err)
+	require.Equal(t, "fallback", orig.Prompt)
 }

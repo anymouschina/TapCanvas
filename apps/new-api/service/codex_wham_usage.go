@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 )
 
 func FetchCodexWhamUsage(
@@ -35,12 +37,7 @@ func FetchCodexWhamUsage(
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+at)
-	req.Header.Set("chatgpt-account-id", aid)
-	req.Header.Set("Accept", "application/json")
-	if req.Header.Get("originator") == "" {
-		req.Header.Set("originator", "codex_cli_rs")
-	}
+	codexauth.ApplyCLIProxyRequestHeaders(&req.Header, at, aid, false)
 
 	resp, err := client.Do(req)
 	if err != nil {

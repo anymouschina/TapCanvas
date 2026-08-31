@@ -37,3 +37,14 @@ func PollPath(taskID string) string { return pollPathPrefix + taskID }
 // AllAsyncModels returns every model id known to the APIMart channel.
 // Reads from the model DB cache — no hardcoded whitelist.
 func AllAsyncModels() []string { return nil }
+
+// upstreamModelCasing maps a canonical (lowercase) model key to the exact
+// case-sensitive `model` string APIMart's /v1/{images,videos}/generations
+// endpoint requires. Most APIMart models are case-insensitive and need no
+// entry here; only add a model when the upstream rejects the lowercase form.
+//
+// Source: the per-model /api-reference pages (e.g. Omni-Flash-Ext shows
+// "model": "Omni-Flash-Ext" in its generation example).
+var upstreamModelCasing = map[string]string{
+	"omni-flash-ext": "Omni-Flash-Ext",
+}

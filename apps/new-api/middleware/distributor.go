@@ -48,8 +48,46 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		// Existing-task reads and origin-bound actions resolve their task, model,
+		// and channel from persisted task state in the downstream controller. They
+		// intentionally carry no request model and must not enter model gating,
+		// channel selection, or selected-channel protocol initialization.
+		if !shouldSelectChannel {
+			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+			c.Next()
+			return
+		}
 		requestedModel, routingModel := normalizeRequestedModelName(modelRequest.Model)
-		if ok {
+		// 模型管理里被禁用的模型：一律拦截，优先级高于渠道（即使令牌指定了渠道也拦）。
+		modelDisabled, err := model.IsModelDisabled(routingModel)
+		if err != nil {
+			abortWithOpenAiMessage(c, http.StatusInternalServerError, "读取模型启停状态失败: "+err.Error())
+			return
+		}
+		if routingModel != "" && modelDisabled {
+			displayModel := requestedModel
+			if displayModel == "" {
+				displayModel = routingModel
+			}
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorModelDisabled, map[string]any{"Model": displayModel}))
+			return
+		}
+		if shouldForceOfficialGeminiRoute(requestedModel) {
+			if !tokenAllowsRequestedModel(c, requestedModel, routingModel) {
+				return
+			}
+			channel, err = selectForcedOfficialGeminiChannel(requestedModel)
+			if err != nil {
+				abortWithOpenAiMessage(
+					c,
+					http.StatusServiceUnavailable,
+					"Gemini 官方渠道强制路由失败: "+err.Error(),
+					types.ErrorCodeGetChannelFailed,
+				)
+				return
+			}
+			markForcedOfficialGeminiRoute(c, channel)
+		} else if ok {
 			id, err := strconv.Atoi(channelId.(string))
 			if err != nil {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
@@ -67,35 +105,8 @@ func Distribute() func(c *gin.Context) {
 		} else {
 			// Select a channel for the user
 			// check token model mapping
-			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
-				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-				if !ok {
-					// token model limit is empty, all models are not allowed
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
-					return
-				}
-				var tokenModelLimit map[string]bool
-				tokenModelLimit, ok = s.(map[string]bool)
-				if !ok {
-					tokenModelLimit = map[string]bool{}
-				}
-				allowed := false
-				for _, candidate := range model.RoutingModelCandidates(routingModel) {
-					matchName := ratio_setting.FormatMatchingModelName(candidate) // match gpts & thinking-*
-					if _, ok := tokenModelLimit[matchName]; ok {
-						allowed = true
-						break
-					}
-				}
-				if !allowed {
-					displayModel := requestedModel
-					if displayModel == "" {
-						displayModel = routingModel
-					}
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": displayModel}))
-					return
-				}
+			if !tokenAllowsRequestedModel(c, requestedModel, routingModel) {
+				return
 			}
 
 			if shouldSelectChannel {
@@ -127,10 +138,7 @@ func Distribute() func(c *gin.Context) {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil {
 						if preferred.Status != common.ChannelStatusEnabled {
-							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
-								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
-								return
-							}
+							service.InvalidateCurrentChannelAffinity(c)
 						} else if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetUserAutoGroup(userGroup)
@@ -192,12 +200,54 @@ func Distribute() func(c *gin.Context) {
 		if originalModel == "" {
 			originalModel = routingModel
 		}
-		SetupContextForSelectedChannel(c, channel, originalModel)
+		if setupErr := SetupContextForSelectedChannel(c, channel, originalModel); setupErr != nil {
+			displayModel := requestedModel
+			if displayModel == "" {
+				displayModel = routingModel
+			}
+			abortWithOpenAiMessage(
+				c,
+				http.StatusServiceUnavailable,
+				fmt.Sprintf("模型 %s 的渠道协议配置无效: %s", displayModel, setupErr.Error()),
+				setupErr.GetErrorCode(),
+			)
+			return
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+// tokenAllowsRequestedModel preserves token-scoped model permissions before a
+// route is selected. Forced upstream routing may replace channel selection, but
+// it must never expand what the requesting token is allowed to call.
+func tokenAllowsRequestedModel(c *gin.Context, requestedModel string, routingModel string) bool {
+	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		return true
+	}
+	rawLimit, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+	if !ok {
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+		return false
+	}
+	tokenModelLimit, ok := rawLimit.(map[string]bool)
+	if !ok {
+		tokenModelLimit = map[string]bool{}
+	}
+	for _, candidate := range model.RoutingModelCandidates(routingModel) {
+		matchName := ratio_setting.FormatMatchingModelName(candidate)
+		if _, allowed := tokenModelLimit[matchName]; allowed {
+			return true
+		}
+	}
+	displayModel := requestedModel
+	if displayModel == "" {
+		displayModel = routingModel
+	}
+	abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": displayModel}))
+	return false
 }
 
 // getModelFromRequest 从请求中读取模型信息
@@ -383,11 +433,21 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
+	resolvedProtocol, err := channel.ResolveProtocol(modelName)
+	if err != nil {
+		return types.NewError(
+			err,
+			types.ErrorCodeChannelProtocolInvalid,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
 	common.SetContextKey(c, constant.ContextKeyChannelName, channel.Name)
 	common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
 	common.SetContextKey(c, constant.ContextKeyChannelCreateTime, channel.CreatedTime)
-	common.SetContextKey(c, constant.ContextKeyChannelSetting, channel.GetSetting())
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolvedProtocol.ChannelSetting)
+	common.SetContextKey(c, constant.ContextKeyChannelProtocol, resolvedProtocol.Protocol)
+	common.SetContextKey(c, constant.ContextKeyChannelProtocolBinding, resolvedProtocol.Binding)
 	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, channel.GetOtherSettings())
 	paramOverride := channel.GetParamOverride()
 	headerOverride := channel.GetHeaderOverride()
@@ -400,17 +460,42 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		common.SetContextKey(c, constant.ContextKeyChannelOrganization, *channel.OpenAIOrganization)
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelAutoBan, channel.GetAutoBan())
-	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, model.BuildImplicitModelMapping(channel))
+	modelMapping := model.BuildImplicitModelMapping(channel)
+	if common.GetContextKeyBool(c, constant.ContextKeyForceOfficialGeminiChannel) {
+		modelMapping = ""
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, modelMapping)
 	common.SetContextKey(c, constant.ContextKeyChannelModels, channel.GetModels())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, NewAPIError := channel.GetNextEnabledKey()
+	// During retry, the relay loop records which (channel, key) pairs have already been
+	// tried this request so a multi-key channel can rotate to a sibling account instead of
+	// re-picking the account that just failed. Pull this channel's tried-key set, if any.
+	var excludeKeyIdx map[int]bool
+	if raw, ok := common.GetContextKey(c, constant.ContextKeyRetryTriedKeys); ok {
+		if triedKeys, ok := raw.(map[int]map[int]bool); ok {
+			excludeKeyIdx = triedKeys[channel.Id]
+		}
+	}
+
+	preferredKeyIndex := -1
+	codexSessionID := ""
+	if channel.Type == constant.ChannelTypeCodex && channel.ChannelInfo.IsMultiKey && channel.ChannelInfo.MultiKeySessionAffinity {
+		codexSessionID = service.CodexSessionID(c)
+		if cachedIndex, found := service.GetCodexSessionKeyIndex(channel.Id, codexSessionID); found {
+			preferredKeyIndex = cachedIndex
+		}
+	}
+	key, index, NewAPIError := channel.GetNextEnabledKeyWithPreference(excludeKeyIdx, preferredKeyIndex)
 	if NewAPIError != nil {
 		return NewAPIError
 	}
 	if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
 		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
+		if codexSessionID != "" {
+			service.BindCodexSessionKey(channel.Id, codexSessionID, index, channel.ChannelInfo.MultiKeySessionTTL)
+		}
 	} else {
 		// 必须设置为 false，否则在重试到单个 key 的时候会导致日志显示错误
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)

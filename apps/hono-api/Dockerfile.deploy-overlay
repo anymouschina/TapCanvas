@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1.7
+
+# Production database-bootstrap overlay.
+#
+# Keep the application runtime byte-for-byte identical to the pinned release
+# image. Only the schema bootstrap and migration coordinator are replaced, so
+# a deployment fix does not rebuild or redistribute Chromium, FFmpeg, Python,
+# or the Node dependency tree.
+ARG TAPCANVAS_API_BASE=beqlee/tapcanvas-api:ec3271f@sha256:c6fb90998763a64461db325f3aa238fa8492def5ee073806718128c10624d511
+FROM ${TAPCANVAS_API_BASE}
+
+LABEL org.opencontainers.image.base.name="docker.io/beqlee/tapcanvas-api:ec3271f" \
+	org.opencontainers.image.base.digest="sha256:c6fb90998763a64461db325f3aa238fa8492def5ee073806718128c10624d511" \
+	org.opencontainers.image.description="TapCanvas API release with versioned database bootstrap corrections"
+
+COPY --link schema.sql /app/schema.sql
+COPY --link scripts/migrate-deploy.mjs /app/scripts/migrate-deploy.mjs

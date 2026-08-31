@@ -37,43 +37,66 @@ import (
 )
 
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	NewAPIError *types.NewAPIError
+	context      *gin.Context
+	localErr     error
+	NewAPIError  *types.NewAPIError
+	responseBody []byte
 }
 
-func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
-	normalized := strings.TrimSpace(endpointType)
-	if normalized != "" {
-		return normalized
+func resolveChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) (constant.EndpointType, error) {
+	if channel == nil {
+		return "", errors.New("channel is nil")
 	}
-	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
-		return string(constant.EndpointTypeOpenAIResponseCompact)
+	resolvedProtocol, err := channel.ResolveProtocol(modelName)
+	if err != nil {
+		return "", err
 	}
-	if channel != nil && channel.Type == constant.ChannelTypeCodex {
-		return string(constant.EndpointTypeOpenAIResponse)
+	if resolvedProtocol.Protocol.Transport != constant.ProtocolTransportRelay {
+		return "", fmt.Errorf(
+			"协议 %s 使用 %s transport，不支持同步渠道测试",
+			resolvedProtocol.Protocol.ID,
+			resolvedProtocol.Protocol.Transport,
+		)
 	}
-	return normalized
+
+	supportedByProtocol := make(map[constant.EndpointType]struct{}, len(resolvedProtocol.Protocol.EndpointTypes))
+	for _, candidate := range resolvedProtocol.Protocol.EndpointTypes {
+		supportedByProtocol[candidate] = struct{}{}
+	}
+
+	explicitEndpoint := constant.EndpointType(strings.TrimSpace(endpointType))
+	if explicitEndpoint != "" {
+		if _, exists := supportedByProtocol[explicitEndpoint]; !exists {
+			return "", fmt.Errorf("协议 %s 不支持端点 %s", resolvedProtocol.Protocol.ID, explicitEndpoint)
+		}
+		if _, exists := common.GetDefaultEndpointInfo(explicitEndpoint); !exists {
+			return "", fmt.Errorf("端点 %s 没有已注册的测试请求契约", explicitEndpoint)
+		}
+		return explicitEndpoint, nil
+	}
+
+	for _, candidate := range model.GetModelSupportEndpointTypes(modelName) {
+		if _, exists := supportedByProtocol[candidate]; !exists {
+			continue
+		}
+		if _, exists := common.GetDefaultEndpointInfo(candidate); exists {
+			return candidate, nil
+		}
+	}
+	for _, candidate := range resolvedProtocol.Protocol.EndpointTypes {
+		if _, exists := common.GetDefaultEndpointInfo(candidate); exists {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("协议 %s 没有可用于渠道测试的端点", resolvedProtocol.Protocol.ID)
 }
 
 func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool) testResult {
+	return testChannelWithPrompt(channel, testModel, endpointType, isStream, "hi")
+}
+
+func testChannelWithPrompt(channel *model.Channel, testModel string, endpointType string, isStream bool, prompt string) testResult {
 	tik := time.Now()
-	var unsupportedTestChannelTypes = []int{
-		constant.ChannelTypeMidjourney,
-		constant.ChannelTypeMidjourneyPlus,
-		constant.ChannelTypeSunoAPI,
-		constant.ChannelTypeKling,
-		constant.ChannelTypeJimeng,
-		constant.ChannelTypeDoubaoVideo,
-		constant.ChannelTypeVidu,
-		constant.ChannelTypeWuyinkeji,
-	}
-	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
-		channelTypeName := constant.GetChannelTypeName(channel.Type)
-		return testResult{
-			localErr: fmt.Errorf("%s channel test is not supported", channelTypeName),
-		}
-	}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 
@@ -92,47 +115,24 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		}
 	}
 
-	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
-
-	requestPath := "/v1/chat/completions"
-
-	// 如果指定了端点类型，使用指定的端点类型
-	if endpointType != "" {
-		if endpointInfo, ok := common.GetDefaultEndpointInfo(constant.EndpointType(endpointType)); ok {
-			requestPath = endpointInfo.Path
-		}
-	} else {
-		// 如果没有指定端点类型，使用原有的自动检测逻辑
-
-		if strings.Contains(strings.ToLower(testModel), "rerank") {
-			requestPath = "/v1/rerank"
-		}
-
-		// 先判断是否为 Embedding 模型
-		if strings.Contains(strings.ToLower(testModel), "embedding") ||
-			strings.HasPrefix(testModel, "m3e") || // m3e 系列模型
-			strings.Contains(testModel, "bge-") || // bge 系列模型
-			strings.Contains(testModel, "embed") ||
-			channel.Type == constant.ChannelTypeMokaAI { // 其他 embedding 模型
-			requestPath = "/v1/embeddings" // 修改请求路径
-		}
-
-		// VolcEngine 图像生成模型
-		if channel.Type == constant.ChannelTypeVolcEngine && strings.Contains(testModel, "seedream") {
-			requestPath = "/v1/images/generations"
-		}
-
-		// responses-only models
-		if strings.Contains(strings.ToLower(testModel), "codex") {
-			requestPath = "/v1/responses"
-		}
-
-		// responses compaction models (must use /v1/responses/compact)
-		if strings.HasSuffix(testModel, ratio_setting.CompactModelSuffix) {
-			requestPath = "/v1/responses/compact"
+	resolvedEndpoint, endpointErr := resolveChannelTestEndpoint(channel, testModel, endpointType)
+	if endpointErr != nil {
+		return testResult{
+			localErr:    endpointErr,
+			NewAPIError: types.NewError(endpointErr, types.ErrorCodeChannelProtocolInvalid),
 		}
 	}
-	if strings.HasPrefix(requestPath, "/v1/responses/compact") {
+	endpointInfo, endpointRegistered := common.GetDefaultEndpointInfo(resolvedEndpoint)
+	if !endpointRegistered {
+		endpointErr = fmt.Errorf("端点 %s 没有已注册的测试请求契约", resolvedEndpoint)
+		return testResult{
+			localErr:    endpointErr,
+			NewAPIError: types.NewError(endpointErr, types.ErrorCodeInvalidApiType),
+		}
+	}
+	endpointType = string(resolvedEndpoint)
+	requestPath := endpointInfo.Path
+	if resolvedEndpoint == constant.EndpointTypeOpenAIResponseCompact {
 		testModel = ratio_setting.WithCompactModelSuffix(testModel)
 	}
 
@@ -157,6 +157,11 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
+	// Channel tests construct an internal Gin context and therefore do not pass
+	// through the HTTP request-id middleware. Give each test a traceable ID so
+	// the same original-request and upstream-attempt evidence is persisted as
+	// for a normal relay request.
+	c.Set(common.RequestIdKey, fmt.Sprintf("channel-test-%d-%s", channel.Id, common.GetUUID()))
 	group, _ := model.GetUserGroup(1, false)
 	c.Set("group", group)
 
@@ -219,7 +224,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		}
 	}
 
-	request := buildTestRequest(testModel, endpointType, channel, isStream)
+	request := buildTestRequest(testModel, endpointType, channel, isStream, prompt)
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 
@@ -247,7 +252,15 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 	// 更新请求中的模型名称
 	request.SetModelName(testModel)
 
-	apiType, _ := common.ChannelType2APIType(channel.Type)
+	apiType := info.ApiType
+	if apiType < 0 {
+		err := fmt.Errorf("protocol %s does not expose a relay api type", info.ChannelMeta.ProtocolID)
+		return testResult{
+			context:     c,
+			localErr:    err,
+			NewAPIError: types.NewError(err, types.ErrorCodeInvalidApiType),
+		}
+	}
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
 		apiType != constant.APITypeOpenAI &&
 		apiType != constant.APITypeCodex {
@@ -500,9 +513,10 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 	})
 	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{
-		context:     c,
-		localErr:    nil,
-		NewAPIError: nil,
+		context:      c,
+		localErr:     nil,
+		NewAPIError:  nil,
+		responseBody: respBody,
 	}
 }
 
@@ -600,8 +614,12 @@ func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
 	return message
 }
 
-func buildTestRequest(model string, endpointType string, channel *model.Channel, isStream bool) dto.Request {
-	testResponsesInput := json.RawMessage(`[{"role":"user","content":"hi"}]`)
+func buildTestRequest(model string, endpointType string, channel *model.Channel, isStream bool, prompt string) dto.Request {
+	responsesInput, err := common.Marshal([]map[string]string{{"role": "user", "content": prompt}})
+	if err != nil {
+		panic(fmt.Sprintf("marshal channel test prompt: %v", err))
+	}
+	testResponsesInput := json.RawMessage(responsesInput)
 
 	// 根据端点类型构建不同的测试请求
 	if endpointType != "" {
@@ -632,7 +650,7 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 			// 返回 OpenAIResponsesRequest
 			return &dto.OpenAIResponsesRequest{
 				Model:  model,
-				Input:  json.RawMessage(`[{"role":"user","content":"hi"}]`),
+				Input:  testResponsesInput,
 				Stream: lo.ToPtr(isStream),
 			}
 		case constant.EndpointTypeOpenAIResponseCompact:
@@ -653,7 +671,7 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 				Messages: []dto.Message{
 					{
 						Role:    "user",
-						Content: "hi",
+						Content: prompt,
 					},
 				},
 				MaxTokens: lo.ToPtr(maxTokens),
@@ -698,7 +716,7 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 	if strings.Contains(strings.ToLower(model), "codex") {
 		return &dto.OpenAIResponsesRequest{
 			Model:  model,
-			Input:  json.RawMessage(`[{"role":"user","content":"hi"}]`),
+			Input:  testResponsesInput,
 			Stream: lo.ToPtr(isStream),
 		}
 	}
@@ -710,7 +728,7 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 		Messages: []dto.Message{
 			{
 				Role:    "user",
-				Content: "hi",
+				Content: prompt,
 			},
 		},
 	}
@@ -845,7 +863,7 @@ func testAllChannels(notify bool) error {
 
 			// disable channel
 			if isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-				processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), NewAPIError, true)
+				processChannelError(result.context, *types.NewChannelErrorWithKeyIndex(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan(), common.GetContextKeyInt(result.context, constant.ContextKeyChannelMultiKeyIndex)), NewAPIError, true)
 			}
 
 			// enable channel

@@ -1,0 +1,177 @@
+.director-pet-plane {
+  position: fixed;
+  inset: 0;
+  z-index: 920;
+  pointer-events: none;
+}
+
+.director-pet-plane--chat-open {
+  z-index: 640;
+}
+
+.director-pet {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.director-pet:focus-visible {
+  outline: 2px solid var(--tc-accent, #5cc8ff);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+.director-pet--chat-peek {
+  position: absolute;
+  top: 0;
+  right: calc(min(480px, calc(100vw - 32px)) - 40px);
+  left: auto;
+  cursor: ns-resize;
+}
+
+body:has(.tc-ai-chat--maximized) .director-pet--chat-peek {
+  right: calc((100vw + min(1040px, calc(100vw - 32px))) / 2 - 52px);
+  clip-path: inset(0 52px 0 0);
+}
+
+body:has(.tc-ai-chat--maximized) .director-pet-plane--chat-open {
+  z-index: 10000;
+}
+
+.director-pet__body {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 116px;
+  height: 116px;
+  margin-bottom: 12px;
+  transform-origin: 50% 92%;
+}
+
+.director-pet__body--chat-peek {
+  margin-bottom: 0;
+}
+
+.director-pet-sprite {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 116px;
+  height: 116px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.director-pet-sprite--mirrored {
+  transform: scaleX(-1);
+}
+
+.director-pet-sprite--peek {
+  clip-path: inset(0 0 40px 0);
+}
+
+.director-pet-sprite__sheet {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  transition: none;
+  will-change: transform;
+}
+
+.director-pet-sprite__sheet.tc-managed-image-wrap--loading::before,
+.director-pet-sprite__sheet.tc-managed-image-wrap--loading::after {
+  content: none;
+}
+
+.director-pet-sprite__sheet .tc-managed-image {
+  object-fit: contain;
+}
+
+.director-pet-sprite__preloads,
+.director-pet-sprite__preload-sheet {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.director-pet-sprite__preload-sheet .tc-managed-image {
+  object-fit: contain;
+}
+
+.director-pet__shadow {
+  position: absolute;
+  left: 25px;
+  bottom: 7px;
+  z-index: 1;
+  display: block;
+  width: 66px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  filter: blur(7px);
+  transform-origin: center;
+}
+
+.director-pet__bubble {
+  position: absolute;
+  top: 2px;
+  z-index: 4;
+  display: flex;
+  min-width: 126px;
+  max-width: 180px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(27, 29, 34, 0.94);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.94);
+  text-align: left;
+  pointer-events: none;
+  backdrop-filter: blur(12px);
+}
+
+.director-pet__bubble--left {
+  right: 112px;
+}
+
+.director-pet__bubble--right {
+  left: 112px;
+}
+
+.director-pet__bubble-name {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #78d6ff;
+}
+
+.director-pet__bubble-text {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+@media (max-width: 640px) {
+  .director-pet__bubble {
+    min-width: 116px;
+  }
+}

@@ -1,6 +1,16 @@
 import { AppError } from "../../middleware/error";
+import {
+	imageOperationMaskUrl,
+	parseImageOperationSpec,
+	type ImageOperationSpec,
+} from "@tapcanvas/image-operation-protocol";
 import type { AppContext } from "../../types";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
+import { removeImageBackground } from "./background-removal";
+import { resolveVideoModelMaximumReferenceImages } from "./video-orchestrator.generation-contract";
+import {
+	verifyVideoPromptDeliveryContract,
+} from "./video-prompt-delivery-contract";
 import { getPrismaClient } from "../../platform/node/prisma";
 import { createSseEventParser } from "../../utils/sse";
 import type { SseEventMessage } from "../../utils/sse";
@@ -22,8 +32,15 @@ import {
 } from "../asset/asset.hosting";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
 import { ensureModelCatalogSchema } from "../model-catalog/model-catalog.repo";
-import { ModelCatalogImageOptionsSchema } from "../model-catalog/model-catalog.schemas";
-import { listNewApiModels } from "../new-api-models/new-api-models.service";
+import {
+	ModelCatalogImageOptionsSchema,
+	ModelCatalogVideoOptionsSchema,
+} from "../model-catalog/model-catalog.schemas";
+import {
+	isSelectableNewApiModel,
+	listNewApiModels,
+} from "../new-api-models/new-api-models.service";
+import { matchesNewApiRuntimeModelIdentity } from "../new-api-models/new-api-model-identity";
 import { normalizeBillingModelKey } from "../billing/billing.models";
 import {
 	isSupportedImageMimeType,
@@ -52,14 +69,7 @@ import {
 	resolveRequiredVendorHttpContext,
 } from "./task.http-utils";
 import {
-	buildStoredFailedTaskResult,
-	buildStoredQueuedTaskResult,
-	buildStoredRunningTaskResult,
-	persistStoredTaskResult,
 	resolveImageVendorApiKeyMissingMessage,
-	resolveStoredTaskId,
-	resolveStoredTaskRefKind,
-	upsertStoredTaskRefSafely,
 	upsertVendorTaskRefWithWarn,
 } from "./task.stored-task-utils";
 import {
@@ -108,6 +118,27 @@ import {
 	normalizeKlingMotionMode,
 	validateKlingMotionDurationSeconds,
 } from "./task.kling-motion-control";
+import {
+	adjustKlingV3BillingSpecKey,
+	buildKlingV3ImageContentItems,
+	collectKlingStructuredReferenceUrls,
+	isKlingV3FamilyVideoModel,
+	isKlingV3ReferenceVideoModel,
+	normalizeKlingVideoReferType,
+} from "./task.kling-v3";
+import {
+	buildSeedanceReferenceContentItems,
+	buildVideoReferenceMediaManifest,
+	mediaManifestMatchesRequest,
+	parseVideoReferenceMediaManifest,
+} from "./video-reference-manifest";
+import { prepareImageReferenceTransport } from "./image-reference-hosting";
+import {
+	attachGenerationAssetContextToTaskResult,
+	readGenerationAssetContextFromRaw,
+	resolveAuthorizedGenerationAssetContext,
+	type GenerationAssetContext,
+} from "./generation-asset-context";
 type VendorContext = {
 	baseUrl: string;
 	apiKey: string;
@@ -135,6 +166,7 @@ type TaskAssetHostingMetaInput = {
 	vendor: string;
 	modelKey?: string | null;
 	taskId: string | null;
+	generationContext?: GenerationAssetContext | null;
 };
 
 function attachBillingSpecKeyToTaskResult(
@@ -148,6 +180,25 @@ function attachBillingSpecKeyToTaskResult(
 	});
 }
 
+async function readStoredGenerationAssetContext(
+	c: AppContext,
+	userId: string,
+	taskId: string,
+): Promise<GenerationAssetContext | null> {
+	const row = await getTaskResultByTaskId(c.env.DB, userId, taskId);
+	if (!row?.result) return null;
+	let payload: unknown;
+	try {
+		payload = JSON.parse(row.result) as unknown;
+	} catch {
+		return null;
+	}
+	const parsed = TaskResultSchema.safeParse(payload);
+	return parsed.success
+		? readGenerationAssetContextFromRaw(parsed.data.raw)
+		: null;
+}
+
 function isHostedTaskAssetUrl(c: AppContext, url: string): boolean {
 	const trimmed = url.trim();
 	if (!trimmed) return false;
@@ -156,7 +207,7 @@ function isHostedTaskAssetUrl(c: AppContext, url: string): boolean {
 	return /^\/?gen\//.test(trimmed);
 }
 
-async function hostTaskAssetsSynchronously(options: {
+export async function hostTaskAssetsSynchronously(options: {
 	c: AppContext;
 	userId: string;
 	result: TaskResult;
@@ -332,151 +383,6 @@ function emitProgress(
 	});
 }
 
-async function runTaskInWorkerBackground(
-	c: AppContext,
-	runInBackground: () => Promise<void>,
-): Promise<void> {
-	const execCtx = (c as any)?.executionCtx;
-	if (execCtx && typeof execCtx.waitUntil === "function") {
-		execCtx.waitUntil(runInBackground());
-		return;
-	}
-	// Fallback (e.g. unit tests / non-worker runtimes): execute inline.
-	await runInBackground();
-}
-
-export async function enqueueStoredTaskForVendor(
-	c: AppContext,
-	userId: string,
-	vendor: string,
-	req: TaskRequestDto,
-	options?: { taskId?: string | null },
-): Promise<TaskResult> {
-	const taskId = resolveStoredTaskId(options);
-	const vendorKey = normalizeVendorKey(vendor);
-	const nowIso = new Date().toISOString();
-	const refKind = resolveStoredTaskRefKind(req.kind);
-
-	const initial = buildStoredQueuedTaskResult({
-		taskId,
-		kind: req.kind,
-		vendor: vendorKey,
-		enqueuedAt: nowIso,
-	});
-
-	await persistStoredTaskResult(c, {
-		userId,
-		taskId,
-		vendor: vendorKey,
-		kind: req.kind,
-		result: initial,
-		nowIso,
-	});
-
-	await upsertStoredTaskRefSafely(c, {
-		userId,
-		refKind,
-		taskId,
-		vendor: vendorKey,
-		nowIso,
-		warnTag: "upsert async task ref failed",
-	});
-
-	// Make pending tasks visible in /tasks/logs immediately.
-	await recordVendorCallPayloads(c, {
-		userId,
-		vendor: vendorKey,
-		taskId,
-		taskKind: req.kind,
-		request: { vendor: vendorKey, request: req },
-	});
-	await recordVendorCallForTaskResult(c, {
-		userId,
-		vendor: vendorKey,
-		taskKind: req.kind,
-		result: initial,
-	});
-
-	const runInBackground = async () => {
-		const startedAtMs = Date.now();
-		try {
-			const startedIso = new Date().toISOString();
-			const running = buildStoredRunningTaskResult({
-				initial,
-				startedAt: startedIso,
-			});
-			await persistStoredTaskResult(c, {
-				userId,
-				taskId,
-				vendor: vendorKey,
-				kind: req.kind,
-				result: running,
-				nowIso: startedIso,
-			});
-			await recordVendorCallForTaskResult(c, {
-				userId,
-				vendor: vendorKey,
-				taskKind: req.kind,
-				result: running,
-			});
-
-			const final = await runGenericTaskForVendor(c, userId, vendorKey, req, {
-				forceTaskId: taskId,
-			});
-			const completedAt =
-				final.status === "succeeded" || final.status === "failed"
-					? new Date().toISOString()
-					: null;
-			await persistStoredTaskResult(c, {
-				userId,
-				taskId,
-				vendor: vendorKey,
-				kind: req.kind,
-				result: final,
-				completedAt,
-				nowIso: completedAt || new Date().toISOString(),
-			});
-		} catch (err: any) {
-			const completedAt = new Date().toISOString();
-			const failed = buildStoredFailedTaskResult({
-				taskId,
-				kind: req.kind,
-				vendor: vendorKey,
-				err,
-			});
-
-			try {
-				await persistStoredTaskResult(c, {
-					userId,
-					taskId,
-					vendor: vendorKey,
-					kind: req.kind,
-					result: failed,
-					completedAt,
-					nowIso: completedAt,
-				});
-			} catch (persistErr: any) {
-				console.warn(
-					"[task-store] persist async failure failed",
-					persistErr?.message || persistErr,
-				);
-			}
-
-			await recordVendorCallForTaskResult(c, {
-				userId,
-				vendor: vendorKey,
-				taskKind: req.kind,
-				result: failed,
-				durationMs: Date.now() - startedAtMs,
-			});
-		}
-	};
-
-	await runTaskInWorkerBackground(c, runInBackground);
-
-	return initial;
-}
-
 async function resolveProxyForVendor(
 	c: AppContext,
 	userId: string,
@@ -591,8 +497,8 @@ async function resolveProxyForVendor(
 	// Public API: prefer higher-success proxies when multiple are enabled.
 	if (isPublicApiRequest() && candidates.length > 1 && !readProxyDisabled()) {
 		const taskKind = readRoutingTaskKind();
-		const isVideoTaskKind =
-			taskKind === "text_to_video" || taskKind === "image_to_video";
+	const isVideoTaskKind =
+			taskKind === "text_to_video" || taskKind === "image_to_video" || taskKind === "image_to_3d" || taskKind === "video_enhance" || taskKind === "video_edit";
 		const sinceIso = !isVideoTaskKind
 			? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
 			: null;
@@ -1164,8 +1070,40 @@ function parseComflyProgress(value: unknown): number | undefined {
 			add(extras.firstFrameUrl);
 			add(input.inputReferenceUrl);
 			const deduped = Array.from(new Set(urls));
-			return deduped.length ? deduped.slice(0, 8) : undefined;
+			return deduped.length ? deduped : undefined;
 		})();
+		if (images?.length) {
+			let maximumReferenceImages: number;
+			try {
+				maximumReferenceImages = await resolveVideoModelMaximumReferenceImages({
+					c,
+					videoModel: model,
+				});
+			} catch (error) {
+				throw new AppError(`当前视频模型缺少引用图片预算合同：${model}`, {
+					status: 422,
+					code: "video_model_reference_image_policy_missing",
+					details: {
+						modelKey: model,
+						cause: error instanceof Error ? error.message : String(error),
+					},
+				});
+			}
+			if (images.length > maximumReferenceImages) {
+				throw new AppError(
+					`视频模型多模态参考图数量超过上限：${images.length} > ${maximumReferenceImages}`,
+					{
+						status: 400,
+						code: "video_model_reference_image_limit_exceeded",
+						details: {
+							modelKey: model,
+							actual: images.length,
+							maximum: maximumReferenceImages,
+						},
+					},
+				);
+			}
+		}
 		const hd =
 			isProModel && typeof extras.hd === "boolean" ? extras.hd : null;
 		const notifyHook =
@@ -1734,7 +1672,52 @@ type NewApiImageRequestShape = {
 	resolution?: string;
 	quality?: string;
 	metadata?: Record<string, unknown>;
+	layerDecomposition?: {
+		numLayers: number;
+		numInferenceSteps: number;
+		guidanceScale: number;
+		outputFormat: "png";
+	};
 };
+
+function readBoundedImageLayerNumber(
+	value: unknown,
+	fallback: number,
+	min: number,
+	max: number,
+): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+	return Math.min(max, Math.max(min, value));
+}
+
+export function resolveImageLayerDecompositionOptions(
+	extras: Record<string, unknown>,
+): NewApiImageRequestShape["layerDecomposition"] | null {
+	const operationSpec = resolveTaskImageOperationSpec(extras);
+	if (extras.imageOperation !== "layer_decompose" && operationSpec?.kind !== "layer_decompose") return null;
+	return {
+		numLayers: Math.round(readBoundedImageLayerNumber(extras.numLayers, 4, 1, 10)),
+		numInferenceSteps: Math.round(
+			readBoundedImageLayerNumber(extras.numInferenceSteps, 28, 1, 50),
+		),
+		guidanceScale: readBoundedImageLayerNumber(extras.guidanceScale, 5, 0, 20),
+		outputFormat: "png",
+	};
+}
+
+export function resolveTaskImageOperationSpec(
+	extras: Record<string, unknown>,
+): ImageOperationSpec | null {
+	if (extras.imageOperationSpec == null) return null;
+	try {
+		return parseImageOperationSpec(extras.imageOperationSpec);
+	} catch (error: unknown) {
+		throw new AppError(
+			error instanceof Error ? error.message : "图片操作合同无效",
+			{ status: 400, code: "image_operation_spec_invalid" },
+		);
+	}
+}
 
 function normalizeImageBillingSpecSegment(value: string | null | undefined): string | null {
 	const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -1744,10 +1727,6 @@ function normalizeImageBillingSpecSegment(value: string | null | undefined): str
 }
 
 function buildImageBillingSpecKey(shape: NewApiImageRequestShape): string | null {
-	const aspectRatio =
-		typeof shape.metadata?.aspectRatio === "string"
-			? normalizeImageBillingSpecSegment(shape.metadata.aspectRatio)
-			: null;
 	const resolution = normalizeImageBillingSpecSegment(
 		shape.resolution ||
 			(typeof shape.metadata?.imageSize === "string" ? shape.metadata.imageSize : null) ||
@@ -1755,25 +1734,15 @@ function buildImageBillingSpecKey(shape: NewApiImageRequestShape): string | null
 	);
 	if (!resolution) return null;
 	const quality = normalizeImageBillingSpecSegment(shape.quality);
-	return ["image", aspectRatio, resolution, quality].filter(Boolean).join(":");
+	return ["image", resolution, quality].filter(Boolean).join(":");
 }
 
-function isGptImage2OfficialModel(modelKey: string | null | undefined): boolean {
-	return typeof modelKey === "string" && modelKey.trim().toLowerCase() === "gpt-image-2-official";
+function usesGptImage2QualityPricing(modelKey: string): boolean {
+	const normalized = modelKey.trim().toLowerCase();
+	return normalized === "gpt-image-2" || normalized.startsWith("gpt-image-2-");
 }
 
-function isRichOfficialImageBillingSpecKey(specKey: string | null | undefined): boolean {
-	const parts = typeof specKey === "string" ? specKey.trim().toLowerCase().split(":") : [];
-	return (
-		parts.length === 4 &&
-		parts[0] === "image" &&
-		Boolean(parts[1]) &&
-		/^(?:1k|2k|4k)$/.test(parts[2] || "") &&
-		/^(?:auto|low|medium|high)$/.test(parts[3] || "")
-	);
-}
-
-function buildNewApiImageRequestShape(input: {
+export function buildNewApiImageRequestShape(input: {
 	req: TaskRequestDto;
 	imageOptions?: {
 		aspectRatioOptions: string[];
@@ -1781,6 +1750,7 @@ function buildNewApiImageRequestShape(input: {
 		resolutionOptions: string[];
 		qualityOptions: string[];
 		defaultAspectRatio?: string;
+		defaultImageSize?: string;
 		defaultResolution?: string;
 		defaultQuality?: string;
 	} | null;
@@ -1843,7 +1813,8 @@ function buildNewApiImageRequestShape(input: {
 	const pickedImageSize =
 		(supportedImageSizes.length > 0
 			? supportedImageSizes.find((option) => explicitImageSizeCandidates.includes(option))
-			: explicitImageSize) || null;
+			: explicitImageSize) ||
+		(imageOptions?.defaultImageSize ?? supportedImageSizes[0] ?? null);
 
 	const rawResolution = normalizeCompactString(extras.resolution)?.toLowerCase() ?? null;
 	const pickedResolution = rawResolution
@@ -1872,8 +1843,15 @@ function buildNewApiImageRequestShape(input: {
 		shape.size = pickedAspectRatio;
 		shape.metadata = metadata;
 	} else if (pickedImageSize) {
-		shape.size = pickedImageSize;
-		shape.metadata = { imageSize: pickedImageSize };
+		// 安全网：纯分辨率关键字（1k/2k/4k）不是画幅比，绝不能当作 size 传给上游
+		// （apimart 会报 invalid size: 2k）。只归入 metadata.imageSize，size 留空让上游用默认比例；
+		// resolution 由下方 pickedResolution 负责填。
+		if (/^\d+k$/i.test(pickedImageSize)) {
+			shape.metadata = { imageSize: pickedImageSize };
+		} else {
+			shape.size = pickedImageSize;
+			shape.metadata = { imageSize: pickedImageSize };
+		}
 	} else if (pixelSize) {
 		shape.size = pixelSize;
 	}
@@ -1883,6 +1861,23 @@ function buildNewApiImageRequestShape(input: {
 	}
 	if (pickedQuality) {
 		shape.quality = pickedQuality;
+	}
+
+	const layerDecomposition = resolveImageLayerDecompositionOptions(extras);
+	if (layerDecomposition) {
+		shape.layerDecomposition = layerDecomposition;
+	}
+	const operationSpec = resolveTaskImageOperationSpec(extras);
+	if (operationSpec) {
+		shape.metadata = {
+			...(shape.metadata ?? {}),
+			imageOperation: operationSpec.kind,
+			imageOperationId: operationSpec.operationId,
+			imageOperationSchemaVersion: operationSpec.schemaVersion,
+			imageOperationSourceRevision: operationSpec.sourceRevision,
+			imageOperationParameters: operationSpec.parameters,
+			imageOperationOutput: operationSpec.output,
+		};
 	}
 
 	return shape;
@@ -1898,12 +1893,13 @@ async function resolveNewApiImageOptions(
 	resolutionOptions: string[];
 	qualityOptions: string[];
 	defaultAspectRatio?: string;
+	defaultImageSize?: string;
 	defaultResolution?: string;
 	defaultQuality?: string;
 } | null> {
 	try {
 		await ensureModelCatalogSchema(c.env.DB);
-		const row = await getPrismaClient().model_catalog_models.findUnique({
+		let row = await getPrismaClient().model_catalog_models.findUnique({
 			where: {
 				vendor_key_model_key: {
 					vendor_key: vendorKey,
@@ -1914,6 +1910,15 @@ async function resolveNewApiImageOptions(
 				meta: true,
 			},
 		});
+		// 通用 relay vendor（newapi/auto）下精确 (vendor,model) 命不中时，按 model_key 跨 vendor 兜底
+		// 取带 imageOptions 的配置。否则 aspectRatioOptions 缺失会让 imageSize（如 "2K"）被当作 size
+		// 比例传给上游（apimart 等会报 invalid size: 2k）。imageOptions 通常与上游 vendor 无关。
+		if (typeof row?.meta !== "string" || !row.meta.trim()) {
+			row = await getPrismaClient().model_catalog_models.findFirst({
+				where: { model_key: modelKey, meta: { contains: "imageOptions" } },
+				select: { meta: true },
+			});
+		}
 		if (typeof row?.meta !== "string" || !row.meta.trim()) return null;
 		const parsed: unknown = JSON.parse(row.meta);
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
@@ -1932,6 +1937,7 @@ async function resolveNewApiImageOptions(
 			),
 			qualityOptions: data.qualityOptions,
 			...(data.defaultAspectRatio ? { defaultAspectRatio: data.defaultAspectRatio } : {}),
+			...(data.defaultImageSize ? { defaultImageSize: data.defaultImageSize } : {}),
 			...(data.defaultResolution ? { defaultResolution: data.defaultResolution } : {}),
 			...(data.defaultQuality ? { defaultQuality: data.defaultQuality } : {}),
 		};
@@ -1982,7 +1988,8 @@ export function buildNewApiVideoRequestShape(
 
 export function isDirectNewApiVideoReferenceUrl(raw: string): boolean {
 	const ref = String(raw || "").trim();
-	return /^https?:\/\//i.test(ref);
+	// http(s) 直链，或 asset://（ARK 审核后的素材引用，原样透传给上游 ark，勿下载）。
+	return /^(?:https?|asset):\/\//i.test(ref);
 }
 
 async function resolveNewApiImageFilePart(
@@ -2100,18 +2107,40 @@ export function resolveTaskMaskUrl(extras: Record<string, unknown>): string | nu
 			: typeof extras.mask_url === "string" && extras.mask_url.trim()
 				? extras.mask_url.trim()
 				: "";
-	if (directMaskUrl) return directMaskUrl;
-
 	const assetInputs = Array.isArray(extras.assetInputs) ? extras.assetInputs : [];
+	let assetInputMaskUrl = "";
 	for (const item of assetInputs) {
 		if (!item || typeof item !== "object" || Array.isArray(item)) continue;
 		const record = item as Record<string, unknown>;
 		const role = typeof record.role === "string" ? record.role.trim().toLowerCase() : "";
 		if (role !== "mask") continue;
 		const url = typeof record.url === "string" ? record.url.trim() : "";
-		if (url) return url;
+		if (url) {
+			assetInputMaskUrl = url;
+			break;
+		}
 	}
-	return null;
+
+	const operationSpec = resolveTaskImageOperationSpec(extras);
+	if (operationSpec) {
+		const operationMaskUrl = imageOperationMaskUrl(operationSpec);
+		const conflictingLegacyMask = [directMaskUrl, assetInputMaskUrl]
+			.filter(Boolean)
+			.find((url) => url !== operationMaskUrl);
+		if (conflictingLegacyMask) {
+			throw new AppError("图片操作合同与旧蒙版字段冲突", {
+				status: 400,
+				code: "image_operation_mask_conflict",
+				details: {
+					operationId: operationSpec.operationId,
+					operationMaskUrl,
+					conflictingMaskUrl: conflictingLegacyMask,
+				},
+			});
+		}
+		return operationMaskUrl;
+	}
+	return directMaskUrl || assetInputMaskUrl || null;
 }
 
 export function buildNewApiImageGenerationBody(input: {
@@ -2126,6 +2155,7 @@ export function buildNewApiImageGenerationBody(input: {
 	referenceImages?: string[];
 	responseModalities?: string[];
 	user?: string;
+	layerDecomposition?: NewApiImageRequestShape["layerDecomposition"];
 }): Record<string, unknown> {
 	const body: Record<string, unknown> = {
 		model: input.model,
@@ -2171,7 +2201,21 @@ export function buildNewApiImageGenerationBody(input: {
 		body.seed = Math.trunc(input.seed);
 	}
 	if (Array.isArray(input.referenceImages) && input.referenceImages.length > 0) {
-		body.images = input.referenceImages;
+		body.images = input.referenceImages.map((imageUrl) => ({ image_url: imageUrl }));
+	}
+	if (input.layerDecomposition) {
+		const sourceImageUrl = input.referenceImages?.[0]?.trim() || "";
+		if (!sourceImageUrl) {
+			throw new AppError("图层分离任务缺少源图片", {
+				status: 400,
+				code: "image_layer_decompose_missing_image",
+			});
+		}
+		body.image_url = sourceImageUrl;
+		body.num_layers = input.layerDecomposition.numLayers;
+		body.num_inference_steps = input.layerDecomposition.numInferenceSteps;
+		body.guidance_scale = input.layerDecomposition.guidanceScale;
+		body.output_format = input.layerDecomposition.outputFormat;
 	}
 	return body;
 }
@@ -2219,7 +2263,8 @@ export function collectTaskReferenceImageUrls(extras: Record<string, unknown>): 
 		for (const item of items) {
 			if (typeof item !== "string") continue;
 			const trimmed = item.trim();
-			if (!trimmed || !/^https?:\/\//i.test(trimmed)) continue;
+			// 接受 http(s) 和 asset://（ARK 审核后的素材引用）；后者用于 ark seedance2 审核闭环。
+			if (!trimmed || !/^(?:https?|asset):\/\//i.test(trimmed)) continue;
 			if (seen.has(trimmed)) continue;
 			seen.add(trimmed);
 			out.push(trimmed);
@@ -2238,6 +2283,42 @@ export function collectTaskReferenceImageUrls(extras: Record<string, unknown>): 
 	pushValue(extras.firstFrameUrl);
 	pushValue(extras.lastFrameUrl);
 	return out;
+}
+
+// extras.assetInputs（[{url, role?, ...}]，风格图 role='style' 走这里）的图片 URL 收集。
+// 2026-07-16 根因修复：collectTaskReferenceImageUrls 收集了七八个别名字段、唯独不收 assetInputs
+// → 工具桥把 styleImages 合进 assetInputs 后在 vendor 层被系统性丢弃 → 只带风格锚（无 referenceImages）
+// 的角色卡/群像图裸文生图、画风全靠 prompt 文字，上游(hunyuan EnhancePrompt)一改写就出真人风。
+// 只在图片任务分支消费（video/remove_bg 不接，避免改变其 refs[0]=源图语义）。
+export function collectTaskAssetInputImageUrls(extras: Record<string, unknown>): string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	const inputs = Array.isArray(extras.assetInputs) ? extras.assetInputs : [];
+	for (const item of inputs) {
+		if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+		const url = typeof (item as Record<string, unknown>).url === "string"
+			? ((item as Record<string, unknown>).url as string).trim()
+			: "";
+		if (!url || !/^(?:https?|asset):\/\//i.test(url)) continue;
+		if (seen.has(url)) continue;
+		seen.add(url);
+		out.push(url);
+	}
+	return out;
+}
+
+export function collectTaskImageOperationReferenceUrls(extras: Record<string, unknown>): string[] {
+	const operationSpec = resolveTaskImageOperationSpec(extras);
+	if (!operationSpec) return [];
+	const seen = new Set<string>();
+	const urls: string[] = [];
+	for (const input of operationSpec.inputs) {
+		if (input.role !== "source" && input.role !== "reference") continue;
+		if (!/^(?:https?|asset):\/\//i.test(input.url) || seen.has(input.url)) continue;
+		seen.add(input.url);
+		urls.push(input.url);
+	}
+	return urls;
 }
 
 export function extractNewApiImageAssets(payload: any): Array<ReturnType<typeof TaskAssetSchema.parse>> {
@@ -2265,6 +2346,17 @@ export function extractNewApiImageAssets(payload: any): Array<ReturnType<typeof 
 					: "";
 		if (!url) continue;
 		pushAsset(url);
+	}
+
+	const layeredImages = Array.isArray(payload?.images) ? payload.images : [];
+	for (const image of layeredImages) {
+		const url =
+			typeof image === "string"
+				? image
+				: typeof image?.url === "string"
+					? image.url
+					: "";
+		if (url) pushAsset(url);
 	}
 
 	const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
@@ -2413,19 +2505,12 @@ async function resolveTaskModelKeyForNewApi(
 	vendorKey: string,
 	req: TaskRequestDto,
 ): Promise<string> {
+	void c;
 	const explicitModelKey = pickModelKey(req, { modelKey: undefined });
 	if (explicitModelKey) {
 		return canonicalizeNewApiModelKey(vendorKey, explicitModelKey);
 	}
-	const kindHint =
-		req.kind === "chat" || req.kind === "prompt_refine" || req.kind === "image_to_prompt"
-			? "text"
-			: req.kind === "text_to_image" || req.kind === "image_edit"
-				? "image"
-				: "video";
-	const fallback = await resolveDefaultModelKeyFromCatalogForVendor(c, vendorKey, kindHint);
-	if (fallback) return canonicalizeNewApiModelKey(vendorKey, fallback);
-	throw new AppError("未配置可用模型（extras.modelKey 为空，且模型目录没有默认模型）", {
+	throw new AppError("任务未指定模型；必须提交系统模型目录返回的精确 modelKey", {
 		status: 400,
 		code: "model_not_configured",
 		details: { vendor: vendorKey, taskKind: req.kind },
@@ -2442,14 +2527,15 @@ function resolveNewApiTaskModelKind(taskKind: TaskRequestDto["kind"]): "text" | 
 	return "video";
 }
 
-async function assertNewApiRouteEnabledForTask(
+async function resolveEnabledNewApiRequestModelForTask(
 	c: AppContext,
 	input: {
 		vendorKey: string;
 		modelKey: string;
 		taskKind: TaskRequestDto["kind"];
+		editOperation?: string;
 	},
-): Promise<void> {
+): Promise<string> {
 	const vendorKey = normalizeVendorKey(input.vendorKey);
 	const modelKey = input.modelKey.trim();
 	if (!vendorKey || !modelKey) {
@@ -2487,18 +2573,16 @@ async function assertNewApiRouteEnabledForTask(
 		}
 	}
 
-	const normalizedModelKey = normalizeBillingModelKey(modelKey);
 	const kind = resolveNewApiTaskModelKind(input.taskKind);
 	const enabledModels = await listNewApiModels(c.env, {
 		enabled: true,
 		kind,
 		fresh: true,
 	});
-	const matched = enabledModels.some((model) => {
-		const modelName = normalizeBillingModelKey(model.modelName);
-		const requestModelKey = normalizeBillingModelKey(model.requestModelKey);
-		return modelName === normalizedModelKey || requestModelKey === normalizedModelKey;
-	});
+	const executableModels = enabledModels.filter(isSelectableNewApiModel);
+	const matched = executableModels.find((model) =>
+		matchesNewApiRuntimeModelIdentity(model, modelKey),
+	);
 	if (!matched) {
 		throw new AppError("模型已停用或未出现在 new-api 启用列表中，拒绝调用上游", {
 			status: 400,
@@ -2508,9 +2592,61 @@ async function assertNewApiRouteEnabledForTask(
 				model: modelKey,
 				taskKind: input.taskKind,
 				kind,
+				upstreamRequestAttempted: false,
+				executableModels: executableModels.map((model) => ({
+					modelKey: model.requestModelKey,
+					label: model.displayLabel,
+					kind: model.kind,
+				})),
 			},
 		});
 	}
+	if (input.taskKind === "video_edit") {
+		const videoOptions = ModelCatalogVideoOptionsSchema.safeParse(matched.meta?.videoOptions);
+		const operation = input.editOperation?.trim();
+		const supported = operation === "subject_remove"
+			? videoOptions.success && videoOptions.data.supportsVideoSubjectRemoval === true
+			: operation === "subtitle_remove" || operation === "subtitle_remove_auto"
+				? videoOptions.success && videoOptions.data.supportsVideoSubtitleRemoval === true
+				: false;
+		if (!supported) {
+			throw new AppError("所选模型未发布当前视频编辑能力，拒绝调用上游", {
+				status: 400,
+				code: "video_edit_capability_unsupported",
+				details: { model: matched.modelName, operation, taskKind: input.taskKind, upstreamRequestAttempted: false },
+			});
+		}
+	}
+	const requestModelKey = matched.requestModelKey.trim();
+	if (!requestModelKey) {
+		throw new AppError("new-api 启用模型缺少结构化 requestModelKey", {
+			status: 500,
+			code: "new_api_request_model_key_missing",
+			details: {
+				model: modelKey,
+				modelName: matched.modelName,
+				taskKind: input.taskKind,
+			},
+		});
+	}
+	return requestModelKey;
+}
+
+export async function resolveExecutableNewApiTaskModel(
+	c: AppContext,
+	vendorKey: string,
+	req: TaskRequestDto,
+): Promise<string> {
+	const normalizedVendorKey = normalizeVendorKey(vendorKey);
+	const requestedModel = await resolveTaskModelKeyForNewApi(c, normalizedVendorKey, req);
+	return await resolveEnabledNewApiRequestModelForTask(c, {
+		vendorKey: normalizedVendorKey,
+		modelKey: requestedModel,
+		taskKind: req.kind,
+		...(req.kind === "video_edit" && typeof req.extras?.editOperation === "string"
+			? { editOperation: req.extras.editOperation }
+			: {}),
+	});
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -3086,14 +3222,11 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 	}
 
 	function arrayBufferToBase64(buf: ArrayBuffer): string {
-		const bytes = new Uint8Array(buf);
-		let binary = "";
-		const chunkSize = 0x2000;
-		for (let i = 0; i < bytes.length; i += chunkSize) {
-			const chunk = bytes.subarray(i, i + chunkSize);
-			binary += String.fromCharCode(...chunk);
-		}
-		return btoa(binary);
+		// Direct Buffer encode — same output as btoa(String.fromCharCode(...)) but
+		// without building a ~2x intermediate JS binary string (and without the
+		// per-chunk spread argument arrays), so a reference image no longer triples
+		// its size in the heap on the way to a data URL.
+		return Buffer.from(buf).toString("base64");
 	}
 
 	async function resolveSora2ApiImageUrl(
@@ -3125,7 +3258,9 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 
 		if (!/^https?:\/\//i.test(resolved)) return trimmed;
 
-		const MAX_BYTES = 100 * 1024 * 1024;
+		// A reference image is at most a high-res still; 24MB is generous. The old
+		// 100MB ceiling let a single ref pin >100MB of heap on the way to a data URL.
+		const MAX_BYTES = 24 * 1024 * 1024;
 		const res = await fetchWithHttpDebugLog(
 			c,
 			resolved,
@@ -3179,33 +3314,53 @@ function parseSseJsonPayloadForTask(raw: string): any | null {
 		return `data:${ct};base64,${base64}`;
 	}
 
-async function resolveDefaultModelKeyFromCatalogForVendor(
+// 像素级抠图任务：取源图字节 → remove.bg 代理去背 → 返回透明 PNG（data URL，
+// 由 runGenericTaskForVendor 的 hostTaskAssetsSynchronously 自动转存 TOS 并改写为公开 URL）。
+async function runImageRemoveBgTask(
 	c: AppContext,
-	vendorKey: string,
-	kind: "text" | "image" | "video",
-): Promise<string | null> {
-	const vk = normalizeVendorKey(vendorKey);
-	if (!vk) return null;
-	try {
-		await ensureModelCatalogSchema(c.env.DB);
-		const row = await getPrismaClient().model_catalog_models.findFirst({
-			where: {
-				vendor_key: { equals: vk, mode: "insensitive" },
-				kind,
-				enabled: 1,
-				model_key: { not: "gpt-image-2-official" },
-			},
-			orderBy: [{ updated_at: "desc" }, { created_at: "desc" }, { model_key: "asc" }],
-			select: { model_key: true },
+	userId: string,
+	req: TaskRequestDto,
+	relay: { baseUrl: string; token: string },
+): Promise<TaskResult> {
+	void userId;
+	const startedAtMs = Date.now();
+	const extras = (req.extras || {}) as Record<string, unknown>;
+	const refs = [
+		...collectTaskImageOperationReferenceUrls(extras),
+		...collectTaskReferenceImageUrls(extras),
+	].filter((url, index, values) => values.indexOf(url) === index);
+	const sourceUrl = refs[0] || "";
+	if (!sourceUrl) {
+		throw new AppError("抠图任务缺少源图片（extras.referenceImages 为空）", {
+			status: 400,
+			code: "remove_bg_missing_image",
 		});
-		const modelKey =
-			typeof row?.model_key === "string" && row.model_key.trim()
-				? row.model_key.trim()
-				: null;
-		return modelKey;
-	} catch {
-		return null;
 	}
+
+	const filePart = await resolveNewApiImageFilePart(c, sourceUrl, "image");
+	const imageBytes = new Uint8Array(await filePart.blob.arrayBuffer());
+	const { bytes, engine } = await removeImageBackground({
+		imageBytes,
+		mimeType: filePart.contentType || "image/png",
+		proxyBaseUrl: relay.baseUrl,
+		proxyToken: relay.token,
+	});
+
+	const base64 = Buffer.from(bytes).toString("base64");
+	const dataUrl = `data:image/png;base64,${base64}`;
+	const id = `cutout-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+	return TaskResultSchema.parse({
+		id,
+		kind: "image_remove_bg",
+		status: "succeeded",
+		assets: [{ type: "image", url: dataUrl }],
+		raw: {
+			provider: "background_removal",
+			engine,
+			source: sourceUrl.slice(0, 256),
+			durationMs: Date.now() - startedAtMs,
+		},
+	});
 }
 
 async function runTaskViaNewApi(
@@ -3223,16 +3378,18 @@ async function runTaskViaNewApi(
 		});
 	}
 
+	// 抠图（像素级分割）走独立链路：不经 new-api 的 /v1/images，也不需要模型/计费档解析。
+	// 只走 remove.bg（经 new-api 代理），产物透明 PNG 由上层自动转存 TOS。
+	if (req.kind === "image_remove_bg") {
+		return await runImageRemoveBgTask(c, userId, req, relay);
+	}
+
 	const startedAtMs = Date.now();
 	const v = normalizeVendorKey(vendorKey);
 	const newApiVendorTag = v === "newapi" || v === "auto" ? "newapi" : `newapi:${v}`;
-	const model = await resolveTaskModelKeyForNewApi(c, v, req);
-	await assertNewApiRouteEnabledForTask(c, {
-		vendorKey: v,
-		modelKey: model,
-		taskKind: req.kind,
-	});
+	const model = await resolveExecutableNewApiTaskModel(c, v, req);
 	const isImageTask = req.kind === "text_to_image" || req.kind === "image_edit";
+	const requestExtras = (req.extras || {}) as Record<string, unknown>;
 	const imageOptions = isImageTask ? await resolveNewApiImageOptions(c, v, model) : null;
 	const imageRequestShape = isImageTask
 		? buildNewApiImageRequestShape({
@@ -3240,39 +3397,70 @@ async function runTaskViaNewApi(
 				imageOptions,
 			})
 		: null;
-	if (
-		imageRequestShape &&
-		String(model || "").trim().toLowerCase() === "gpt-image-2-official"
-	) {
-		imageRequestShape.quality = "high";
-	}
 	let billingSpecKey = extractBillingSpecKeyFromTaskRequest(req);
-	// For image tasks: derive billing spec key from resolution if not explicitly set.
-	if (!billingSpecKey && imageRequestShape) {
+	// GPT Image 2 quality is a paid runtime dimension. Always derive its key from
+	// the validated request shape so legacy/client-supplied resolution-only keys
+	// cannot understate the selected quality.
+	if (imageRequestShape && (usesGptImage2QualityPricing(model) || !billingSpecKey)) {
 		billingSpecKey = buildImageBillingSpecKey(imageRequestShape);
 	}
-	if (isImageTask && isGptImage2OfficialModel(model)) {
-		const derivedSpecKey = imageRequestShape ? buildImageBillingSpecKey(imageRequestShape) : null;
-		if (!isRichOfficialImageBillingSpecKey(billingSpecKey)) {
-			billingSpecKey = isRichOfficialImageBillingSpecKey(derivedSpecKey) ? derivedSpecKey : null;
-		}
-		if (!billingSpecKey) {
-			throw new AppError("gpt-image-2-official 图片计费规格缺失，必须包含比例、分辨率和质量", {
-				status: 400,
-				code: "image_billing_spec_required",
-				details: {
-					modelKey: model,
-					taskKind: req.kind,
-					parsedShape: imageRequestShape,
-					requestSpecKey: extractBillingSpecKeyFromTaskRequest(req),
-				},
-			});
-		}
+	// kling-v3 家族有声/视频参考计费档：上游 audio / video_list 有独立 +sound/+video
+	// 定价（pricing.go），把基础 spec key 对齐到实付档，避免少扣。
+	if (billingSpecKey && isKlingV3FamilyVideoModel(model)) {
+		const billingExtras = (req.extras || {}) as Record<string, unknown>;
+		billingSpecKey = adjustKlingV3BillingSpecKey({
+			model,
+			specKey: billingSpecKey,
+			audio: billingExtras.audio === true,
+			hasVideoReference:
+				typeof billingExtras.upstreamVideoUrl === "string" &&
+				/^https?:\/\//i.test(billingExtras.upstreamVideoUrl.trim()),
+		});
 	}
+	const imageReferenceSources = isImageTask
+		? [
+				...collectTaskImageOperationReferenceUrls(requestExtras),
+				...collectTaskReferenceImageUrls(requestExtras),
+				...collectTaskAssetInputImageUrls(requestExtras),
+		  ].filter((url, index, values) => values.indexOf(url) === index)
+		: [];
+	const billingUpstreamVideoUrl =
+		typeof requestExtras.upstreamVideoUrl === "string" &&
+		/^https?:\/\//i.test(requestExtras.upstreamVideoUrl.trim())
+			? requestExtras.upstreamVideoUrl.trim()
+			: "";
+	const isSeedance2VideoReference =
+		billingUpstreamVideoUrl.length > 0 && /seedance[-_.]?2(?:[-_.]|$)/i.test(model);
+	const outputDurationSeconds =
+		typeof requestExtras.durationSeconds === "number" && Number.isFinite(requestExtras.durationSeconds)
+			? requestExtras.durationSeconds
+			: null;
+	const referenceVideoDurationSeconds =
+		typeof requestExtras.referenceVideoDurationSeconds === "number" &&
+		Number.isFinite(requestExtras.referenceVideoDurationSeconds)
+			? requestExtras.referenceVideoDurationSeconds
+			: null;
+	if (isSeedance2VideoReference && (!referenceVideoDurationSeconds || referenceVideoDurationSeconds <= 0)) {
+		throw new AppError("参考视频时长缺失，无法计算 SD2 视频积分消耗", {
+			status: 400,
+			code: "reference_video_duration_required_for_pricing",
+			details: { modelKey: model, upstreamVideoUrl: billingUpstreamVideoUrl },
+		});
+	}
+	// Reference transport is prepared before the credit reservation and before
+	// any vendor request. An unreachable or non-image URL therefore fails without
+	// creating a paid task or asking the upstream model to resolve legacy hosts.
+	const imageReferenceTransport = isImageTask
+		? await prepareImageReferenceTransport({ c, userId, urls: imageReferenceSources })
+		: [];
 	const required = await resolveTeamCreditsCostForTask(c, {
 		taskKind: req.kind,
 		modelKey: model,
 		...(billingSpecKey ? { specKey: billingSpecKey } : {}),
+		...(isImageTask ? { referenceImageCount: imageReferenceTransport.length } : {}),
+		...(isSeedance2VideoReference
+			? { outputDurationSeconds, referenceVideoDurationSeconds }
+			: {}),
 	});
 	const reservation = await requireSufficientTeamCredits(c, userId, {
 		required,
@@ -3408,8 +3596,8 @@ async function runTaskViaNewApi(
 			);
 		}
 
-		if (req.kind === "text_to_image" || req.kind === "image_edit") {
-			const refs = collectTaskReferenceImageUrls(extras);
+			if (req.kind === "text_to_image" || req.kind === "image_edit") {
+				const refs = imageReferenceTransport.map((mapping) => mapping.transportUrl);
 			const maskUrl = req.kind === "image_edit" ? resolveTaskMaskUrl(extras) : null;
 			if (!imageRequestShape) {
 				throw new AppError("图片请求规格解析失败", {
@@ -3505,6 +3693,7 @@ async function runTaskViaNewApi(
 						seed: req.seed,
 						referenceImages: refs,
 						user: String(userId),
+						layerDecomposition: imageRequestShape.layerDecomposition,
 					});
 					capturedUpstreamBody = body;
 					data = await callJsonApi(
@@ -3541,6 +3730,7 @@ async function runTaskViaNewApi(
 				throw callErr;
 			}
 			const assets = extractNewApiImageAssets(data);
+			const operationSpec = resolveTaskImageOperationSpec(requestExtras);
 			const id =
 				(typeof data?.id === "string" && data.id.trim()) ||
 				(typeof data?.created === "number" ? `img-${data.created}-${Date.now().toString(36)}` : "") ||
@@ -3555,11 +3745,26 @@ async function runTaskViaNewApi(
 					kind: req.kind,
 					status: imageStatus,
 					assets,
-					raw: {
-						provider: "new_api",
-						vendor: `newapi:${v}`,
-						model,
-						response: data,
+						raw: {
+							provider: "new_api",
+							vendor: `newapi:${v}`,
+							model,
+							...(operationSpec
+								? {
+									imageOperation: {
+										schemaVersion: operationSpec.schemaVersion,
+										operationId: operationSpec.operationId,
+										kind: operationSpec.kind,
+										execution: operationSpec.execution,
+										sourceNodeId: operationSpec.sourceNodeId,
+										sourceRevision: operationSpec.sourceRevision,
+										parameters: operationSpec.parameters,
+										output: operationSpec.output,
+									},
+								}
+								: {}),
+							imageReferenceTransport,
+							response: data,
 					},
 				}),
 				billingSpecKey,
@@ -3576,6 +3781,8 @@ async function runTaskViaNewApi(
 				userId,
 				vendor: newApiVendorTag,
 				taskKind: req.kind,
+				modelKey: model,
+				specKey: billingSpecKey,
 				result: imageResult,
 				durationMs: Date.now() - startedAtMs,
 			}).catch(() => {});
@@ -3591,8 +3798,98 @@ async function runTaskViaNewApi(
 			/^https?:\/\//i.test(extras.upstreamVideoUrl.trim())
 				? extras.upstreamVideoUrl.trim()
 				: "";
+		if (req.kind === "video_edit") {
+			if (!upstreamVideoUrl) {
+				throw new AppError("视频编辑必须提供真实源视频 URL", {
+					status: 400,
+					code: "video_edit_missing_source_video",
+					details: { upstreamRequestAttempted: false },
+				});
+			}
+			const operation = typeof extras.editOperation === "string" ? extras.editOperation.trim() : "";
+			if (operation !== "subject_remove" && operation !== "subtitle_remove" && operation !== "subtitle_remove_auto") {
+				throw new AppError("视频编辑操作类型无效", {
+					status: 400,
+					code: "video_edit_operation_invalid",
+					details: { operation, upstreamRequestAttempted: false },
+				});
+			}
+			if (
+				(operation === "subject_remove" || operation === "subtitle_remove") &&
+				(!Array.isArray(extras.editSelections) || extras.editSelections.length === 0)
+			) {
+				throw new AppError("框选视频编辑必须提供结构化选区", {
+					status: 400,
+					code: "video_edit_selections_missing",
+					details: { operation, upstreamRequestAttempted: false },
+				});
+			}
+		}
 		const refs = collectTaskReferenceImageUrls(extras);
-		const effectiveVideoTaskKind: TaskRequestDto["kind"] = upstreamVideoUrl
+		const klingStyleReferences = collectKlingStructuredReferenceUrls(
+			extras.styleReferences,
+			extras.style_references,
+		);
+		const klingElementReferences = collectKlingStructuredReferenceUrls(
+			extras.elementReferences,
+			extras.element_references,
+		);
+		// 【原生对白音频·seedance 2.0】参考音频（≤3 条 MP3，外链 http(s)，上游原生音画联合生成+对口型）。
+		// 来源＝orchestrate 逐镜用配音卡(豆包语音 doubao-seed-audio-1-0)合成的台词音频；
+		// 作为 content 数组的 audio_url 条目直接喂给视频模型，不再依赖出片后二次 TTS+mux。
+		const referenceAudios: string[] = Array.isArray(extras.referenceAudioUrls)
+			? (extras.referenceAudioUrls as unknown[])
+					.map((u) => (typeof u === "string" ? u.trim() : ""))
+					.filter((u) => /^https?:\/\//i.test(u))
+					.slice(0, 3)
+			: [];
+		const suppliedReferenceMediaManifest = parseVideoReferenceMediaManifest(
+			extras.referenceMediaManifest,
+		);
+		if (
+			extras.referenceMediaManifest !== undefined &&
+			suppliedReferenceMediaManifest === null
+		) {
+			throw new AppError("视频参考媒体 manifest 结构无效", {
+				status: 400,
+				code: "video_reference_manifest_invalid",
+			});
+		}
+		const referenceMediaManifest =
+			suppliedReferenceMediaManifest ??
+			buildVideoReferenceMediaManifest({
+				referenceImages: refs,
+				firstFrameUrl: extras.firstFrameUrl,
+				lastFrameUrl: extras.lastFrameUrl,
+				referenceAudioUrls: referenceAudios,
+			});
+		if (
+			!mediaManifestMatchesRequest({
+				manifest: referenceMediaManifest,
+				referenceImages: refs,
+				referenceAudios,
+			})
+		) {
+			throw new AppError(
+				"视频参考媒体 manifest 与最终 referenceImages/referenceAudioUrls 顺序不一致",
+				{
+					status: 400,
+					code: "video_reference_manifest_mismatch",
+					details: {
+						manifestImages: referenceMediaManifest.images.map((item) => item.url),
+						requestImages: refs,
+						manifestAudios: referenceMediaManifest.audios.map((item) => item.url),
+						requestAudios: referenceAudios,
+					},
+				},
+			);
+		}
+		const seedanceReferenceContentItems = buildSeedanceReferenceContentItems(
+			referenceMediaManifest,
+		);
+	const effectiveVideoTaskKind: TaskRequestDto["kind"] = req.kind === "video_edit"
+			? "video_edit"
+			: upstreamVideoUrl
 			? "image_to_video"
 			: req.kind === "text_to_video" && refs.length > 0
 				? "image_to_video"
@@ -3605,18 +3902,111 @@ async function runTaskViaNewApi(
 					? Math.max(1, Math.floor(extras.duration))
 					: undefined;
 		const videoRequestShape = buildNewApiVideoRequestShape(v, req);
+		// 通用「上一镜引用」：上一镜上游 task_id，透传进 metadata 供 new-api 各渠道 adaptor 自行挑用
+		// （apimart pixverse 会据此注入 extend_from_task_id 做续写；doubao 忽略，走 content video_url）。
+		const prevTaskId = typeof extras.prevTaskId === "string" ? extras.prevTaskId.trim() : "";
+		const promptDelivery = verifyVideoPromptDeliveryContract({
+			rawContract: extras.promptDeliveryContract,
+			prompt: req.prompt,
+			negativePrompt: req.negativePrompt,
+		});
+		if (!promptDelivery.ok) {
+			throw new AppError(promptDelivery.message, {
+				status: 422,
+				code: promptDelivery.code,
+				details: { upstreamRequestAttempted: false },
+			});
+		}
+		const hasAuthoritativePromptDelivery = promptDelivery.contract !== null;
+		// Provider boundary is transport-only: the prompt and negative prompt are the exact
+		// artifacts delivered by agents/the caller. Semantic cleanup, quality rewrites,
+		// no-BGM injection and negative-template merging must happen before this boundary;
+		// mutating either string here can corrupt dialogue, style intent or shot causality.
+		if (hasAuthoritativePromptDelivery) {
+			const finalPromptDelivery = verifyVideoPromptDeliveryContract({
+				rawContract: extras.promptDeliveryContract,
+				prompt: req.prompt,
+				negativePrompt: req.negativePrompt,
+			});
+			if (!finalPromptDelivery.ok || finalPromptDelivery.contract === null) {
+				throw new AppError(
+					finalPromptDelivery.ok
+						? "视频提示词交付合同在供应商边界丢失"
+						: finalPromptDelivery.message,
+					{
+						status: 422,
+						code: finalPromptDelivery.ok
+							? "video_prompt_delivery_contract_missing"
+							: finalPromptDelivery.code,
+						details: { upstreamRequestAttempted: false },
+					},
+				);
+			}
+		}
 		const metadata = {
 			vendor: v,
 			taskKind: effectiveVideoTaskKind,
+			...(req.kind === "video_edit" && upstreamVideoUrl
+				? {
+						video_url: upstreamVideoUrl,
+						edit_operation: String(extras.editOperation).trim(),
+						edit_selections: Array.isArray(extras.editSelections) ? extras.editSelections : [],
+					}
+				: {}),
+			...(/seedance/i.test(model) && typeof extras.generateAudio === "boolean"
+				? { generate_audio: extras.generateAudio }
+				: {}),
 			...(typeof req.negativePrompt === "string" && req.negativePrompt.trim()
 				? { negative_prompt: req.negativePrompt.trim() }
+				: {}),
+			...(prevTaskId ? { prevTaskId } : {}),
+			...(isSeedance2VideoReference
+				? { billing_reference_video_duration_seconds: referenceVideoDurationSeconds }
+				: {}),
+			...(req.kind === "video_edit" &&
+				typeof extras.billingReferenceVideoDurationSeconds === "number" &&
+				Number.isFinite(extras.billingReferenceVideoDurationSeconds) &&
+				extras.billingReferenceVideoDurationSeconds > 0
+				? { billing_reference_video_duration_seconds: extras.billingReferenceVideoDurationSeconds }
+				: {}),
+			// Kling 家族原生有声开关。只透传调用方明确给出的布尔值，确保 false
+			// 不会在到达 FunAI 前丢失；APIMart 的 video_list/audio 互斥由适配器闭环。
+			...(isKlingV3FamilyVideoModel(model) && typeof extras.audio === "boolean"
+				? { audio: extras.audio }
+				: {}),
+			...(isKlingV3FamilyVideoModel(model) && klingStyleReferences.length > 0
+				? { style_references: klingStyleReferences }
+				: {}),
+			...(isKlingV3FamilyVideoModel(model) && klingElementReferences.length > 0
+				? { element_references: klingElementReferences }
 				: {}),
 		};
 
 		let requestInit: RequestInit;
 		let requestPayload: Record<string, unknown>;
 
-		if (isKlingMotionControlModel(model)) {
+		if (req.kind === "video_enhance") {
+			const ex = (extras || {}) as Record<string, any>;
+			const enhanceMetadata: Record<string, unknown> = {
+				video_url: ex.video_url ?? ex.videoUrl,
+			};
+			if (ex.tool_version ?? ex.toolVersion) enhanceMetadata.tool_version = ex.tool_version ?? ex.toolVersion;
+			if (ex.scene) enhanceMetadata.scene = ex.scene;
+			if (ex.resolution) enhanceMetadata.resolution = ex.resolution;
+			if (ex.resolution_limit ?? ex.resolutionLimit) enhanceMetadata.resolution_limit = ex.resolution_limit ?? ex.resolutionLimit;
+			if (ex.fps) enhanceMetadata.fps = ex.fps;
+			const enhanceBody: Record<string, unknown> = { model, metadata: enhanceMetadata };
+			requestInit = {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${relay.token}`,
+					Accept: "application/json",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(enhanceBody),
+			};
+			requestPayload = enhanceBody;
+		} else if (isKlingMotionControlModel(model)) {
 			if (!upstreamVideoUrl) {
 				throw new AppError("kling-motion-control 必须提供参考视频 (extras.upstreamVideoUrl)", {
 					status: 400,
@@ -3677,9 +4067,35 @@ async function runTaskViaNewApi(
 			};
 			requestPayload = body;
 		} else if (upstreamVideoUrl) {
+			// kling-v3-omni「参考视频用途」（动作迁移开关）：feature=参考视频只供动作/运镜/风格，
+			// 新主体来自参考图；base=把参考视频当底片重绘/续演（旧默认）。仅 omni 且显式设置时
+			// 才在 content 条目上带 refer_type / keep_original_sound（由 apimart adaptor 转
+			// video_list[].refer_type）；其它渠道（doubao/ARK 等）不注入，避免私货字段外泄。
+			const klingReferType = isKlingV3ReferenceVideoModel(model)
+				? normalizeKlingVideoReferType(extras.videoReferType ?? extras.video_refer_type)
+				: null;
+			const klingKeepSound =
+				isKlingV3ReferenceVideoModel(model) &&
+				(extras.keepOriginalSound !== undefined || extras.keep_original_sound !== undefined)
+					? normalizeKlingKeepOriginalSound(extras.keepOriginalSound ?? extras.keep_original_sound)
+					: null;
 			const contentItems: unknown[] = [
-				{ type: "video_url", video_url: { url: upstreamVideoUrl } },
-				...refs.map((u) => ({ type: "image_url", image_url: { url: u } })),
+				{
+					type: "video_url",
+					video_url: { url: upstreamVideoUrl },
+					...(klingReferType ? { refer_type: klingReferType } : {}),
+					...(klingKeepSound ? { keep_original_sound: klingKeepSound } : {}),
+				},
+				...(/seedance/i.test(model)
+					? seedanceReferenceContentItems
+					: [
+							...refs.map((u) => ({ type: "image_url", image_url: { url: u } })),
+							...referenceAudios.map((u) => ({
+								type: "audio_url",
+								audio_url: { url: u },
+								role: "reference_audio",
+							})),
+						]),
 			];
 			const metadataWithContent = {
 				...metadata,
@@ -3691,6 +4107,72 @@ async function runTaskViaNewApi(
 				response_format: "url",
 				n: 1,
 				metadata: metadataWithContent,
+			};
+			if (typeof req.seed === "number" && Number.isFinite(req.seed)) {
+				body.seed = Math.trunc(req.seed);
+			}
+			if (videoRequestShape.size) body.size = videoRequestShape.size;
+			if (videoRequestShape.resolution) body.resolution = videoRequestShape.resolution;
+			if (videoRequestShape.aspectRatio) body.aspect_ratio = videoRequestShape.aspectRatio;
+			if (typeof seconds === "number") body.duration = seconds;
+			requestInit = {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${relay.token}`,
+					Accept: "application/json",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(body),
+			};
+			requestPayload = body;
+		} else if ((refs.length > 0 || referenceAudios.length > 0) && /seedance/i.test(model)) {
+			// Seedance 的单图、多图与参考音频统一走 content[]。条目顺序和 role 完全来自已校验的
+			// referenceMediaManifest，首帧/尾帧保持 first_frame/last_frame，不降格成普通 reference_image。
+			const contentItems: unknown[] = seedanceReferenceContentItems;
+			const metadataWithContent = {
+				...metadata,
+				content: contentItems,
+			};
+			const body: Record<string, unknown> = {
+				model,
+				prompt: req.prompt,
+				response_format: "url",
+				n: 1,
+				metadata: metadataWithContent,
+			};
+			if (typeof req.seed === "number" && Number.isFinite(req.seed)) {
+				body.seed = Math.trunc(req.seed);
+			}
+			if (videoRequestShape.size) body.size = videoRequestShape.size;
+			if (videoRequestShape.resolution) body.resolution = videoRequestShape.resolution;
+			if (videoRequestShape.aspectRatio) body.aspect_ratio = videoRequestShape.aspectRatio;
+			if (typeof seconds === "number") body.duration = seconds;
+			requestInit = {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${relay.token}`,
+					Accept: "application/json",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(body),
+			};
+			requestPayload = body;
+		} else if (refs.length > 0 && isKlingV3FamilyVideoModel(model)) {
+			// kling-v3/omni：参考图全量带 role 发 content[]（first_frame/last_frame/reference_image），
+			// 由 apimart adaptor 转 image_with_roles(omni)/有序 image_urls(v3)。
+			// 走下面的通用分支只会发 refs[0]，尾帧与其余参考图会被静默丢弃（首尾帧钉运镜失效）。
+			const contentItems = buildKlingV3ImageContentItems({
+				refs,
+				firstFrameUrl: extras.firstFrameUrl,
+				lastFrameUrl: extras.lastFrameUrl,
+			});
+			const body: Record<string, unknown> = {
+				model,
+				prompt: req.prompt,
+				response_format: "url",
+				n: 1,
+				metadata:
+					contentItems.length > 0 ? { ...metadata, content: contentItems } : metadata,
 			};
 			if (typeof req.seed === "number" && Number.isFinite(req.seed)) {
 				body.seed = Math.trunc(req.seed);
@@ -3809,6 +4291,13 @@ async function runTaskViaNewApi(
 				body.aspect_ratio = videoRequestShape.aspectRatio;
 			}
 			if (typeof seconds === "number") body.duration = seconds;
+			// 透传图片（含 asset:// 审核素材）；firstFrameUrl 置首，便于上游标记 first_frame。
+			if (refs.length > 0) {
+				const ff =
+					typeof extras.firstFrameUrl === "string" ? extras.firstFrameUrl.trim() : "";
+				body.images =
+					ff && refs.includes(ff) ? [ff, ...refs.filter((u) => u !== ff)] : refs;
+			}
 
 			requestInit = {
 				method: "POST",
@@ -3891,8 +4380,19 @@ export async function fetchNewApiTaskResult(
 		taskKind?: TaskRequestDto["kind"] | null;
 		vendor?: string | null;
 		promptFromClient?: string | null;
+		/** Bound a single upstream poll GET so a worker tick cannot hang on a slow
+		 * upstream. Opt-in: existing callers omit it and keep the prior no-timeout
+		 * behavior; the poller worker passes a finite value. */
+		timeoutMs?: number;
+		/** Polling callers release the upstream lease before the potentially slow OSS upload. */
+		skipAssetHosting?: boolean;
 	},
 ): Promise<TaskResult> {
+	const generationContext = await readStoredGenerationAssetContext(
+		c,
+		userId,
+		taskId,
+	);
 	const relay = resolveNewApiRelayConfig(c);
 	if (!relay) {
 		throw new AppError("NEW_API_INTERNAL_BASE_URL / NEW_API_INTERNAL_TOKEN 未配置", {
@@ -3925,25 +4425,35 @@ export async function fetchNewApiTaskResult(
 				Accept: "application/json",
 			},
 		},
-		{ provider: vendorRaw },
+		typeof input?.timeoutMs === "number"
+			? { provider: vendorRaw, timeoutMs: input.timeoutMs }
+			: { provider: vendorRaw },
 	);
 	const assets = extractNewApiVideoAssets(data);
-	const parsedResult = TaskResultSchema.parse({
-		id: taskId.trim(),
-		kind: (input?.taskKind as TaskRequestDto["kind"]) || "text_to_video",
-		status: assets.length ? "succeeded" : normalizeNewApiVideoStatus(data?.status || data?.state || data?.task_status),
-		assets,
-		raw: {
-			provider: "new_api",
-			vendor: vendorRaw,
-			upstreamTaskId,
-			response: data,
-			prompt: input?.promptFromClient ?? null,
-		},
-	});
+	const parsedResult = attachGenerationAssetContextToTaskResult(
+		TaskResultSchema.parse({
+			id: taskId.trim(),
+			kind: (input?.taskKind as TaskRequestDto["kind"]) || "text_to_video",
+			status: assets.length
+				? "succeeded"
+				: normalizeNewApiVideoStatus(
+						data?.status || data?.state || data?.task_status,
+					),
+			assets,
+			raw: {
+				provider: "new_api",
+				vendor: vendorRaw,
+				upstreamTaskId,
+				response: data,
+				prompt: input?.promptFromClient ?? null,
+			},
+		}),
+		generationContext,
+	);
 	if (parsedResult.status !== "succeeded" || parsedResult.assets.length === 0) {
 		return parsedResult;
 	}
+	if (input?.skipAssetHosting) return parsedResult;
 	return hostTaskAssetsSynchronously({
 		c,
 		userId,
@@ -3953,6 +4463,7 @@ export async function fetchNewApiTaskResult(
 			prompt: input?.promptFromClient ?? null,
 			vendor: vendorRaw,
 			taskId: parsedResult.id,
+			generationContext,
 		},
 		traceTaskKind: parsedResult.kind,
 		traceVendor: vendorRaw,
@@ -3971,6 +4482,11 @@ export async function runGenericTaskForVendor(
 	setTraceStage(c, "task:run:begin", { vendor: v, taskKind: req.kind });
 	const progressCtx = extractProgressContext(req, v);
 	const startedAtMs = Date.now();
+	const generationContext = await resolveAuthorizedGenerationAssetContext(
+		c,
+		userId,
+		req,
+	);
 	const forcedTaskId =
 		typeof options?.forceTaskId === "string" && options.forceTaskId.trim()
 			? options.forceTaskId.trim()
@@ -4003,7 +4519,10 @@ export async function runGenericTaskForVendor(
 				},
 			);
 		}
-		result = await runTaskViaNewApi(c, userId, v, req, options);
+		result = attachGenerationAssetContextToTaskResult(
+			await runTaskViaNewApi(c, userId, v, req, options),
+			generationContext,
+		);
 
 		const apiVendor = pickApiVendorForTask(result, v);
 		const persistAssets =
@@ -4029,7 +4548,7 @@ export async function runGenericTaskForVendor(
 			if (vendorTaskId && vendorTaskId !== forcedTaskId) {
 				const inferredPid = existingUpstreamTaskId || vendorTaskId;
 				const refKind =
-					req.kind === "text_to_video" || req.kind === "image_to_video"
+						req.kind === "text_to_video" || req.kind === "image_to_video" || req.kind === "image_to_3d" || req.kind === "video_enhance" || req.kind === "video_edit"
 						? ("video" as const)
 						: req.kind === "text_to_image" || req.kind === "image_edit"
 							? ("image" as const)
@@ -4086,6 +4605,7 @@ export async function runGenericTaskForVendor(
 					vendor: apiVendor,
 					modelKey: modelKeyForHosting,
 					taskId: taskIdForHosting,
+					generationContext,
 				},
 				traceTaskKind: req.kind,
 				traceVendor: apiVendor,
@@ -4116,18 +4636,23 @@ export async function runGenericTaskForVendor(
 				userId,
 				vendor: apiVendor,
 				taskId: result.id,
-				taskKind: req.kind,
-				request: { vendor: v, request: req },
+				taskKind: result.kind,
+				request: {
+					vendor: v,
+					requestedKind: req.kind,
+					effectiveKind: result.kind,
+					request: req,
+				},
 				upstreamResponse: { status: result.status, raw: result.raw },
 			});
 
 			await recordVendorCallForTaskResult(c, {
 				userId,
 				vendor: apiVendor,
-				taskKind: req.kind,
-			result,
-			durationMs: Date.now() - startedAtMs,
-		});
+				taskKind: result.kind,
+				result,
+				durationMs: Date.now() - startedAtMs,
+			});
 
 		return result;
 	} catch (err: any) {
