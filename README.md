@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./apps/web/public/weblogo.png" width="240" alt="TapCanvas" />
+  <img src="./apps/web/public/tapcanvas-app-icon.svg" width="128" alt="TapCanvas" />
 </p>
 
 <p align="center">
