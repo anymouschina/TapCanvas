@@ -27,7 +27,7 @@ export type HarnessHttpServer = Readonly<{
 
 class BodyLimitError extends Error {}
 
-class SseWriter {
+export class SseWriter {
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
 
@@ -53,7 +53,7 @@ class SseWriter {
   }
 }
 
-class SessionSerialGate {
+export class SessionSerialGate {
   private readonly tails = new Map<string, Promise<unknown>>();
 
   async run<T>(key: string, task: () => Promise<T>): Promise<T> {
@@ -68,7 +68,7 @@ class SessionSerialGate {
   }
 }
 
-function authorize(request: IncomingMessage, token: string | undefined): boolean {
+export function authorize(request: IncomingMessage, token: string | undefined): boolean {
   if (!token) return true;
   const authorization = request.headers.authorization;
   const agentsToken = request.headers["x-agents-token"];
@@ -109,7 +109,7 @@ function beginSse(response: ServerResponse): void {
   response.flushHeaders();
 }
 
-function errorDetails(error: unknown): { status: number; code: string; message: string } {
+export function errorDetails(error: unknown): { status: number; code: string; message: string } {
   if (error instanceof BridgeRequestError) {
     return { status: error.status, code: error.code, message: error.message };
   }
@@ -140,7 +140,7 @@ function combineAbortSignals(signals: readonly AbortSignal[]): AbortSignal {
   return AbortSignal.any([...signals]);
 }
 
-function requiredBodyString(body: unknown, key: string): string {
+export function requiredBodyString(body: unknown, key: string): string {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new BridgeRequestError("request body must be a JSON object", "invalid_request_body");
   }

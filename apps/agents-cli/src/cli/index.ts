@@ -2,6 +2,7 @@
 import { Command } from "commander";
 
 import { startHarnessHttpServer } from "../bridge/http-server.js";
+import { positiveInteger } from "./args.js";
 
 type ServeOptions = Readonly<{
   host: string;
@@ -9,14 +10,6 @@ type ServeOptions = Readonly<{
   token?: string;
   bodyLimit: string;
 }>;
-
-function positiveInteger(value: string, label: string): number {
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`${label} 必须是正整数，收到：${value}`);
-  }
-  return parsed;
-}
 
 const program = new Command();
 
