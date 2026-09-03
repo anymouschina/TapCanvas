@@ -9,3 +9,6 @@ logs
 project-data
 .DS_Store
 coverage
+**/.env
+**/.env.*
+!**/.env.example

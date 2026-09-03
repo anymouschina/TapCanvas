@@ -16,7 +16,9 @@
     "test:web": "pnpm --filter @tapcanvas/web test",
     "test:api": "pnpm --filter @tapcanvas/api test",
     "test:agents": "pnpm --filter agents test",
-    "compose:up": "docker compose up -d",
-    "compose:down": "docker compose down"
+    "compose:up": "./scripts/dev.sh docker",
+    "compose:up:fresh": "./scripts/dev.sh docker --fresh-build",
+    "compose:init": "./scripts/dev.sh docker --init-only",
+    "compose:down": "./scripts/dev.sh docker-down"
   }
 }

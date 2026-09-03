@@ -23,7 +23,8 @@
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.2-alpha.2",
     "@deepseek-ai/dsh-sdk-client": "0.1.2-alpha.2",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "dotenv": "^16.6.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

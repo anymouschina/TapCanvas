@@ -66,10 +66,10 @@ pnpm db:migrate:sqlite-to-pg
 
 ### Docker 自动部署时的数据库更新
 
-`apps/hono-api/docker-compose.yml` 当前会让 `api` 服务在启动时执行这条链路：
+根目录 `docker-compose.yml` 会让 `api` 服务在首次启动或相关输入变化时执行这条链路：
 
 ```bash
-pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:seed-patches && pnpm build && node dist/main.js
+pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:migrate && pnpm db:pg:seed-patches && pnpm build && node dist/main.js
 ```
 
 这意味着每次容器启动都会：
@@ -77,22 +77,23 @@ pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:seed-patches && pnpm bui
 1. 重新生成 Prisma Client
 2. 自动应用安全的增量 schema 更新
 3. 如果检测到破坏性 schema 语句则立即失败并拒绝启动
-4. `api` 镜像会在构建阶段预装依赖，运行时只在 `/app/node_modules` 卷为空或缺包时才回退执行 `pnpm install`；`agents-bridge` 仍保持轻量镜像，不会额外预装 `apps/hono-api` 依赖
-5. 依赖安装层只依赖 `package.json`、`pnpm-lock.yaml` 与 `prisma/`，普通 `src/` 改动不会再次触发整层 `pnpm install`
+4. `api` 在独立命名卷为空、依赖清单或锁文件变化、或发现直接依赖缺失时严格执行 `pnpm install --frozen-lockfile`
+5. Web 与鲁班 API 的前端都在各自镜像内按锁文件构建，不读取宿主 `node_modules` 或 `dist`
 
 ### 一条命令部署 / 启动（带 Postgres）
 
-在 `apps/hono-api` 目录下执行：
+在仓库根目录执行：
 
 ```bash
-docker-compose up --build -d
+./scripts/dev.sh docker
 ```
 
-共享宿主机目录默认按 monorepo 布局解析，也就是当前文件位于 `<repo>/apps/hono-api` 时，`packages/`、`skills/`、`project-data/` 会从 `../..` 查找。若你的线上部署是扁平目录（例如 `<root>/hono-api`、`<root>/packages`、`<root>/skills`、`<root>/project-data` 同级），启动前显式设置：
+脚本会自动选择 `docker compose` 或 `docker-compose`，并把 `apps/hono-api/.env` 同时用于 Compose 插值与容器注入。全新克隆缺少该文件时会生成一次性的强随机本地密钥；已有文件只追加缺失启动项、不覆盖既有值，因此现有 lluban 与其他渠道配置保持不变。应用镜像逐个构建，避免冷启动时的并发构建耗尽 Docker 内存；所有 `.env*` 都被 Docker 构建上下文排除。
+
+需要验证完全冷构建时执行：
 
 ```bash
-export TAPCANVAS_SHARED_ROOT=..
-docker-compose up --build -d
+./scripts/dev.sh docker --fresh-build
 ```
 
 如果你的 `.env` 里仍然使用宿主机本地 DSN（`localhost:5432`），可以继续保留给宿主机工具使用，但容器内 DSN 需要单独配置：
@@ -101,12 +102,14 @@ docker-compose up --build -d
 DATABASE_URL_DOCKER=postgresql://tapcanvas:***@postgres:5432/tapcanvas?schema=public
 ```
 
-内置服务：
+默认内置服务：
 
 1. `postgres`（持久卷：`hono_api_postgres`）
 2. `redis`
 3. `agents-bridge`
-4. `api`
+4. `api` 与后台 Workers
+5. `new-api`（鲁班 API）
+6. `web`
 
 Compose API 健康后，可从宿主机运行真实认证集成测试：
 
@@ -137,7 +140,7 @@ pnpm prisma:generate && pnpm db:pg:schema && pnpm db:pg:migrate && pnpm db:pg:se
 补充：
 
 - `api` 服务当前设置了 `restart: unless-stopped` 和 `init: true`，避免单次异常退出把整组长期停住。
-- 由于 `api` 依赖在镜像构建阶段预装，首次 `docker-compose up --build` 创建空白 `api_node_modules` 卷时，Docker 会先用镜像里的 `/app/node_modules` 初始化该卷，通常不再需要在启动热路径里重新跑完整依赖安装。
+- 首次启动会在空白 `api_node_modules` 卷内按应用锁文件安装依赖；后续只有依赖指纹变化或直接依赖缺失才会重新安装，且锁文件不一致会显式失败。
 - `api` 镜像当前会在构建阶段额外安装 Dreamina CLI，并将其固定放在 `/usr/local/bin/dreamina`；compose 同时显式注入 `DREAMINA_CLI_PATH=/usr/local/bin/dreamina`，供后端 Dreamina runner 直接调用。
 - Dreamina 登录态与每个账号的本地 session 不放在镜像层内，而是落到 `/app/project-data/users/<userId>/integrations/dreamina/accounts/<accountId>/...`；由于 compose 已挂载 `${TAPCANVAS_SHARED_ROOT:-../..}/project-data:/app/project-data`，容器重建后登录态仍会保留。
 
@@ -182,7 +185,7 @@ docker-compose exec api dreamina version
 - TapCanvas 的公开 `sessionKey` 是稳定的产品对话身份，继续用于 Hono 的 `public_chat_sessions/public_chat_messages`、SSE thread 与后续外部恢复；它不再直接复用为 DeepSeek Harness 的内部 session ID。Bridge 每次创建新的 Harness SDK 子进程时，都会根据用户、公开 session 与本次执行 nonce 派生一个新的不透明内部 session ID；因此全新物理进程不会碰撞到已有但不属于该 live session 的 DSH 持久日志，也不会通过删除旧日志掩盖冲突。跨回合产品历史由 Hono 对话存储和已授权记忆层承担，而不是让不同物理进程盲目复用同一份 DSH live-session 日志。
 - Bridge 与 Web 对 `status-update` 使用唯一严格合同：`{threadId, turnId, phase, llmTurn, startedAt, timeoutMs?, deadlineAt?, continuationId?, continuationStage?}`，其中 `phase` 只允许 `agent_reasoning | agent_continuation`。旧版 `{status, runtime, promptPreview}` 不是兼容输入，字段漂移必须显式报 `agents_chat_stream_payload_invalid:status-update`。该事件仅表达真实模型轮次/续跑窗口，不是交付完成证据。生产 Bridge 启动时会把只读源码复制到运行快照；源码更新后必须重建或重建容器实例，禁止用仍驻留的旧快照宣称已经切换协议。
 - DeepSeek Harness Bridge 原生实现 `/chat/status` 与 `/chat/interrupt`，不再让 Hono 的控制面请求落到通用 404。Bridge 在受理 `/chat` 前按 `userId + TapCanvas sessionId` 原子写入独立 lifecycle checkpoint，运行中状态同时保留精确 `publicTurnId` 与可中断的 Harness 控制器，终态只根据 Harness 的通用 delivery closure 写入 `logicalTaskState`、`finalResponse` 与 `terminalDelivery`；未发生过回合的合法会话返回 `{durable:true, activeTurn:false, turn:null}`，不是接口故障。checkpoint 使用外部会话身份的 SHA-256 文件名持久化在 `DSH_HOME/tapcanvas-chat-status`，与每个物理执行独占的 DSH session log 分离；Bridge 重启后状态查询读取同一 checkpoint，不复用或删除物理日志。若磁盘 checkpoint 仍写着 running、但新进程没有对应内存 owner，状态层会显式收口为 `failed/deepseek_harness_process_restarted`，禁止把孤儿记录伪装成仍在执行。用户中断只接受同一 session 的精确 turnId，并先持久化 cancelled 终态再关闭对应 Harness 进程；身份不匹配返回 `interrupted=false`，禁止误杀较新的回合。
-- Bridge 的部署依赖与运行链同样采用单一真源：`apps/agents-cli` 只直接声明实际 import/启动的 `@deepseek-ai/dsh`、`@deepseek-ai/dsh-sdk-client` 与 `commander`，Harness 内部插件统一由 `@deepseek-ai/dsh` 的精确版本传递拥有，不在应用清单重复钉住。workspace 与生产镜像分别使用根 `pnpm-lock.yaml` 和 `apps/agents-cli/pnpm-lock.yaml`；旧 npm lock、`xlsx`、自研 runtime 的同步配置脚本、Redis/任务图/轮询/子代理预算环境变量、`packages`/`docs` bootstrap 和失效 memory/skills volume 均不再属于 Bridge 部署合同。生产镜像只携带当前 `src -> dist`、`harness/tapcanvas.patch.yml`、`skills/` 与只读 `knowledge/` 运行时资产，缺任一真实输入时在 build/start 阶段显式失败。
+- Bridge 的部署依赖与运行链同样采用单一真源：`apps/agents-cli` 直接声明实际 import/启动的 `@deepseek-ai/dsh`、`@deepseek-ai/dsh-sdk-client`、`commander`，以及内置 evolver Skill 读取本地环境时使用的 `dotenv`；Harness 内部插件统一由 `@deepseek-ai/dsh` 的精确版本传递拥有，不在应用清单重复钉住。workspace 与生产镜像分别使用根 `pnpm-lock.yaml` 和 `apps/agents-cli/pnpm-lock.yaml`；旧 npm lock、`xlsx`、自研 runtime 的同步配置脚本、Redis/任务图/轮询/子代理预算环境变量、`packages`/`docs` bootstrap 和失效 memory/skills volume 均不再属于 Bridge 部署合同。生产镜像只携带当前 `src -> dist`、`harness/tapcanvas.patch.yml`、`skills/` 与只读 `knowledge/` 运行时资产，缺任一真实输入时在 build/start 阶段显式失败。
 - Docker API 每次启动都会调和内置资产：数据库结构发生变化时在迁移/seed 后执行，结构指纹未变时跳过迁移但仍从 `apps/agents-cli/skills/` 幂等同步系统 Skill，并对 `apps/agents-cli/knowledge/` 中声明的编译知识卡先核对正文 SHA-256、embedding 模型和 pgvector 维度，再写入 `agent_knowledge_vectors`；同 ID 已存在时只接受哈希、模型与维度完全一致的不可变记录，任何差异、保留 ID 冲突或表维度漂移都会阻断启动，禁止覆盖后台知识。管理员账号确认后，API 再幂等发布 `all_users` 系统工作流及其不可变 Flow 版本。当前内置问候工作流使用稳定工作流身份 `tapcanvas.builtin.greeting-fixed-reply/v1` 与最新不可变定义版本 2；全新空库启动会自动创建系统项目、3 节点 Flow、版本和 `all_users` attachment，已有部署启动时也幂等调和到同一最新版，因此新用户无需人工安装或装配。该能力只把适用范围作为 capability descriptor 的语义证据，由 agents-cli 自主判断是否调用；Hono/Web 不维护“你好”关键词路由。真实图固定为 `workflow.input.text/v1 -> workflow.transform.fixed_text/v1 -> workflow.output/v1`，最终用户输出只从成功的 `workflow.output/v1` 标准边界读取，不依赖本地 JavaScript、默认 route 或 prompt 兜底。
 - 公开 AI 对话明确区分三类事实，禁止再用一个字段同时表达三层含义：`AgentLogicalTaskStatusV1 = active|waiting_input|waiting_external|succeeded|failed|cancelled` 表示用户目标；`AgentPhysicalRunStatusV1 = running|completed|handed_off|interrupted` 表示本次模型/进程窗口；`AgentDeliveryStatusV1 = pending|satisfied|unsatisfied` 表示真实交付核验。共享协议 `AgentLogicalTaskStateV1` 同时携带三类状态、稳定 `logicalTaskId`、根任务节点、修订号与结构化原因。
 - 唯一生命周期提交链为 `agents-cli durable owner / PhysicalRunExitV1 -> Hono authority projector -> public session or durable Workflow -> Web logicalTaskState`。每个物理执行都必须声明 `terminalAuthority`：公开根任务由 TaskStore 以 `user_delivery` 签发，只有 `logical_terminal + delivery verified` 才能得到用户级 `succeeded`；直接 Workflow Agent 由 durable Workflow 以 `workflow_action` 签发，其 `logical_terminal/satisfied` 只关闭当前原子动作并把 typed 输出交还 Workflow，不能冒充整章视频已经交付。Hono 会核对调用方式与回执裁决权完全一致，缺失、错配或非法回执均显式失败，不从正文、HTTP 200、模型结束或旧状态回退推断。物理窗口耗尽、provider 等待和真实外部异步受理继续按各自结构事实投影；`requestTerminal`、`runOutcome`、`turnVerdict`、completion trace 和历史 `turn.state` 只保留诊断/审计事实。

@@ -8,14 +8,15 @@ TapCanvas one-click dev launcher.
 Local (recommended for fastest HMR):
   ./scripts/dev.sh local [--install] [--webcut]
 
-Docker Compose (HMR via bind mount; slower, but closer to prod):
-  ./scripts/dev.sh docker [--build]
+Docker Compose (self-contained images; no host dependencies required):
+  ./scripts/dev.sh docker [--no-build|--fresh-build|--init-only]
+  ./scripts/dev.sh docker-down
 
 Examples:
   ./scripts/dev.sh local --install
   ./scripts/dev.sh local --webcut
   ./scripts/dev.sh docker
-  ./scripts/dev.sh docker --build
+  ./scripts/dev.sh docker --fresh-build
 EOF
 }
 
@@ -31,7 +32,7 @@ read_env_value() {
   local key="$2"
   [ -f "$file" ] || return 1
   local line=""
-  line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$file" | head -n 1 || true)"
+  line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$file" | tail -n 1 || true)"
   [ -n "$line" ] || return 1
   local value="${line#*=}"
   value="${value%$'\r'}"
@@ -43,6 +44,157 @@ read_env_value() {
   fi
   printf "%s" "$value"
   return 0
+}
+
+generate_hex_secret() {
+  local bytes="$1"
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "[dev.sh] openssl is required to generate the first-run Docker secrets." >&2
+    return 1
+  fi
+  openssl rand -hex "$bytes"
+}
+
+create_docker_env() {
+  local file="$1"
+  local postgres_password=""
+  local jwt_secret=""
+  local internal_worker_token=""
+  local agents_bridge_token=""
+  local new_api_internal_token=""
+  local new_api_session_secret=""
+  local new_api_crypto_secret=""
+  local tapcanvas_admin_password=""
+  local new_api_root_password=""
+
+  postgres_password="$(generate_hex_secret 24)"
+  jwt_secret="$(generate_hex_secret 32)"
+  internal_worker_token="$(generate_hex_secret 32)"
+  agents_bridge_token="$(generate_hex_secret 32)"
+  new_api_internal_token="sk-$(generate_hex_secret 24)"
+  new_api_session_secret="$(generate_hex_secret 32)"
+  new_api_crypto_secret="$(generate_hex_secret 32)"
+  tapcanvas_admin_password="$(generate_hex_secret 12)"
+  new_api_root_password="$(generate_hex_secret 12)"
+
+  umask 077
+  {
+    printf '%s\n' '# Generated once by ./scripts/dev.sh docker. Keep this file private.'
+    printf '%s\n' '# Existing files are never overwritten, so manually added provider keys are preserved.'
+    printf 'POSTGRES_DB=tapcanvas\n'
+    printf 'POSTGRES_USER=tapcanvas\n'
+    printf 'POSTGRES_PASSWORD=%s\n' "$postgres_password"
+    printf 'JWT_SECRET=%s\n' "$jwt_secret"
+    printf 'INTERNAL_WORKER_TOKEN=%s\n' "$internal_worker_token"
+    printf 'AGENTS_BRIDGE_TOKEN=%s\n' "$agents_bridge_token"
+    printf 'NEW_API_INTERNAL_TOKEN=%s\n' "$new_api_internal_token"
+    printf 'NEW_API_SESSION_SECRET=%s\n' "$new_api_session_secret"
+    printf 'NEW_API_CRYPTO_SECRET=%s\n' "$new_api_crypto_secret"
+    printf 'NEW_API_USD_EXCHANGE_RATE=7.3\n'
+    printf 'TAP_CREDITS_PER_CNY=100\n'
+    printf 'TAPCANVAS_ADMIN_USERNAME=admin\n'
+    printf 'TAPCANVAS_ADMIN_PASSWORD=%s\n' "$tapcanvas_admin_password"
+    printf 'NEW_API_ROOT_USERNAME=admin\n'
+    printf 'NEW_API_ROOT_PASSWORD=%s\n' "$new_api_root_password"
+  } > "$file"
+  chmod 600 "$file"
+  echo "[dev.sh] Created private Docker configuration at $file (values were not printed)."
+}
+
+validate_docker_env() {
+  local file="$1"
+  local required_keys=(
+    POSTGRES_PASSWORD
+    JWT_SECRET
+    INTERNAL_WORKER_TOKEN
+    AGENTS_BRIDGE_TOKEN
+    NEW_API_INTERNAL_TOKEN
+    NEW_API_SESSION_SECRET
+    NEW_API_CRYPTO_SECRET
+    NEW_API_USD_EXCHANGE_RATE
+  )
+  local missing_keys=()
+  local key=""
+  local value=""
+
+  for key in "${required_keys[@]}"; do
+    value="$(read_env_value "$file" "$key" || true)"
+    if [ -z "$value" ]; then
+      missing_keys+=("$key")
+    fi
+  done
+  if [ "${#missing_keys[@]}" -gt 0 ]; then
+    echo "[dev.sh] Existing $file is missing required Docker keys:" >&2
+    printf '  - %s\n' "${missing_keys[@]}" >&2
+    echo "[dev.sh] The file was preserved. Add those keys, then run the command again." >&2
+    return 1
+  fi
+
+  value="$(read_env_value "$file" "NEW_API_INTERNAL_TOKEN")"
+  value="${value#sk-}"
+  if [ "${#value}" -ne 48 ]; then
+    echo "[dev.sh] NEW_API_INTERNAL_TOKEN in $file must contain exactly 48 characters after an optional sk- prefix." >&2
+    return 1
+  fi
+}
+
+append_missing_docker_env_values() {
+  local file="$1"
+  local required_keys=(
+    POSTGRES_PASSWORD
+    JWT_SECRET
+    INTERNAL_WORKER_TOKEN
+    AGENTS_BRIDGE_TOKEN
+    NEW_API_INTERNAL_TOKEN
+    NEW_API_SESSION_SECRET
+    NEW_API_CRYPTO_SECRET
+    NEW_API_USD_EXCHANGE_RATE
+  )
+  local added_keys=()
+  local key=""
+  local current_value=""
+  local generated_value=""
+
+  umask 077
+  for key in "${required_keys[@]}"; do
+    current_value="$(read_env_value "$file" "$key" || true)"
+    if [ -n "$current_value" ]; then
+      continue
+    fi
+    case "$key" in
+      POSTGRES_PASSWORD) generated_value="$(generate_hex_secret 24)" ;;
+      JWT_SECRET|INTERNAL_WORKER_TOKEN|AGENTS_BRIDGE_TOKEN|NEW_API_SESSION_SECRET|NEW_API_CRYPTO_SECRET)
+        generated_value="$(generate_hex_secret 32)"
+        ;;
+      NEW_API_INTERNAL_TOKEN) generated_value="sk-$(generate_hex_secret 24)" ;;
+      NEW_API_USD_EXCHANGE_RATE) generated_value="7.3" ;;
+      *)
+        echo "[dev.sh] No generator is defined for required key $key." >&2
+        return 1
+        ;;
+    esac
+    if [ "${#added_keys[@]}" -eq 0 ]; then
+      printf '\n%s\n' '# Added by ./scripts/dev.sh docker; existing values above remain unchanged.' >> "$file"
+    fi
+    printf '%s=%s\n' "$key" "$generated_value" >> "$file"
+    added_keys+=("$key")
+  done
+  chmod 600 "$file"
+  if [ "${#added_keys[@]}" -gt 0 ]; then
+    echo "[dev.sh] Added missing Docker settings without printing their values:"
+    printf '  - %s\n' "${added_keys[@]}"
+  fi
+}
+
+ensure_docker_env() {
+  local file="$1"
+  if [ ! -f "$file" ]; then
+    create_docker_env "$file"
+  else
+    echo "[dev.sh] Preserving existing values in $file; provider credentials were not changed."
+    append_missing_docker_env_values "$file"
+  fi
+  validate_docker_env "$file"
 }
 
 detect_compose() {
@@ -70,6 +222,25 @@ compose() {
   fi
   echo "[dev.sh] docker compose not available (neither 'docker compose' nor 'docker-compose')" >&2
   return 1
+}
+
+build_docker_images() {
+  local env_file="$1"
+  local fresh="$2"
+  local build_args=()
+  local service=""
+  local build_services=(new-api agents-bridge api web media-worker)
+
+  if [ "$fresh" = "1" ]; then
+    build_args+=(--pull --no-cache)
+  fi
+
+  # A cold Vite, Bun, Node, and Go build can exceed an 8 GiB Docker VM when
+  # Compose schedules all images concurrently. Build one image at a time.
+  for service in "${build_services[@]}"; do
+    echo "[dev.sh] Building $service image..."
+    compose --env-file "$env_file" build "${build_args[@]}" "$service"
+  done
 }
 
 cmd="${1:-local}"
@@ -151,24 +322,49 @@ case "$cmd" in
     wait
     ;;
   docker)
-    build=0
+    build=1
+    fresh_build=0
+    init_only=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --build) build=1 ;;
+        --no-build) build=0 ;;
+        --fresh-build) build=1; fresh_build=1 ;;
+        --init-only) init_only=1 ;;
         *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
       esac
       shift
     done
 
-    args=(up)
-    args+=(-d)
-    if [ "$build" = "1" ]; then
-      args+=(--build)
+    docker_env_file="${TAPCANVAS_ENV_FILE:-apps/hono-api/.env}"
+    ensure_docker_env "$docker_env_file"
+    if [ "$init_only" = "1" ]; then
+      echo "[dev.sh] Docker configuration is ready."
+      exit 0
     fi
 
-    compose "${args[@]}"
-    echo "Web: http://localhost:5173"
+    compose_args=(--env-file "$docker_env_file")
+    if [ "$build" = "1" ]; then
+      build_docker_images "$docker_env_file" "$fresh_build"
+    fi
+    if [ "$fresh_build" = "1" ]; then
+      compose "${compose_args[@]}" up -d --no-build --force-recreate
+    else
+      args=(up -d --no-build)
+      compose "${compose_args[@]}" "${args[@]}"
+    fi
+    echo "Web: http://localhost:5175"
     echo "API: http://localhost:8788"
+    echo "Lluban API: http://localhost:4455"
+    echo "Generated local credentials stay in $docker_env_file and are never printed."
+    ;;
+  docker-down)
+    docker_env_file="${TAPCANVAS_ENV_FILE:-apps/hono-api/.env}"
+    if [ ! -f "$docker_env_file" ]; then
+      echo "[dev.sh] No $docker_env_file exists; there is no initialized local stack to stop."
+      exit 0
+    fi
+    compose --env-file "$docker_env_file" down
     ;;
   *)
     echo "Unknown command: $cmd" >&2

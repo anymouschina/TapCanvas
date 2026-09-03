@@ -1,0 +1,24 @@
+# Never send local credentials to a Docker builder, including a remote builder.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Host dependency/build state must not influence a clean image build.
+**/node_modules
+**/dist
+**/.pnpm-store
+**/.turbo
+**/.cache
+**/coverage
+**/test-results
+
+# Runtime data and local tooling state are not image inputs.
+project-data
+**/data
+**/logs
+**/backups
+.git
+.github
+.DS_Store
+**/.DS_Store
+*.log

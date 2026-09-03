@@ -1,16 +1,52 @@
-# TapCanvas 主前端镜像：nginx serve 宿主预构建的 SPA dist + 同源反代 /api、/public 到 api 容器。
-#
-# 为什么不在镜像内 build：vite build 这类重型前端在 colima(8G/无swap)+QEMU amd64 模拟下会 OOM
-#   (跟 new-api web 同病)。dist 由 deploy.sh 在【宿主机原生】pnpm build 预构建（web 产物平台无关），
-#   本镜像只做 nginx + COPY 静态资源——纯 COPY、零 RUN 执行，不碰 QEMU。
-# nginx:alpine 是多架构 manifest，buildx 按 target(amd64) 直接拉对应架构层，无需模拟。
-#
-# 构建（context=apps/web，见 deploy.sh build_one）：
-#   docker buildx build --platform linux/amd64 -f apps/web/Dockerfile -t <registry>/tapcanvas/web:<tag> --push apps/web
-ARG DOCKERHUB_REGISTRY=docker.io
-FROM ${DOCKERHUB_REGISTRY}/nginx:1.27-alpine
+# syntax=docker.io/docker/dockerfile:1.7
 
-COPY nginx.conf /etc/nginx/nginx.conf
-COPY dist /usr/share/nginx/html
+# Build context is the repository root. The Web application imports shared
+# protocol sources from packages/ and two deterministic contracts from hono-api,
+# so a clean image build must receive those sources explicitly.
+ARG DOCKERHUB_REGISTRY=docker.io
+ARG NPM_REGISTRY=https://registry.npmjs.org
+
+FROM ${DOCKERHUB_REGISTRY}/node:22.19.0-bookworm-slim AS builder
+ARG NPM_REGISTRY
+ARG VITE_API_BASE=/api
+ARG VITE_OBJECT_STORAGE_PROVIDER=tos
+ARG VITE_TOS_PUBLIC_BASE_URL=https://tanvas-ai.tos-cn-guangzhou.volces.com
+ARG VITE_R2_PUBLIC_BASE_URL=https://assets.tapcanvas.uk
+ARG VITE_GITHUB_CLIENT_ID=
+ARG VITE_GITHUB_REDIRECT_URI=
+
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:${PATH} \
+    npm_config_registry=${NPM_REGISTRY} \
+    PNPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
+    VITE_API_BASE=${VITE_API_BASE} \
+    VITE_OBJECT_STORAGE_PROVIDER=${VITE_OBJECT_STORAGE_PROVIDER} \
+    VITE_TOS_PUBLIC_BASE_URL=${VITE_TOS_PUBLIC_BASE_URL} \
+    VITE_R2_PUBLIC_BASE_URL=${VITE_R2_PUBLIC_BASE_URL} \
+    VITE_GITHUB_CLIENT_ID=${VITE_GITHUB_CLIENT_ID} \
+    VITE_GITHUB_REDIRECT_URI=${VITE_GITHUB_REDIRECT_URI}
+
+RUN npm install --global pnpm@10.8.1
+
+WORKDIR /workspace/apps/web
+COPY apps/web/package.json apps/web/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --ignore-workspace \
+      --child-concurrency=1 --network-concurrency=1 \
+      --registry "${NPM_REGISTRY}"
+
+COPY tsconfig.base.json /workspace/tsconfig.base.json
+COPY packages /workspace/packages
+COPY apps/hono-api/src/modules/flow/flow.anchor-bindings.ts \
+     /workspace/apps/hono-api/src/modules/flow/flow.anchor-bindings.ts
+COPY apps/hono-api/src/modules/project-directory/project-directory.contract.ts \
+     /workspace/apps/hono-api/src/modules/project-directory/project-directory.contract.ts
+COPY apps/web /workspace/apps/web
+
+RUN pnpm build
+
+FROM ${DOCKERHUB_REGISTRY}/nginx:1.27-alpine AS runtime
+COPY apps/web/nginx.conf /etc/nginx/nginx.conf
+COPY --from=builder /workspace/apps/web/dist /usr/share/nginx/html
 
 EXPOSE 80

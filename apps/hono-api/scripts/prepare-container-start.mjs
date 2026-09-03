@@ -136,11 +136,11 @@ function prepareDependencies() {
 
 	run("dependencies", "pnpm", [
 		"install",
+		"--frozen-lockfile",
 		"--child-concurrency=1",
 		"--network-concurrency=1",
 		"--registry",
 		registry,
-		"--no-frozen-lockfile",
 	]);
 	const missingAfter = missingInstalledPackages(packageJson);
 	if (missingAfter.length > 0) {
