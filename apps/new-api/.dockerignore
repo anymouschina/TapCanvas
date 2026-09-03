@@ -10,7 +10,11 @@ docs/*
 .eslintcache
 .gocache
 /web/node_modules
+/web/dist
 /data
 /logs
 /tmp
 *.log
+**/.env
+**/.env.*
+!**/.env.example

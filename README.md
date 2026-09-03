@@ -48,24 +48,31 @@ Monorepo 的职责边界：`apps/web` 负责交互与确定性画布执行，`ap
 
 ## 快速开始
 
-需要 Docker + Docker Compose、Node.js `^22.19.0` 或 `>=24`、pnpm `10.8.1`。
+Docker 启动只需要 Docker、Docker Compose 和 OpenSSL；不要求宿主机安装 Node.js、pnpm、Bun 或 Go。
 
 ```bash
 git clone https://github.com/anymouschina/TapCanvas.git
 cd TapCanvas
-corepack enable
-pnpm -w install
-
-cp apps/hono-api/.env.example apps/hono-api/.env
-cp apps/web/.env.example apps/web/.env
-# 按模板注释补齐必填密钥后，启动后端、数据库、网关、Agents 与 Workers
-docker compose up -d --build
-
-# 另开终端启动 Web
-pnpm dev:web
+./scripts/dev.sh docker
 ```
 
-打开 Web [http://localhost:5175](http://localhost:5175)，API 位于 [http://localhost:8788](http://localhost:8788)，鲁班 API 管理台位于 [http://localhost:4455](http://localhost:4455)。全新数据库的 Canvas 管理员默认为 `admin / 123456`，仅用于本机首次启动；暴露到局域网或公网前必须修改。
+这条命令会识别 `docker compose` 或 `docker-compose`，为全新安装生成一次性的强随机本地密钥，随后从已提交的源码和锁文件逐个构建 Web、API、鲁班 API、Agents Bridge 与 Workers，避免冷构建并发耗尽 Docker 内存。密钥只写入被 Git 和 Docker 构建上下文排除的 `apps/hono-api/.env`，不会打印；如果该文件已经存在，脚本只追加缺失的启动项，不覆盖任何现有值，因此已有的 lluban 或其他模型渠道配置会保留。
+
+打开 Web [http://localhost:5175](http://localhost:5175)，API 位于 [http://localhost:8788](http://localhost:8788)，鲁班 API 管理台位于 [http://localhost:4455](http://localhost:4455)。首次生成的两个管理员密码保存在私有 `.env` 文件中，不会显示在终端。冷构建可能需要较长时间，可通过容器状态与日志查看真实进度。
+
+需要完全忽略已有构建缓存并重新拉取基础镜像时运行：
+
+```bash
+./scripts/dev.sh docker --fresh-build
+```
+
+本地源码开发仍可使用 Node.js `^22.19.0` 或 `>=24` 与 pnpm `10.8.1`：
+
+```bash
+corepack enable
+pnpm -w install --frozen-lockfile
+pnpm dev:web
+```
 
 ### 环境变量
 
@@ -74,17 +81,17 @@ README 不复制整份配置，避免与代码漂移；[API 模板](./apps/hono-
 | 分组     | 关键变量                                                                                                         |
 | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | 数据库   | `POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`DATABASE_URL_DOCKER`                               |
-| 服务鉴权 | `JWT_SECRET`、`INTERNAL_WORKER_TOKEN`、`AGENTS_BRIDGE_TOKEN`                                               |
+| 服务鉴权 | `JWT_SECRET`、`INTERNAL_WORKER_TOKEN`、`AGENTS_BRIDGE_TOKEN`；首次 Docker 启动自动生成                     |
 | 模型网关 | `NEW_API_INTERNAL_TOKEN`、`NEW_API_SESSION_SECRET`、`NEW_API_CRYPTO_SECRET`、`NEW_API_USD_EXCHANGE_RATE` |
-| Web      | `VITE_API_BASE`；GitHub OAuth 与对象存储按模板启用                                                             |
+| Web      | Docker 镜像默认同源访问 `/api`；GitHub OAuth 与对象存储可按模板启用                                      |
 
 模型供应商凭据在鲁班 API 管理台配置；不要把真实密钥提交到 Git。缺失关键配置会显式失败，不会自动选择默认模型或静默降级。
 
 ```bash
 pnpm build          # Web + API + Agents
 pnpm test           # 全量测试
-docker compose ps   # 服务状态
-docker compose down # 停止服务，不删除数据卷
+docker-compose --env-file apps/hono-api/.env ps # 当前主机使用 standalone Compose
+./scripts/dev.sh docker-down                     # 停止服务，不删除数据卷
 ```
 
 ## 许可证

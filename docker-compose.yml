@@ -6,16 +6,15 @@ x-new-api-build: &new-api-build
   dockerfile: Dockerfile
   args:
     DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
-    # SKIP_WEB_BUILD=1 is the deployment path: host-built dist only needs a
-    # copy/check stage. An in-image Web build must explicitly provide Bun and
-    # set NEW_API_SKIP_WEB_BUILD=0.
-    BUN_IMAGE: ${NEW_API_BUN_IMAGE:-docker.m.daocloud.io/library/alpine:3.20}
+    # A clean clone has no host-built web/dist. Build the dashboard in the
+    # image with Bun so local startup never depends on host Node/Bun state.
+    BUN_IMAGE: ${NEW_API_BUN_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/oven/bun:1.3.11}
+    NODE_IMAGE: ${NEW_API_NODE_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/node:22.19.0-bookworm-slim}
     GO_IMAGE: ${NEW_API_GO_IMAGE:-docker.m.daocloud.io/library/golang:1.26.1-alpine}
     RUNTIME_IMAGE: ${NEW_API_RUNTIME_IMAGE:-docker.m.daocloud.io/library/debian:bookworm-slim}
     NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     GO_PROXY: ${NEW_API_GO_PROXY:-https://goproxy.cn,direct}
     APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
-    SKIP_WEB_BUILD: ${NEW_API_SKIP_WEB_BUILD:-1}
     HTTP_PROXY: ""
     HTTPS_PROXY: ""
     NO_PROXY: ""
@@ -256,7 +255,7 @@ services:
       # Compose 服务名。使用独立变量，避免同一 .env 的 host-local 地址污染容器网络。
       NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
       NEW_API_PUBLIC_BASE_URL: ${NEW_API_PUBLIC_BASE_URL:-http://localhost:${NEW_API_PORT:-4455}}
-      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_HOST_PORT:-80}/assets/local}
+      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_DEV_HOST_PORT:-5175}/assets/local}
       NEW_API_INTERNAL_TOKEN: ${NEW_API_INTERNAL_TOKEN:-}
       NEW_API_SQL_DSN: ${NEW_API_SQL_DSN:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${NEW_API_POSTGRES_DB:-tapcanvas_new_api}}
       TAPCANVAS_API_INTERNAL_BASE: http://api:8788
@@ -403,26 +402,43 @@ services:
         limits:
           memory: 1g
 
+  # Default local Web entrypoint. The image builds the SPA from tracked source;
+  # no host node_modules, .env, or dist directory is used as an image input.
+  web:
+    image: ${TAPCANVAS_WEB_IMAGE:-tapcanvas/web:local}
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        VITE_API_BASE: /api
+        VITE_OBJECT_STORAGE_PROVIDER: ${VITE_OBJECT_STORAGE_PROVIDER:-tos}
+        VITE_TOS_PUBLIC_BASE_URL: ${VITE_TOS_PUBLIC_BASE_URL:-https://tanvas-ai.tos-cn-guangzhou.volces.com}
+        VITE_R2_PUBLIC_BASE_URL: ${VITE_R2_PUBLIC_BASE_URL:-https://assets.tapcanvas.uk}
+        VITE_GITHUB_CLIENT_ID: ${VITE_GITHUB_CLIENT_ID:-}
+        VITE_GITHUB_REDIRECT_URI: ${VITE_GITHUB_REDIRECT_URI:-}
+    ports:
+      - "${WEB_DEV_HOST_PORT:-5175}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
   # Go 媒体处理微服务（gRPC 控制面 + TOS 数据面）：poster/probe/concat/mux/抽帧/切段/理解代理
   # 已全部迁入（M2 完成，见 docs/superpowers/specs/2026-07-06-media-worker-grpc-design.md）。
   # api 侧各 TS 函数内部 worker 优先、RPC 失败自动回退本地 ffmpeg——worker 挂了不影响功能，只影响峰值内存。
   # 无状态、无 DB；横向扩容直接调 MEDIA_WORKER_REPLICAS（副本间无协调，api 端 grpc 逐调用负载均衡由
   # docker DNS + 短连接语义承担；副本>1 时如需严格均衡再上 lb，poster 类短任务无此必要）。
-  # tc.tanvas.cn 生产入口（profile "webprod"）：宿主机构建 dist 后由 Caddy 静态服务+反代 api。
-  # 构建：cd apps/web && npx vite build --mode production（VITE_API_BASE 缺省 /api 相对自身）
-  # 启动：docker-compose --profile webprod up -d web-prod → http://tc.tanvas.cn（需路由器转发 80）
-  web-prod:
-    profiles: ["webprod"]
-    image: ${DOCKERHUB_REGISTRY:-docker.io}/caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "${WEB_HOST_PORT:-80}:80"
-    volumes:
-      - ./apps/web/dist:/srv:ro
-      - ./apps/hono-api/web-prod.Caddyfile:/etc/caddy/Caddyfile:ro
-    depends_on:
-      - api
-
   media-worker:
     image: ${TAPCANVAS_MEDIA_WORKER_IMAGE:-tapcanvas/media-worker:local}
     restart: unless-stopped
@@ -558,7 +574,6 @@ services:
       CRITICAL_RATE_LIMIT_ENABLE: ${NEW_API_CRITICAL_RATE_LIMIT_ENABLE:-false}
       SEARCH_RATE_LIMIT_ENABLE: ${NEW_API_SEARCH_RATE_LIMIT_ENABLE:-false}
       NODE_NAME: ${NEW_API_NODE_NAME:-new-api-node-1}
-      WEB_DIST_DIR: ${NEW_API_WEB_DIST_DIR:-/runtime/web/dist}
       # 图片生成（gpt-image-2 等）可能耗时超过 5 分钟，需显式延长 upstream HTTP 超时
       RELAY_TIMEOUT: ${NEW_API_RELAY_TIMEOUT:-1200}
       SERVER_ADDRESS: ${SERVER_ADDRESS:-}
@@ -606,7 +621,6 @@ services:
     volumes:
       - ${TAPCANVAS_NEW_API_DATA_ROOT:-./apps/new-api/data}:/data
       - ${TAPCANVAS_NEW_API_LOG_ROOT:-./apps/new-api/logs}:/app/logs
-      - ./apps/new-api/web/dist:/runtime/web/dist:ro
     healthcheck:
       test: ["CMD-SHELL", "http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= wget -q -O - http://127.0.0.1:4455/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
@@ -675,7 +689,7 @@ services:
       AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
       TAPCANVAS_API_INTERNAL_BASE: http://api:8788
       NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
-      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_HOST_PORT:-80}/assets/local}
+      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_DEV_HOST_PORT:-5175}/assets/local}
       # Workflow node jobs execute in this worker, so required media operations
       # must see the same gRPC endpoint as the API process. Keeping this only on
       # `api` makes concat fail after every provider clip has already succeeded.
@@ -706,7 +720,7 @@ services:
       https_proxy: ""
       npm_config_proxy: ""
       npm_config_https_proxy: ""
-    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile && pnpm inprocess:worker"
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --frozen-lockfile && pnpm inprocess:worker"
     healthcheck:
       test: ["CMD", "node", "dist/inprocess-worker-healthcheck.js"]
       interval: 15s
@@ -756,7 +770,7 @@ services:
       AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
       TAPCANVAS_API_INTERNAL_BASE: http://api:8788
       NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
-      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_HOST_PORT:-80}/assets/local}
+      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_DEV_HOST_PORT:-5175}/assets/local}
       # Workflow IR media nodes execute here rather than in `api`; concat must
       # inherit the same mandatory endpoint after paid clips have succeeded.
       MEDIA_WORKER_GRPC_ADDR: ${MEDIA_WORKER_GRPC_ADDR:-media-worker:9090}
@@ -771,7 +785,7 @@ services:
       https_proxy: ""
       npm_config_proxy: ""
       npm_config_https_proxy: ""
-    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile && pnpm workflow-runtime:worker"
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --frozen-lockfile && pnpm workflow-runtime:worker"
     healthcheck:
       test: ["CMD-SHELL", "test -s /tmp/tapcanvas-workflow-runtime-ready.json"]
       interval: 10s
@@ -822,7 +836,7 @@ services:
       AGENTS_BRIDGE_REPLICA_URLS: ${AGENTS_BRIDGE_REPLICA_URLS:-}
       TAPCANVAS_API_INTERNAL_BASE: http://api:8788
       NEW_API_INTERNAL_BASE_URL: ${NEW_API_INTERNAL_DOCKER_BASE_URL:-http://new-api:4455}
-      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_HOST_PORT:-80}/assets/local}
+      LOCAL_ASSET_PUBLIC_BASE_URL: ${LOCAL_ASSET_PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_DEV_HOST_PORT:-5175}/assets/local}
       AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -830,7 +844,7 @@ services:
       https_proxy: ""
       npm_config_proxy: ""
       npm_config_https_proxy: ""
-    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --no-frozen-lockfile && pnpm async-image:worker"
+    command: sh -lc "pnpm config set registry ${NPM_REGISTRY:-https://registry.npmmirror.com} && pnpm install --child-concurrency=1 --network-concurrency=1 --registry ${NPM_REGISTRY:-https://registry.npmmirror.com} --frozen-lockfile && pnpm async-image:worker"
     volumes:
       - ./apps/hono-api:/app
       - ./assets/public:/app/assets/public
