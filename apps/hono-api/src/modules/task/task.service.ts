@@ -3388,6 +3388,9 @@ async function runTaskViaNewApi(
 	const v = normalizeVendorKey(vendorKey);
 	const newApiVendorTag = v === "newapi" || v === "auto" ? "newapi" : `newapi:${v}`;
 	const model = await resolveExecutableNewApiTaskModel(c, v, req);
+	// Agnes 视频 API 不接受 response_format 字段（官方文档未列入允许字段），
+	// new-api 的 task 视频协议链路不应用渠道 param_override，因此在源头构造请求时剔除。
+	const isAgnesVideoModel = /^agnes-video/i.test(model);
 	const isImageTask = req.kind === "text_to_image" || req.kind === "image_edit";
 	const requestExtras = (req.extras || {}) as Record<string, unknown>;
 	const imageOptions = isImageTask ? await resolveNewApiImageOptions(c, v, model) : null;
@@ -3985,7 +3988,80 @@ async function runTaskViaNewApi(
 		let requestInit: RequestInit;
 		let requestPayload: Record<string, unknown>;
 
-		if (req.kind === "video_enhance") {
+		// Agnes 视频 2.5 Flash：OpenAI Videos 兼容但只接受文档列出的字段
+		// （model/prompt/mode/seconds/size/aspect_ratio/seed/n，keyframe 用 first_frame/last_frame，
+		// reference 用 images/audios）。response_format、duration、resolution、metadata 均被上游拒绝，
+		// 且 mode 为必填——因此按文档构造专用请求体，不走通用 OpenAI 视频分支。
+		if (isAgnesVideoModel) {
+			const firstFrame =
+				typeof extras.firstFrameUrl === "string" ? extras.firstFrameUrl.trim() : "";
+			const lastFrame =
+				typeof extras.lastFrameUrl === "string" ? extras.lastFrameUrl.trim() : "";
+			const hasFrames = Boolean(firstFrame || lastFrame);
+			const hasRefs = refs.length > 0 || referenceAudios.length > 0;
+			const mode = hasFrames ? "keyframe" : hasRefs ? "reference" : "text";
+			const clampedSeconds =
+				typeof seconds === "number" && Number.isFinite(seconds)
+					? String(Math.max(4, Math.min(12, Math.floor(seconds))))
+					: "5";
+			const aspectRatio =
+				(typeof videoRequestShape.aspectRatio === "string" &&
+					videoRequestShape.aspectRatio.trim()) ||
+				(typeof videoRequestShape.size === "string" &&
+					/^[0-9]+:[0-9]+$/.test(videoRequestShape.size.trim())
+					? videoRequestShape.size.trim()
+					: "") ||
+				"16:9";
+			const agnesBody: Record<string, unknown> = {
+				model,
+				prompt: req.prompt,
+				mode,
+				seconds: clampedSeconds,
+				size: "720P",
+				aspect_ratio: aspectRatio,
+			};
+			if (typeof req.seed === "number" && Number.isFinite(req.seed)) {
+				agnesBody.seed = Math.trunc(req.seed);
+			}
+			if (mode === "keyframe") {
+				if (firstFrame) agnesBody.first_frame = firstFrame;
+				if (lastFrame) agnesBody.last_frame = lastFrame;
+				if (!firstFrame && !lastFrame) {
+					throw new AppError("agnes keyframe 视频至少需要首帧或尾帧之一", {
+						status: 400,
+						code: "agnes_video_keyframe_missing_frame",
+						details: { upstreamRequestAttempted: false },
+					});
+				}
+			}
+			if (mode === "reference") {
+				const images = refs
+					.map((u) => (typeof u === "string" ? u.trim() : ""))
+					.filter((u) => /^https?:\/\//i.test(u))
+					.slice(0, 5);
+				if (images.length > 0) agnesBody.images = images;
+				if (referenceAudios.length > 0) {
+					agnesBody.audios = referenceAudios.slice(0, 3);
+				}
+				if (!agnesBody.images && !agnesBody.audios) {
+					throw new AppError("agnes reference 视频至少需要一张参考图或一段参考音频", {
+						status: 400,
+						code: "agnes_video_reference_missing_media",
+						details: { upstreamRequestAttempted: false },
+					});
+				}
+			}
+			requestInit = {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${relay.token}`,
+					Accept: "application/json",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(agnesBody),
+			};
+			requestPayload = agnesBody;
+		} else if (req.kind === "video_enhance") {
 			const ex = (extras || {}) as Record<string, any>;
 			const enhanceMetadata: Record<string, unknown> = {
 				video_url: ex.video_url ?? ex.videoUrl,
