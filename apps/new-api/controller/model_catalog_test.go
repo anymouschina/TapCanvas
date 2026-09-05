@@ -3,7 +3,9 @@ package controller
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildCanonicalModelList(t *testing.T) {
@@ -177,4 +179,32 @@ func TestBuildCanonicalModelParamsCatalogKeepsGeminiImageAspectRatio(t *testing.
 	if entry.Params[1].Key != "image_size" {
 		t.Fatalf("second param key = %q, want image_size", entry.Params[1].Key)
 	}
+}
+
+func TestBuildCanonicalModelParamsCatalogPreservesExtendedConstraints(t *testing.T) {
+	t.Parallel()
+
+	rows := []model.Model{{
+		ModelName:    "constraint-model",
+		Kind:         "video",
+		Capabilities: `["reference_images"]`,
+		ParamsDef:    `[{"key":"images","type":"array","item_type":"object","aliases":["reference_images"],"min_items":1,"max_items":8,"recommended_max_items":4,"required_when":{"all":[{"field":"mode","operator":"eq","value":"reference"}]},"forbidden_when":{"all":[{"field":"mode","operator":"eq","value":"text"}]},"items":{"type":"object","required":["url"]},"item_properties":[{"key":"url","type":"string","required":true}],"constraints":[{"type":"combined_max_items","fields":["images","audios"],"max_items":12}],"limit_status":"documented","sources":[{"name":"provider docs","url":"https://example.com/docs","checked_at":"2026-09-05"}]}]`,
+	}}
+
+	entry := buildCanonicalModelParamsCatalog(rows)["constraint-model"]
+	require.Len(t, entry.Params, 1)
+	param := entry.Params[0]
+	require.Equal(t, "object", param.ItemType)
+	require.Equal(t, []string{"reference_images"}, param.Aliases)
+	require.NotNil(t, param.MinItems)
+	require.Equal(t, 1, *param.MinItems)
+	require.NotNil(t, param.MaxItems)
+	require.Equal(t, 8, *param.MaxItems)
+	require.NotEmpty(t, param.RequiredWhen)
+	require.NotEmpty(t, param.ForbiddenWhen)
+	require.NotEmpty(t, param.Items)
+	require.Len(t, param.ItemProperties, 1)
+	require.Len(t, param.Constraints, 1)
+	require.Equal(t, "documented", param.LimitStatus)
+	require.Equal(t, []dto.ModelParamSource{{Name: "provider docs", URL: "https://example.com/docs", CheckedAt: "2026-09-05"}}, entry.Sources)
 }
