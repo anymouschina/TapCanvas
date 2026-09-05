@@ -104,9 +104,11 @@ TapCanvas 根项目及未另行声明的代码按 [MIT License](./LICENSE) 发�
 
 <p align="center">
   <a href="https://github.com/anymouschina/TapCanvas/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=anymouschina/TapCanvas" alt="TapCanvas Contributors" />
+    <img src="https://contrib.rocks/image?repo=anymouschina/TapCanvas&v=20260905" alt="TapCanvas Contributors" />
   </a>
 </p>
+
+贡献者头像由 [contrib.rocks](https://contrib.rocks/) 根据 GitHub 默认分支的贡献记录动态生成。GitHub 与图像服务存在缓存，合并 MR 后可能需要最多约 72 小时才会显示；提交邮箱也必须能关联到对应的 GitHub 账号，贡献才能正确归因。
 
 每一次贡献都在帮助社区版变得更统一、更稳定，也让多模态内容生产工作流能够服务更多创作者。欢迎阅读现有 Issues、提交修复或分享你的工作流实践。
 
