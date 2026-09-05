@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -136,6 +137,129 @@ func TestConvertGaiscGenerationCanonicalizesRatioAliases(t *testing.T) {
 	require.Equal(t, "/v1/images/generations", info.RequestURLPath)
 	require.NotContains(t, convertedRequest.Extra, "aspect_ratio")
 	require.NotContains(t, convertedRequest.Extra, "resolution")
+}
+
+func TestConvertGaiscGenerationPreservesOfficialOptionalParameters(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"model":"gpt-image-2",
+		"prompt":"preserve every official image option",
+		"n":1,
+		"size":"1024x1024",
+		"quality":"high",
+		"response_format":"url",
+		"background":"transparent",
+		"output_format":"webp",
+		"output_compression":0,
+		"partial_images":0,
+		"moderation":"low",
+		"input_fidelity":"high",
+		"images":[{"image_url":"https://example.com/input.png"}],
+		"stream":false,
+		"user":"customer-42"
+	}`)
+	var request dto.ImageRequest
+	require.NoError(t, common.Unmarshal(raw, &request))
+
+	context := newImageEditJSONTestContext()
+	context.Request.URL.Path = "/v1/images/generations"
+	info := newImageRelayInfo(constant.ChannelTypeGaiscImage, relayconstant.RelayModeImagesGenerations)
+
+	converted, err := (&Adaptor{}).ConvertImageRequest(context, info, request)
+	require.NoError(t, err)
+	encoded, err := common.Marshal(converted)
+	require.NoError(t, err)
+
+	var payload map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	for _, field := range []string{
+		"n", "size", "quality", "response_format", "background",
+		"output_format", "output_compression", "partial_images",
+		"moderation", "stream", "user",
+		"input_fidelity",
+	} {
+		require.Contains(t, payload, field)
+	}
+	require.JSONEq(t, `0`, string(payload["output_compression"]))
+	require.JSONEq(t, `0`, string(payload["partial_images"]))
+	require.JSONEq(t, `false`, string(payload["stream"]))
+}
+
+func TestConvertGaiscGenerationRejectsInvalidParameterConstraints(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "n", raw: `{"model":"gpt-image-2","prompt":"test","n":11}`, want: "n must be between 1 and 10"},
+		{name: "quality", raw: `{"model":"gpt-image-2","prompt":"test","quality":"ultra"}`, want: "quality must be one of"},
+		{name: "compression", raw: `{"model":"gpt-image-2","prompt":"test","output_compression":101}`, want: "output_compression must be between 0 and 100"},
+		{name: "compression_without_lossy_format", raw: `{"model":"gpt-image-2","prompt":"test","output_compression":80}`, want: "requires output_format jpeg or webp"},
+		{name: "transparent_jpeg", raw: `{"model":"gpt-image-2","prompt":"test","background":"transparent","output_format":"jpeg"}`, want: "requires output_format png or webp"},
+		{name: "partial_without_stream", raw: `{"model":"gpt-image-2","prompt":"test","partial_images":1,"stream":false}`, want: "requires stream=true"},
+		{name: "input_fidelity_without_image", raw: `{"model":"gpt-image-2","prompt":"test","input_fidelity":"high"}`, want: "requires at least one image"},
+		{name: "mask_without_image", raw: `{"model":"gpt-image-2","prompt":"test","mask":{"image_url":"https://example.com/mask.png"}}`, want: "mask requires at least one image"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var request dto.ImageRequest
+			require.NoError(t, common.Unmarshal([]byte(test.raw), &request))
+			context := newImageEditJSONTestContext()
+			context.Request.URL.Path = "/v1/images/generations"
+			info := newImageRelayInfo(constant.ChannelTypeGaiscImage, relayconstant.RelayModeImagesGenerations)
+			_, err := (&Adaptor{}).ConvertImageRequest(context, info, request)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestConvertGaiscGenerationAcceptsOfficialMaximumCountAndOptionalCompression(t *testing.T) {
+	t.Parallel()
+
+	var request dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"gpt-image-2",
+		"prompt":"ten variations",
+		"n":10,
+		"output_format":"webp"
+	}`), &request))
+	context := newImageEditJSONTestContext()
+	context.Request.URL.Path = "/v1/images/generations"
+	info := newImageRelayInfo(constant.ChannelTypeGaiscImage, relayconstant.RelayModeImagesGenerations)
+
+	converted, err := (&Adaptor{}).ConvertImageRequest(context, info, request)
+	require.NoError(t, err)
+	encoded, err := common.Marshal(converted)
+	require.NoError(t, err)
+	var payload map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.JSONEq(t, `10`, string(payload["n"]))
+	require.NotContains(t, payload, "output_compression")
+}
+
+func TestConvertGaiscJSONEditPreservesFileIDReferences(t *testing.T) {
+	t.Parallel()
+
+	var request dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"gpt-image-2",
+		"prompt":"edit uploaded image",
+		"images":[{"file_id":"file-source"}],
+		"mask":{"file_id":"file-mask"}
+	}`), &request))
+	context := newImageEditJSONTestContext()
+	info := newImageRelayInfo(constant.ChannelTypeGaiscImage, relayconstant.RelayModeImagesEdits)
+
+	converted, err := (&Adaptor{}).ConvertImageRequest(context, info, request)
+	require.NoError(t, err)
+	encoded, err := common.Marshal(converted)
+	require.NoError(t, err)
+	var payload map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.JSONEq(t, `[{"file_id":"file-source"}]`, string(payload["images"]))
+	require.JSONEq(t, `{"file_id":"file-mask"}`, string(payload["mask"]))
 }
 
 func TestConvertGaiscGenerationRoutesReferenceImagesToJSONEdit(t *testing.T) {

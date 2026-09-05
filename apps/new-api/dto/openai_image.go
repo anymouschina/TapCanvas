@@ -41,16 +41,17 @@ type ImageRequest struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ImageURLReference is the JSON image reference shape accepted by the G-AISC
-// image edit endpoint. It is deliberately typed so the gateway preserves the
-// images[].image_url and mask.image_url contract without semantic guessing.
+// ImageURLReference is the JSON image reference shape accepted by OpenAI-style
+// JSON image edit endpoints. A reference must contain exactly one of image_url
+// or file_id. Legacy string inputs are normalized to image_url references.
 type ImageURLReference struct {
-	ImageURL string `json:"image_url"`
+	ImageURL string `json:"image_url,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
 }
 
 // UnmarshalJSON accepts both the canonical G-AISC object shape and the legacy
 // string-array shape used by existing callers. MarshalJSON remains canonical:
-// every reference is emitted as {"image_url":"..."}.
+// every legacy string reference is emitted as {"image_url":"..."}.
 func (reference *ImageURLReference) UnmarshalJSON(data []byte) error {
 	var imageURL string
 	if err := common.Unmarshal(data, &imageURL); err == nil {
@@ -58,7 +59,7 @@ func (reference *ImageURLReference) UnmarshalJSON(data []byte) error {
 		if imageURL == "" {
 			return errors.New("image URL must not be empty")
 		}
-		reference.ImageURL = imageURL
+		*reference = ImageURLReference{ImageURL: imageURL}
 		return nil
 	}
 
@@ -68,10 +69,24 @@ func (reference *ImageURLReference) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	object.ImageURL = strings.TrimSpace(object.ImageURL)
-	if object.ImageURL == "" {
-		return errors.New("image_url must not be empty")
+	object.FileID = strings.TrimSpace(object.FileID)
+	parsed := ImageURLReference(object)
+	if err := parsed.Validate(); err != nil {
+		return err
 	}
-	*reference = ImageURLReference(object)
+	*reference = parsed
+	return nil
+}
+
+// Validate enforces the official JSON edit reference union. It is also used by
+// relays because callers may construct ImageRequest values without JSON
+// unmarshalling first.
+func (reference ImageURLReference) Validate() error {
+	hasImageURL := strings.TrimSpace(reference.ImageURL) != ""
+	hasFileID := strings.TrimSpace(reference.FileID) != ""
+	if hasImageURL == hasFileID {
+		return errors.New("image reference must provide exactly one of image_url or file_id")
+	}
 	return nil
 }
 

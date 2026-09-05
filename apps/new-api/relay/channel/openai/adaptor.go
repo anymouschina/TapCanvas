@@ -657,7 +657,167 @@ func normalizeGaiscImageRequest(request dto.ImageRequest) (dto.ImageRequest, err
 	if strings.TrimSpace(request.ResponseFormat) == "" {
 		request.ResponseFormat = "url"
 	}
+	if err := validateGaiscImageOptions(request); err != nil {
+		return request, err
+	}
 	return request, nil
+}
+
+func validateGaiscImageOptions(request dto.ImageRequest) error {
+	if strings.TrimSpace(request.Prompt) == "" {
+		return errors.New("gpt-image-2 prompt is required")
+	}
+	if request.N != nil && (*request.N < 1 || *request.N > 10) {
+		return errors.New("gpt-image-2 n must be between 1 and 10")
+	}
+	if err := validateOptionalString("quality", request.Quality, "auto", "low", "medium", "high"); err != nil {
+		return err
+	}
+	if err := validateOptionalString("response_format", request.ResponseFormat, "url", "b64_json"); err != nil {
+		return err
+	}
+	background, hasBackground, err := rawOptionalString("background", request.Background)
+	if err != nil {
+		return err
+	}
+	if hasBackground {
+		if err := validateOptionalString("background", background, "auto", "transparent", "opaque"); err != nil {
+			return err
+		}
+	}
+	outputFormat, hasOutputFormat, err := rawOptionalString("output_format", request.OutputFormat)
+	if err != nil {
+		return err
+	}
+	if hasOutputFormat {
+		if err := validateOptionalString("output_format", outputFormat, "png", "jpeg", "webp"); err != nil {
+			return err
+		}
+	}
+	if hasBackground && background == "transparent" && hasOutputFormat && outputFormat == "jpeg" {
+		return errors.New("gpt-image-2 transparent background requires output_format png or webp")
+	}
+	if err := validateRawString("moderation", request.Moderation, "auto", "low"); err != nil {
+		return err
+	}
+	if err := validateRawIntegerRange("output_compression", request.OutputCompression, 0, 100); err != nil {
+		return err
+	}
+	if len(request.OutputCompression) > 0 && (!hasOutputFormat || outputFormat == "png") {
+		return errors.New("gpt-image-2 output_compression requires output_format jpeg or webp")
+	}
+	partialImages, hasPartialImages, err := rawOptionalInteger("partial_images", request.PartialImages)
+	if err != nil {
+		return err
+	}
+	if hasPartialImages && (partialImages < 0 || partialImages > 3) {
+		return errors.New("gpt-image-2 partial_images must be between 0 and 3")
+	}
+	stream, hasStream, err := rawOptionalBoolean("stream", request.Extra["stream"])
+	if err != nil {
+		return err
+	}
+	if hasPartialImages && partialImages > 0 && (!hasStream || !stream) {
+		return errors.New("gpt-image-2 partial_images greater than 0 requires stream=true")
+	}
+	if len(request.User) > 0 {
+		var user string
+		if err := common.Unmarshal(request.User, &user); err != nil {
+			return errors.New("gpt-image-2 user must be a string")
+		}
+	}
+	inputFidelity, hasInputFidelity, err := rawOptionalString("input_fidelity", request.Extra["input_fidelity"])
+	if err != nil {
+		return err
+	}
+	if hasInputFidelity && inputFidelity != "high" {
+		return errors.New("gpt-image-2 input_fidelity must be high")
+	}
+	if hasInputFidelity && len(request.Images) == 0 {
+		return errors.New("gpt-image-2 input_fidelity requires at least one image")
+	}
+	if len(request.Images) > 16 {
+		return errors.New("gpt-image-2 images must not exceed 16")
+	}
+	for index, reference := range request.Images {
+		if err := reference.Validate(); err != nil {
+			return fmt.Errorf("gpt-image-2 images[%d]: %w", index, err)
+		}
+	}
+	if request.Mask != nil && len(request.Images) == 0 {
+		return errors.New("gpt-image-2 mask requires at least one image")
+	}
+	if request.Mask != nil {
+		if err := request.Mask.Validate(); err != nil {
+			return fmt.Errorf("gpt-image-2 mask: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateOptionalString(field, value string, allowed ...string) error {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return nil
+	}
+	for _, candidate := range allowed {
+		if value == candidate {
+			return nil
+		}
+	}
+	return fmt.Errorf("gpt-image-2 %s must be one of %s", field, strings.Join(allowed, ", "))
+}
+
+func validateRawString(field string, raw json.RawMessage, allowed ...string) error {
+	value, ok, err := rawOptionalString(field, raw)
+	if err != nil || !ok {
+		return err
+	}
+	return validateOptionalString(field, value, allowed...)
+}
+
+func rawOptionalString(field string, raw json.RawMessage) (string, bool, error) {
+	if len(raw) == 0 {
+		return "", false, nil
+	}
+	var value string
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return "", false, fmt.Errorf("gpt-image-2 %s must be a string", field)
+	}
+	return strings.ToLower(strings.TrimSpace(value)), true, nil
+}
+
+func validateRawIntegerRange(field string, raw json.RawMessage, minValue, maxValue int) error {
+	value, ok, err := rawOptionalInteger(field, raw)
+	if err != nil || !ok {
+		return err
+	}
+	if value < minValue || value > maxValue {
+		return fmt.Errorf("gpt-image-2 %s must be between %d and %d", field, minValue, maxValue)
+	}
+	return nil
+}
+
+func rawOptionalInteger(field string, raw json.RawMessage) (int, bool, error) {
+	if len(raw) == 0 {
+		return 0, false, nil
+	}
+	var value int
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return 0, false, fmt.Errorf("gpt-image-2 %s must be an integer", field)
+	}
+	return value, true, nil
+}
+
+func rawOptionalBoolean(field string, raw json.RawMessage) (bool, bool, error) {
+	if len(raw) == 0 {
+		return false, false, nil
+	}
+	var value bool
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return false, false, fmt.Errorf("gpt-image-2 %s must be a boolean", field)
+	}
+	return value, true, nil
 }
 
 func stripGaiscImageTransportAliases(request dto.ImageRequest) (dto.ImageRequest, error) {
