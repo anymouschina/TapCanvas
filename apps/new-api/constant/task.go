@@ -22,6 +22,7 @@ const (
 	TaskPlatformMegaby     TaskPlatform = ProtocolTaskMegaby
 	TaskPlatformMagic666   TaskPlatform = ProtocolTaskMagic666
 	TaskPlatformMediaKit   TaskPlatform = ProtocolTaskMediaKit
+	TaskPlatformAgnes      TaskPlatform = ProtocolTaskAgnes
 )
 
 const (

@@ -82,6 +82,41 @@ func TestTaskSubmitReqUnmarshalSupportsSnakeAndCamelAliases(t *testing.T) {
 	require.Equal(t, "9:16", req.Metadata["aspect_ratio"])
 }
 
+func TestTaskSubmitReqAcceptsAgnesMediaFieldsAndPreservesZeroValues(t *testing.T) {
+	t.Parallel()
+
+	var request TaskSubmitReq
+	err := neoSparkMartcommon.Unmarshal([]byte(`{
+		"model":"agnes-video-2.5",
+		"prompt":"test",
+		"duration_seconds":9,
+		"first_frame":"https://example.com/first.png",
+		"last_frame":"https://example.com/last.png",
+		"reference_videos":["https://example.com/reference.mp4"],
+		"reference_audios":["https://example.com/reference.mp3"],
+		"audios":["https://example.com/audio.mp3"],
+		"videos":[{"url":"https://example.com/video.mp4","start_seconds":0,"require_audio":false}],
+		"seed":0,
+		"n":1
+	}`), &request)
+	require.NoError(t, err)
+	require.Equal(t, 9, request.Duration)
+	require.Equal(t, "https://example.com/first.png", request.StartFrame)
+	require.Equal(t, "https://example.com/last.png", request.EndFrame)
+	require.Equal(t, []string{"https://example.com/reference.mp4"}, request.ReferenceVideos)
+	require.Equal(t, []string{"https://example.com/reference.mp3"}, request.ReferenceAudios)
+	require.Equal(t, []string{"https://example.com/audio.mp3"}, request.Audios)
+	require.Len(t, request.VideoReferences, 1)
+	require.NotNil(t, request.VideoReferences[0].StartSeconds)
+	require.Zero(t, *request.VideoReferences[0].StartSeconds)
+	require.NotNil(t, request.VideoReferences[0].RequireAudio)
+	require.False(t, *request.VideoReferences[0].RequireAudio)
+	require.NotNil(t, request.Seed)
+	require.Zero(t, *request.Seed)
+	require.NotNil(t, request.N)
+	require.Equal(t, 1, *request.N)
+}
+
 func TestNormalizeTaskSubmitReqIncludesInputReference(t *testing.T) {
 	t.Parallel()
 
