@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -806,12 +805,39 @@ func effectivePublishedBasePriceCNYFrom(
 	return fixedImageBasePriceCNY(modelName)
 }
 
+const maxExpandedDurationOptions = 3600
+
+func positiveIntegerParam(value any) (int, bool) {
+	maxInt := int(^uint(0) >> 1)
+	switch typed := value.(type) {
+	case float64:
+		if typed <= 0 || typed >= float64(maxInt) || math.Trunc(typed) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case int:
+		return typed, typed > 0
+	case int64:
+		if typed <= 0 || uint64(typed) > uint64(maxInt) {
+			return 0, false
+		}
+		return int(typed), true
+	case uint:
+		if typed == 0 || typed > uint(maxInt) {
+			return 0, false
+		}
+		return int(typed), true
+	default:
+		return 0, false
+	}
+}
+
 func extractDurationOptions(meta *Model) []int {
 	if meta == nil || strings.TrimSpace(meta.ParamsDef) == "" {
 		return nil
 	}
 	var raw []map[string]any
-	if err := json.Unmarshal([]byte(meta.ParamsDef), &raw); err != nil {
+	if err := common.Unmarshal([]byte(meta.ParamsDef), &raw); err != nil {
 		return nil
 	}
 	for _, item := range raw {
@@ -830,20 +856,38 @@ func extractDurationOptions(meta *Model) []int {
 			if !ok {
 				continue
 			}
-			switch typed := value.(type) {
-			case float64:
-				if typed > 0 && math.Trunc(typed) == typed {
-					out = append(out, int(typed))
-				}
-			case int:
-				if typed > 0 {
-					out = append(out, typed)
-				}
+			if duration, valid := positiveIntegerParam(value); valid {
+				out = append(out, duration)
 			}
 		}
 		if len(out) > 0 {
 			return out
 		}
+		minDuration, hasMin := positiveIntegerParam(item["min"])
+		maxDuration, hasMax := positiveIntegerParam(item["max"])
+		if !hasMin || !hasMax || minDuration > maxDuration {
+			return nil
+		}
+		step := 1
+		if rawStep, exists := item["step"]; exists {
+			parsedStep, valid := positiveIntegerParam(rawStep)
+			if !valid {
+				return nil
+			}
+			step = parsedStep
+		}
+		count := ((maxDuration - minDuration) / step) + 1
+		if count > maxExpandedDurationOptions {
+			return nil
+		}
+		out = make([]int, 0, count)
+		for duration := minDuration; duration <= maxDuration; duration += step {
+			out = append(out, duration)
+			if duration > maxDuration-step {
+				break
+			}
+		}
+		return out
 	}
 	return nil
 }

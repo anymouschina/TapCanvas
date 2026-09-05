@@ -2,6 +2,7 @@ package model
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -443,6 +444,32 @@ func TestBuildParamPricingForSeedance(t *testing.T) {
 	assertSpecPriceCNY("video:720p:6s", 1.7100*6)
 	assertSpecPriceCNY("video:1080p:4s", 3.8544*4)
 	assertSpecPriceCNY("video:1080p:6s", 3.8544*6)
+}
+
+func TestExtractDurationOptionsExpandsIntegerRanges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want []int
+	}{
+		{name: "default step", raw: `[{"key":"duration","type":"integer","min":3,"max":6}]`, want: []int{3, 4, 5, 6}},
+		{name: "explicit step", raw: `[{"key":"duration","type":"integer","min":4,"max":10,"step":2}]`, want: []int{4, 6, 8, 10}},
+		{name: "invalid descending range", raw: `[{"key":"duration","type":"integer","min":10,"max":4,"step":1}]`, want: nil},
+		{name: "invalid zero step", raw: `[{"key":"duration","type":"integer","min":4,"max":10,"step":0}]`, want: nil},
+		{name: "expansion guard", raw: `[{"key":"duration","type":"integer","min":1,"max":5000,"step":1}]`, want: nil},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := extractDurationOptions(&Model{ParamsDef: test.raw})
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("extractDurationOptions() = %v, want %v", got, test.want)
+			}
+		})
+	}
 }
 
 func TestBuildParamPricingExplicitDisableDoesNotRestoreSystemDefault(t *testing.T) {
