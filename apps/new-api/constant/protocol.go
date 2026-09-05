@@ -48,6 +48,7 @@ const (
 	ProtocolLingjing      = "lingjing"
 	ProtocolKiro          = "kiro"
 	ProtocolFlow2API      = "flow2api"
+	ProtocolAgnes         = "agnes"
 	ProtocolXinference    = "xinference"
 	ProtocolDeepSeek      = "deepseek"
 	ProtocolZhipuV4       = "zhipu-v4"
@@ -70,6 +71,7 @@ const (
 	ProtocolTaskMegaby    = "task.megaby"
 	ProtocolTaskMagic666  = "task.magic666"
 	ProtocolTaskMediaKit  = "task.volc-mediakit"
+	ProtocolTaskAgnes     = "task.agnes"
 	ProtocolNativeMJ      = "native.midjourney"
 )
 
@@ -165,6 +167,8 @@ var protocolDefinitions = []ProtocolDefinition{
 	relayProtocol(ProtocolOpenAI, "OpenAI Compatible", "OpenAI", "OpenAI Chat Completions, Responses, Images and Embeddings compatible protocol.", APITypeOpenAI, true,
 		[]EndpointType{EndpointTypeOpenAI, EndpointTypeOpenAIResponse, EndpointTypeOpenAIResponseCompact, EndpointTypeImageGeneration, EndpointTypeEmbeddings},
 		ChannelTypeOpenAI, ChannelTypeCustom, ChannelTypeOpenAIMax, ChannelTypeOhMyGPT, ChannelTypeAILS, ChannelTypeAIProxy, ChannelTypeAPI2GPT, ChannelTypeAIGC2D, ChannelType360, ChannelTypeLingYiWanWu, ChannelTypeSiliconFlow, ChannelTypeDeepSeek, ChannelTypeXinference, ChannelTypeXai, ChannelTypeGaiscImage, ChannelTypeAIStudioToAPI, ChannelTypeLluban),
+	relayProtocol(ProtocolAgnes, "Agnes OpenAI Images", "OpenAI", "Agnes image generation exposed through the standard OpenAI Images contract.", APITypeAgnes, false,
+		[]EndpointType{EndpointTypeImageGeneration}, ChannelTypeAgnes),
 	withProtocolOptions(
 		relayProtocol(ProtocolFlow2API, "Flow2API Image Chat", "OpenAI", "Flow2API image generation over OpenAI Chat Completions, including deterministic aspect-ratio and resolution model variants.", APITypeFlow2API, false,
 			[]EndpointType{EndpointTypeOpenAI, EndpointTypeImageGeneration}, ChannelTypeGemini),
@@ -300,6 +304,7 @@ var protocolDefinitions = []ProtocolDefinition{
 	taskProtocol(ProtocolTaskMegaby, "Megaby Task", "Megaby", "Megaby OpenAI-compatible asynchronous video protocol.", TaskPlatformMegaby, ChannelTypeMegaby),
 	taskProtocol(ProtocolTaskMagic666, "Magic666 Task", "Magic666", "Magic666 asynchronous media protocol.", TaskPlatformMagic666, ChannelTypeMagic666),
 	taskProtocol(ProtocolTaskMediaKit, "Volcengine MediaKit Task", "ByteDance", "Volcengine MediaKit enhancement protocol.", TaskPlatformMediaKit, ChannelTypeVolcMediaKit),
+	taskProtocol(ProtocolTaskAgnes, "Agnes OpenAI Video Task", "OpenAI", "Agnes asynchronous video generation exposed through the standard OpenAI Videos contract.", TaskPlatformAgnes, ChannelTypeAgnes),
 	nativeProtocol(ProtocolNativeMJ, "Midjourney Native", "Midjourney", "Midjourney proxy routes handled by the native relay.", ChannelTypeMidjourney, ChannelTypeMidjourneyPlus),
 }
 

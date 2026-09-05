@@ -54,6 +54,21 @@ func TestLlubanChannelUsesOpenAICompatibleProtocol(t *testing.T) {
 	}
 }
 
+func TestAgnesProtocolsRegistration(t *testing.T) {
+	if got := ChannelBaseURLs[ChannelTypeAgnes]; got != "https://api.agnes-ai.cn" {
+		t.Fatalf("unexpected Agnes base URL %q", got)
+	}
+
+	imageProtocol, ok := GetProtocolDefinition(ProtocolAgnes)
+	if !ok || imageProtocol.APIType != APITypeAgnes || imageProtocol.Transport != ProtocolTransportRelay {
+		t.Fatalf("unexpected Agnes image protocol: %+v, %v", imageProtocol, ok)
+	}
+	videoProtocol, ok := GetProtocolDefinition(ProtocolTaskAgnes)
+	if !ok || videoProtocol.TaskPlatform != TaskPlatformAgnes || videoProtocol.Transport != ProtocolTransportTask {
+		t.Fatalf("unexpected Agnes video protocol: %+v, %v", videoProtocol, ok)
+	}
+}
+
 func TestProtocolRegistryReturnsDefensiveCopies(t *testing.T) {
 	first, ok := GetProtocolDefinition(ProtocolOpenAI)
 	if !ok {

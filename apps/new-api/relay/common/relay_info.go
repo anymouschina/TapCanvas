@@ -678,13 +678,29 @@ type TaskSubmitReq struct {
 	Images          []string               `json:"images,omitempty"`
 	Urls            []string               `json:"urls,omitempty"`
 	ReferenceImages []string               `json:"referenceImages,omitempty"`
+	ReferenceVideos []string               `json:"referenceVideos,omitempty"`
+	ReferenceAudios []string               `json:"referenceAudios,omitempty"`
+	Audios          []string               `json:"audios,omitempty"`
+	VideoReferences []TaskVideoReference   `json:"videos,omitempty"`
 	Size            string                 `json:"size,omitempty"`
 	Resolution      string                 `json:"resolution,omitempty"`
 	AspectRatio     string                 `json:"aspect_ratio,omitempty"`
 	Duration        int                    `json:"duration,omitempty"`
 	Seconds         string                 `json:"seconds,omitempty"`
 	InputReference  string                 `json:"input_reference,omitempty"`
+	StartFrame      string                 `json:"start_frame,omitempty"`
+	EndFrame        string                 `json:"end_frame,omitempty"`
+	N               *int                   `json:"n,omitempty"`
+	Seed            *int                   `json:"seed,omitempty"`
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// TaskVideoReference is a structured reference-video input. Pointer scalar
+// fields preserve explicit zero and false values supplied by clients.
+type TaskVideoReference struct {
+	URL          string   `json:"url"`
+	StartSeconds *float64 `json:"start_seconds,omitempty"`
+	RequireAudio *bool    `json:"require_audio,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -700,7 +716,14 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata             json.RawMessage `json:"metadata,omitempty"`
 		Duration             json.RawMessage `json:"duration,omitempty"`
+		DurationSeconds      json.RawMessage `json:"duration_seconds,omitempty"`
 		ReferenceImagesSnake json.RawMessage `json:"reference_images,omitempty"`
+		ReferenceVideosSnake json.RawMessage `json:"reference_videos,omitempty"`
+		ReferenceAudiosSnake json.RawMessage `json:"reference_audios,omitempty"`
+		FirstFrameURL        json.RawMessage `json:"first_frame_url,omitempty"`
+		LastFrameURL         json.RawMessage `json:"last_frame_url,omitempty"`
+		FirstFrame           json.RawMessage `json:"first_frame,omitempty"`
+		LastFrame            json.RawMessage `json:"last_frame,omitempty"`
 		AspectRatioCamel     json.RawMessage `json:"aspectRatio,omitempty"`
 		*Alias
 	}{
@@ -711,13 +734,17 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	if len(aux.Duration) > 0 {
+	durationRaw := aux.Duration
+	if len(durationRaw) == 0 {
+		durationRaw = aux.DurationSeconds
+	}
+	if len(durationRaw) > 0 {
 		var durationInt int
-		if err := common.Unmarshal(aux.Duration, &durationInt); err == nil {
+		if err := common.Unmarshal(durationRaw, &durationInt); err == nil {
 			t.Duration = durationInt
 		} else {
 			var durationStr string
-			if err := common.Unmarshal(aux.Duration, &durationStr); err == nil && durationStr != "" {
+			if err := common.Unmarshal(durationRaw, &durationStr); err == nil && durationStr != "" {
 				if v, err := strconv.Atoi(durationStr); err == nil {
 					t.Duration = v
 				}
@@ -746,6 +773,24 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		if err := common.Unmarshal(aux.ReferenceImagesSnake, &values); err == nil {
 			t.ReferenceImages = values
 		}
+	}
+	if len(t.ReferenceVideos) == 0 && len(aux.ReferenceVideosSnake) > 0 {
+		_ = common.Unmarshal(aux.ReferenceVideosSnake, &t.ReferenceVideos)
+	}
+	if len(t.ReferenceAudios) == 0 && len(aux.ReferenceAudiosSnake) > 0 {
+		_ = common.Unmarshal(aux.ReferenceAudiosSnake, &t.ReferenceAudios)
+	}
+	if strings.TrimSpace(t.StartFrame) == "" && len(aux.FirstFrameURL) > 0 {
+		_ = common.Unmarshal(aux.FirstFrameURL, &t.StartFrame)
+	}
+	if strings.TrimSpace(t.StartFrame) == "" && len(aux.FirstFrame) > 0 {
+		_ = common.Unmarshal(aux.FirstFrame, &t.StartFrame)
+	}
+	if strings.TrimSpace(t.EndFrame) == "" && len(aux.LastFrameURL) > 0 {
+		_ = common.Unmarshal(aux.LastFrameURL, &t.EndFrame)
+	}
+	if strings.TrimSpace(t.EndFrame) == "" && len(aux.LastFrame) > 0 {
+		_ = common.Unmarshal(aux.LastFrame, &t.EndFrame)
 	}
 
 	if strings.TrimSpace(t.AspectRatio) == "" && len(aux.AspectRatioCamel) > 0 {

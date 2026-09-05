@@ -78,6 +78,7 @@ const (
 	ChannelTypeGaiscImage     = 73 // G-AISC OpenAI-compatible GPT Image 2 generation/edit channel
 	ChannelTypeAIStudioToAPI  = 74 // Browser-backed Google AI Studio runtime with an importer-managed account pool
 	ChannelTypeLluban         = 75 // Recommended lluban new-api upstream (OpenAI-compatible)
+	ChannelTypeAgnes          = 76 // Agnes AI image generation and asynchronous video tasks
 
 )
 
@@ -158,6 +159,7 @@ var ChannelBaseURLs = []string{
 	"https://sub.g-aisc.com",                        //73 G-AISC Image
 	"",                                              //74 AI Studio To API (operator-supplied runtime URL)
 	"https://tt-api.lluban.com",                     //75 lluban new-api upstream
+	"https://api.agnes-ai.cn",                       //76 Agnes AI
 }
 
 var ChannelTypeNames = map[int]string{
@@ -232,6 +234,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeGaiscImage:     "G-AISC Image",
 	ChannelTypeAIStudioToAPI:  "AI Studio To API",
 	ChannelTypeLluban:         "Lluban API",
+	ChannelTypeAgnes:          "Agnes AI",
 }
 
 func GetChannelTypeName(channelType int) string {
