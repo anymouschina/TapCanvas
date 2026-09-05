@@ -42,7 +42,20 @@ func effectiveFixedImageRequestPriceCNY(modelName string, request *dto.ImageRequ
 		return 0, false
 	}
 	referenceImagePrice := model.EffectiveImageReferencePriceCNY(modelName)
-	return basePrice + referenceImagePrice*float64(len(imageutil.ExtractReferenceImages(request))), true
+	referenceImageCount := len(imageutil.ExtractReferenceImages(request))
+	freeReferenceCount := model.EffectiveImageReferenceFreeCount(modelName)
+	chargeableReferenceCount := chargeableImageReferenceCount(referenceImageCount, freeReferenceCount)
+	if chargeableReferenceCount > 0 {
+		basePrice += referenceImagePrice * float64(chargeableReferenceCount)
+	}
+	return basePrice, true
+}
+
+func chargeableImageReferenceCount(total, free int) int {
+	if total <= free {
+		return 0
+	}
+	return total - free
 }
 
 func (w *captureWriter) Write(b []byte) (int, error) {
