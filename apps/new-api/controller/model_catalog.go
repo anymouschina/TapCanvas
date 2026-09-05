@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 
@@ -94,6 +93,7 @@ func buildCanonicalModelParamsCatalog(models []model.Model) map[string]dto.Model
 			var params []dto.ModelParamSpec
 			if err := common.Unmarshal([]byte(raw.ParamsDef), &params); err == nil {
 				entry.Params = params
+				entry.Sources = mergeModelParamSources(entry.Sources, params)
 			}
 		}
 		if entry.Params == nil {
@@ -155,11 +155,30 @@ func chooseMergedCapabilities(primary string, secondary string) string {
 	if len(merged) == 0 {
 		return ""
 	}
-	data, err := json.Marshal(merged)
+	data, err := common.Marshal(merged)
 	if err != nil {
 		return primary
 	}
 	return string(data)
+}
+
+func mergeModelParamSources(existing []dto.ModelParamSource, params []dto.ModelParamSpec) []dto.ModelParamSource {
+	seen := make(map[string]struct{}, len(existing))
+	result := append([]dto.ModelParamSource(nil), existing...)
+	for _, source := range existing {
+		seen[source.Name+"\x00"+source.URL+"\x00"+source.CheckedAt] = struct{}{}
+	}
+	for _, param := range params {
+		for _, source := range param.Sources {
+			key := source.Name + "\x00" + source.URL + "\x00" + source.CheckedAt
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, source)
+		}
+	}
+	return result
 }
 
 func chooseMergedParamsDef(primary string, secondary string) string {
