@@ -93,6 +93,42 @@ func TestImageRequestAcceptsStringEditReferencesAndMarshalsCanonicalShape(t *tes
 	require.JSONEq(t, `{"image_url":"https://example.com/mask.png"}`, string(payload["mask"]))
 }
 
+func TestImageRequestAcceptsFileIDEditReferences(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"model":"gpt-image-2",
+		"prompt":"replace the background",
+		"images":[{"file_id":"file-source"}],
+		"mask":{"file_id":"file-mask"}
+	}`)
+
+	var request ImageRequest
+	require.NoError(t, common.Unmarshal(raw, &request))
+	require.Equal(t, []ImageURLReference{{FileID: "file-source"}}, request.Images)
+	require.Equal(t, &ImageURLReference{FileID: "file-mask"}, request.Mask)
+
+	encoded, err := common.Marshal(request)
+	require.NoError(t, err)
+	var payload map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.JSONEq(t, `[{"file_id":"file-source"}]`, string(payload["images"]))
+	require.JSONEq(t, `{"file_id":"file-mask"}`, string(payload["mask"]))
+}
+
+func TestImageRequestRejectsInvalidReferenceUnion(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		`{"model":"gpt-image-2","prompt":"test","images":[{}]}`,
+		`{"model":"gpt-image-2","prompt":"test","images":[{"image_url":"https://example.com/a.png","file_id":"file-a"}]}`,
+		`{"model":"gpt-image-2","prompt":"test","mask":{}}`,
+	} {
+		var request ImageRequest
+		require.ErrorContains(t, common.Unmarshal([]byte(raw), &request), "exactly one of image_url or file_id")
+	}
+}
+
 func TestValidateGptImage2Size(t *testing.T) {
 	t.Parallel()
 
