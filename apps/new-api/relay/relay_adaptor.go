@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/agnes"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
 	"github.com/QuantumNous/new-api/relay/channel/amux"
 	"github.com/QuantumNous/new-api/relay/channel/apimart"
@@ -39,6 +40,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/runninghub"
 	"github.com/QuantumNous/new-api/relay/channel/siliconflow"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
+	taskagnes "github.com/QuantumNous/new-api/relay/channel/task/agnes"
 	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
 	taskapimart "github.com/QuantumNous/new-api/relay/channel/task/apimart"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
@@ -161,6 +163,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &kiro.Adaptor{}
 	case constant.APITypeFlow2API:
 		return &openai.Adaptor{}
+	case constant.APITypeAgnes:
+		return &agnes.Adaptor{}
 	}
 	return nil
 }
@@ -213,6 +217,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 		return &taskmagic666.TaskAdaptor{}
 	case constant.TaskPlatformMediaKit:
 		return &taskvolcmediakit.TaskAdaptor{}
+	case constant.TaskPlatformAgnes:
+		return &taskagnes.TaskAdaptor{}
 	}
 	return nil
 }

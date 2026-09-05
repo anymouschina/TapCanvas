@@ -48,5 +48,6 @@ const (
 	APITypeEvolink
 	APITypeKiro
 	APITypeFlow2API
+	APITypeAgnes
 	APITypeDummy // this one is only for count, do not add any channel after this
 )
