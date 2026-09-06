@@ -1,5 +1,6 @@
 import React from 'react'
 import { Group, Title, Transition, Button, Stack, Text, Badge, Table, ActionIcon, Tooltip, Loader } from '@mantine/core'
+import type { MantineColor } from '@mantine/core'
 import { IconRefresh, IconPlayerPlay, IconFileText, IconTarget } from '@tabler/icons-react'
 import { useUIStore } from './uiStore'
 import {
@@ -31,6 +32,17 @@ function agentStatusColor(status: AgentPipelineRunStatus): string {
   return 'gray'
 }
 
+function readErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback
+}
+
+function agentResultPreview(run: AgentPipelineRunDto): string | null {
+  const content = run.result?.storyboardContent?.trim()
+  if (content) return content
+  if (run.result?.storyboardStructured) return '已生成结构化分镜结果，可打开对应项目查看。'
+  return null
+}
+
 export default function ExecutionPanel(props: {
   onOpenLog: (executionId: string) => void
   onRun?: () => void | Promise<void>
@@ -49,6 +61,7 @@ export default function ExecutionPanel(props: {
   const [agentLoading, setAgentLoading] = React.useState(false)
   const [agentError, setAgentError] = React.useState<string | null>(null)
   const [agentItems, setAgentItems] = React.useState<AgentPipelineRunDto[]>([])
+  const [expandedAgentRunId, setExpandedAgentRunId] = React.useState<string | null>(null)
   const [failedNodeByExecId, setFailedNodeByExecId] = React.useState<Record<string, { nodeId: string }>>({})
   const [runStatsByExecId, setRunStatsByExecId] = React.useState<Record<string, { total: number; done: number; failed: number }>>({})
   const nodeLabelById = props.nodeLabelById
@@ -62,8 +75,8 @@ export default function ExecutionPanel(props: {
       const list = await listWorkflowExecutions({ flowId: currentFlowId, limit: 40 })
       setItems(Array.isArray(list) ? list : [])
       setFailedNodeByExecId((prev) => prev) // keep cache
-    } catch (e: any) {
-      setError(e?.message || '加载失败')
+    } catch (error: unknown) {
+      setError(readErrorMessage(error, '加载失败'))
       setItems([])
     } finally {
       setLoading(false)
@@ -80,8 +93,8 @@ export default function ExecutionPanel(props: {
     try {
       const list = await listAgentPipelineRuns({ projectId: currentProjectId, limit: 30 })
       setAgentItems(Array.isArray(list) ? list : [])
-    } catch (e: any) {
-      setAgentError(e?.message || '加载失败')
+    } catch (error: unknown) {
+      setAgentError(readErrorMessage(error, '加载失败'))
       setAgentItems([])
     } finally {
       setAgentLoading(false)
@@ -280,7 +293,7 @@ export default function ExecutionPanel(props: {
                               </Text>
                             </Table.Td>
                             <Table.Td className="execution-panel-table-cell">
-                              <Badge className="execution-panel-status-badge" size="xs" variant="light" color={statusColor(it.status) as any}>
+                              <Badge className="execution-panel-status-badge" size="xs" variant="light" color={statusColor(it.status) as MantineColor}>
                                 {it.status}
                               </Badge>
                             </Table.Td>
@@ -392,14 +405,15 @@ export default function ExecutionPanel(props: {
                       </Table.Thead>
                       <Table.Tbody className="execution-panel-agent-table-body">
                         {agentItems.map((it) => (
-                          <Table.Tr className="execution-panel-agent-table-row" key={it.id}>
+                          <React.Fragment key={it.id}>
+                          <Table.Tr className="execution-panel-agent-table-row" onClick={() => setExpandedAgentRunId((current) => current === it.id ? null : it.id)} style={{ cursor: 'pointer' }}>
                             <Table.Td className="execution-panel-agent-table-cell">
                               <Text className="execution-panel-agent-title-text" size="xs" title={it.title} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 170 }}>
                                 {it.title}
                               </Text>
                             </Table.Td>
                             <Table.Td className="execution-panel-agent-table-cell">
-                              <Badge className="execution-panel-agent-status-badge" size="xs" variant="light" color={agentStatusColor(it.status) as any}>
+                              <Badge className="execution-panel-agent-status-badge" size="xs" variant="light" color={agentStatusColor(it.status) as MantineColor}>
                                 {it.status}
                               </Badge>
                             </Table.Td>
@@ -417,6 +431,22 @@ export default function ExecutionPanel(props: {
                               </Text>
                             </Table.Td>
                           </Table.Tr>
+                          {expandedAgentRunId === it.id && (
+                            <Table.Tr className="execution-panel-agent-result-row">
+                              <Table.Td className="execution-panel-agent-result-cell" colSpan={5}>
+                                {it.errorMessage ? (
+                                  <Text className="execution-panel-agent-result-error" size="xs" c="red">{it.errorMessage}</Text>
+                                ) : agentResultPreview(it) ? (
+                                  <Text className="execution-panel-agent-result-preview" size="xs" style={{ whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto' }}>
+                                    {agentResultPreview(it)}
+                                  </Text>
+                                ) : (
+                                  <Text className="execution-panel-agent-result-empty" size="xs" c="dimmed">该运行尚未回传可展示的产物。</Text>
+                                )}
+                              </Table.Td>
+                            </Table.Tr>
+                          )}
+                          </React.Fragment>
                         ))}
                       </Table.Tbody>
                     </Table>
