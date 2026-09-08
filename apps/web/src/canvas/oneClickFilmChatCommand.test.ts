@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildGroupFilmChatText,
+  buildGroupSkillOnlyFilmChatText,
   buildOneClickFilmChatText,
   GROUP_FILM_CHAT_DISPLAY_TEXT,
+  GROUP_FILM_SKILL_ONLY_DISPLAY_TEXT,
   ONE_CLICK_FILM_CHAT_DISPLAY_TEXT,
 } from './oneClickFilmChatCommand'
 
@@ -63,5 +65,25 @@ describe('buildGroupFilmChatText', () => {
     expect(text).not.toContain('runNodeDagToTarget')
     expect(text).not.toContain('videoCompose')
     expect(text).not.toContain('积分')
+  })
+})
+
+describe('buildGroupSkillOnlyFilmChatText', () => {
+  it('只召回 Skill，适用于新项目部署', () => {
+    const text = buildGroupSkillOnlyFilmChatText({
+      groupId: 'group-1',
+      sourceRecipeId: null,
+      targetDurationSeconds: null,
+      videoAspect: null,
+      videoModel: null,
+      videoProfileId: null,
+    })
+
+    expect(GROUP_FILM_SKILL_ONLY_DISPLAY_TEXT).toBe('拆分当前组 Beat')
+    expect(text).toContain('tapcanvas-one-click-skill-only')
+    expect(text).toContain('120 个 Unicode 字符')
+    expect(text).toContain('最多 10 个')
+    expect(text).not.toContain('tapcanvas_equipped_workflow_run')
+    expect(text).not.toContain('供应商')
   })
 })

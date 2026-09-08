@@ -14,6 +14,7 @@ export type OneClickFilmFacts = {
 
 export const ONE_CLICK_FILM_CHAT_DISPLAY_TEXT = '生成当前画布整片'
 export const GROUP_FILM_CHAT_DISPLAY_TEXT = '生成当前组整片'
+export const GROUP_FILM_SKILL_ONLY_DISPLAY_TEXT = '拆分当前组 Beat'
 
 export function buildOneClickFilmChatText(facts: OneClickFilmFacts): string {
   return [
@@ -44,5 +45,18 @@ export function buildGroupFilmChatText(facts: GroupFilmFacts): string {
     '以下只是真实组作用域事实，不是创作路线、工具顺序或本地路由；若用户本轮明确选择 adaptationMode=creative，则在核心人物关系、世界规则、主线因果与关键结果不偏离的前提下允许扩写桥段、对白、冲突、反转、视觉包装和商业化表达；未明确选择时按 faithful 兼容。请读取当前画布与已加载 Skill，自主决定完整 BeatSheet、连续性、资产职责和执行动作。',
     JSON.stringify(facts),
     '必须保留全部已生成资产、任务和交付证据；已受理或已产出媒体不得被覆盖、回滚或丢弃。',
+  ].join('\n')
+}
+
+/**
+ * 轻量规划入口：只召回 skill，不绑定持久视频 Workflow IR。
+ * 固定合同由 agents-cli skill 承担，Web 端只传递真实组作用域事实。
+ */
+export function buildGroupSkillOnlyFilmChatText(facts: GroupFilmFacts): string {
+  return [
+    '完成用户刚刚在当前画布组节点发起的轻量一键成片规划。',
+    '本次只召回 tapcanvas-one-click-skill-only：按 Skill 合同拆分 Beat 并输出画布规划。不要启动媒体工作流，不要调用图片、音频或视频供应商，不要声称已生成成片。',
+    '固定约束：每个 Beat 文本恰好 120 个 Unicode 字符；总节点数最多 10 个；缺少真实输入或无法满足约束时显式失败。',
+    JSON.stringify(facts),
   ].join('\n')
 }
