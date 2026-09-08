@@ -117,6 +117,7 @@ RUN --mount=type=cache,target=/pnpm/store,sharing=locked \
 
 COPY tsconfig.json ./
 COPY schema.sql ./
+COPY sql ./sql
 COPY scripts ./scripts
 COPY marketplace-skills ./marketplace-skills
 COPY src ./src

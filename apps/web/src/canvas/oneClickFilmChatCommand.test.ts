@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildGroupFilmChatText,
-  buildGroupSkillOnlyFilmChatText,
+  buildGroupVideoNodesChatText,
   buildOneClickFilmChatText,
   GROUP_FILM_CHAT_DISPLAY_TEXT,
-  GROUP_FILM_SKILL_ONLY_DISPLAY_TEXT,
+  GROUP_FILM_VIDEO_NODES_DISPLAY_TEXT,
   ONE_CLICK_FILM_CHAT_DISPLAY_TEXT,
 } from './oneClickFilmChatCommand'
 
@@ -68,9 +68,9 @@ describe('buildGroupFilmChatText', () => {
   })
 })
 
-describe('buildGroupSkillOnlyFilmChatText', () => {
-  it('只召回 Skill，适用于新项目部署', () => {
-    const text = buildGroupSkillOnlyFilmChatText({
+describe('buildGroupVideoNodesChatText', () => {
+  it('传递视频节点交付意图和真实组身份，不要求 Skill', () => {
+    const text = buildGroupVideoNodesChatText({
       groupId: 'group-1',
       sourceRecipeId: null,
       targetDurationSeconds: null,
@@ -79,11 +79,11 @@ describe('buildGroupSkillOnlyFilmChatText', () => {
       videoProfileId: null,
     })
 
-    expect(GROUP_FILM_SKILL_ONLY_DISPLAY_TEXT).toBe('拆分当前组 Beat')
-    expect(text).toContain('tapcanvas-one-click-skill-only')
-    expect(text).toContain('120 个 Unicode 字符')
-    expect(text).toContain('最多 10 个')
-    expect(text).not.toContain('tapcanvas_equipped_workflow_run')
-    expect(text).not.toContain('供应商')
+    expect(GROUP_FILM_VIDEO_NODES_DISPLAY_TEXT).toBe('拆分当前组为视频节点')
+    expect(text).toContain('一键成片v1')
+    expect(text).toContain('待生成视频节点')
+    expect(text).toContain('group-1')
+    expect(text).not.toContain('tapcanvas-one-click-skill-only')
+    expect(text).not.toContain('最多 10 个')
   })
 })

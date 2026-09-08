@@ -1,5 +1,5 @@
 import { useRFStore } from './store'
-import { buildGroupSkillOnlyFilmChatText, GROUP_FILM_SKILL_ONLY_DISPLAY_TEXT } from './oneClickFilmChatCommand'
+import { buildGroupVideoNodesChatText, GROUP_FILM_VIDEO_NODES_DISPLAY_TEXT } from './oneClickFilmChatCommand'
 import { useChatCommandStore } from '../ui/chat/chatCommandStore'
 import { toast } from '../ui/toast'
 
@@ -22,11 +22,11 @@ function readOptionalDuration(value: unknown): number | null {
 }
 
 /**
- * 组节点「Beat 规划」入口。
+ * 组节点「按字长创建视频节点」入口。
  *
  * 组节点不再扫描子节点、估算积分、创建本地 compose 或直连供应商。AiChatDialog
- * 会在消费命令前持久化当前画布并附加 canonical canvas context，随后只由
- * agents-cli 召回轻量 Skill 输出 Beat 规划。
+ * 会在消费命令前持久化当前画布并附加 canonical canvas context，随后由
+ * agents-cli 根据装载的工作流契约执行。
  */
 export function runGroupToFilm(groupId: string): void {
   const normalizedGroupId = groupId.trim()
@@ -52,11 +52,10 @@ export function runGroupToFilm(groupId: string): void {
   }
 
   useChatCommandStore.getState().dispatchSend({
-    text: buildGroupSkillOnlyFilmChatText(facts),
-    displayText: GROUP_FILM_SKILL_ONLY_DISPLAY_TEXT,
-    requiredSkills: ['tapcanvas-one-click-skill-only'],
+    text: buildGroupVideoNodesChatText(facts),
+    displayText: GROUP_FILM_VIDEO_NODES_DISPLAY_TEXT,
     attachCanvasContext: true,
     freshConversation: true,
   })
-  toast('已把组节点 Beat 拆分任务交给小T，结果会回到画布', 'info')
+  toast('已发送视频节点拆分请求', 'info')
 }
