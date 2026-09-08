@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(scriptDir, "..", "dist");
+const skillsDir = path.resolve(scriptDir, "..", "skills");
 
 function collectTests(dir) {
   if (!fs.existsSync(dir)) return [];
@@ -16,16 +17,16 @@ function collectTests(dir) {
       files.push(...collectTests(fullPath));
       continue;
     }
-    if (entry.isFile() && entry.name.endsWith(".test.js")) {
+    if (entry.isFile() && (entry.name.endsWith(".test.js") || entry.name.endsWith(".test.mjs"))) {
       files.push(fullPath);
     }
   }
   return files.sort();
 }
 
-const testFiles = collectTests(distDir);
+const testFiles = [...collectTests(distDir), ...collectTests(skillsDir)].sort();
 if (testFiles.length === 0) {
-  console.error("[agents-cli] no built test files found under dist/");
+  console.error("[agents-cli] no test files found under dist/ or skills/");
   process.exit(1);
 }
 

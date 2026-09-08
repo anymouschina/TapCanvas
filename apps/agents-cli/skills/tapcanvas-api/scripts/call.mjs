@@ -3,8 +3,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const __dirname = path.dirname(new URL(import.meta.url).pathname);
-const skillRoot = path.resolve(__dirname, "..");
+import { resolveSkillRoot } from "../runtime-paths.mjs";
+
+const skillRoot = resolveSkillRoot(import.meta.url);
 const defaultConfigPath = path.join(skillRoot, "config.json");
 
 const ENDPOINTS = {
