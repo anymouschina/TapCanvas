@@ -6,6 +6,16 @@ import test from "node:test";
 
 import { shellTool } from "./shell.js";
 
+function quoteShellValue(value: string): string {
+  if (process.platform === "win32") return `"${value.replaceAll('"', '""')}"`;
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function readFileCommand(filePath: string): string {
+  const readCommand = process.platform === "win32" ? "type" : "cat";
+  return `${readCommand} ${quoteShellValue(filePath)}`;
+}
+
 function createState() {
   return {
     cache: { readFile: new Map(), bash: new Map() },
@@ -23,8 +33,9 @@ test("bash restricts project-data access to declared localResourcePaths", async 
 
   const allowed = await shellTool.execute(
     {
-      command:
-        `cd ${root} && cat project-data/users/u1/projects/p1/note.txt`,
+      command: process.platform === "win32"
+        ? `cd /d ${quoteShellValue(root)} && ${readFileCommand("project-data\\users\\u1\\projects\\p1\\note.txt")}`
+        : `cd ${quoteShellValue(root)} && ${readFileCommand("project-data/users/u1/projects/p1/note.txt")}`,
     },
     {
       cwd,
@@ -93,7 +104,7 @@ test("bash allows quoted declared project-data paths for filesystem commands", a
 
   const allowed = await shellTool.execute(
     {
-      command: `cat '${filePath}'`,
+      command: readFileCommand(filePath),
     },
     {
       cwd,
@@ -119,7 +130,7 @@ test("bash does not block plain quoted project-data text when no filesystem comm
 
   const allowed = await shellTool.execute(
     {
-      command: "printf '%s' 'project-data/users/u1/projects/p1'",
+      command: `echo ${quoteShellValue("project-data/users/u1/projects/p1")}`,
     },
     {
       cwd,
@@ -184,7 +195,7 @@ test("bash blocks read paths outside capability readableRoots", async () => {
 
   const allowed = await shellTool.execute(
     {
-      command: `cat ${path.join(allowedDir, "ok.txt")}`,
+      command: readFileCommand(path.join(allowedDir, "ok.txt")),
     },
     {
       cwd,
@@ -212,7 +223,7 @@ test("bash blocks read paths outside capability readableRoots", async () => {
 
   const denied = await shellTool.execute(
     {
-      command: `cat ${path.join(deniedDir, "no.txt")}`,
+      command: readFileCommand(`.${path.sep}${path.join("denied", "no.txt")}`),
     },
     {
       cwd,

@@ -16,7 +16,7 @@ const execAsync = promisify(exec);
 export const shellTool: ToolHandler = {
   definition: {
     name: "bash",
-    description: "执行 shell 命令。",
+    description: "使用当前平台的系统 shell 执行命令。",
     parameters: {
       type: "object",
       properties: {

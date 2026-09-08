@@ -4,6 +4,11 @@ import test from "node:test";
 import { createExecCommandTool, createWriteStdinTool } from "./interactive-exec.js";
 import { TerminalSessionManager } from "../terminal/session-manager.js";
 
+function nodeEvalCommand(source: string): string {
+  const encoded = Buffer.from(source, "utf8").toString("base64");
+  return `"${process.execPath}" -e "eval(Buffer.from('${encoded}','base64').toString())"`;
+}
+
 function createState() {
   return {
     cache: { readFile: new Map(), bash: new Map() },
@@ -27,7 +32,7 @@ test("interactive exec tool returns session_id and supports polling", async () =
 
   const started = await execTool.execute(
     {
-      cmd: "sleep 0.1; printf 'ok\\n'",
+      cmd: nodeEvalCommand("setTimeout(() => console.log('ok'), 100)"),
       yield_time_ms: 20,
     },
     ctx,

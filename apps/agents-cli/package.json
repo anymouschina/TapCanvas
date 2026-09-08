@@ -11,6 +11,7 @@
     "dev": "node --loader ts-node/esm src/cli/index.ts",
     "dev:watch": "node --watch --watch-path=src --watch-path=skills --loader ts-node/esm src/cli/index.ts",
     "build": "tsc -p tsconfig.json",
+    "pretest": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "test": "node scripts/run-tests.mjs",
     "watch": "node scripts/watch.mjs",
     "start": "node dist/cli/index.js",

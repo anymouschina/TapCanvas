@@ -70,3 +70,28 @@ test("message compaction preserves whole api rounds instead of slicing inside as
   assert.match(compacted.messages[1]?.content || "", /^a2-/);
   assert.equal(compacted.messages.length, 2);
 });
+
+test("message compaction drops a complete old tool round when its binding blocks the first boundary", () => {
+  const messages: Message[] = [
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: "call_old", name: "read_file", arguments: '{"path":"old.txt"}' }],
+    },
+    { role: "tool", content: "old-output-" + "x".repeat(180), toolCallId: "call_old" },
+    { role: "assistant", content: "current-" + "y".repeat(180) },
+  ];
+
+  const compacted = compactMessagesForTurn({
+    messages,
+    kind: "preflight",
+    maxChars: 240,
+    preserveLastMessages: 10,
+  });
+
+  assert.ok(compacted.event);
+  assert.equal(compacted.messages[0]?.role, "user");
+  assert.equal(compacted.messages[1]?.role, "assistant");
+  assert.match(compacted.messages[1]?.content || "", /^current-/);
+  assert.equal(compacted.messages.some((message) => message.role === "tool"), false);
+});

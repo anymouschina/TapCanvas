@@ -69,7 +69,7 @@ function extractProjectDataPathMentions(command: string): string[] {
 
 function commandTouchesFilesystem(command: string): boolean {
   const unquoted = stripQuotedSegments(command);
-  return /\b(find|cat|ls|rg|sed|head|tail|wc|stat|test|grep|awk|sort|readlink)\b/.test(unquoted);
+  return /\b(find|cat|type|ls|dir|rg|sed|head|tail|wc|stat|test|grep|awk|sort|readlink|get-content|get-childitem|select-string)\b/i.test(unquoted);
 }
 
 function normalizeProjectDataMention(
@@ -142,21 +142,23 @@ function extractFilesystemPathMentions(command: string): string[] {
   const mentions: string[] = [];
   for (const token of rawTokens) {
     const cleaned = token.replace(/^[({\['"`]+|[)\]};,'"``]+$/g, "");
+    const portable = cleaned.replace(/\\/g, "/");
     if (!cleaned || cleaned.startsWith("-")) continue;
     if (
-      cleaned === "." ||
-      cleaned === ".." ||
-      cleaned.startsWith("./") ||
-      cleaned.startsWith("../") ||
-      cleaned.startsWith("/") ||
-      cleaned.startsWith("project-data/") ||
-      cleaned.startsWith("apps/") ||
-      cleaned.startsWith("packages/") ||
-      cleaned.startsWith("infra/") ||
-      cleaned.startsWith("docs/") ||
-      cleaned.startsWith("assets/") ||
-      cleaned.startsWith("skills/") ||
-      cleaned.startsWith("ai-metadata/")
+      portable === "." ||
+      portable === ".." ||
+      portable.startsWith("./") ||
+      portable.startsWith("../") ||
+      portable.startsWith("/") ||
+      path.isAbsolute(cleaned) ||
+      portable.startsWith("project-data/") ||
+      portable.startsWith("apps/") ||
+      portable.startsWith("packages/") ||
+      portable.startsWith("infra/") ||
+      portable.startsWith("docs/") ||
+      portable.startsWith("assets/") ||
+      portable.startsWith("skills/") ||
+      portable.startsWith("ai-metadata/")
     ) {
       mentions.push(cleaned);
     }
@@ -175,17 +177,18 @@ function normalizeMentionToAbsolute(
   cwd: string
 ): string {
   if (path.isAbsolute(mention)) return path.resolve(mention);
+  const portable = mention.replace(/\\/g, "/");
   if (
-    mention.startsWith("project-data/") ||
-    mention.startsWith("apps/") ||
-    mention.startsWith("packages/") ||
-    mention.startsWith("infra/") ||
-    mention.startsWith("docs/") ||
-    mention.startsWith("assets/") ||
-    mention.startsWith("skills/") ||
-    mention.startsWith("ai-metadata/")
+    portable.startsWith("project-data/") ||
+    portable.startsWith("apps/") ||
+    portable.startsWith("packages/") ||
+    portable.startsWith("infra/") ||
+    portable.startsWith("docs/") ||
+    portable.startsWith("assets/") ||
+    portable.startsWith("skills/") ||
+    portable.startsWith("ai-metadata/")
   ) {
-    return path.resolve(workspaceRoot, mention);
+    return path.resolve(workspaceRoot, portable);
   }
   return path.resolve(cwd, mention);
 }

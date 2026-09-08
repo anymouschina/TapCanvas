@@ -238,9 +238,10 @@ export class TerminalSessionManager {
       waiters: new Set(),
     };
 
-    const child = spawn("/bin/sh", ["-lc", input.command], {
+    const child = spawn(input.command, {
       cwd: input.cwd,
       env: input.env,
+      shell: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
     session.child = child;

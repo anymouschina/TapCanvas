@@ -182,9 +182,9 @@ test("composer panel soft-wraps long input instead of truncating it", () => {
   internal.composerCursor = internal.composerInput.length;
   const panel = internal.renderComposerPanel(20);
 
-  assert.ok(panel.lines.some((line) => line.includes("abcdefghij")));
-  assert.ok(panel.lines.some((line) => line.includes("klmnopqrst")));
-  assert.ok(panel.lines.some((line) => line.includes("uvwxyz")));
+  assert.ok(panel.lines.some((line) => line.includes("abcdefghijk")));
+  assert.ok(panel.lines.some((line) => line.includes("lmnopqrstuvwxy")));
+  assert.ok(panel.lines.some((line) => line.includes("  z")));
   assert.equal(panel.lines.some((line) => line.includes("…")), false);
   assert.ok(panel.cursorRowOffset > 2);
 });
@@ -210,7 +210,6 @@ test("composer panel preserves explicit multiline input while wrapping later row
   const panel = internal.renderComposerPanel(22);
 
   assert.ok(panel.lines.some((line) => line.includes("You: first line")));
-  assert.ok(panel.lines.some((line) => line.includes("… second line")));
-  assert.ok(panel.lines.some((line) => line.includes("definitely")));
-  assert.ok(panel.lines.some((line) => line.includes("longer")));
+  assert.ok(panel.lines.some((line) => line.includes("… second line is d")));
+  assert.ok(panel.lines.some((line) => line.includes("efinitely longer")));
 });

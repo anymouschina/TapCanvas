@@ -65,86 +65,43 @@ function buildAssistantToolCallIndex(messages: Message[]): Map<string, number> {
   return indexByToolCallId;
 }
 
-type MessageRound = {
-  startIndex: number;
-  endIndex: number;
-  messages: Message[];
-};
-
-function groupMessagesByApiRound(messages: Message[]): MessageRound[] {
-  const groups: MessageRound[] = [];
-  let current: Message[] = [];
-  let currentStartIndex = 0;
-  let seenAssistantInCurrentGroup = false;
-
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (message?.role === "assistant" && current.length > 0 && seenAssistantInCurrentGroup) {
-      groups.push({
-        startIndex: currentStartIndex,
-        endIndex: index - 1,
-        messages: current,
-      });
-      current = [message];
-      currentStartIndex = index;
-      seenAssistantInCurrentGroup = true;
-      continue;
-    }
-    current.push(message);
-    if (message?.role === "assistant") {
-      seenAssistantInCurrentGroup = true;
-    }
-  }
-
-  if (current.length > 0) {
-    groups.push({
-      startIndex: currentStartIndex,
-      endIndex: messages.length - 1,
-      messages: current,
-    });
-  }
-  return groups;
-}
-
-function hasToolLinkedHistory(messages: Message[]): boolean {
-  return messages.some(
-    (message) =>
-      message?.role === "tool" ||
-      (message?.role === "assistant" &&
-        Array.isArray(message.toolCalls) &&
-        message.toolCalls.length > 0),
-  );
-}
-
 function resolvePreserveStartIndex(messages: Message[], preserveLastMessages: number): number {
-  const rounds = groupMessagesByApiRound(messages);
-  const preserveLastRounds = Math.max(1, preserveLastMessages);
-  const floorRoundIndex = Math.max(0, rounds.length - preserveLastRounds);
   const assistantToolCallIndex = buildAssistantToolCallIndex(messages);
-  let preserveStartIndex =
-    rounds[floorRoundIndex]?.startIndex ?? Math.max(0, messages.length - preserveLastMessages);
-  for (let index = preserveStartIndex; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (message?.role === "tool") {
-      const toolCallId = String(message.toolCallId || "").trim();
-      const linkedAssistantIndex = assistantToolCallIndex.get(toolCallId);
-      if (typeof linkedAssistantIndex === "number") {
-        preserveStartIndex = Math.min(preserveStartIndex, linkedAssistantIndex);
-      } else {
-        preserveStartIndex = Math.min(preserveStartIndex, index);
+  const expandLinkedToolBoundary = (candidate: number): number => {
+    let boundary = candidate;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let index = boundary; index < messages.length; index += 1) {
+        const message = messages[index];
+        if (message?.role !== "tool") continue;
+        const toolCallId = String(message.toolCallId || "").trim();
+        const linkedAssistantIndex = assistantToolCallIndex.get(toolCallId);
+        if (typeof linkedAssistantIndex === "number" && linkedAssistantIndex < boundary) {
+          boundary = linkedAssistantIndex;
+          changed = true;
+          break;
+        }
       }
-      continue;
     }
-    if (message?.role === "assistant" && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
-      preserveStartIndex = Math.min(preserveStartIndex, index);
+    return boundary;
+  };
+
+  const requestedBoundary = Math.max(
+    messages.length > 1 ? 1 : 0,
+    messages.length - Math.max(1, preserveLastMessages),
+  );
+  const expandedBoundary = expandLinkedToolBoundary(requestedBoundary);
+  if (expandedBoundary > 0) return expandedBoundary;
+
+  for (let candidate = requestedBoundary + 1; candidate < messages.length; candidate += 1) {
+    if (messages[candidate]?.role === "tool") continue;
+    const nextBoundary = expandLinkedToolBoundary(candidate);
+    if (nextBoundary > 0) {
+      return nextBoundary;
     }
   }
-  if (preserveStartIndex === 0 && floorRoundIndex === 0 && rounds.length > 1) {
-    if (!hasToolLinkedHistory(messages)) {
-      return rounds[1]?.startIndex ?? 1;
-    }
-  }
-  return preserveStartIndex;
+  return 0;
 }
 
 export function compactMessagesForTurn(input: {

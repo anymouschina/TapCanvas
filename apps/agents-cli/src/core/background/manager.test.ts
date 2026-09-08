@@ -29,7 +29,7 @@ test("BackgroundTaskManager persists completion and emits notifications", async 
   const manager = new BackgroundTaskManager(dir);
 
   const task = manager.start({
-    command: "printf 'done\\n'",
+    command: "echo done",
     cwd: dir,
     requestedBy: "root",
   });

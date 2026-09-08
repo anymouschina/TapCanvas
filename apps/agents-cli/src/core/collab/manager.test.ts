@@ -207,7 +207,7 @@ test("CollabAgentManager imports only staged worker repo files into the shared w
   });
   assert.equal(preview.files.length, 1);
   assert.equal(preview.audit.agent_type, "worker");
-  assert.match(preview.audit.workspace_lane, /\/repo$/);
+  assert.equal(path.basename(preview.audit.workspace_lane), "repo");
   assert.equal(preview.summary.create_count, 1);
   assert.equal(preview.summary.conflict_count, 0);
   assert.equal(preview.files[0]?.target_path, path.join(workspaceRoot, "src", "feature.ts"));

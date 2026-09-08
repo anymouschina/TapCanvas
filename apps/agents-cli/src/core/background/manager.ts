@@ -68,12 +68,13 @@ export class BackgroundTaskManager {
     };
     this.saveTask(record);
 
-    const child = spawn("/bin/sh", ["-lc", command], {
+    const child = spawn(command, {
       cwd,
       env: {
         ...process.env,
         ...(input.env ?? {}),
       },
+      shell: true,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

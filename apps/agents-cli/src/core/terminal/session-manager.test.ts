@@ -3,10 +3,15 @@ import test from "node:test";
 
 import { TerminalSessionManager } from "./session-manager.js";
 
+function nodeEvalCommand(source: string): string {
+  const encoded = Buffer.from(source, "utf8").toString("base64");
+  return `"${process.execPath}" -e "eval(Buffer.from('${encoded}','base64').toString())"`;
+}
+
 test("TerminalSessionManager supports session polling via empty write_stdin", async () => {
   const manager = new TerminalSessionManager();
   const started = await manager.execCommand({
-    command: "sleep 0.1; printf 'done\\n'",
+    command: nodeEvalCommand("setTimeout(() => console.log('done'), 100)"),
     cwd: process.cwd(),
     yieldTimeMs: 20,
   });
@@ -39,7 +44,7 @@ test("TerminalSessionManager supports session polling via empty write_stdin", as
 test("TerminalSessionManager rejects non-tty stdin writes", async () => {
   const manager = new TerminalSessionManager();
   const started = await manager.execCommand({
-    command: "sleep 0.2",
+    command: nodeEvalCommand("setTimeout(() => undefined, 200)"),
     cwd: process.cwd(),
     yieldTimeMs: 10,
   });

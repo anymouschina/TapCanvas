@@ -150,8 +150,8 @@ function loadContextFiles(
 function toDisplayPath(rootDir: string, candidate: string): string {
   const relative = path.relative(rootDir, candidate);
   if (!relative || relative === "") return path.basename(candidate);
-  if (relative.startsWith("..")) return candidate;
-  return relative;
+  if (relative.startsWith("..")) return candidate.split(path.sep).join("/");
+  return relative.split(path.sep).join("/");
 }
 
 function buildEvidenceBundles(files: WorkspaceContextFile[]): EvidenceBundle[] {
