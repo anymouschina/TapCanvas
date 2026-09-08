@@ -36,7 +36,8 @@ export class SkillLoader {
   }
 
   private parseSkillMd(content: string, skillPath: string): Skill | null {
-    const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
+    const normalizedContent = content.replace(/\r\n?/g, "\n");
+    const match = normalizedContent.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
     if (!match) return null;
     const [, frontmatter, body] = match;
     const meta = parseFrontmatter(frontmatter);

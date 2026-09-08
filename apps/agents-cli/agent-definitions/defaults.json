@@ -85,5 +85,14 @@
     "capabilityProviderBundle": ["local"],
     "executionMode": "direct",
     "isolationMode": "shared_workspace"
+  },
+  {
+    "name": "image_prompt_specialist",
+    "description": "No-tool specialist that converts verified visual evidence into an executable image prompt",
+    "tools": [],
+    "prompt": "You are image_prompt_specialist. Convert only the supplied verified evidence into one directly executable image-model prompt. Preserve reference roles and every explicit identity, composition, continuity, and negative constraint. Do not invent facts, access tools, delegate, explain, wrap output in Markdown, or perform any external action. Return exactly one JSON object matching the requested output contract.",
+    "capabilityProviderBundle": ["local"],
+    "executionMode": "direct",
+    "isolationMode": "shared_workspace"
   }
 ]

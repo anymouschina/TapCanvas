@@ -6,6 +6,7 @@ import { loadConfig, ensureConfig, getAgentsHomeDir, writeGlobalConfig, resolveW
 import { Message } from "../types/index.js";
 import { listSessionSummaries } from "../core/memory/session.js";
 import { startAgentsHttpServer } from "../server/http-server.js";
+import { requireImagePromptRelayConfig } from "../server/image-prompt-relay-client.js";
 import { ensureDefaultBootstrapFiles } from "../core/workspace-context/bootstrap.js";
 import { SkillLoader } from "../core/skills/loader.js";
 import type { LlmTurnTrace, ToolCallTrace } from "../core/hooks/types.js";
@@ -187,9 +188,15 @@ program
   .option("--host <host>", "监听地址", "127.0.0.1")
   .option("--port <port>", "监听端口", "8799")
   .option("--token <token>", "可选：鉴权 Token（Authorization: Bearer 或 X-Agents-Token）")
+  .option("--specialist-token <token>", "可选：图片提示词 Specialist 私有接口 Token")
   .option("--body-limit <bytes>", "请求体大小限制（字节）", "8000000")
   .option("--no-stream", "关闭流式输出")
   .action(async (options) => {
+    const specialistToken =
+      typeof options.specialistToken === "string"
+        ? options.specialistToken.trim()
+        : String(process.env.AGENTS_SPECIALIST_TOKEN ?? "").trim();
+    if (specialistToken) requireImagePromptRelayConfig();
     const runtime = createRuntime(options);
     const port = Number(options.port);
     const bodyLimitBytes = Number(options.bodyLimit);
@@ -201,17 +208,22 @@ program
         systemOverride: runtime.systemOverride,
         memoryDir: runtime.config.memoryDir,
         toolContextMeta: runtime.createToolContextMeta(),
+        imagePromptSpecialist: runtime.imagePromptSpecialist,
       },
       {
         host: String(options.host || "127.0.0.1"),
         port: Number.isFinite(port) ? port : 8799,
         token: typeof options.token === "string" ? options.token : undefined,
+        specialistToken,
         bodyLimitBytes: Number.isFinite(bodyLimitBytes) ? bodyLimitBytes : undefined,
       }
     );
 
     console.log(`[agents] HTTP server listening: ${server.url}`);
     console.log(`[agents] POST ${server.url}/chat`);
+    if (specialistToken) {
+      console.log(`[agents] POST ${server.url}/specialists/image-prompt`);
+    }
     console.log(`[agents] GET  ${server.url}/collab/status`);
 
     const stop = async (signal: string) => {

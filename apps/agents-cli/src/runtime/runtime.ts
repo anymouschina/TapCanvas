@@ -50,10 +50,23 @@ import { CollabRuntimeStore } from "../core/collab/runtime-store.js";
 import { CollabMailboxStore } from "../core/collab/mailbox-store.js";
 import { CollabProtocolStore } from "../core/collab/protocol-store.js";
 import {
+  getAgentDefinition,
   loadAgentDefinitions,
   resolveAgentDefinitionFiles,
   setActiveAgentDefinitions,
 } from "../core/subagent/definitions.js";
+import {
+  executeImagePromptSpecialist,
+  ImagePromptSpecialistFailure,
+} from "../server/image-prompt-specialist.js";
+import {
+  createImagePromptRelayCall,
+  readImagePromptRelayConfig,
+} from "../server/image-prompt-relay-client.js";
+import type {
+  ImagePromptSpecialistRequestV1,
+  ImagePromptSpecialistResponseV1,
+} from "../server/image-prompt-contract.js";
 import { listSessionSummaries, loadSessionMessages, saveSessionMessages, type SessionSummary } from "../core/memory/session.js";
 import type { AgentRuntimeProfile } from "../core/root-persona.js";
 
@@ -75,6 +88,11 @@ export type AssistantRuntime = {
   profile: AgentRuntimeProfile;
   skills: SkillLoader;
   runner: AgentRunner;
+  imagePromptSpecialist: (
+    request: ImagePromptSpecialistRequestV1,
+    relayGrant: string,
+    abortSignal: AbortSignal,
+  ) => Promise<ImagePromptSpecialistResponseV1>;
   memoryRoot: string;
   logger?: WorldLogger;
   systemOverride: string;
@@ -227,6 +245,35 @@ export function createAssistantRuntime(input: CreateAssistantRuntimeInput): Assi
   const registeredTeamToolNames = registeredToolNames.filter((toolName) => teamToolNames.has(toolName));
   const client = new LLMClient(config);
   const runner = new AgentRunner(config, registry, client, skills, new HookRunner(hookRegistry.list()));
+  const imagePromptRelayConfig = readImagePromptRelayConfig();
+  const imagePromptSpecialist = (
+    request: ImagePromptSpecialistRequestV1,
+    relayGrant: string,
+    abortSignal: AbortSignal,
+  ): Promise<ImagePromptSpecialistResponseV1> => {
+    if (!imagePromptRelayConfig) {
+      throw new ImagePromptSpecialistFailure(
+        "specialist_unavailable",
+        "image prompt specialist relay is not configured",
+      );
+    }
+    const imagePromptRelayCall = createImagePromptRelayCall(config, {
+      baseUrl: imagePromptRelayConfig.baseUrl,
+      grant: relayGrant,
+      correlationId: request.correlationId,
+      generationTaskId: request.commercialContext.generationTaskId,
+      promptModel: request.promptModel,
+    });
+    return executeImagePromptSpecialist(
+      request,
+      {
+        call: imagePromptRelayCall,
+        getRole: getAgentDefinition,
+        getSkillContent: (name) => skills.getSkillContent(name),
+      },
+      { abortSignal },
+    );
+  };
   const baseCapabilityGrant = createCapabilityGrant({
     tools: registeredToolNames,
     workspaceRoot: config.workspaceRoot,
@@ -353,6 +400,7 @@ export function createAssistantRuntime(input: CreateAssistantRuntimeInput): Assi
     profile,
     skills,
     runner,
+    imagePromptSpecialist,
     memoryRoot,
     logger,
     systemOverride,

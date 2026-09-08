@@ -37,6 +37,7 @@ import {
 } from "./openapi/docs.zh";
 import { installDomParserIfNeeded } from "./polyfills/domparser";
 import { internalRouter } from "./modules/internal/internal.routes";
+import { imagePromptInternalRouter } from "./modules/internal/image-prompt-specialist.routes";
 import { newApiModelsRouter } from "./modules/new-api-models/new-api-models.routes";
 
 const API_BOOT_TIME_ISO = new Date().toISOString();
@@ -331,6 +332,7 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 	app.route("/memory", memoryRouter);
 	app.route("/dreamina", dreaminaRouter);
 	// Internal ops endpoints (token protected; not in OpenAPI docs)
+	app.route("/internal/v1", imagePromptInternalRouter);
 	app.route("/internal", internalRouter);
 
 	return app;

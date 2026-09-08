@@ -60,3 +60,31 @@ test("renderSkillsSection includes run-specific required skills hint when provid
 
   assert.match(rendered, /Run-specific constraint: This run explicitly prioritizes these skills first: agents-team\./);
 });
+
+test("skill loader accepts CRLF frontmatter with description on the final metadata line", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-skill-loader-crlf-"));
+  const skillsDir = path.join(tempDir, "skills", "tapcanvas-prompt-specialists");
+  fs.mkdirSync(skillsDir, { recursive: true });
+  try {
+    fs.writeFileSync(
+      path.join(skillsDir, "SKILL.md"),
+      [
+        "---",
+        "name: tapcanvas-prompt-specialists",
+        "description: Defines the image prompt specialist contract.",
+        "---",
+        "",
+        "# Prompt Specialist",
+        "",
+        "Return a production-ready prompt.",
+      ].join("\r\n"),
+      "utf8",
+    );
+
+    const loader = new SkillLoader(path.join(tempDir, "skills"));
+    assert.equal(loader.listSkills().includes("tapcanvas-prompt-specialists"), true);
+    assert.match(loader.getSkillContent("tapcanvas-prompt-specialists") ?? "", /production-ready/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

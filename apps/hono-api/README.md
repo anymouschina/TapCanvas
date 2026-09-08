@@ -186,6 +186,16 @@ docker-compose --profile credit-worker up --build
 
 Chat Completions 兼容模型可通过 `AGENTS_CHAT_THINKING_MODE=enabled|disabled` 显式控制思考模式。官方 DeepSeek V4 若需要直接消费最终文本，应设置为 `disabled`；桥接层不会使用旧模型别名或静默回退。
 
+图片节点的提示词生成已新增一条与普通网站 Agent 隔离的内部 Specialist 链路，当前仅供商业任务执行器接入，不改变 `POST /public/agents/chat`：
+
+1. HMaigc 在用户确认最终图片报价并创建不可变任务后，以 `image-prompt-request/v1` 调用 `POST /internal/v1/specialists/image-prompt`。请求携带租户/用户/项目/画布/节点作用域、真实参考图证据摘要、账单与任务标识、结构化操作，以及由 HMaigc 模型目录和加密渠道版本冻结的五段模型身份；Hono 先对受限大小的原始正文完成 HMAC、时间窗、nonce 与 idempotency key 验证，再解析业务 JSON，未授权请求不会获得契约校验细节。
+2. `hono-api` 只做协议、鉴权、Redis 幂等、事实关联和 trace 校验，不查询或同步第二套 Specialist 模型目录。首次执行在取得业务幂等权后签发最长 120 秒、绑定 correlation/task/五段模型身份/商业上下文的单次 relay grant；grant 只以 SHA-256 摘要存入 Redis，并通过原子 GET+DEL 消费。相同成功业务请求只重放已冻结响应，不签发新 grant，也不会再次调用模型。
+3. `agents-cli` 加载无工具的 `image_prompt_specialist` 角色和 `tapcanvas-prompt-specialists` skill，使用执行信封中的单次 grant 回调 `POST /internal/v1/agents/image-prompt-llm/chat/completions`。调用固定为两条 system/user 消息、`tools=[]`、`stream=false`、零 HTTP 重试；agents-cli 不保存模型渠道密钥，不读取普通网站 Agent 的模型地址、stream 或 thinking 设置。
+4. Hono 在解析模型请求前原子消费 grant，随后校验正文中的 correlation/task/五段模型绑定，再以独立 HMAC 调用 HMaigc 的 `POST /internal/v1/model-relays/image-prompt/chat-completions`。HMaigc 重新核验父 Task/BillingOrder、报价指纹、五段模型身份、精确 endpoint/credential version 与加密凭证，然后只调用一次该供应商；Hono/New API 的模型表和凭证不在这条依赖图中。推理不创建第二个用户账单，usage 与供应商 request ID 作为内部平台成本和审计证据关联原图片任务。
+5. Specialist 响应必须保留原请求 identity、evidence digest、完整模型绑定、实际响应模型、token usage 与起止时间。任何缺失、Markdown 包裹、未知字段、模型继承漂移或取消/超时都原地失败；禁止回退到固定 prompt、普通 `/chat`、默认模型或第二次模型调用。
+
+运行变量必须完整配置：Hono 侧为 `IMAGE_PROMPT_HMAC_SERVICE_ID`、`IMAGE_PROMPT_HMAC_SECRET`、`IMAGE_PROMPT_REDIS_URL`、`IMAGE_PROMPT_AGENTS_BASE_URL`、`IMAGE_PROMPT_AGENTS_TOKEN`、`IMAGE_PROMPT_HMAIGC_RELAY_URL`、`IMAGE_PROMPT_HMAIGC_RELAY_SERVICE_ID`、`IMAGE_PROMPT_HMAIGC_RELAY_HMAC_SECRET`；agents-cli 侧为 `AGENTS_SPECIALIST_TOKEN` 与 `AGENTS_IMAGE_PROMPT_RELAY_BASE_URL`。`AGENTS_SPECIALIST_TOKEN` 与 Hono 的 `IMAGE_PROMPT_AGENTS_TOKEN` 相同；Hono 的三枚私有凭证必须各为 32–512 UTF-8 字节且互不相同，反向 HMAC 密钥仅与 HMaigc 的 `CANVAS_IMAGE_PROMPT_RELAY_HMAC_SECRET` 配对。任一配置、Redis、版本化凭证或审计写入不可用时显式失败，不使用 New API、默认模型、静态 grant 或固定 prompt 回退。
+
 本节描述当前真实运行中的 AI 对话链路。当前版本已经收敛为“前端收集上下文、后端注入作用域与协议、agents 自主决策、skills 承载方法论”的结构；当前唯一聊天入口为 `POST /public/agents/chat`；旧 `/public/chat` 系列文本入口与 `/storyboard/*`、`/agents/storyboard/workflow/*` 生产链已删除。
 
 范围说明：

@@ -61,6 +61,31 @@ type ImageViewControlsModule = {
 	) => string;
 };
 
+type ImagePromptSpecialistContractModule = {
+	IMAGE_PROMPT_SPECIALIST_REQUEST_VERSION: "image-prompt-request/v1";
+	IMAGE_PROMPT_SPECIALIST_EXECUTION_VERSION: "image-prompt-execution/v1";
+	IMAGE_PROMPT_SPECIALIST_RESPONSE_VERSION: "image-prompt/v1";
+	IMAGE_PROMPT_SPECIALIST_NAME: "image_prompt_specialist";
+	IMAGE_PROMPT_SPECIALIST_ERROR_CODES: readonly string[];
+	parseImagePromptSpecialistRequest: (
+		input: unknown,
+	) =>
+		| { ok: true; value: import("../../../../../packages/schemas/image-prompt-specialist/index.js").ImagePromptSpecialistRequestV1 }
+		| { ok: false; error: string };
+	parseImagePromptSpecialistExecutionRequest: (
+		input: unknown,
+	) =>
+		| { ok: true; value: import("../../../../../packages/schemas/image-prompt-specialist/index.js").ImagePromptSpecialistExecutionRequestV1 }
+		| { ok: false; error: string };
+	parseImagePromptSpecialistResponse: (
+		input: unknown,
+	) =>
+		| { ok: true; value: import("../../../../../packages/schemas/image-prompt-specialist/index.js").ImagePromptSpecialistResponseV1 }
+		| { ok: false; error: string };
+	canonicalImagePromptSpecialistJson: (input: unknown) => string;
+	imagePromptEvidenceDigest: (input: unknown) => string;
+};
+
 function requireSharedSchemaModule<TModule>(moduleRelativePath: string): TModule {
 	const candidatePaths = [
 		path.resolve(process.cwd(), "../../packages/schemas", moduleRelativePath),
@@ -91,4 +116,10 @@ export function loadImagePromptSpecModule(): ImagePromptSpecModule {
 
 export function loadImageViewControlsModule(): ImageViewControlsModule {
 	return requireSharedSchemaModule<ImageViewControlsModule>("image-view-controls/index.js");
+}
+
+export function loadImagePromptSpecialistContractModule(): ImagePromptSpecialistContractModule {
+	return requireSharedSchemaModule<ImagePromptSpecialistContractModule>(
+		"image-prompt-specialist/index.js",
+	);
 }

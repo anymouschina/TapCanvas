@@ -189,6 +189,12 @@ export type AgentConfig = {
 export type LLMResponse = {
   text: string;
   toolCalls: ToolCall[];
+  model?: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
 };
 
 export type LLMRequest = {

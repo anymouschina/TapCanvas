@@ -55,6 +55,8 @@ npm run watch -- run "你好，先规划一个最小 MVP"
 - `AGENTS_MEMORY_DIR`
 - `AGENTS_SKILLS_DIR`
 - `AGENTS_WORLD_API_URL`
+- `AGENTS_SPECIALIST_TOKEN`：图片提示词 Specialist 私有接口凭证；必须为 32–512 UTF-8 字节、与通用 `/chat` 的 Token 分离，并仅由 Hono 内部网关持有
+- `AGENTS_IMAGE_PROMPT_RELAY_BASE_URL`：图片提示词 Specialist 专用 Hono 单次授权中继基址，例如 `http://hono-api:8787/internal/v1/agents/image-prompt-llm`；每次请求的 Bearer grant 由执行信封提供，进程不保存静态中继凭证
 - `AGENTS_REDIS_URL`（会话缓存 Redis 地址；未设置时仅使用文件会话）
 - `AGENTS_SESSION_CACHE_TTL_SECONDS`（会话缓存 TTL，默认 `600` 秒）
 - `AGENTS_SESSION_CACHE_PREFIX`（会话缓存 key 前缀，默认 `agents:chat:session`）
@@ -236,6 +238,8 @@ pnpm --filter agents dev -- serve --port 8799
 
 # 然后在调用方配置
 # AGENTS_BRIDGE_BASE_URL="http://127.0.0.1:8799"
+# AGENTS_SPECIALIST_TOKEN="独立的高熵私有凭证"
+# AGENTS_IMAGE_PROMPT_RELAY_BASE_URL="http://hono-api:8787/internal/v1/agents/image-prompt-llm"
 ```
 
 是否对上游 LLM 使用流式请求，默认由 `apps/agents-cli/agents.config.json`、`~/.agents/agents.config.json` 或 `AGENTS_STREAM` 决定；只有显式传 `--no-stream` 时，`serve` 才会强制关闭流式。
@@ -243,6 +247,7 @@ pnpm --filter agents dev -- serve --port 8799
 服务端点：
 
 - `POST /chat`：执行一次 agent run
+- `POST /specialists/image-prompt`：执行一次无工具的 `image_prompt_specialist`；只有同时配置 specialist handler 与 `AGENTS_SPECIALIST_TOKEN` 时才暴露，并且只接受 `Authorization: Bearer <AGENTS_SPECIALIST_TOKEN>`
 - `GET /health`：健康检查
 - `GET /collab/status`：读取当前 team agents/submissions 运行态
 - `GET /collab/status?ids=<agentId1>,<agentId2>`：只读取指定 agents 的运行态
@@ -255,6 +260,8 @@ pnpm --filter agents dev -- serve --port 8799
 - `requireAgentsTeamExecution`: 要求本轮结束前先产生真实 team tool 执行证据
 
 `agents-cli` 只负责把这些远程工具暴露给模型并在调用时回调执行；业务工具定义与真实执行逻辑应收口在上游服务，而不是内置到 `agents-cli` 本体。
+
+图片提示词 Specialist 接口使用 `image-prompt-request/v1 -> image-prompt/v1` 共享契约。它只接受结构化操作、真实图片证据，以及精确的 `catalogRecordId/modelKey/configurationRevision/providerEndpointVersionId/providerCredentialVersionId` 模型绑定；运行时加载 `image_prompt_specialist` 角色和 `tapcanvas-prompt-specialists` skill，以零工具、零传输重试的单次 LLM 调用返回严格 JSON。每个执行信封都携带 Hono 刚签发的单次 Bearer grant，agents-cli 仅使用该 grant 回调 `AGENTS_IMAGE_PROMPT_RELAY_BASE_URL`，不读取普通网站 Agent 的模型地址、密钥、流式或 thinking 设置，也不保存长期模型中继凭证。配置了 `AGENTS_SPECIALIST_TOKEN` 却缺少中继地址时，服务会拒绝启动。实际响应模型或 token usage 缺失、模型继承漂移、Markdown/非 JSON 输出、未知字段、请求取消与超时都会显式失败，不会回落到默认模型、固定提示词或 `/chat`。响应携带 evidence digest、完整模型版本、token usage 与时间戳，供商业服务在调用图片供应商前冻结审计证据；请求和响应均设置 `Cache-Control: no-store`，日志只记录标识、计数、耗时与失败码，不记录 grant、签名 URL 或完整提示词。
 
 Checklist/todo 对齐能力（与 codex-main thread item 语义保持一致方向）：
 - 当本轮调用 `TodoWrite` 成功时，`/chat` 流式事件会额外发送 `event: todo_list`，包含结构化 `items[]`、`totalCount`、`completedCount`、`inProgressCount`。

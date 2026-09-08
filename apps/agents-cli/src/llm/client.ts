@@ -87,6 +87,21 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function asNonNegativeInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : null;
+}
+
+function parseLlmUsage(value: unknown): LLMResponse["usage"] {
+  const record = asObject(value);
+  if (!record) return undefined;
+  const inputTokens = asNonNegativeInteger(record.input_tokens ?? record.prompt_tokens);
+  const outputTokens = asNonNegativeInteger(record.output_tokens ?? record.completion_tokens);
+  const totalTokens = asNonNegativeInteger(record.total_tokens);
+  if (inputTokens === null || outputTokens === null || totalTokens === null) return undefined;
+  if (totalTokens !== inputTokens + outputTokens) return undefined;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
 function asOutputItems(value: unknown): ResponsesOutputItem[] {
   return Array.isArray(value) ? value.filter((item): item is ResponsesOutputItem => Boolean(asObject(item))) : [];
 }
@@ -98,8 +113,25 @@ const requireNodeModule = createRequire(import.meta.url);
 export class LLMClient {
   private responsesInstructionsKey: "instructions" | "system" = "instructions";
   private responsesToolOutputType: "function_call_output" | "tool_result" = "function_call_output";
+  private readonly maxHttpRetries: number;
+  private readonly allowPayloadLogging: boolean;
+  private readonly requestMetadata: Readonly<Record<string, unknown>> | undefined;
 
-  constructor(private config: AgentConfig) {
+  constructor(
+    private config: AgentConfig,
+    options?: {
+      maxHttpRetries?: number;
+      allowPayloadLogging?: boolean;
+      requestMetadata?: Readonly<Record<string, unknown>>;
+    },
+  ) {
+    const configuredRetries = options?.maxHttpRetries;
+    this.maxHttpRetries =
+      typeof configuredRetries === "number" && Number.isSafeInteger(configuredRetries)
+        ? Math.max(0, Math.min(2, configuredRetries))
+        : 2;
+    this.allowPayloadLogging = options?.allowPayloadLogging !== false;
+    this.requestMetadata = options?.requestMetadata;
     configureDnsResultOrderOnce();
   }
 
@@ -229,6 +261,7 @@ export class LLMClient {
       messages: [{ role: "system", content: request.system }, ...this.buildChatMessages(request.messages)],
       tools: this.toChatTools(request.tools),
       stream: this.config.stream,
+      ...(this.requestMetadata ? { metadata: this.requestMetadata } : {}),
       ...(this.config.chatThinkingMode
         ? { thinking: { type: this.config.chatThinkingMode } }
         : {}),
@@ -248,7 +281,7 @@ export class LLMClient {
       ...requestSummary,
       messages: payload.messages.length,
       toolLinkage,
-      payloadPreview: shouldLogPayload()
+      payloadPreview: this.allowPayloadLogging && shouldLogPayload()
         ? safePreview(payload).slice(0, 4000)
         : undefined,
     });
@@ -267,7 +300,7 @@ export class LLMClient {
 
     if (!res.ok) {
       const text = await res.text();
-      if (isRetryableHttpStatus(res.status) && retry < 2) {
+      if (isRetryableHttpStatus(res.status) && retry < this.maxHttpRetries) {
         await sleep(500 * (retry + 1));
         return this.callChat(request, retry + 1);
       }
@@ -306,7 +339,14 @@ export class LLMClient {
       normalizedNames: toolCalls.map((call) => call.name),
     });
 
-    return { text, toolCalls };
+    const responseModel = asString(json.model).trim();
+    const usage = parseLlmUsage(json.usage);
+    return {
+      text,
+      toolCalls,
+      ...(responseModel ? { model: responseModel } : {}),
+      ...(usage ? { usage } : {}),
+    };
   }
 
   private async callResponses(request: LLMRequest, retry = 0): Promise<LLMResponse> {
@@ -342,7 +382,7 @@ export class LLMClient {
       ...requestSummary,
       instructionsKey: this.responsesInstructionsKey,
       toolOutputType: this.responsesToolOutputType,
-      payloadPreview: shouldLogPayload()
+      payloadPreview: this.allowPayloadLogging && shouldLogPayload()
         ? safePreview(payload).slice(0, 4000)
         : undefined,
     });
@@ -361,11 +401,11 @@ export class LLMClient {
 
     if (!res.ok) {
       const text = await res.text();
-      if (isRetryableHttpStatus(res.status) && retry < 2) {
+      if (isRetryableHttpStatus(res.status) && retry < this.maxHttpRetries) {
         await sleep(500 * (retry + 1));
         return this.callResponses(request, retry + 1);
       }
-      if (res.status === 400 && retry < 2) {
+      if (res.status === 400 && retry < this.maxHttpRetries) {
         if (request.system && text.includes("Unsupported parameter: system") && this.responsesInstructionsKey === "system") {
           this.responsesInstructionsKey = "instructions";
           return this.callResponses(request, retry + 1);
@@ -446,7 +486,14 @@ export class LLMClient {
       throw new Error(`LLM 返回空响应: outputTypes=${JSON.stringify(outputTypes)} preview=${preview}`);
     }
 
-    return { text, toolCalls };
+    const responseModel = asString(json.model).trim();
+    const usage = parseLlmUsage(json.usage);
+    return {
+      text,
+      toolCalls,
+      ...(responseModel ? { model: responseModel } : {}),
+      ...(usage ? { usage } : {}),
+    };
   }
 
   private async resolveResponsesLifecycle(
@@ -628,7 +675,10 @@ export class LLMClient {
         this.debugLog("response.raw.parse_failed", {
           contentType,
           status: res.status,
-          bodyPreview: raw.slice(0, 4000),
+          bodyPreview:
+            this.allowPayloadLogging && shouldLogPayload()
+              ? raw.slice(0, 4000)
+              : undefined,
           error: String((err as Error)?.message || err || ""),
         });
         throw err;
@@ -665,7 +715,10 @@ export class LLMClient {
     this.debugLog("response.sse.raw", {
       status: res.status,
       bodyChars: chunkChars,
-      bodyPreview: shouldLogPayload() ? safePreview(parsed).slice(0, 4000) : undefined,
+      bodyPreview:
+        this.allowPayloadLogging && shouldLogPayload()
+          ? safePreview(parsed).slice(0, 4000)
+          : undefined,
     });
     return parsed;
   }

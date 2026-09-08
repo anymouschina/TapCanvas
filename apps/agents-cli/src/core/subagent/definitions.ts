@@ -40,8 +40,9 @@ function normalizeAgentDefinition(value: unknown): AgentDefinition | null {
   const name = typeof record.name === "string" ? record.name.trim() : "";
   const description = typeof record.description === "string" ? record.description.trim() : "";
   const prompt = typeof record.prompt === "string" ? record.prompt.trim() : "";
+  if (!Array.isArray(record.tools)) return null;
   const tools = normalizeStringArray(record.tools);
-  if (!name || !description || !prompt || tools.length === 0) return null;
+  if (!name || !description || !prompt) return null;
   const executionModeRaw =
     typeof record.executionMode === "string" ? record.executionMode.trim() : "";
   const isolationModeRaw =

@@ -24,11 +24,17 @@ import {
 import type { RuntimeRunEvent } from "../runtime/events.js";
 import { createRuntimeChannelMeta } from "../runtime/channel.js";
 import { parseRuntimeTodoUpdate } from "../runtime/todo-events.js";
+import {
+  handleImagePromptSpecialistRoute,
+  normalizeImagePromptSpecialistToken,
+  type ImagePromptSpecialistHandler,
+} from "./image-prompt-route.js";
 
 export type AgentsHttpServerOptions = {
   host: string;
   port: number;
   token?: string;
+  specialistToken?: string;
   bodyLimitBytes?: number;
 };
 
@@ -1606,6 +1612,7 @@ export function startAgentsHttpServer(
     systemOverride?: string;
     toolContextMeta?: Record<string, unknown>;
     memoryDir?: string;
+    imagePromptSpecialist?: ImagePromptSpecialistHandler;
   },
   options: AgentsHttpServerOptions
 ): Promise<{ url: string; close: () => Promise<void> }> {
@@ -1616,6 +1623,11 @@ export function startAgentsHttpServer(
   }
 
   const token = typeof options.token === "string" ? options.token.trim() : "";
+  const rawSpecialistToken =
+    typeof options.specialistToken === "string" ? options.specialistToken.trim() : "";
+  const specialistToken = rawSpecialistToken
+    ? normalizeImagePromptSpecialistToken(rawSpecialistToken)
+    : "";
   const bodyLimitBytes =
     typeof options.bodyLimitBytes === "number" && Number.isFinite(options.bodyLimitBytes)
       ? Math.max(1024, Math.min(32_000_000, Math.trunc(options.bodyLimitBytes)))
@@ -1884,6 +1896,16 @@ export function startAgentsHttpServer(
 
       if (method === "GET" && pathname === "/health") {
         return json(res, 200, { ok: true });
+      }
+
+      if (method === "POST" && pathname === "/specialists/image-prompt") {
+        if (!input.imagePromptSpecialist || !specialistToken) return notFound(res);
+        await handleImagePromptSpecialistRoute(req, res, {
+          token: specialistToken,
+          bodyLimitBytes,
+          execute: input.imagePromptSpecialist,
+        });
+        return;
       }
 
       if (!requireAuth(req)) {
