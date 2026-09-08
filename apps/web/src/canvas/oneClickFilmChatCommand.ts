@@ -14,7 +14,7 @@ export type OneClickFilmFacts = {
 
 export const ONE_CLICK_FILM_CHAT_DISPLAY_TEXT = '生成当前画布整片'
 export const GROUP_FILM_CHAT_DISPLAY_TEXT = '生成当前组整片'
-export const GROUP_FILM_SKILL_ONLY_DISPLAY_TEXT = '拆分当前组 Beat'
+export const GROUP_FILM_VIDEO_NODES_DISPLAY_TEXT = '拆分当前组为视频节点'
 
 export function buildOneClickFilmChatText(facts: OneClickFilmFacts): string {
   return [
@@ -49,14 +49,12 @@ export function buildGroupFilmChatText(facts: GroupFilmFacts): string {
 }
 
 /**
- * 轻量规划入口：只召回 skill，不绑定持久视频 Workflow IR。
- * 固定合同由 agents-cli skill 承担，Web 端只传递真实组作用域事实。
+ * 最小工作流入口只传真实组身份与期望交付，由小T选择已装载工作流。
  */
-export function buildGroupSkillOnlyFilmChatText(facts: GroupFilmFacts): string {
+export function buildGroupVideoNodesChatText(facts: GroupFilmFacts): string {
   return [
-    '完成用户刚刚在当前画布组节点发起的轻量一键成片规划。',
-    '本次只召回 tapcanvas-one-click-skill-only：按 Skill 合同拆分 Beat 并输出画布规划。不要启动媒体工作流，不要调用图片、音频或视频供应商，不要声称已生成成片。',
-    '固定约束：每个 Beat 文本恰好 120 个 Unicode 字符；总节点数最多 10 个；缺少真实输入或无法满足约束时显式失败。',
+    '使用已装载的一键成片v1工作流，将当前组原文按字长拆分，并把每段对应的待生成视频节点添加到当前画布。',
+    '本次交付是已保存的视频节点；不生成媒体。请根据当前真实作用域与已装载工作流的调用契约执行，并核对实际写入的节点结果。',
     JSON.stringify(facts),
   ].join('\n')
 }

@@ -96,6 +96,7 @@ COPY apps/hono-api/tsconfig.json apps/hono-api/schema.sql ./
 COPY apps/hono-api/scripts ./scripts
 COPY apps/hono-api/marketplace-skills ./marketplace-skills
 COPY apps/hono-api/src ./src
+COPY apps/hono-api/sql ./sql
 # System-Skill catalog is reconciled against these source-of-truth Skill files at startup.
 COPY apps/agents-cli/skills /apps/agents-cli/skills
 # Compiled built-in knowledge cards are checksum-verified and materialized into pgvector at startup.
@@ -117,6 +118,7 @@ COPY --from=builder /apps/agents-cli/skills /apps/agents-cli/skills
 COPY --from=builder /apps/agents-cli/knowledge /apps/agents-cli/knowledge
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/schema.sql ./schema.sql
+COPY --from=builder /app/sql ./sql
 # 运行期 shared-schema-loader 按 cwd(/app)/../../packages 读盘，必须落 /packages。
 COPY --from=builder /packages /packages
 

@@ -41,6 +41,7 @@ import { waitForGracefulShutdown } from "./platform/node/graceful-shutdown";
 import { resumePersistedPromptLibraryCrawls } from "./modules/prompt-library/prompt-library.crawler";
 import { ensureBootstrapAdmin } from "./modules/auth/bootstrap-admin";
 import { syncBuiltInGreetingWorkflow } from "./modules/agents/system-greeting-workflow";
+import { syncBuiltInOneClickWorkflow } from "./modules/agents/system-one-click-workflow";
 
 async function bootstrap() {
 	loadLocalEnvFiles();
@@ -57,6 +58,7 @@ async function bootstrap() {
 	const env = await createNodeWorkerEnv();
 	const bootstrapAdminId = await ensureBootstrapAdmin(env.DB);
 	await syncBuiltInGreetingWorkflow(env.DB, bootstrapAdminId);
+	await syncBuiltInOneClickWorkflow(env.DB, bootstrapAdminId);
 	const assetHosting = assertObjectStorageStartupReady(env);
 	// Credentials are intentionally excluded from this startup diagnostic.
 	console.log("[api] asset hosting startup", assetHosting);
