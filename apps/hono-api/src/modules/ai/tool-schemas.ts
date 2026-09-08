@@ -59,7 +59,7 @@ export type CanvasCapabilityManifest = {
 				videoLikeTargets: readonly string[];
 				videoLikeSources: readonly string[];
 			};
-			storyboard: {
+			storyboard?: {
 				editorCellFactField: string;
 				editorCellPromptField: string;
 				runtimeTelemetryFields: readonly string[];

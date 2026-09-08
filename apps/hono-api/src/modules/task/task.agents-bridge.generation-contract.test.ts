@@ -84,9 +84,9 @@ describe("runAgentsBridgeChatTask generation contract forwarding", () => {
 	});
 
 	it("forwards normalized generationContract to agents-cli /chat body", async () => {
-		let forwardedBody: Record<string, unknown> | null = null;
+		const forwardedBodies: Record<string, unknown>[] = [];
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-			forwardedBody = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+			forwardedBodies.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
 			return new Response(
 				JSON.stringify({
 					id: "bridge-1",
@@ -135,6 +135,7 @@ describe("runAgentsBridgeChatTask generation contract forwarding", () => {
 		});
 
 		expect(result.status).toBe("succeeded");
+		const forwardedBody = forwardedBodies.at(-1);
 		expect(forwardedBody?.generationContract).toEqual({
 			version: "v1",
 			lockedAnchors: ["角色外观", "镜头构图"],
@@ -166,9 +167,9 @@ describe("runAgentsBridgeChatTask generation contract forwarding", () => {
 	});
 
 	it("does not inject execution planning requirements for visual agents chat runs", async () => {
-		let forwardedBody: Record<string, unknown> | null = null;
+		const forwardedBodies: Record<string, unknown>[] = [];
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-			forwardedBody = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+			forwardedBodies.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
 			return new Response(
 				JSON.stringify({
 					id: "bridge-planning-1",
@@ -210,7 +211,8 @@ describe("runAgentsBridgeChatTask generation contract forwarding", () => {
 			},
 		});
 
-		const diagnosticContext = forwardedBody?.diagnosticContext as Record<string, unknown>;
+		const forwardedBody = forwardedBodies.at(-1);
+		const diagnosticContext = forwardedBody?.diagnosticContext as Record<string, unknown> | undefined;
 		expect(diagnosticContext?.planningRequired).toBe(true);
 		expect(diagnosticContext?.planningMinimumSteps).toBe(3);
 		expect(diagnosticContext?.planningChecklistFirst).toBe(false);
@@ -288,12 +290,12 @@ describe("runAgentsBridgeChatTask generation contract forwarding", () => {
 			planningRequired: true,
 			hasChecklist: false,
 		});
-		expect(rawMeta.turnVerdict.status).toBe("failed");
-		expect(rawMeta.turnVerdict.reasons).toEqual(
-			expect.arrayContaining([
+		expect(rawMeta.turnVerdict).toMatchObject({
+			status: "failed",
+			reasons: expect.arrayContaining([
 				"runtime_completion_blocked",
 				"runtime_completion_reason:planning_checklist_missing",
 			]),
-		);
+		});
 	});
 });

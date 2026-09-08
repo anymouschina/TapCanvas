@@ -272,7 +272,7 @@ export async function generateImageToCanvas(input: {
   }
 
   const taskNode = parsedArgs.data.node;
-  const nodeData = taskNode.data as Record<string, unknown>;
+  const nodeData = taskNode.data;
   const prompt = appendImageViewPrompt(readTrimmedString(nodeData.prompt), {
     cameraControl: nodeData.imageCameraControl,
     lightingRig: nodeData.imageLightingRig,

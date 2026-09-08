@@ -8118,6 +8118,7 @@ assetRouter.patch("/:id/data", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const id = c.req.param("id");
+	if (!id) return c.json({ error: "asset id is required" }, 400);
 	const body = (await c.req.json().catch(() => ({}))) ?? {};
 	const parsed = UpdateAssetDataSchema.safeParse(body);
 	if (!parsed.success) {
@@ -8155,6 +8156,7 @@ assetRouter.put("/:id", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const id = c.req.param("id");
+	if (!id) return c.json({ error: "asset id is required" }, 400);
 	const body = (await c.req.json().catch(() => ({}))) ?? {};
 	const parsed = RenameAssetSchema.safeParse(body);
 	if (!parsed.success) {
@@ -8187,6 +8189,7 @@ assetRouter.delete("/:id", authMiddleware, async (c) => {
 	const userId = c.get("userId");
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const id = c.req.param("id");
+	if (!id) return c.json({ error: "asset id is required" }, 400);
 	await deleteAssetRow(c.env.DB, userId, id);
 	return c.body(null, 204);
 });
@@ -8794,17 +8797,17 @@ assetRouter.post("/character-library/import", authMiddleware, async (c) => {
 	const sourceLanguage = normalizeTapNowText(body.sourceLanguage) || "zh-CN";
 	const sourceBrowserLocale = normalizeTapNowText(body.sourceBrowserLocale) || sourceLanguage;
 	const upstreamFilters: TapNowCharacterFilterInput = {
-		filterWorldview: body.filterWorldview,
-		filterTheme: body.filterTheme,
-		gender: body.gender,
-		ageGroup: body.ageGroup,
-		species: body.species,
-		physique: body.physique,
-		heightLevel: body.heightLevel,
-		skinColor: body.skinColor,
-		hairLength: body.hairLength,
-		hairColor: body.hairColor,
-		temperament: body.temperament,
+		filterWorldview: normalizeTapNowFilterValues(body.filterWorldview),
+		filterTheme: normalizeTapNowFilterValues(body.filterTheme),
+		gender: normalizeTapNowFilterValues(body.gender),
+		ageGroup: normalizeTapNowFilterValues(body.ageGroup),
+		species: normalizeTapNowFilterValues(body.species),
+		physique: normalizeTapNowFilterValues(body.physique),
+		heightLevel: normalizeTapNowFilterValues(body.heightLevel),
+		skinColor: normalizeTapNowFilterValues(body.skinColor),
+		hairLength: normalizeTapNowFilterValues(body.hairLength),
+		hairColor: normalizeTapNowFilterValues(body.hairColor),
+		temperament: normalizeTapNowFilterValues(body.temperament),
 	};
 	const limitUpload = createAsyncLimiter(5);
 

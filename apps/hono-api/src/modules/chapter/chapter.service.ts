@@ -283,7 +283,6 @@ export async function deleteChapterForUser(
 		await deleteStoryboardShotForOwner({
 			db: c.env.DB,
 			ownerId: userId,
-			projectId: chapterRow.project_id,
 			shotId: shot.id,
 		});
 	}

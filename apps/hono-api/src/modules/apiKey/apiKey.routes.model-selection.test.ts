@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppContext } from "../../types";
+import type { ModelCatalogModelRow } from "../model-catalog/model-catalog.repo";
+
+type VendorConfigRow = { key: string; enabled: number; auth_type: string };
+type VendorApiKeyRow = { vendor_key: string; enabled: number; api_key: string };
 
 const {
 	ensureModelCatalogSchema,
@@ -12,14 +16,14 @@ const {
 } = vi.hoisted(() => ({
 	ensureModelCatalogSchema: vi.fn(async () => undefined),
 	isAgentsBridgeEnabled: vi.fn(() => false),
-	listCatalogModelsByModelAlias: vi.fn(async () => []),
-	listCatalogModelsByModelKey: vi.fn(async () => []),
+	listCatalogModelsByModelAlias: vi.fn<[unknown, string], Promise<ModelCatalogModelRow[]>>(async () => []),
+	listCatalogModelsByModelKey: vi.fn<[unknown, string], Promise<ModelCatalogModelRow[]>>(async () => []),
 	prisma: {
 		model_catalog_vendors: {
-			findMany: vi.fn(async () => []),
+			findMany: vi.fn<[], Promise<VendorConfigRow[]>>(async () => []),
 		},
 		model_catalog_vendor_api_keys: {
-			findMany: vi.fn(async () => []),
+			findMany: vi.fn<[], Promise<VendorApiKeyRow[]>>(async () => []),
 		},
 		proxy_providers: {
 			findMany: vi.fn(async () => []),
@@ -51,6 +55,8 @@ function makeCtx(): AppContext {
 		env: {
 			DB: {},
 			PUBLIC_VENDOR_ROUTING: "",
+			NEW_API_INTERNAL_BASE_URL: "http://new-api.test",
+			NEW_API_INTERNAL_TOKEN: "test-token",
 		} as AppContext["env"],
 		req: {
 			url: "https://example.com/public/tasks",
@@ -208,7 +214,7 @@ describe("resolvePublicTaskVendors modelKey routing", () => {
 			extras: { modelAlias: "gemini-3.1-flash-image-preview" },
 		});
 
-		expect(resolved.vendorCandidates).toEqual(["yunwu"]);
+		expect(resolved.vendorCandidates).toEqual(["newapi"]);
 		expect(resolved.modelAliasRaw).toBe("gemini-3.1-flash-image-preview");
 		expect(resolved.aliasMap?.get("yunwu")).toBe("gemini-3.1-flash-image-preview");
 		expect(listCatalogModelsByModelAlias).toHaveBeenCalledWith(
@@ -258,7 +264,7 @@ describe("buildPublicVisionTaskRequest", () => {
 			},
 		);
 
-		expect(request.extras.modelAlias).toBe("gemini-3.1-flash-image-preview");
-		expect(request.extras.modelKey).toBeUndefined();
+		expect(request.extras.modelAlias).toBeUndefined();
+		expect(request.extras.modelKey).toBe("gpt-5.5");
 	});
 });

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../../types";
+import type { AppContext, AppEnv } from "../../types";
 import { authMiddleware } from "../../middleware/auth";
 import { apiKeyAuthMiddleware } from "../apiKey/apiKey.middleware";
 import {
@@ -44,6 +44,10 @@ import { handleAgentsLlmChatCompletions, handleAgentsLlmVideoUnderstand } from "
 
 export const agentsRouter = new Hono<AppEnv>();
 export const adminAgentsRouter = new Hono<AppEnv>();
+
+function isExplicitCanvasRequest(c: AppContext): boolean {
+	return c.req.header("X-TapCanvas-Source")?.trim().toLowerCase() === "canvas";
+}
 
 // Public skill listing should work for both end-user JWT and external API keys.
 agentsRouter.use("*", apiKeyAuthMiddleware);
@@ -207,7 +211,7 @@ agentsRouter.post("/pipeline/runs/:id/execute", async (c) => {
 			400,
 		);
 	}
-	const isCanvasSource = ensureCanvasStoryboardRequest(c);
+	const isCanvasSource = isExplicitCanvasRequest(c);
 	const run = await executeUserAgentPipelineRun(c as any, userId, id, {
 		...parsed.data,
 		skipMediaGeneration:

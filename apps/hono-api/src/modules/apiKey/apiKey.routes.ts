@@ -56,6 +56,11 @@ import {
 import { fetchTaskResultForPolling } from "../task/task.polling";
 import { NEW_API_AUTO_VENDOR, normalizeDispatchVendor } from "../task/task.vendor";
 import { maybeWrapSyncImageResultAsStoredTask } from "../task/task.task-store-wrap";
+import {
+	TaskRequestSchema,
+	type TaskRequestDto,
+	type TaskResultDto,
+} from "../task/task.schemas";
 import { setTraceStage } from "../../trace";
 import { createAssetRow } from "../asset/asset.repo";
 import { resolvePublicAssetBaseUrl } from "../asset/asset.publicBase";
@@ -414,9 +419,8 @@ function normalizeStringArray(value: unknown): string[] {
 export async function normalizeTaskAssetBackedVideoRequest(
 	c: AppContext,
 	userId: string,
-	request: unknown,
-): Promise<unknown> {
-	if (!isPlainRecord(request)) return request;
+	request: TaskRequestDto,
+): Promise<TaskRequestDto> {
 	const kind =
 		typeof request.kind === "string" ? request.kind.trim() : "";
 	if (kind !== "text_to_video" && kind !== "image_to_video") return request;
@@ -502,7 +506,7 @@ export async function normalizeTaskAssetBackedVideoRequest(
 		(typeof extras.firstFrameUrl === "string" && extras.firstFrameUrl.trim().length > 0) ||
 		(typeof extras.lastFrameUrl === "string" && extras.lastFrameUrl.trim().length > 0);
 	const isVideoNodeKind = nodeKind === "video" || nodeKind === "composevideo";
-	const normalizedKind =
+	const normalizedKind: TaskRequestDto["kind"] =
 		isVideoNodeKind && (hasReferenceImages || hasFrameReference)
 			? "image_to_video"
 			: "text_to_video";
@@ -1242,9 +1246,9 @@ function parseToolCallsFromText(raw: string): Array<{ id: string; name: string; 
 	return [];
 }
 
-function hasImageEditSourceInExtras(extras: Record<string, any>): boolean {
+function hasImageEditSourceInExtras(extras: Record<string, unknown>): boolean {
 	const referenceImages = Array.isArray(extras?.referenceImages)
-		? extras.referenceImages.filter((u: any) => typeof u === "string" && u.trim())
+		? extras.referenceImages.filter((url) => typeof url === "string" && url.trim())
 		: [];
 	if (referenceImages.length > 0) return true;
 	if (typeof extras?.imageUrl === "string" && extras.imageUrl.trim()) return true;
@@ -1264,7 +1268,10 @@ function isGenerationsOnlyImageModel(modelKey: string): boolean {
 	);
 }
 
-function readImageEditModelKey(rawRequest: any, extras: Record<string, any>): string {
+function readImageEditModelKey(
+	rawRequest: TaskRequestDto,
+	extras: Record<string, unknown>,
+): string {
 	const extrasModelKey =
 		typeof extras?.modelKey === "string" && extras.modelKey.trim()
 			? extras.modelKey.trim()
@@ -1275,15 +1282,15 @@ function readImageEditModelKey(rawRequest: any, extras: Record<string, any>): st
 			? extras.modelAlias.trim()
 			: "";
 	if (extrasModelAlias) return extrasModelAlias;
-	return typeof rawRequest?.model === "string" && rawRequest.model.trim()
-		? rawRequest.model.trim()
+	const requestModel = "model" in rawRequest ? rawRequest.model : undefined;
+	return typeof requestModel === "string" && requestModel.trim()
+		? requestModel.trim()
 		: "";
 }
 
-export function normalizeImageEditRequestKind(rawRequest: any): any {
-	if (!rawRequest || typeof rawRequest !== "object") return rawRequest;
+export function normalizeImageEditRequestKind(rawRequest: TaskRequestDto): TaskRequestDto {
 	if (rawRequest.kind !== "image_edit") return rawRequest;
-	const extras = { ...((rawRequest.extras || {}) as Record<string, any>) };
+	const extras: Record<string, unknown> = { ...(rawRequest.extras || {}) };
 	const modelKey = readImageEditModelKey(rawRequest, extras);
 	if (isGenerationsOnlyImageModel(modelKey)) {
 		return {
@@ -1369,29 +1376,18 @@ function sanitizePublicTaskPayload(value: unknown, fieldName = "", depth = 0): u
 	return out;
 }
 
-function sanitizePublicTaskResult(result: unknown): unknown {
-	if (!result || typeof result !== "object") return result;
-	const src = result as Record<string, unknown>;
-	const out: Record<string, unknown> = { ...src };
-
-	if (Array.isArray(src.assets)) {
-		const sanitizedAssets: Array<Record<string, unknown>> = [];
-		for (const item of src.assets) {
-			if (!item || typeof item !== "object") continue;
-			const rawAsset = item as Record<string, unknown>;
-			const url = typeof rawAsset.url === "string" ? rawAsset.url.trim() : "";
-			if (!url) continue;
-			if (/^data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,/i.test(url)) continue;
-			sanitizedAssets.push({ ...rawAsset, url });
-		}
-		out.assets = sanitizedAssets;
-	}
-
-	if (Object.prototype.hasOwnProperty.call(src, "raw")) {
-		out.raw = sanitizePublicTaskPayload(src.raw, "raw", 0);
-	}
-
-	return out;
+function sanitizePublicTaskResult(result: TaskResultDto): TaskResultDto {
+	return {
+		...result,
+		assets: result.assets
+			.map((asset) => ({ ...asset, url: asset.url.trim() }))
+			.filter(
+				(asset) =>
+					Boolean(asset.url) &&
+					!/^data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,/i.test(asset.url),
+			),
+		raw: sanitizePublicTaskPayload(result.raw, "raw", 0),
+	};
 }
 
 export function detectPublicTaskAssetHostingGap(input: {
@@ -1560,11 +1556,8 @@ function mergeAssetInputs(
 	return out;
 }
 
-const handlePublicAgentsChat = async (c: AppContext) => {
-	return handlePublicAgentsChatRoute(c);
-};
-
-publicApiRouter.openapi(PublicAgentsChatOpenApiRoute, handlePublicAgentsChat);
+publicApiRouter.openAPIRegistry.registerPath(PublicAgentsChatOpenApiRoute);
+publicApiRouter.post(PublicAgentsChatOpenApiRoute.path, handlePublicAgentsChatRoute);
 
 const DEFAULT_PUBLIC_VISION_PROMPT =
 	"请详细分析我提供的图片，推测可用于复现它的英文提示词，包含主体、环境、镜头、光线和风格。输出必须是纯英文提示词，不要添加中文备注或翻译。";
@@ -3025,18 +3018,26 @@ export async function resolvePublicTaskVendors(
 }
 
 export async function runPublicTask(
-	c: any,
+	c: AppContext,
 	userId: string,
-	input: any,
-): Promise<{ vendor: string; result: any }> {
+	input: { request: unknown; vendor?: unknown; abortSignal?: unknown },
+): Promise<{ vendor: string; result: TaskResultDto }> {
 	const abortSignal = isAbortSignalLike(input?.abortSignal) ? input.abortSignal : null;
 	throwIfAbortSignalAborted(abortSignal);
+	const parsedRequest = TaskRequestSchema.safeParse(input.request);
+	if (!parsedRequest.success) {
+		throw new AppError("Invalid public task request", {
+			status: 400,
+			code: "invalid_public_task_request",
+			details: { issues: parsedRequest.error.issues },
+		});
+	}
 	const request = await normalizeTaskAssetBackedVideoRequest(
-		c as AppContext,
+		c,
 		userId,
-		normalizeImageEditRequestKind(input.request),
+		normalizeImageEditRequestKind(parsedRequest.data),
 	);
-	const extras = (request?.extras || {}) as Record<string, any>;
+	const extras: Record<string, unknown> = request.extras || {};
 	const externalVendor =
 		typeof input?.vendor === "string" && input.vendor.trim() ? input.vendor.trim() : null;
 	setTraceStage(c, "public:run:begin", {
@@ -3069,12 +3070,12 @@ export async function runPublicTask(
 	if (request?.kind) c.set("routingTaskKind", request.kind);
 
 	const requestForNewApi = (() => {
-		const cleanExtras = { ...(request?.extras || {}) } as Record<string, any>;
+		const cleanExtras: Record<string, unknown> = { ...(request.extras || {}) };
 		const modelAliasRaw =
 			typeof cleanExtras.modelAlias === "string" && cleanExtras.modelAlias.trim()
 				? cleanExtras.modelAlias.trim()
 				: "";
-		delete (cleanExtras as any).modelAlias;
+		delete cleanExtras.modelAlias;
 		if (modelAliasRaw && !String(cleanExtras.modelKey || "").trim()) {
 			cleanExtras.modelKey = modelAliasRaw;
 		}
@@ -3140,10 +3141,10 @@ export async function runPublicTask(
 					nowIso,
 				});
 			}
-		} catch (err: any) {
+		} catch (err: unknown) {
 			console.warn(
 				"[task-store] persist public failed result failed",
-				err?.message || err,
+				err instanceof Error ? err.message : err,
 			);
 		}
 
@@ -3155,10 +3156,10 @@ export async function runPublicTask(
 		return { vendor: NEW_API_AUTO_VENDOR, result: sanitizedFailedResult };
 	}
 
-	result = await maybeWrapSyncImageResultAsStoredTask(c as any, userId, {
+	result = await maybeWrapSyncImageResultAsStoredTask(c, userId, {
 		vendor: NEW_API_AUTO_VENDOR,
 		requestKind: requestForNewApi.kind,
-		result: result as any,
+		result,
 	});
 	const sanitizedResult = sanitizePublicTaskResult(result);
 	const hostingGap = detectPublicTaskAssetHostingGap({

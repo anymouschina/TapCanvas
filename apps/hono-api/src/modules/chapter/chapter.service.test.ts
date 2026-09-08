@@ -14,7 +14,7 @@ function buildChapter(input: {
 		projectId: "project-1",
 		index: input.index,
 		title: input.title || input.id,
-		summary: null,
+		summary: undefined,
 		status: "draft",
 		sortOrder: input.sortOrder,
 		continuityContext: undefined,

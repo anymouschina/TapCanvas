@@ -393,32 +393,7 @@ taskRouter.get("/:taskId", async (c) => {
 		taskId,
 		status: row.status,
 		assetUri,
-		chapterId: row.chapter_id ?? null,
-		nodeId: row.node_id ?? null,
 	});
-});
-
-taskRouter.post("/:taskId/link", async (c) => {
-	const userId = c.get("userId");
-	if (!userId) return c.json({ error: "Unauthorized" }, 401);
-	const taskId = c.req.param("taskId");
-	const body = await c.req.json().catch(() => ({}));
-	const chapterId = typeof body.chapterId === "string" ? body.chapterId.trim() : null;
-	const nodeId = typeof body.nodeId === "string" ? body.nodeId.trim() : null;
-	if (!chapterId || !nodeId) return c.json({ error: "chapterId and nodeId required" }, 400);
-
-	await upsertTaskResult(c.env.DB, {
-		userId,
-		taskId,
-		vendor: "n/a",
-		kind: "n/a",
-		status: "linked",
-		result: null,
-		nowIso: new Date().toISOString(),
-		chapterId,
-		nodeId,
-	});
-	return c.json({ ok: true });
 });
 
 // POST /tasks/gemini/result - legacy endpoint path; polling is handled by new-api.

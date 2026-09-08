@@ -337,7 +337,7 @@ export async function generateVideoToCanvas(input: {
   }
 
   const taskNode = parsedArgs.data.node;
-  const nodeData = taskNode.data as Record<string, unknown>;
+  const nodeData = taskNode.data;
   const prompt = readTrimmedString(nodeData.prompt);
   const negativePrompt = readTrimmedString(nodeData.negativePrompt);
   const modelAlias = readTrimmedString(nodeData.modelAlias);

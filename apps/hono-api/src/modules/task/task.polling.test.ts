@@ -6,20 +6,12 @@ const {
 	mockedGetTaskResultByTaskId,
 	mockedUpsertTaskResult,
 	mockedGetVendorTaskRefByTaskId,
-	mockedFetchApimartTaskResult,
-	mockedFetchAsyncDataTaskResult,
-	mockedFetchGrsaiDrawTaskResult,
-	mockedFetchMappedTaskResultForVendor,
-	mockedFetchTuziTaskResult,
+	mockedFetchNewApiTaskResult,
 } = vi.hoisted(() => ({
 	mockedGetTaskResultByTaskId: vi.fn(),
 	mockedUpsertTaskResult: vi.fn(),
 	mockedGetVendorTaskRefByTaskId: vi.fn(),
-	mockedFetchApimartTaskResult: vi.fn(),
-	mockedFetchAsyncDataTaskResult: vi.fn(),
-	mockedFetchGrsaiDrawTaskResult: vi.fn(),
-	mockedFetchMappedTaskResultForVendor: vi.fn(),
-	mockedFetchTuziTaskResult: vi.fn(),
+	mockedFetchNewApiTaskResult: vi.fn(),
 }));
 
 vi.mock("./task-result.repo", () => ({
@@ -32,11 +24,7 @@ vi.mock("./vendor-task-refs.repo", () => ({
 }));
 
 vi.mock("./task.service", () => ({
-	fetchApimartTaskResult: mockedFetchApimartTaskResult,
-	fetchAsyncDataTaskResult: mockedFetchAsyncDataTaskResult,
-	fetchGrsaiDrawTaskResult: mockedFetchGrsaiDrawTaskResult,
-	fetchMappedTaskResultForVendor: mockedFetchMappedTaskResultForVendor,
-	fetchTuziTaskResult: mockedFetchTuziTaskResult,
+	fetchNewApiTaskResult: mockedFetchNewApiTaskResult,
 }));
 
 import { fetchTaskResultForPolling } from "./task.polling";
@@ -53,7 +41,7 @@ function createMockContext(): AppContext {
 }
 
 describe("fetchTaskResultForPolling", () => {
-	it("does not short-circuit running task_store results and continues mapped polling", async () => {
+	it("does not short-circuit running task_store results and continues New API polling", async () => {
 		const c = createMockContext();
 		mockedGetTaskResultByTaskId.mockResolvedValueOnce({
 			vendor: "yunwu",
@@ -72,7 +60,7 @@ describe("fetchTaskResultForPolling", () => {
 			vendor: "yunwu",
 			pid: "upstream-task-1",
 		});
-		mockedFetchMappedTaskResultForVendor.mockResolvedValueOnce({
+		mockedFetchNewApiTaskResult.mockResolvedValueOnce({
 			id: "task-1",
 			kind: "text_to_video",
 			status: "succeeded",
@@ -88,20 +76,19 @@ describe("fetchTaskResultForPolling", () => {
 			mode: "internal",
 		});
 
-		expect(mockedFetchMappedTaskResultForVendor).toHaveBeenCalledTimes(1);
-		expect(mockedFetchMappedTaskResultForVendor).toHaveBeenCalledWith(
+		expect(mockedFetchNewApiTaskResult).toHaveBeenCalledTimes(1);
+		expect(mockedFetchNewApiTaskResult).toHaveBeenCalledWith(
 			c,
 			"user-1",
-			"yunwu",
+			"task-1",
 			expect.objectContaining({
-				taskId: "task-1",
 				taskKind: "text_to_video",
-				kindHint: "video",
+				vendor: "newapi",
 			}),
 		);
 		expect(outcome).toMatchObject({
 			ok: true,
-			vendor: "yunwu",
+			vendor: "newapi",
 			result: {
 				id: "task-1",
 				status: "succeeded",

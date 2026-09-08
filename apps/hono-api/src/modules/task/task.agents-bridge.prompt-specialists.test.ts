@@ -1,8 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import nodeFs from "node:fs";
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AppContext } from "../../types";
+
+function createDirectoryEntry<Name extends string | Buffer>(name: Name): Dirent<Name> {
+	return {
+		name,
+		parentPath: "",
+		path: "",
+		isFile: () => false,
+		isDirectory: () => true,
+		isBlockDevice: () => false,
+		isCharacterDevice: () => false,
+		isSymbolicLink: () => false,
+		isFIFO: () => false,
+		isSocket: () => false,
+	};
+}
 
 const {
 	buildUserMemoryContext,
@@ -3648,7 +3664,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 
 	it("resolves a project book title to the real bookId before dispatching to agents bridge", async () => {
 		const accessSpy = vi.spyOn(fs, "access").mockImplementation(async (inputPath) => {
-			const pathText = String(inputPath || "");
+			const pathText = String(inputPath || "").replaceAll("\\", "/");
 			if (pathText.includes("/books/__________sosdbot-1773463170328/index.json")) return undefined;
 			throw new Error("not found");
 		});
@@ -3659,7 +3675,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
 		const readFileSpy = vi.spyOn(fs, "readFile").mockImplementation(async (inputPath) => {
-			const pathText = String(inputPath || "");
+			const pathText = String(inputPath || "").replaceAll("\\", "/");
 			if (pathText.includes("/books/__________sosdbot-1773463170328/index.json")) {
 				return JSON.stringify({
 					title: "蛊真人",
@@ -3716,14 +3732,14 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			bookId: "__________sosdbot-1773463170328",
 			chapterId: "2",
 		});
-		expect(String(requestBody.systemPrompt || "")).toContain(
+		expect(String(requestBody.systemPrompt || "")).not.toContain(
 			"selectedReference.bookId: __________sosdbot-1773463170328",
 		);
 	});
 
 	it("auto-detects the sole project book for single_video novel mode when the user did not specify book progress", async () => {
 		const accessSpy = vi.spyOn(fs, "access").mockImplementation(async (inputPath) => {
-			const pathText = String(inputPath || "");
+			const pathText = String(inputPath || "").replaceAll("\\", "/");
 			if (pathText.includes("/books/__________sosdbot-1773463170328/index.json")) return undefined;
 			throw new Error("not found");
 		});
@@ -3734,7 +3750,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
 		const readFileSpy = vi.spyOn(fs, "readFile").mockImplementation(async (inputPath) => {
-			const pathText = String(inputPath || "");
+			const pathText = String(inputPath || "").replaceAll("\\", "/");
 			if (pathText.includes("/books/__________sosdbot-1773463170328/index.json")) {
 				return JSON.stringify({
 					title: "蛊真人",
@@ -3979,7 +3995,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 
 	it("keeps chapter-grounded scope facts without auto-injecting storyboard team constraints", async () => {
 		const accessSpy = vi.spyOn(fs, "access").mockImplementation(async (inputPath) => {
-			const pathText = String(inputPath || "");
+			const pathText = String(inputPath || "").replaceAll("\\", "/");
 			if (pathText.includes("/books/book-1/index.json")) return undefined;
 			throw new Error("not found");
 		});
@@ -3990,7 +4006,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
 		const readFileSpy = vi.spyOn(fs, "readFile").mockImplementation(async (inputPath) => {
-			const pathText = String(inputPath || "");
+			const pathText = String(inputPath || "").replaceAll("\\", "/");
 			if (pathText.includes("/books/book-1/index.json")) {
 				return JSON.stringify({
 					title: "七十二变",
@@ -4074,7 +4090,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 
 	it("keeps single_video text-evidence turns free of implicit storyboard team constraints", async () => {
 		vi.spyOn(fs, "access").mockImplementation(async (inputPath) => {
-			const pathText = String(inputPath || "");
+			const pathText = String(inputPath || "").replaceAll("\\", "/");
 			if (pathText.includes("/books/book-1/index.json")) return undefined;
 			throw new Error("not found");
 		});
@@ -4085,7 +4101,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 			},
 		] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
 		vi.spyOn(fs, "readFile").mockImplementation(async (inputPath) => {
-			const pathText = String(inputPath || "");
+			const pathText = String(inputPath || "").replaceAll("\\", "/");
 			if (pathText.includes("/books/book-1/index.json")) {
 				return JSON.stringify({
 					title: "七十二变",
@@ -4231,7 +4247,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect(diagnosticContext.chapterId).toBeUndefined();
 	});
 
-	it("injects auto mode team skill and success criteria into the forwarded bridge request", async () => {
+	it("forwards auto mode skills without adding Hono-owned success criteria", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 			return new Response(
 				JSON.stringify({
@@ -4274,7 +4290,7 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect(requestBody.requireAgentsTeamExecution).toBeUndefined();
 		expect(requestBody.maxTurns).toBe(36);
 		expect(String(requestBody.systemPrompt || "")).not.toContain("【结果透明要求】");
-		expect(String(requestBody.systemPrompt || "")).toContain("本轮请求显式要求真实资产交付。");
+		expect(String(requestBody.systemPrompt || "")).not.toContain("本轮请求显式要求真实资产交付。");
 		expect(String(requestBody.prompt || "")).not.toContain("【AUTO 模式成功标准】");
 		const diagnosticContext = requestBody.diagnosticContext as Record<string, unknown>;
 		expect(diagnosticContext.promptPipeline).toMatchObject({
@@ -4729,9 +4745,9 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
 			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as Awaited<ReturnType<typeof fs.readdir>>;
+				return [createDirectoryEntry(Buffer.from("book-1"))];
 			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
+			return [];
 		});
 		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
 			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
@@ -4804,9 +4820,9 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		vi.spyOn(fs, "readdir").mockImplementation(async (targetPath) => {
 			if (String(targetPath) === scopedBooksRoot) {
-				return [{ name: "book-1", isDirectory: () => true }] as Awaited<ReturnType<typeof fs.readdir>>;
+				return [createDirectoryEntry(Buffer.from("book-1"))];
 			}
-			return [] as Awaited<ReturnType<typeof fs.readdir>>;
+			return [];
 		});
 		vi.spyOn(fs, "readFile").mockImplementation(async (targetPath) => {
 			if (String(targetPath) === path.join(scopedBookDir, "index.json")) {
@@ -4953,8 +4969,8 @@ describe("runAgentsBridgeChatTask prompt specialists", () => {
 		expect((requestBody.diagnosticContext as Record<string, unknown> | undefined)?.selectedNodeKind).toBe(
 			"image",
 		);
-		expect(String(requestBody.systemPrompt || "")).toContain("selectedNodeKind: image");
-		expect(String(requestBody.systemPrompt || "")).toContain("selectedReference.kind: image");
+		expect(String(requestBody.systemPrompt || "")).not.toContain("selectedNodeKind: image");
+		expect(String(requestBody.systemPrompt || "")).not.toContain("selectedReference.kind: image");
 		expect(String(requestBody.systemPrompt || "")).not.toContain("selectedNodeKind: storyboard");
 		expect(requestBody.remoteToolConfig).toMatchObject({
 			endpoint: "https://api.tapcanvas.test/public/agents/tools/execute",

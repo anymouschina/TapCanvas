@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 
 import {
 	buildChatAssistantSystemPrompt,
@@ -506,8 +507,8 @@ describe("chat system prompt helpers", () => {
 	it("resolves persona roots for both repo root and apps/hono-api cwd", () => {
 		const repoRoots = resolvePersonaRootCandidates("/repo");
 		const apiRoots = resolvePersonaRootCandidates("/repo/apps/hono-api");
-		expect(repoRoots).toContain("/repo/apps/agents-cli");
-		expect(apiRoots).toContain("/repo/apps/agents-cli");
-		expect(apiRoots).toContain("/repo/apps/hono-api");
+		expect(repoRoots).toContain(path.resolve("/repo/apps/agents-cli"));
+		expect(apiRoots).toContain(path.resolve("/repo/apps/agents-cli"));
+		expect(apiRoots).toContain(path.resolve("/repo/apps/hono-api"));
 	});
 });

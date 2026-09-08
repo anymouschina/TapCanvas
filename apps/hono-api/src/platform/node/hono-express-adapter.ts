@@ -1,8 +1,8 @@
-import { Readable } from "node:stream";
+import type { OpenAPIHono } from "@hono/zod-openapi";
+import type { AppEnv, WorkerEnv } from "../../types";
 
-type HonoLike = {
-	fetch: (req: Request, env?: unknown, ctx?: unknown) => Promise<Response> | Response;
-};
+type HonoLike = Pick<OpenAPIHono<AppEnv>, "fetch">;
+type HonoExecutionContext = NonNullable<Parameters<HonoLike["fetch"]>[2]>;
 
 type ExpressLikeRequest = {
 	headers?: Record<string, string | string[] | undefined>;
@@ -17,15 +17,91 @@ type ExpressLikeResponse = {
 	headersSent?: boolean;
 	writableEnded?: boolean;
 	setHeader: (name: string, value: string | string[]) => void;
-	end: (chunk?: string) => void;
-	on: (
-		event: "error" | "close" | "finish",
+	write: (chunk: Uint8Array) => boolean;
+	end: (chunk?: string | Uint8Array) => void;
+	once: (
+		event: "drain" | "close" | "error",
+		listener: (error?: Error) => void,
+	) => void;
+	off: (
+		event: "drain" | "close" | "error",
 		listener: (error?: Error) => void,
 	) => void;
 };
 
+type AsyncRequestBody = AsyncIterable<unknown> & {
+	destroy?: () => void;
+};
+
+function isAsyncRequestBody(value: unknown): value is AsyncRequestBody {
+	if (typeof value !== "object" || value === null) return false;
+	const candidate = value as { [Symbol.asyncIterator]?: unknown };
+	return typeof candidate[Symbol.asyncIterator] === "function";
+}
+
+function toRequestBodyChunk(value: unknown): Uint8Array {
+	if (value instanceof Uint8Array) return value;
+	if (typeof value === "string") return new TextEncoder().encode(value);
+	if (value instanceof ArrayBuffer) return new Uint8Array(value);
+	if (ArrayBuffer.isView(value)) {
+		return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+	}
+	throw new TypeError("Unsupported Node request body chunk");
+}
+
+function buildRequestBody(req: ExpressLikeRequest): ReadableStream<Uint8Array> {
+	if (!isAsyncRequestBody(req)) {
+		throw new TypeError("Express request body is not an async iterable stream");
+	}
+	const iterator = req[Symbol.asyncIterator]();
+	return new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			try {
+				const next = await iterator.next();
+				if (next.done) {
+					controller.close();
+					return;
+				}
+				controller.enqueue(toRequestBodyChunk(next.value));
+			} catch (error) {
+				controller.error(error);
+			}
+		},
+		async cancel() {
+			await iterator.return?.();
+			req.destroy?.();
+		},
+	});
+}
+
 function hasResponseStarted(res: ExpressLikeResponse): boolean {
 	return Boolean(res.headersSent || res.writableEnded);
+}
+
+function waitForResponseDrain(res: ExpressLikeResponse): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
+		let settled = false;
+		const cleanup = () => {
+			res.off("drain", onDrain);
+			res.off("close", onClose);
+			res.off("error", onError);
+		};
+		const settle = (complete: () => void) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			complete();
+		};
+		const onDrain = () => settle(resolve);
+		const onClose = () =>
+			settle(() => reject(new Error("Client closed while response was backpressured")));
+		const onError = (error?: Error) =>
+			settle(() => reject(error ?? new Error("Response stream failed")));
+
+		res.once("drain", onDrain);
+		res.once("close", onClose);
+		res.once("error", onError);
+	});
 }
 
 function buildRequestFromExpress(req: ExpressLikeRequest): Request {
@@ -45,15 +121,13 @@ function buildRequestFromExpress(req: ExpressLikeRequest): Request {
 
 	const method = String(req.method || "GET").toUpperCase();
 	const hasBody = !(method === "GET" || method === "HEAD");
-	const body = hasBody ? Readable.toWeb(req as never) : undefined;
-
-	return new Request(url, {
+	const requestInit: RequestInit & { duplex?: "half" } = {
 		method,
 		headers,
-		body,
-		// Required by Node fetch when the body is a stream.
-		...(hasBody ? { duplex: "half" as any } : {}),
-	});
+		...(hasBody ? { body: buildRequestBody(req), duplex: "half" } : {}),
+	};
+
+	return new Request(url, requestInit);
 }
 
 async function writeResponseToExpress(
@@ -85,20 +159,21 @@ async function writeResponseToExpress(
 		return;
 	}
 
-	const nodeStream = Readable.fromWeb(response.body as never);
-	await new Promise<void>((resolve, reject) => {
-		nodeStream.on("error", reject);
-		res.on("error", reject);
-		res.on("close", resolve);
-		res.on("finish", resolve);
-		nodeStream.pipe(res);
-	});
+	const reader = response.body.getReader();
+	while (true) {
+		const chunk = await reader.read();
+		if (chunk.done) break;
+		if (!res.write(chunk.value)) {
+			await waitForResponseDrain(res);
+		}
+	}
+	res.end();
 }
 
 export function mountHonoToExpress(
 	expressApp: { use: (handler: (req: ExpressLikeRequest, res: ExpressLikeResponse) => Promise<void>) => void },
 	honoApp: HonoLike,
-	env: unknown,
+	env: WorkerEnv,
 ): void {
 	// Delegate everything to Hono (keep existing routes/OpenAPI/docs intact).
 	expressApp.use(async (req: ExpressLikeRequest, res: ExpressLikeResponse) => {
@@ -111,7 +186,9 @@ export function mountHonoToExpress(
 						console.warn("[api] waitUntil rejected", err);
 					});
 				},
-			};
+				passThroughOnException: () => undefined,
+				props: undefined,
+			} satisfies HonoExecutionContext;
 			const response = await honoApp.fetch(request, env, ctx);
 			await writeResponseToExpress(res, response);
 		} catch (err) {

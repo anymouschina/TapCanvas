@@ -2346,10 +2346,10 @@ function applyImagePromptSpecGovernanceRecord(
 		sourceHint,
 		requestAnchorSummary,
 	});
-	if (anchorSummary.hasReferenceAnchors && parsed.value.referenceBindings.length <= 0) {
+	if (anchorSummary.hasReferenceAnchors && (parsed.value.referenceBindings?.length ?? 0) <= 0) {
 		summary.missingReferenceBindingsCount += 1;
 	}
-	if (anchorSummary.hasCharacterAnchors && parsed.value.identityConstraints.length <= 0) {
+	if (anchorSummary.hasCharacterAnchors && (parsed.value.identityConstraints?.length ?? 0) <= 0) {
 		summary.missingIdentityConstraintsCount += 1;
 	}
 	if (anchorSummary.hasEnvironmentAnchors && parsed.value.environmentObjects.length <= 0) {
@@ -5135,7 +5135,7 @@ function parseMentionRoleReferenceAsset(row: AssetRow): MentionRoleReferenceAsse
 		chapterEnd: normalizePositiveReferenceChapter(obj.chapterEnd),
 		chapterSpan: normalizeReferenceChapterSpan(obj.chapterSpan),
 		updatedAtTs: (() => {
-			const ts = Date.parse(String(obj.updatedAt || row.updatedAt || row.createdAt || ""));
+			const ts = Date.parse(String(obj.updatedAt || row.updated_at || row.created_at || ""));
 			return Number.isFinite(ts) ? ts : 0;
 		})(),
 		referenceSource: "role_card",
