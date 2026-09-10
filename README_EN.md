@@ -20,7 +20,7 @@ TapCanvas is a multi-model AI content creation platform built around a visual ca
 
 [Register through our HeyRoute referral link](https://heyroute.ai/r/c/ch_iiq2tvtmrc) to claim **$15 in credits** for Codex, Claude and Gemini chat and the platform's image generation services (eligibility and model availability are subject to HeyRoute's terms).
 
-The built-in `heyroute-image` channel supports GPT Image 2, Gemini 3.1 Flash Image and Gemini 3 Pro Image. It starts disabled with an empty API key. In the new-api channel list or editor, click **Apply for API Key**, register, enter your own key and enable the channel. No maintainer credentials are included. Chat models require separate configuration based on your account's available models.
+Seven built-in HeyRoute channels provide 31 models: 15 chat models (Claude, GPT, Grok, Gemini and Kimi), five image models and 11 video models (Grok, MiniMax H3 and Seedance), with per-channel pricing. In the new-api channel list or editor, click **Apply for API Key**, register through the link above, enter your own key and enable the desired channels. New channels start disabled with empty keys; upgrades preserve existing credentials and status. See the [initialization SQL](apps/new-api/patches/2026-09-11/004-expand-heyroute-channels.sql) and [integration notes](apps/new-api/docs/heyroute.md).
 
 ## Quick Start
 

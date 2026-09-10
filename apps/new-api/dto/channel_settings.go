@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -18,7 +19,33 @@ type ProtocolBinding struct {
 	Options  map[string]string `json:"options,omitempty"`
 }
 
+// TextTokenCostCNY expresses procurement cost per million tokens.
+type TextTokenCostCNY struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cache_read"`
+	CacheWrite float64 `json:"cache_write"`
+}
+
 type ChannelSettings struct {
+	TextCostPerMillionCNY map[string]TextTokenCostCNY `json:"text_cost_per_million_cny,omitempty"`
+	TextSaleMultiplier    float64                     `json:"text_sale_multiplier,omitempty"`
+	// Fixed per-delivered-image procurement contracts, independent of size.
+	ImageCostPerImageCNY map[string]float64 `json:"image_cost_per_image_cny,omitempty"`
+	ImageSaleMultiplier  float64            `json:"image_sale_multiplier,omitempty"`
+	// Native fixed model IDs do not use gateway quality-to-model variants.
+	ImageFixedModelNames map[string]bool `json:"image_fixed_model_names,omitempty"`
+	// VideoCostPricing stores actual procurement rates in CNY for this channel.
+	// VideoSaleMultiplier converts those rates to the channel's retail quote.
+	VideoCostPricing    map[string]json.RawMessage `json:"video_cost_pricing,omitempty"`
+	VideoSaleMultiplier float64                    `json:"video_sale_multiplier,omitempty"`
+	VideoModelParams    map[string]json.RawMessage `json:"video_model_params,omitempty"`
+	// ImagePricingOverrides contains complete model pricing_config objects for
+	// this channel only; model identities and other channels' prices stay shared.
+	ImagePricingOverrides map[string]json.RawMessage `json:"image_pricing_overrides,omitempty"`
+	// Empty/image bills delivered images; request bills one accepted submission.
+	ImageBillingUnit string `json:"image_billing_unit,omitempty"`
+
 	ForceFormat            bool   `json:"force_format,omitempty"`
 	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
 	Proxy                  string `json:"proxy"`

@@ -17,6 +17,9 @@ import (
 )
 
 type Pricing struct {
+	ChannelTextPrices      []ChannelTextPrice      `json:"channel_text_prices,omitempty"`
+	ChannelImagePrices     []ChannelImagePrice     `json:"channel_image_prices,omitempty"`
+	ChannelVideoPrices     []ChannelVideoPrice     `json:"channel_video_prices,omitempty"`
 	ModelName              string                  `json:"model_name"`
 	ModelKind              string                  `json:"model_kind,omitempty"`
 	Description            string                  `json:"description,omitempty"`
@@ -1229,6 +1232,18 @@ func updatePricing() error {
 		return fmt.Errorf("读取可用模型渠道失败: %w", err)
 	}
 	maxChannelPriceRatio := maxChannelPriceRatioByCanonicalModel(enableAbilities)
+	channelTextPrices, err := channelTextPricesByModel(enableAbilities)
+	if err != nil {
+		return err
+	}
+	channelVideoPrices, err := channelVideoPricesByModel(enableAbilities)
+	if err != nil {
+		return fmt.Errorf("invalid channel video prices: %w", err)
+	}
+	channelImagePrices, err := channelImagePricesByModel(enableAbilities)
+	if err != nil {
+		return fmt.Errorf("解析渠道图片价格失败: %w", err)
+	}
 	maxChannelVideoPriceFloor := maxChannelVideoPriceFloorByCanonicalModel(enableAbilities)
 	pricingModelReference, err := pricingModelReferenceByCanonicalModel(enableAbilities)
 	if err != nil {
@@ -1594,6 +1609,11 @@ func updatePricing() error {
 		if channelRatio != 1.0 || videoPriceFloor > 0 {
 			applyChannelPricingContractToPricing(&pricing, channelRatio, videoPriceFloor)
 		}
+		pricing.ChannelTextPrices = channelTextPrices[model]
+		applyChannelTextQuotes(&pricing, pricing.ChannelTextPrices)
+		pricing.ChannelImagePrices = channelImagePrices[model]
+		pricing.ChannelVideoPrices = channelVideoPrices[model]
+		applyChannelVideoQuotes(&pricing, pricing.ChannelVideoPrices)
 		nextPricingMap = append(nextPricingMap, pricing)
 	}
 

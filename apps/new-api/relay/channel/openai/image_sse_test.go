@@ -59,3 +59,18 @@ func TestNormalizeImageResponseBodySupportsMultilineAndFinalUnterminatedEvent(t 
 	require.NoError(t, err)
 	require.JSONEq(t, `{"data":[{"b64_json":"aW1hZ2U="}]}`, string(normalized))
 }
+
+func TestImageSSELargeImageAndProviderError(t *testing.T) {
+	resp := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
+	encoded := strings.Repeat("a", 5*1024*1024)
+	body := []byte("data: {\"data\":[{\"b64_json\":\"" + encoded + "\"}]}\n\n")
+	normalized, err := normalizeImageResponseBody(resp, body)
+	if err != nil || !strings.Contains(string(normalized), encoded) {
+		t.Fatalf("large image lost: %v", err)
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+	_, err = normalizeImageResponseBody(resp, []byte("data: {\"error\":{\"code\":\"provider_rejected\",\"message\":\"quota unavailable\"}}\n\n"))
+	if err == nil || !strings.Contains(err.Error(), "quota unavailable") {
+		t.Fatalf("provider error lost: %v", err)
+	}
+}

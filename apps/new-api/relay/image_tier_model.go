@@ -126,6 +126,9 @@ func selectedChannelModels(c *gin.Context, info *relaycommon.RelayInfo) []string
 }
 
 func selectChannelBoundImageTierModel(currentModel string, resolutionTier string, channelModels []string, info *relaycommon.RelayInfo) (string, bool, error) {
+	if info != nil && info.ChannelMeta != nil && info.ChannelSetting.ImageFixedModelNames[currentModel] {
+		return "", false, nil
+	}
 	currentModel = strings.TrimSpace(currentModel)
 	if currentModel == "" || resolutionTier == "1K" {
 		return "", false, nil

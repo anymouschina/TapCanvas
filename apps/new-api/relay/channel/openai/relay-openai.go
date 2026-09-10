@@ -576,6 +576,26 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
+	if info.ChannelMeta != nil && info.ChannelSetting.ImageBillingUnit != "" {
+		var images dto.ImageResponse
+		if err := common.Unmarshal(responseBody, &images); err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
+		delivered := 0
+		for _, item := range images.Data {
+			if strings.TrimSpace(item.Url) != "" || strings.TrimSpace(item.B64Json) != "" {
+				delivered++
+			}
+		}
+		if delivered == 0 {
+			return nil, types.NewOpenAIError(fmt.Errorf("image response contains no delivered images"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
+		if info.ChannelSetting.ImageBillingUnit == "request" && delivered > 0 {
+			delivered = 1
+		}
+		info.PriceData.AddOtherRatio("n", float64(delivered))
+	}
+
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
