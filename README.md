@@ -34,7 +34,7 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 
 ## HeyRoute 注册福利与渠道配置
 
-通过 [HeyRoute 推广链接注册](https://heyroute.ai/r/c/ch_iiq2tvtmrc)可领取 **$15 额度**，可使用 Codex、Claude、Gemini 对话及平台提供的生图能力（具体领取条件与可用模型以 HeyRoute 页面为准）。这是本项目的推广链接。
+通过 [HeyRoute 推广链接注册](https://heyroute.ai/r/c/ch_iiq2tvtmrc)可领取 **$15 额度**，可使用 Codex、Claude、Gemini 对话及平台提供的生图能力（具体领取条件与可用模型以 HeyRoute 页面为准）。
 
 社区版内置 7 个 HeyRoute 渠道，共 31 个模型：15 个对话模型（Claude、GPT、Grok、Gemini、Kimi）、5 个图片模型和 11 个视频模型。新增视频包括 Grok、MiniMax H3 与 Seedance 系列，文本、图片和视频均支持渠道独立计价。首次部署后，在鲁班 API（new-api）管理台的渠道列表或编辑窗口点击 **申请 API Key**，通过上述链接注册，填写自己的 Key 并启用所需渠道。新增渠道默认停用且 Key 为空，不包含维护者私人凭据；升级保留已有 Key 和启用状态。初始化配置见 [`004-expand-heyroute-channels.sql`](apps/new-api/patches/2026-09-11/004-expand-heyroute-channels.sql)，详细说明见 [HeyRoute 接入说明](apps/new-api/docs/heyroute.md)。
 
@@ -113,8 +113,6 @@ TapCanvas 根项目及未另行声明的代码按 [MIT License](./LICENSE) 发�
     <img src="https://contrib.rocks/image?repo=anymouschina/TapCanvas&v=20260905" alt="TapCanvas Contributors" />
   </a>
 </p>
-
-贡献者头像由 [contrib.rocks](https://contrib.rocks/) 根据 GitHub 默认分支的贡献记录动态生成。GitHub 与图像服务存在缓存，合并 MR 后可能需要最多约 72 小时才会显示；提交邮箱也必须能关联到对应的 GitHub 账号，贡献才能正确归因。
 
 每一次贡献都在帮助社区版变得更统一、更稳定，也让多模态内容生产工作流能够服务更多创作者。欢迎阅读现有 Issues、提交修复或分享你的工作流实践。
 
