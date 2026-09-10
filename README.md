@@ -32,6 +32,12 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 - **项目化资产**：素材库、版本、生成历史、任务状态、交付证据与项目本地元数据持续沉淀，生成成功的资产不会被后处理丢弃。
 - **工作流与协作**：支持可复用 DAG、异步 Worker、失败恢复、分享/发布、团队作用域与实时画布状态。
 
+## HeyRoute 注册福利与渠道配置
+
+通过 [HeyRoute 推广链接注册](https://heyroute.ai/r/c/ch_iiq2tvtmrc)可领取 **$15 额度**，可使用 Codex、Claude、Gemini 对话及平台提供的生图能力（具体领取条件与可用模型以 HeyRoute 页面为准）。这是本项目的推广链接。
+
+社区版内置 `heyroute-image` 图片渠道，支持 GPT Image 2、Gemini 3.1 Flash Image 和 Gemini 3 Pro Image。首次部署后，在鲁班 API（new-api）管理台的渠道列表或编辑窗口点击 **申请 API Key**，通过上述链接注册，填写你自己的 Key 并启用渠道即可。渠道默认不含凭据且停用，不包含项目维护者的私人 Key。图片模型和映射随 SQL 初始化；Codex、Claude、Gemini 的对话接入需在渠道管理中按实际账户可用模型另行配置。
+
 ## 当前架构
 
 <p align="center">

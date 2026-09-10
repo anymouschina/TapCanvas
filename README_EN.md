@@ -16,6 +16,12 @@ TapCanvas is a multi-model AI content creation platform built around a visual ca
   <img src="assets/video-to-image.jpg" alt="Drag frame to generate reference image" width="1000" />
 </p>
 
+## HeyRoute referral credit
+
+[Register through our HeyRoute referral link](https://heyroute.ai/r/c/ch_iiq2tvtmrc) to claim **$15 in credits** for Codex, Claude and Gemini chat and the platform's image generation services (eligibility and model availability are subject to HeyRoute's terms).
+
+The built-in `heyroute-image` channel supports GPT Image 2, Gemini 3.1 Flash Image and Gemini 3 Pro Image. It starts disabled with an empty API key. In the new-api channel list or editor, click **Apply for API Key**, register, enter your own key and enable the channel. No maintainer credentials are included. Chat models require separate configuration based on your account's available models.
+
 ## Quick Start
 
 ### Local dev (recommended)
