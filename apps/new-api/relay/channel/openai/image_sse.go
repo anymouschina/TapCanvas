@@ -3,6 +3,7 @@ package openai
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -24,9 +25,10 @@ func normalizeImageResponseBody(resp *http.Response, body []byte) ([]byte, error
 
 	var completed []byte
 	var parseErr error
+	var providerError json.RawMessage
 	found := false
 	scanner := bufio.NewScanner(bytes.NewReader(body))
-	scanner.Buffer(make([]byte, 4096), 4*1024*1024)
+	scanner.Buffer(make([]byte, 4096), 64*1024*1024)
 	var eventData strings.Builder
 	flush := func() {
 		if eventData.Len() == 0 {
@@ -41,6 +43,9 @@ func normalizeImageResponseBody(resp *http.Response, body []byte) ([]byte, error
 		if err := common.Unmarshal([]byte(data), &payload); err != nil {
 			parseErr = fmt.Errorf("invalid image SSE event JSON: %w", err)
 			return
+		}
+		if len(payload.Error) > 0 {
+			providerError = payload.Error
 		}
 		if len(payload.Data) > 0 {
 			// Preserve the entire completed envelope, including usage and provider metadata.
@@ -69,6 +74,9 @@ func normalizeImageResponseBody(resp *http.Response, body []byte) ([]byte, error
 		return nil, err
 	}
 	if !found {
+		if len(providerError) > 0 {
+			return nil, fmt.Errorf("image provider error: %s", providerError)
+		}
 		if parseErr != nil {
 			return nil, parseErr
 		}
@@ -81,6 +89,7 @@ func normalizeImageResponseBody(resp *http.Response, body []byte) ([]byte, error
 }
 
 type imageSSEPayload struct {
+	Error   json.RawMessage `json:"error,omitempty"`
 	Created int64           `json:"created,omitempty"`
 	Model   string          `json:"model,omitempty"`
 	Data    []dto.ImageData `json:"data"`

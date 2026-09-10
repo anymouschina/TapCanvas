@@ -203,6 +203,38 @@ func (channel *Channel) ValidateProtocolSettings() error {
 	}
 
 	channelKeys := channelModelKeys(channel)
+	for modelKey, cost := range settings.ImageCostPerImageCNY {
+		if _, ok := channelKeys[modelKey]; !ok {
+			return fmt.Errorf("image_cost_per_image_cny[%q] is not a channel model", modelKey)
+		}
+		if err := validateChannelImageCost(settings, modelKey, cost); err != nil {
+			return err
+		}
+	}
+	for modelKey := range settings.TextCostPerMillionCNY {
+		if _, ok := channelKeys[modelKey]; !ok {
+			return fmt.Errorf("text_cost_per_million_cny[%q] is not a channel model", modelKey)
+		}
+		if _, _, err := ChannelTextRetail(settings, modelKey); err != nil {
+			return err
+		}
+	}
+	for modelKey := range settings.VideoCostPricing {
+		if _, exists := channelKeys[modelKey]; !exists {
+			return fmt.Errorf("video_cost_pricing[%q] is not a channel model", modelKey)
+		}
+		if _, _, err := channelVideoCostConfig(settings, modelKey); err != nil {
+			return err
+		}
+	}
+	for modelKey := range settings.ImagePricingOverrides {
+		if _, exists := channelKeys[modelKey]; !exists {
+			return fmt.Errorf("image_pricing_overrides[%q] 不属于当前渠道模型列表", modelKey)
+		}
+		if _, _, err := channelImagePricingConfig(settings, modelKey); err != nil {
+			return err
+		}
+	}
 	for modelKey, binding := range settings.ModelProtocols {
 		trimmedModelKey := strings.TrimSpace(modelKey)
 		if trimmedModelKey == "" {

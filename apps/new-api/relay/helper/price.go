@@ -2,6 +2,8 @@ package helper
 
 import (
 	"fmt"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -74,6 +76,20 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	userPriceRatio := getUserPriceRatio(info.UserId)
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
+	// Channel selection is already recorded in request context before relay
+	// metadata is initialized. Use that same contract for precharge and settlement.
+	settings, _ := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
+	if info.ChannelMeta != nil {
+		settings = info.ChannelMeta.ChannelSetting
+	}
+	channelRate, channelPriced, priceErr := model.ChannelTextRetail(settings, info.OriginModelName)
+	if priceErr != nil {
+		return types.PriceData{}, priceErr
+	}
+	if channelPriced {
+		usePrice = false
+	}
+
 	groupRatioInfo := HandleGroupRatio(c, info)
 
 	var preConsumedQuota int
@@ -96,7 +112,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		var success bool
 		var matchName string
 		baseModelRatio, success, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
-		if !success {
+		if !success && !channelPriced {
 			acceptUnsetRatio := false
 			if info.UserSetting.AcceptUnsetRatioModel {
 				acceptUnsetRatio = true
@@ -118,6 +134,15 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		imageRatio, _ = ratio_setting.GetImageRatio(info.OriginModelName)
 		audioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
+		if channelPriced {
+			baseModelRatio = channelRate.Input / 2
+			modelRatio = baseModelRatio
+			completionRatio = channelRate.Output / channelRate.Input
+			cacheRatio = channelRate.CacheRead / channelRate.Input
+			cacheCreationRatio = channelRate.CacheWrite / channelRate.Input
+			cacheCreationRatio5m = cacheCreationRatio
+			cacheCreationRatio1h = cacheCreationRatio * claudeCacheCreation1hMultiplier
+		}
 		ratio := modelRatio * groupRatioInfo.GroupRatio
 		preConsumedQuota = int(float64(preConsumedTokens) * ratio * userPriceRatio)
 	} else {

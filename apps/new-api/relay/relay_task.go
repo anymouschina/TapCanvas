@@ -208,6 +208,25 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
+	// A configured channel procurement contract is authoritative for this
+	// request; a missing specification must fail before submitting upstream.
+	if _, configured := info.ChannelSetting.VideoCostPricing[modelName]; configured {
+		taskReq, taskReqErr := relaycommon.GetTaskRequest(c)
+		if taskReqErr != nil {
+			return nil, service.TaskErrorWrapperLocal(taskReqErr, "invalid_task_request", http.StatusBadRequest)
+		}
+		videoResolution, videoSeconds := taskcommon.ResolveTaskVideoBillingSpec(&taskReq)
+		channelVideoPrice, hasChannelVideoPrice, channelVideoErr := model.ChannelVideoRequestPriceCNY(info.ChannelSetting, modelName, videoResolution, videoSeconds)
+		if channelVideoErr != nil {
+			return nil, service.TaskErrorWrapperLocal(channelVideoErr, "channel_video_price_invalid", http.StatusBadRequest)
+		}
+		if hasChannelVideoPrice {
+			if info.PriceData.ModelPrice <= 0 {
+				return nil, service.TaskErrorWrapperLocal(fmt.Errorf("channel video requires a positive base price"), "channel_video_price_invalid", http.StatusBadRequest)
+			}
+			info.PriceData.OtherRatios = map[string]float64{"channel_video_spec": channelVideoPrice / info.PriceData.ModelPrice}
+		}
+	}
 	// 5.5 规格价兜底：适配器没有给出任何计费倍率、而模型发布了 (分辨率×时长) 规格价
 	//（/api/pricing 的 param_pricing，下游按它给用户定价）时，按同一张价表把固定
 	// 基础价折算成本次请求的规格价，避免任意时长/规格都扣固定基础价。

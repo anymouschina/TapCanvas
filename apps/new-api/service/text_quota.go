@@ -114,11 +114,15 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	summary.CacheCreationTokens1h = usage.ClaudeCacheCreation1hTokens
 	summary.ImageTokens = usage.PromptTokensDetails.ImageTokens
 	summary.AudioTokens = usage.PromptTokensDetails.AudioTokens
+	channelTextPriced := false
+	if relayInfo.ChannelMeta != nil {
+		_, channelTextPriced = relayInfo.ChannelSetting.TextCostPerMillionCNY[summary.ModelName]
+	}
 	if tieredModelRatio, tiered := ratio_setting.ResolveModelRatioForPromptTokens(
 		summary.ModelName,
 		relayInfo.PriceData.BaseModelRatio,
 		summary.PromptTokens,
-	); tiered {
+	); tiered && !channelTextPriced {
 		summary.ModelRatio = tieredModelRatio
 	}
 	legacyClaudeDerived := isLegacyClaudeDerivedOpenAIUsage(relayInfo, usage)

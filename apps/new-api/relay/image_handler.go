@@ -89,6 +89,19 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *type
 		return types.NewError(fmt.Errorf("failed to copy request to ImageRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
+	channelImagePrice, hasChannelImagePrice, err := model.ChannelImageRequestPriceCNY(
+		info.ChannelSetting, info.OriginModelName, imageResolutionTier(*request), request.Quality,
+		len(imageutil.ExtractReferenceImages(request)),
+	)
+	if err != nil {
+		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{ErrorMessage: err.Error()})
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if hasChannelImagePrice {
+		info.PriceData.UsePrice = true
+		info.PriceData.ModelPrice = channelImagePrice
+	}
+
 	err = applyChannelBoundImageModel(c, info, request)
 	if err != nil {
 		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
@@ -290,7 +303,9 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *type
 	// For models with tiered fixed image pricing, update ModelPrice to the price for
 	// the actual resolution tier so billing matches the pricing API.
 	if info.PriceData.UsePrice {
-		if requestPrice, ok := effectiveFixedImageRequestPriceCNY(info.OriginModelName, request); ok {
+		if hasChannelImagePrice {
+			info.PriceData.ModelPrice = channelImagePrice
+		} else if requestPrice, ok := effectiveFixedImageRequestPriceCNY(info.OriginModelName, request); ok {
 			info.PriceData.ModelPrice = requestPrice
 		}
 	}

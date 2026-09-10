@@ -61,6 +61,7 @@ const (
 	ProtocolTaskVidu      = "task.vidu"
 	ProtocolTaskDoubao    = "task.doubao"
 	ProtocolTaskSora      = "task.openai-video"
+	ProtocolTaskHeyRoute  = "task.heyroute-video"
 	ProtocolTaskGemini    = "task.gemini-video"
 	ProtocolTaskMiniMax   = "task.minimax"
 	ProtocolTaskMiniMaxV2 = "task.minimax-v2"
@@ -164,6 +165,7 @@ func nativeProtocol(
 }
 
 var protocolDefinitions = []ProtocolDefinition{
+	taskProtocol(ProtocolTaskHeyRoute, "HeyRoute Video", "HeyRoute", "JSON video generation, polling and signed video results.", TaskPlatform(ProtocolTaskHeyRoute), ChannelTypeOpenAI),
 	relayProtocol(ProtocolOpenAI, "OpenAI Compatible", "OpenAI", "OpenAI Chat Completions, Responses, Images and Embeddings compatible protocol.", APITypeOpenAI, true,
 		[]EndpointType{EndpointTypeOpenAI, EndpointTypeOpenAIResponse, EndpointTypeOpenAIResponseCompact, EndpointTypeImageGeneration, EndpointTypeEmbeddings},
 		ChannelTypeOpenAI, ChannelTypeCustom, ChannelTypeOpenAIMax, ChannelTypeOhMyGPT, ChannelTypeAILS, ChannelTypeAIProxy, ChannelTypeAPI2GPT, ChannelTypeAIGC2D, ChannelType360, ChannelTypeLingYiWanWu, ChannelTypeSiliconFlow, ChannelTypeDeepSeek, ChannelTypeXinference, ChannelTypeXai, ChannelTypeGaiscImage, ChannelTypeAIStudioToAPI, ChannelTypeLluban),
