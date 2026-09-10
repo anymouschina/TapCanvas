@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+import HeyRouteApiKeyLink from './components/HeyRouteApiKeyLink';
 import {
   Button,
   Dropdown,
@@ -859,6 +860,11 @@ export const getChannelsColumns = ({
                   {t('编辑')}
                 </Button>
               )}
+
+              <HeyRouteApiKeyLink
+                className='heyroute-channel-list-key-link'
+                baseUrl={record.base_url}
+              />
 
               <Dropdown
                 trigger='click'

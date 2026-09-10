@@ -78,6 +78,7 @@ import SecureVerificationModal from '../../../common/modals/SecureVerificationMo
 import StatusCodeRiskGuardModal from './StatusCodeRiskGuardModal';
 import ChannelKeyDisplay from '../../../common/ui/ChannelKeyDisplay';
 import ChannelProtocolEditor from '../components/ChannelProtocolEditor';
+import HeyRouteApiKeyLink from '../components/HeyRouteApiKeyLink';
 import VertexEgressSettings from '../components/VertexEgressSettings';
 import { useSecureVerification } from '../../../../hooks/common/useSecureVerification';
 import { parseChannelConnectionString } from '../../../../helpers/token';
@@ -4051,6 +4052,10 @@ const EditChannelModal = (props) => {
                                       </Button>
                                     </>
                                   )}
+                                  <HeyRouteApiKeyLink
+                                    className='heyroute-channel-editor-key-link'
+                                    baseUrl={inputs.base_url}
+                                  />
                                   {inputs.type === LLUBAN_CHANNEL_TYPE && (
                                     <Button
                                       className='lluban-channel-apply-key-button'
