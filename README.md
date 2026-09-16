@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/anymouschina/TapCanvas/stargazers"><img src="https://img.shields.io/github/stars/anymouschina/TapCanvas?style=flat-square" alt="GitHub Stars" /></a>
-  <a href="https://atomgit.com/gcw_PzejWSbY/TapCanvas" target="_blank" rel="noopener noreferrer"><img src="https://atomgit.com/gcw_PzejWSbY/TapCanvas/star/badge.svg" alt="AtomGit Star" /></a>
+  <a href="https://atomgit.com/anymouschina/TapCanvas" target="_blank" rel="noopener noreferrer"><img src="https://atomgit.com/anymouschina/TapCanvas/star/badge.svg" alt="AtomGit Star" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript strict" />
   <img src="https://img.shields.io/badge/pnpm-10.8.1-f69220?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm 10.8.1" />
