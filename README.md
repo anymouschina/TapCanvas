@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/anymouschina/TapCanvas/stargazers"><img src="https://img.shields.io/github/stars/anymouschina/TapCanvas?style=flat-square" alt="GitHub Stars" /></a>
+  <a href="https://atomgit.com/gcw_PzejWSbY/TapCanvas" target="_blank" rel="noopener noreferrer"><img src="https://atomgit.com/gcw_PzejWSbY/TapCanvas/star/badge.svg" alt="AtomGit Star" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript strict" />
   <img src="https://img.shields.io/badge/pnpm-10.8.1-f69220?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm 10.8.1" />
@@ -103,6 +104,27 @@ docker-compose --env-file apps/hono-api/.env ps # 当前主机使用 standalone 
 ## 许可证
 
 TapCanvas 根项目及未另行声明的代码按 [MIT License](./LICENSE) 发布。`apps/new-api` 是独立上游衍生组件，继续适用其目录中的 [GNU AGPL-3.0 License](./apps/new-api/LICENSE) 与原始归属声明；其他第三方组件分别适用各自许可证。在线商业版不适用本仓库协议。
+
+## 鸣谢
+
+感谢以下平台与开源项目，TapCanvas 的托管、推广与实现都建立在它们之上。
+
+- **[AtomGit](https://atomgit.com/gcw_PzejWSbY/TapCanvas) / GitCode**：提供代码托管、开源社区推广与 Badge 数据服务，上述链接即本项目在 AtomGit 的项目入口。
+
+上游开源项目：
+
+| 项目                                                                              | 在本仓库中的职责                                          |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| [new-api](https://github.com/QuantumNous/new-api)（上游为 [One API](https://github.com/songquanpeng/one-api)） | `apps/new-api` 模型网关的来源实现，负责渠道接入、计量与模型下发 |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)                | `apps/agents-cli` Bridge 的官方运行时、主代理循环与工具能力 |
+| [React Flow](https://github.com/xyflow/xyflow)（`@xyflow/react`）                    | 无限画布的节点、端口与连线内核                            |
+| [Mantine](https://github.com/mantinedev/mantine)                                   | Web 端 UI 组件与主题                                      |
+| [Hono](https://github.com/honojs/hono)                                             | `apps/hono-api` 的 Worker 路由与 OpenAPI 层               |
+| [Prisma](https://github.com/prisma/prisma)                                         | 数据模型与数据库访问                                      |
+| [Vite](https://github.com/vitejs/vite) / [Vitest](https://github.com/vitest-dev/vitest) | Web 构建与测试                                        |
+| [AI SDK](https://github.com/vercel/ai)、[Zustand](https://github.com/pmndrs/zustand)、[Tabler Icons](https://github.com/tabler/tabler-icons) | 模型调用、前端状态管理与图标 |
+
+具体依赖版本以 `apps/*/package.json` 与 `pnpm-lock.yaml` 为准；第三方组件各自适用其上游许可证，见[许可证](#许可证)。
 
 ## 感谢贡献者
 

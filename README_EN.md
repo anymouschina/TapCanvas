@@ -4,6 +4,12 @@
 
 <h1 align="center">TapCanvas</h1>
 
+<p align="center">
+  <a href="https://github.com/anymouschina/TapCanvas/stargazers"><img src="https://img.shields.io/github/stars/anymouschina/TapCanvas?style=flat-square" alt="GitHub Stars" /></a>
+  <a href="https://atomgit.com/gcw_PzejWSbY/TapCanvas" target="_blank" rel="noopener noreferrer"><img src="https://atomgit.com/gcw_PzejWSbY/TapCanvas/star/badge.svg" alt="AtomGit Star" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
+</p>
+
 TapCanvas is a multi-model AI content creation platform built around a visual canvas: orchestrate text, image, video and other generation workflows in one place, with fast iteration across multi-step creative pipelines.
 
 **Language:** [中文](README.md) | English
@@ -114,6 +120,27 @@ Open-source projects built on top of TapCanvas:
 | [JarvisHub](https://github.com/LYL1015/JarvisHub) | An Open Harness for Canvas-Native Multimodal Creative Agents. Treats an editable canvas as shared project state between people and agents for long-horizon creative work (narrative media, interactive web dev, deck generation), with Skills / Memory / Subagents and a bundled Trace Viewer. Apache-2.0. |
 
 > Built something on TapCanvas? Open a PR or issue to get listed here.
+
+## Special Thanks
+
+Thanks to the following platform and open-source projects — TapCanvas' hosting, promotion and implementation are built on them.
+
+- **[AtomGit](https://atomgit.com/gcw_PzejWSbY/TapCanvas) / GitCode** — code hosting, open-source community promotion and badge data; the link above is this project's AtomGit entry.
+
+Upstream open-source projects:
+
+| Project | Role in this repository |
+| --- | --- |
+| [new-api](https://github.com/QuantumNous/new-api) (upstream: [One API](https://github.com/songquanpeng/one-api)) | Source implementation of the `apps/new-api` model gateway: channel access, metering and model delivery |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | Official runtime, agent loop and tooling for the `apps/agents-cli` bridge |
+| [React Flow](https://github.com/xyflow/xyflow) (`@xyflow/react`) | Node, handle and edge kernel of the infinite canvas |
+| [Mantine](https://github.com/mantinedev/mantine) | Web UI components and theming |
+| [Hono](https://github.com/honojs/hono) | Worker routing and OpenAPI layer of `apps/hono-api` |
+| [Prisma](https://github.com/prisma/prisma) | Data models and database access |
+| [Vite](https://github.com/vitejs/vite) / [Vitest](https://github.com/vitest-dev/vitest) | Web build and tests |
+| [AI SDK](https://github.com/vercel/ai), [Zustand](https://github.com/pmndrs/zustand), [Tabler Icons](https://github.com/tabler/tabler-icons) | Model calls, frontend state management and icons |
+
+Dependency versions follow `apps/*/package.json` and `pnpm-lock.yaml`; every third-party component keeps its own upstream license.
 
 ## Contributing
 
