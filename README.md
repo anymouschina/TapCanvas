@@ -81,6 +81,8 @@ pnpm -w install --frozen-lockfile
 pnpm dev:web
 ```
 
+本地浏览器入口统一使用 `http://localhost:5175`。通过 `127.0.0.1` 或 `[::1]` 打开 Web 时，应用启动前会跳转到 `localhost`，保留协议、端口、路径、查询参数与 hash；源码开发、预览和 Docker 静态构建使用同一入口规则。浏览器不会在这些主机名之间共享 Cookie 或 localStorage，统一入口可避免登录态割裂和跨站 Cookie 丢失。GitHub OAuth 本地回调也应配置为 `http://localhost:5175/oauth/github`。
+
 ### 环境变量
 
 README 不复制整份配置，避免与代码漂移；[API 模板](./apps/hono-api/.env.example) 和 [Web 模板](./apps/web/.env.example) 是唯一入口。首次启动只需确认以下分组：
