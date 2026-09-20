@@ -1,175 +1,74 @@
 import type { ChapterCanvasIntent } from '@tapcanvas/chapter-canvas-intents'
-import { generateBatchUlid } from '@tapcanvas/chapter-canvas-intents'
-import { streamChapterIntent, type PendingUserInputRequest } from './streamChapterIntent'
-import { useIntentLifecycle } from './intentLifecycle'
+import { useChatCommandStore, type ChatSendCommand } from '../ui/chat/chatCommandStore'
 import { toast } from '../ui/toast'
 import { useUIStore } from '../ui/uiStore'
-import { preloadModelOptions } from '../config/useModelOptions'
-import {
-  readStoredChatModelValue,
-  requireSelectedChatModelRequest,
-  type SelectedChatModelRequest,
-} from '../ui/chat/chatModelSelection'
-
-function formatIntentFailure(err: { message?: string; code?: string }): string {
-  const message = String(err.message || '').trim() || '未知错误'
-  const code = String(err.code || '').trim()
-  return code ? `Agent 执行未完成（${code}）：${message}` : `Agent 执行未完成：${message}`
-}
+import type { IntentChapterContext } from './nodes/taskNode/intentChapterContext'
 
 export type DispatchIntentOptions = {
-  languageModel?: SelectedChatModelRequest
-  chapterContext?: {
-    projectId: string
-    bookId: string | null
-    chapterId: string
-    flowSnapshot: {
-      nodes: Array<{
-        id: string
-        kind: string
-        preset?: string
-        data: Record<string, unknown>
-        position?: { x: number; y: number }
-      }>
-      edges: Array<{
-        id: string
-        source: string
-        target: string
-        sourceHandle?: string
-        targetHandle?: string
-      }>
-    }
-  }
+  chapterContext?: IntentChapterContext
   userHints?: string
-  generationConfig?: {
-    imageModel?: string
-    imageSize?: string
-  }
+  generationConfig?: { imageModel?: string; imageSize?: string }
   variantParams?: Record<string, unknown>
-  onPendingUserInput?: (req: PendingUserInputRequest) => void
-  requestUserInputResponse?: {
-    requestId: string
-    answers: Array<{ id: string; value: string; optionLabel: string; optionIndex: number }>
-  }
 }
 
-export async function dispatchIntent(
+// These are the actions explicitly selected by the user, not inferred routes or
+// execution plans. Evidence gathering, skills and tool order belong to the agent.
+const INTENT_GOALS: Record<ChapterCanvasIntent, string> = {
+  extract_roles: '从指定源节点提取角色并在当前画布创建角色卡',
+  expand_video_script: '根据指定源节点扩写视频剧本并写回当前画布',
+  generate_scene_references: '根据指定源节点生成场景和人物参考图，并将真实图片资产写回当前画布',
+  generate_shot_placeholders: '根据指定源节点生成镜头设计板及设计板图片，并写回当前画布',
+  generate_video_nodes: '根据指定源节点及用户参数生成视频，并将真实视频资产写回当前画布',
+  generate_group_storyboard: '根据指定源节点生成分组分镜及分镜图片，并写回当前画布',
+}
+
+export function buildIntentChatCommand(
   intent: ChapterCanvasIntent,
   sourceNodeId: string,
   options: DispatchIntentOptions,
-): Promise<void> {
-  const batchUlid = generateBatchUlid()
-  const abortController = new AbortController()
-  let terminalObserved = false
-  let failed = false
-  let completedToolCount = 0
-  let failedToolCount = 0
-  useIntentLifecycle.getState().start(intent, batchUlid, abortController, sourceNodeId)
+  styleGuide?: { styleName?: string; referenceImages?: string[] },
+): Omit<ChatSendCommand, 'nonce'> {
+  const context = options.chapterContext
+  if (!context?.projectId || !context.chapterId) {
+    throw new Error('章节画布操作缺少真实 projectId 或 chapterId')
+  }
+  const sourceNode = context.flowSnapshot.nodes.find((node) => node.id === sourceNodeId)
+  if (!sourceNode) throw new Error('当前画布中找不到指定源节点，请重新选择')
+  const goal = INTENT_GOALS[intent]
+  return {
+    displayText: goal,
+    canvasNodeId: sourceNodeId,
+    attachCanvasContext: true,
+    text: [
+      goal,
+      '以下是用户点击入口时的真实作用域、源节点和明确选择的生成参数。请结合当前项目事实自主决定执行步骤；完成状态以真实交付结果为准。',
+      JSON.stringify({
+        intent,
+        projectId: context.projectId,
+        bookId: context.bookId,
+        chapterId: context.chapterId,
+        sourceNode,
+        generationConfig: options.generationConfig,
+        variantParams: options.variantParams,
+        styleGuide,
+      }),
+      ...(options.userHints?.trim() ? [`用户补充要求：${options.userHints.trim()}`] : []),
+    ].join('\n'),
+  }
+}
 
+/** Submit to the main chat; submission is not evidence of completed generation. */
+export function dispatchIntent(
+  intent: ChapterCanvasIntent,
+  sourceNodeId: string,
+  options: DispatchIntentOptions,
+): void {
   try {
-    const chapterContext = options.chapterContext
-    if (!chapterContext?.projectId || !chapterContext.chapterId) {
-      throw new Error('章节画布 Agent 执行缺少真实 projectId 或 chapterId')
-    }
-    const activeStyleBible = useUIStore.getState().activeStyleBible
-    const selectedValue = readStoredChatModelValue()
-    const languageModel = options.languageModel ?? requireSelectedChatModelRequest(
-      await preloadModelOptions('text'),
-      selectedValue,
-    )
-    if (abortController.signal.aborted) return
-    await streamChapterIntent({
-      languageModel,
-      executionId: batchUlid,
-      intent,
-      sourceNodeId,
-      chapterContext,
-      userHints: options.userHints,
-      generationConfig: options.generationConfig,
-      variantParams: options.variantParams,
-      styleGuide: activeStyleBible ?? undefined,
-      abortSignal: abortController.signal,
-      onTool: (tool) => {
-        if (tool.phase !== 'completed') return
-        completedToolCount += 1
-        if (tool.status === 'failed') failedToolCount += 1
-        useIntentLifecycle.getState().incrementCount(batchUlid)
-        useIntentLifecycle.getState().applyProgress(batchUlid, {
-          stage: 'tool_completed',
-          bufferedToolCalls: completedToolCount,
-          toolName: tool.toolName,
-          upstreamErrors: failedToolCount,
-        })
-      },
-      onProgress: (p) => {
-        if (p.kind === 'stage') {
-          useIntentLifecycle.getState().applyProgress(batchUlid, {
-            stage: p.stage,
-            bufferedToolCalls: p.bufferedToolCalls,
-            toolName: p.toolName,
-            upstreamErrors: p.upstreamErrors,
-          })
-        }
-      },
-      onTerminal: (terminal) => {
-        if (terminal.status === 'active' || terminal.status === 'waiting_external') {
-          useIntentLifecycle.getState().applyProgress(batchUlid, {
-            stage: 'waiting_upstream',
-            bufferedToolCalls: completedToolCount,
-            upstreamErrors: failedToolCount,
-          })
-          return
-        }
-        terminalObserved = true
-        if (terminal.status === 'failed') {
-          failed = true
-          toast(`Agent 执行失败：${terminal.text || terminal.reason}`, 'error')
-          return
-        }
-        if (terminal.status === 'succeeded' && terminal.text) {
-          toast(terminal.text, 'info')
-        }
-      },
-      onError: (err) => {
-        if (failed) return
-        failed = true
-        toast(formatIntentFailure(err), 'error')
-      },
-      onDone: (info) => {
-        if (terminalObserved || failed || info.reason === 'physical_suspended') return
-        failed = true
-        toast(`Agent 执行结束但缺少结构化结果：${String(info.reason || 'unknown')}`, 'error')
-      },
-      onWorkflowChanged: (workflow) => {
-        useUIStore.getState().setActiveWorkflow(workflow)
-      },
-      onPendingUserInput: (req) => {
-        terminalObserved = true
-        useIntentLifecycle.getState().setPendingUserInput({
-          languageModel,
-          request: req,
-          intent,
-          sourceNodeId,
-          chapterContext,
-          generationConfig: options.generationConfig,
-          variantParams: options.variantParams,
-        })
-        options.onPendingUserInput?.(req)
-      },
-      requestUserInputResponse: options.requestUserInputResponse,
-    })
-    if (!terminalObserved && !failed && !abortController.signal.aborted) {
-      failed = true
-      toast('Agent 执行结束但没有形成可验证终态', 'error')
-    }
-  } catch (err) {
-    if (abortController.signal.aborted) {
-      toast('Agent 规划已取消', 'info')
-    } else {
-      const message = err instanceof Error ? err.message : String(err)
-      toast(formatIntentFailure({ message }), 'error')
-    }
-  } finally {
-    useIntentLifecycle.getState().finish(batchUlid)
+    const ui = useUIStore.getState()
+    const command = buildIntentChatCommand(intent, sourceNodeId, options, ui.activeStyleBible ?? undefined)
+    ui.setAiChatOpen(true)
+    useChatCommandStore.getState().dispatchSend(command)
+  } catch (error: unknown) {
+    toast(error instanceof Error ? error.message : String(error), 'error')
   }
 }

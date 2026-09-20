@@ -1,5 +1,3 @@
-import { useIntentLifecycle } from '../canvas/intentLifecycle'
-
 const NAVIGATION_STATE_KEY = '__tapcanvasNavigation'
 const NAVIGATION_SESSION_KEY = 'tapcanvas:navigation-session'
 
@@ -50,23 +48,8 @@ function historyStateAt(index: number): BrowserHistoryState {
   }
 }
 
-/**
- * 同 path 的"导航"不算切换路由（只是 hash/query 变化），不触发 agent 守卫。
- * 跨 path 的程序导航前都要先问一下是否要终止 agent。
- */
-function shouldGuard(to: string): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    const targetPath = new URL(to, window.location.origin).pathname
-    return targetPath !== window.location.pathname
-  } catch {
-    return true
-  }
-}
-
 export function spaNavigate(to: string) {
   if (typeof window === 'undefined') return
-  if (shouldGuard(to) && !useIntentLifecycle.getState().confirmAbandonAgent()) return
   const next = String(to || '').trim() || '/'
   try {
     const current = ensureNavigationState()
@@ -80,7 +63,6 @@ export function spaNavigate(to: string) {
 
 export function spaReplace(to: string) {
   if (typeof window === 'undefined') return
-  if (shouldGuard(to) && !useIntentLifecycle.getState().confirmAbandonAgent()) return
   const next = String(to || '').trim() || '/'
   try {
     const current = ensureNavigationState()
@@ -93,8 +75,6 @@ export function spaReplace(to: string) {
 
 export function navigateBackOr(to: string) {
   if (typeof window === 'undefined') return
-  // history.back() 走浏览器原生导航，会触发 popstate；那里的全局守卫会拦截，
-  // 这里不再单独问，避免重复弹窗。
   const current = ensureNavigationState()
   if (current.index > 0) {
     window.history.back()

@@ -27,7 +27,6 @@ import { CanvasVirtualizationContext } from './CanvasVirtualizationContext'
 import { CanvasLODContext } from './CanvasLODContext'
 import { CanvasBottomControls } from './CanvasBottomControls'
 import { CanvasDevPerfPanel } from './components/CanvasDevPerfPanel'
-import { CanvasIntentInputDialog } from './CanvasIntentInputDialog'
 
 import { DirectorCaptureRunner } from './nodes/directorConsole/DirectorCaptureRunner'
 import { applyTidyPosition, beginCanvasNodeDrag, clearCanvasNodeDragActivity, isCanvasNodeDragActive, registerCanvasTidyExecutor, useRFStore } from './store'
@@ -4757,7 +4756,6 @@ function CanvasInner({
         style={{ display: 'none' }}
         onChange={handleTemplateCoverUploadInputChange}
       />
-      <CanvasIntentInputDialog />
       <VideoCompareModal className="tc-canvas__video-compare-modal" />
       {storyboardPickerGroupId && (
         <StoryboardRecipePicker

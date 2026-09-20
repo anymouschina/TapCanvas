@@ -7,7 +7,6 @@ import type { ChapterCanvasIntent } from '@tapcanvas/chapter-canvas-intents'
 import { dispatchIntent } from '../../dispatchIntent'
 import { useRFStore } from '../../store'
 import { resolveIntentChapterContext } from './intentChapterContext'
-import { useIntentLifecycle } from '../../intentLifecycle'
 import { IntentConfigModal } from './IntentConfigModal'
 import { ChapterFilmSpecModal, type ChapterFilmSpec } from './ChapterFilmSpecModal'
 import { useChatCommandStore } from '../../../ui/chat/chatCommandStore'
@@ -93,7 +92,6 @@ function mergeShotPlaceholderVariantParams(
 }
 
 export function IntentActionGroup(props: Props) {
-  const activeIntent = useIntentLifecycle((s) => s.activeIntent)
   const [pendingConfig, setPendingConfig] = useState<PendingConfig | null>(null)
   const [filmSpecOpened, setFilmSpecOpened] = useState(false)
 
@@ -204,8 +202,6 @@ export function IntentActionGroup(props: Props) {
 
   function renderActionButton(a: (typeof actions)[number]) {
     const Icon = a.icon
-    const isThisLoading = activeIntent === a.intent
-    const isAnyLoading = activeIntent !== null
     const actionLabel = a.resolveLabel?.({
       kind: props.kind,
       semanticKind: props.semanticKind,
@@ -214,13 +210,12 @@ export function IntentActionGroup(props: Props) {
       isLastSegment: props.isLastSegment,
     }) ?? a.label
     return (
-      <Tooltip key={a.key} label={actionLabel} withArrow>
+      <Tooltip className="tc-intent-action-tooltip" key={a.key} label={actionLabel} withArrow>
         <ActionIcon
+          className="tc-intent-action-button"
+          aria-label={actionLabel}
           variant="subtle"
-          loading={isThisLoading}
-          disabled={isAnyLoading && !isThisLoading}
           onClick={() => {
-            if (isAnyLoading) return
             const chapterContext = resolveContext()
             if (!chapterContext) {
               console.warn('[IntentActionGroup] no current chapter context', { nodeId: props.nodeId })

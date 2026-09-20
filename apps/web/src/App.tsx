@@ -82,7 +82,6 @@ import ChapterCanvasFullPage from './projects/ChapterCanvasFullPage'
 import ProjectEntryRedirectPage from './projects/ProjectEntryRedirectPage'
 import AgentAdminWorkbenchPanel from './ui/AgentAdminWorkbenchPanel'
 import { useAgentCanvasDeepLink } from './ui/agent-task-execution/useAgentCanvasDeepLink'
-import { IntentProgressToast } from './ui/IntentProgressToast'
 import { StudioProjectNameEditor } from './ui/StudioProjectNameEditor'
 import { PortalAccountMenu } from './portal/PortalAccountMenu'
 import { compileAgentWorkflow } from './canvas/agentWorkflowExecution'
@@ -1658,7 +1657,6 @@ function CanvasApp({
 
       <KeyboardShortcuts className="app-keyboard-shortcuts" />
       <ToastHost className="app-toast-host" />
-      <IntentProgressToast />
       <ExecutionLogModal className="app-exec-log-modal" opened={execLogOpen} executionId={execId} onClose={() => setExecLogOpen(false)} />
       <WorkflowExecutionSnapshotHost
         onOpenLog={(id) => {

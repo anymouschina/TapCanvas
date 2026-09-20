@@ -30,7 +30,6 @@ import DirectorPetLauncher from '../ui/DirectorPetLauncher'
 import PreviewModal from '../ui/PreviewModal'
 import { PublishModal } from '../ui/PublishModal'
 import { ToastHost } from '../ui/toast'
-import { IntentProgressToast } from '../ui/IntentProgressToast'
 import { useAuth } from '../auth/store'
 import ChapterCanvasPage from './ChapterCanvasPage'
 import { getChapterWorkbench, getProjectBookChapter } from '../api/server'
@@ -256,7 +255,6 @@ export default function ChapterCanvasFullPage({
       </AppShell.Main>
 
       <ToastHost className="app-toast-host" />
-      <IntentProgressToast />
       <ExecutionLogModal
         className="chapter-execution-log-modal"
         opened={Boolean(executionLogId)}

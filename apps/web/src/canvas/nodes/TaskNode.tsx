@@ -199,7 +199,6 @@ import { dispatchIntent } from '../dispatchIntent'
 import { readNodeModelPrefs, saveNodeModelPrefs } from '../nodeModelPrefs'
 import { DEFAULT_GENERATION_PREFS, updateRecentGenerationPrefs } from '../../config/generationPrefs'
 import { resolveIntentChapterContext } from './taskNode/intentChapterContext'
-import { useIntentLifecycle } from '../intentLifecycle'
 import type { ChapterCanvasIntent } from '@tapcanvas/chapter-canvas-intents'
 import { REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
 import {
@@ -4428,8 +4427,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const [panoramicSphereMode, setPanoramicSphereMode] = React.useState(false)
   const [gridSplitOpen, setGridSplitOpen] = React.useState(false)
   const [pendingIntentConfig, setPendingIntentConfig] = React.useState<{ intent: ChapterCanvasIntent; chapterContext: NonNullable<ReturnType<typeof resolveIntentChapterContext>> } | null>(null)
-  const activeIntent = useIntentLifecycle((s) => s.activeIntent)
-  const runningNodeIntents = useIntentLifecycle((s) => s.runningNodeIntents)
   // ─── 图片编辑器 state ─────────────────────────────────────────────────────
   const [cropOpen, setCropOpen] = React.useState(false)
   const [trimOpen, setTrimOpen] = React.useState(false)
@@ -7561,18 +7558,13 @@ const rewritePromptWithCharacters = React.useCallback(
           nodes: useRFStore.getState().nodes,
           edges: useRFStore.getState().edges,
         })
-        const thisNodeIntents = runningNodeIntents.get(id)
         for (const definition of imageIntentDefs) {
           const IntentIcon = definition.icon
-          const thisLoading = Boolean(thisNodeIntents?.has(definition.intent))
           moreMenuItems.push({
             key: definition.key,
             label: definition.label,
             icon: <IntentIcon size={14} />,
-            loading: thisLoading,
-            disabled: thisLoading,
             onClick: () => {
-              if (thisLoading) return
               const chapterContext = resolveIntentContext()
               if (!chapterContext) {
                 toast('当前画布上下文未就绪，请稍后重试', 'error')
@@ -7801,29 +7793,19 @@ const rewritePromptWithCharacters = React.useCallback(
           const imageIntentDefs = INTENT_ACTIONS.filter((a) => a.applicableTo({ kind }))
           if (imageIntentDefs.length > 0) {
             const resolveCtx = () => resolveIntentChapterContext({ sourceNodeId: id, nodes: useRFStore.getState().nodes, edges: useRFStore.getState().edges })
-            // Only show loading for THIS node's running intents, not global ones.
-            const thisNodeIntents = runningNodeIntents.get(id)
-            const parentLoading = imageIntentDefs.some((a) => thisNodeIntents?.has(a.intent))
             tools.push({
               key: 'text-creation',
               label: '文本创作',
               icon: <IconMovie size={18} />,
               showLabel: true,
-              loading: parentLoading,
               onClick: () => {},
               menuItems: imageIntentDefs.map((a) => {
                 const Icon = a.icon
-                const thisLoading = Boolean(thisNodeIntents?.has(a.intent))
                 return {
                   key: a.key,
                   label: a.label,
                   icon: <Icon size={14} />,
-                  loading: thisLoading,
-                  // Allow concurrent dispatches from different source nodes —
-                  // only disable if THIS exact intent is already running from THIS node.
-                  disabled: thisLoading,
                   onClick: () => {
-                    if (thisLoading) return
                     const chapterContext = resolveCtx()
                     if (!chapterContext) {
                       toast('当前画布上下文未就绪，请稍后重试', 'error')
@@ -8164,8 +8146,6 @@ const rewritePromptWithCharacters = React.useCallback(
     addNode,
     id,
     isImageNode,
-    activeIntent,
-    runningNodeIntents,
     setPendingIntentConfig,
     isVideoNode,
     hasPrimaryVideo,
