@@ -1,7 +1,12 @@
+import { AgentExecutionPreferencesSchema } from "../task/agent-execution-provenance";
+import type { z } from "zod";
+
+export type WorkflowAgentPreferences = z.infer<typeof AgentExecutionPreferencesSchema>;
+
 export type WorkflowInitiatingAgentExecution = Readonly<{
 	model: string;
 	apiStyle: "chat" | "responses";
-}>;
+} & WorkflowAgentPreferences>;
 
 export type WorkflowAgentModelCutover = Readonly<{
 	targetModelKey: string;
@@ -29,7 +34,7 @@ export function parseWorkflowInitiatingAgentExecution(
 	const model = typeof raw.model === "string" ? raw.model.trim() : "";
 	const apiStyle = raw.apiStyle;
 	if (!model || (apiStyle !== "chat" && apiStyle !== "responses")) return null;
-	return { model, apiStyle };
+	return { model, apiStyle, ...AgentExecutionPreferencesSchema.parse(raw) };
 }
 
 export function resolveWorkflowAgentModelKey(input: Readonly<{
@@ -71,6 +76,7 @@ export function applyWorkflowAgentModelCutover(
 	return {
 		...flowVersionData,
 		workflowInitiatingAgentExecution: {
+			...source,
 			model: targetModelKey,
 			apiStyle: cutover.apiStyle,
 		},
@@ -79,7 +85,7 @@ export function applyWorkflowAgentModelCutover(
 			{
 				protocolVersion: "tapcanvas.workflow-agent-model-cutover/v1",
 				from: source,
-				to: { model: targetModelKey, apiStyle: cutover.apiStyle },
+				to: { ...source, model: targetModelKey, apiStyle: cutover.apiStyle },
 				authorizedBy,
 				authorizationSource: cutover.authorizationSource,
 				requestedAt: cutover.requestedAt,

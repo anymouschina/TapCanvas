@@ -1,3 +1,4 @@
+import { projectCanvasMembership } from "@tapcanvas/workflow-kernel-protocol";
 import type { MaterialAssetDto, MaterialKind } from "./material.schemas";
 
 type ProjectNodeOwnerType = "project" | "chapter" | "shot";
@@ -75,7 +76,7 @@ function readCanvasNodes(value: unknown): CanvasNodeRecord[] {
 			return [];
 		}
 	}
-	const root = readRecord(parsed);
+	const root = readRecord(projectCanvasMembership(parsed));
 	if (!root || !Array.isArray(root.nodes)) return [];
 	const nodes: CanvasNodeRecord[] = [];
 	for (const rawNode of root.nodes) {
@@ -105,6 +106,7 @@ function resolveMaterialKind(data: Record<string, unknown>): MaterialKind {
 
 function resolveNodeName(node: CanvasNodeRecord): string {
 	for (const value of [
+		node.data.displayName,
 		node.data.roleName,
 		node.data.characterName,
 		node.data.sceneName,
@@ -131,6 +133,27 @@ function buildProjectedData(node: CanvasNodeRecord, canvas: ProjectNodeAssetCanv
 	const audioUrl = readHttpUrl(node.data.audioUrl);
 	const copiedFields: Record<string, unknown> = {};
 	for (const key of [
+		"displayName",
+		"canonicalName",
+		"physicalIdentityKey",
+		"characterAssetRole",
+		"characterProfileVersion",
+		"identityBoardSpec",
+		"identityAnchors",
+		"prohibitedDrift",
+		"sceneAssetRole",
+		"sceneProfileVersion",
+		"sceneOccupancy",
+		"sceneLightingSpec",
+		"sceneAnchors",
+		"prohibitedSceneDrift",
+		"prompt",
+		"negativePrompt",
+		"workflowExecutionId",
+		"taskId",
+		"assetPurpose",
+		"sourcePlanAssetId",
+		"workflowObjectId",
 		"materialKind",
 		"materialProjectId",
 		"referenceType",
@@ -166,7 +189,6 @@ function buildProjectedData(node: CanvasNodeRecord, canvas: ProjectNodeAssetCanv
 		"productionLayer",
 		"creationStage",
 		"assetUsage",
-		"assetPurpose",
 		"productionEligible",
 		"previewSeriesId",
 		"previewBoardIndex",

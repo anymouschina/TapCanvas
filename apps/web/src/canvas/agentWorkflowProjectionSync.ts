@@ -14,14 +14,23 @@ export function findLatestAgentWorkflowTrace(
 }
 
 export function applyAgentWorkflowTrace(workflowInstanceId: string, trace: AgentDiagnosticsTraceDto): void {
+  const terminalNodeStatus = trace.status === 'failed'
+    ? 'error'
+    : trace.status === 'cancelled' || trace.status === 'canceled'
+      ? 'canceled'
+      : null
   useRFStore.setState((state) => ({
     nodes: state.nodes.map((node) => {
       const data = node.data && typeof node.data === 'object' ? node.data as Record<string, unknown> : {}
       if (data.workflowInstanceId !== workflowInstanceId) return node
+      const currentStatus = data.status
+      const shouldSetTerminalStatus = terminalNodeStatus !== null
+        && (currentStatus === 'queued' || currentStatus === 'running')
       return {
         ...node,
         data: {
           ...data,
+          ...(shouldSetTerminalStatus ? { status: terminalNodeStatus } : {}),
           workflowTraceId: trace.id,
           workflowTraceStatus: trace.status,
           workflowTraceUpdatedAt: trace.updatedAt,

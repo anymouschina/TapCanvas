@@ -38,6 +38,45 @@ function nodeId(node: unknown): string {
 	return stringValue(record(node)?.id);
 }
 
+function isAuthoredWorkflowNode(node: unknown): boolean {
+	const raw = record(node);
+	const data = nodeData(node);
+	const kind = stringValue(data.kind);
+	// The definition authority belongs to the editable workflow graph. Runtime
+	// output nodes may retain the workflow key while carrying an older snapshot
+	// of the stage that produced them; they must not make the authored template
+	// appear outdated. The group container is authored too, even though it has
+	// no workflowTrigger/workflowStage kind.
+	return raw?.type === "groupNode"
+		|| raw?.type === "group"
+		|| kind === "workflowTrigger"
+		|| kind === "workflowStage";
+}
+
+/**
+ * Collection inputs that describe clips and the assets consumed by those
+ * clips cannot be aligned by ordinal position: the asset collection contains
+ * one item per asset while the clip collection contains one item per clip.
+ * The canonical video workflow therefore carries an explicit keyed-join
+ * contract on any authored node exposing both ports.  Keep this check at the
+ * diagnostic boundary so collection alignment drift remains observable.
+ * Saved workflow contracts are never rewritten from template metadata.
+ */
+function hasCanonicalClipAssetJoin(spec: JsonRecord): boolean {
+	const inputPorts = Array.isArray(spec.inputPorts)
+		? spec.inputPorts.filter((value): value is string => typeof value === "string")
+		: [];
+	if (!inputPorts.includes("clip-contexts") || !inputPorts.includes("asset-bindings")) return true;
+	const alignment = record(spec.inputAlignment);
+	return alignment?.strategy === "keyed_join"
+		&& alignment.primaryPort === "clip-contexts"
+		&& alignment.primaryKeyPath === "beat.clipId"
+		&& alignment.candidateKeyPath === "assetPlan.consumerClipIds"
+		&& Array.isArray(alignment.candidatePorts)
+		&& alignment.candidatePorts.length === 1
+		&& alignment.candidatePorts[0] === "asset-bindings";
+}
+
 export type VideoWorkflowCanvasDefinitionState = Readonly<{
 	applicable: boolean;
 	current: boolean;
@@ -48,33 +87,11 @@ export type VideoWorkflowCanvasDefinitionState = Readonly<{
 	invalidNodeIds: readonly string[];
 }>;
 
-export type VideoWorkflowDefinitionAuthorityV1 = Readonly<{
-	protocolVersion: "tapcanvas.workflow-definition-authority/v1";
-	workflowKey: typeof VIDEO_PRODUCTION_WORKFLOW_KEY;
-	canvasDefinitionVersion: typeof VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION;
-	canvasDefinitionFingerprint: typeof VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT;
-}>;
-
-export function createVideoWorkflowDefinitionAuthority(
-	state: VideoWorkflowCanvasDefinitionState,
-): VideoWorkflowDefinitionAuthorityV1 | null {
-	if (!state.applicable) return null;
-	if (!state.current) {
-		throw new Error("Cannot freeze authority for an outdated one-click production definition");
-	}
-	return {
-		protocolVersion: "tapcanvas.workflow-definition-authority/v1",
-		workflowKey: VIDEO_PRODUCTION_WORKFLOW_KEY,
-		canvasDefinitionVersion: state.requiredVersion,
-		canvasDefinitionFingerprint: state.requiredFingerprint,
-	};
-}
-
 /**
  * Inspect only immutable structural provenance carried by the authored graph.
  * Version is a human-readable cutover marker; the fingerprint is the actual
- * executable-definition identity and prevents two different templates from
- * being treated as the same version.
+ * template identity. Differences are diagnostics only; execution validates
+ * the actual saved graph independently of its template origin.
  */
 export function inspectVideoWorkflowCanvasDefinition(
 	flowData: unknown,
@@ -83,6 +100,7 @@ export function inspectVideoWorkflowCanvasDefinition(
 	const nodes = Array.isArray(root.nodes) ? root.nodes : [];
 	const canonicalNodes = nodes.filter((node) => (
 		stringValue(nodeData(node).workflowKey) === VIDEO_PRODUCTION_WORKFLOW_KEY
+		&& isAuthoredWorkflowNode(node)
 	));
 	if (canonicalNodes.length === 0) {
 		return {
@@ -105,8 +123,10 @@ export function inspectVideoWorkflowCanvasDefinition(
 	}))].sort();
 	const invalidNodeIds = canonicalNodes.flatMap((node) => {
 		const data = nodeData(node);
+		const spec = record(data.workflowAtomicSpec);
 		return data.workflowCanvasDefinitionVersion === VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION
 			&& stringValue(data.workflowCanvasDefinitionFingerprint) === VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT
+			&& (!spec || hasCanonicalClipAssetJoin(spec))
 			? []
 			: [nodeId(node)];
 	});

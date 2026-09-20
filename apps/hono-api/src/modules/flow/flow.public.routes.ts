@@ -1,3 +1,6 @@
+import { restorePersistedCanvasNodes } from "./flow.canvas-membership";
+import { assertCanvasMembershipPermission } from "./flow.canvas-membership";
+import { reconcileCanvasMembership } from "@tapcanvas/workflow-kernel-protocol";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { AppEnv } from "../../types";
@@ -313,18 +316,23 @@ export function registerPublicFlowRoutes(publicApiRouter: OpenAPIHono<AppEnv>) {
 		const dto = mapFlowRowToDto(row);
 		const canManageAdminWorkflow = isAdminRequest(c);
 		const current = sanitizeFlowDataForStorage(dto.data ?? {});
-		const visibleCurrent = projectWorkflowGraphForViewer(current, canManageAdminWorkflow);
+		const membershipChanges = { deletedNodeIds: parsed.data.deleteNodeIds, restoredNodeIds: parsed.data.restoredNodeIds };
+		if (parsed.data.restoredNodeIds?.some((id) => parsed.data.deleteNodeIds?.includes(id))) {
+			throw new AppError("Cannot delete and restore the same node", { status: 400, code: "canvas_membership_conflict" });
+		}
+		assertCanvasMembershipPermission(current, membershipChanges, canManageAdminWorkflow);
+		const visibleCurrent = projectWorkflowGraphForViewer(restorePersistedCanvasNodes(current, parsed.data.restoredNodeIds), canManageAdminWorkflow);
 		const applied = applyPublicFlowGraphPatch({ current: visibleCurrent, patch: parsed.data });
 
 		const nowIso = new Date().toISOString();
-		const sanitizedNext = sanitizeFlowDataForStorage(
+		const sanitizedNext = reconcileCanvasMembership(current, sanitizeFlowDataForStorage(
 			canManageAdminWorkflow
 				? applied.data
 				: preserveAdminWorkflowGraphForNonAdmin({
 					existing: current,
 					incoming: applied.data,
 				}),
-		);
+		), membershipChanges);
 		const visibleNext = projectWorkflowGraphForViewer(sanitizedNext, canManageAdminWorkflow);
 		const nextParsed = PublicFlowGraphSchema.safeParse(visibleNext);
 		if (!nextParsed.success) {
@@ -341,6 +349,8 @@ export function registerPublicFlowRoutes(publicApiRouter: OpenAPIHono<AppEnv>) {
 					name: row.name,
 					data: nextJson,
 					nowIso,
+					expectedRevision: dto.canvasRevision,
+					canvasMembershipChanges: membershipChanges,
 				})
 			: await updateFlow(c.env.DB, {
 					id,
@@ -349,6 +359,8 @@ export function registerPublicFlowRoutes(publicApiRouter: OpenAPIHono<AppEnv>) {
 					ownerId: requestUserId,
 					projectId: row.project_id,
 					nowIso,
+					expectedRevision: dto.canvasRevision,
+					canvasMembershipChanges: membershipChanges,
 				});
 		if (!updated) {
 			throw new AppError("Flow not found", {

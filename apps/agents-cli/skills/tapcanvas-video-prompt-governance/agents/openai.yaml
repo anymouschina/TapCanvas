@@ -1,0 +1,7 @@
+interface:
+  display_name: "视频提示词合同治理"
+  short_description: "同步视频提示词知识、权威合同、writer 与 reviewer 标准"
+  default_prompt: "使用 $tapcanvas-video-prompt-governance 审计新知识并生成权威提示词合同的一致性更新方案。"
+policy:
+  allow_implicit_invocation: true
+

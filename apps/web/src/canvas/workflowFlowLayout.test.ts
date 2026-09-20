@@ -4,6 +4,7 @@ import { useRFStore } from './store'
 import {
   WORKFLOW_ICON_NODE_FLOW_GAP_X,
   WORKFLOW_ICON_NODE_FLOW_GAP_Y,
+  WORKFLOW_ICON_NODE_HEIGHT,
   WORKFLOW_ICON_NODE_SIZE,
 } from './workflowNodeGeometry'
 import { computeWorkflowFlowLayout } from './workflowFlowLayout'
@@ -88,11 +89,11 @@ describe('workflow group flow layout', () => {
       WORKFLOW_ICON_NODE_SIZE + WORKFLOW_ICON_NODE_FLOW_GAP_X,
     )
     expect(Math.abs(branchRight.position.y - branchLeft.position.y)).toBe(
-      WORKFLOW_ICON_NODE_SIZE + WORKFLOW_ICON_NODE_FLOW_GAP_Y,
+      WORKFLOW_ICON_NODE_HEIGHT + WORKFLOW_ICON_NODE_FLOW_GAP_Y,
     )
 
-    const branchCenterY = (branchLeft.position.y + branchRight.position.y + WORKFLOW_ICON_NODE_SIZE) / 2
-    const prepareCenterY = prepare.position.y + WORKFLOW_ICON_NODE_SIZE / 2
+    const branchCenterY = (branchLeft.position.y + branchRight.position.y + WORKFLOW_ICON_NODE_HEIGHT) / 2
+    const prepareCenterY = prepare.position.y + WORKFLOW_ICON_NODE_HEIGHT / 2
     expect(prepareCenterY).toBe(branchCenterY)
     expect(merge.position.y).toBe(prepare.position.y)
     expect(merge.position.x - branchLeft.position.x).toBe(

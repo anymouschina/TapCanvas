@@ -1,3 +1,7 @@
+import { workflowAgentRepairSource } from "./execution.agent-repair-handoff";
+import { readWorkflowAgentOutputRepair } from "./execution.agent-output-repair";
+import { readWorkflowMediaRetries } from "./execution.media-retry";
+import { readWorkflowMediaAdoptions, workflowMediaAdoptionCheckpoint, type WorkflowMediaAdoption } from "./execution.media-adoption";
 import { parseWorkflowPinnedOutputSourceV1 } from "@tapcanvas/workflow-kernel-protocol";
 import type { PrismaClient } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
@@ -8,15 +12,6 @@ import {
 	resolveWorkflowNodeExecutorRef,
 	type WorkflowNodeOutputV1,
 } from "./execution.node-runtime";
-import {
-	applyWorkflowArtifactJsonArrayContract,
-	applyWorkflowArtifactJsonObjectContract,
-	parseWorkflowAgentJsonArrayContract,
-	parseWorkflowAgentJsonObjectContract,
-	parseWorkflowAgentOutputEncoding,
-	validateWorkflowAgentOutput,
-} from "./execution.agent-output-contract";
-
 export type WorkflowReplayRequest = Readonly<{
 	sourceExecutionId: string;
 	startFromNodeId: string;
@@ -227,6 +222,9 @@ function declaredOutputPorts(node: GraphNode): readonly string[] {
 		: [];
 }
 
+// Persisted artifacts have already passed their delivery boundary and may differ
+// from the compact model submission schema. Reuse validates durable identity and
+// ports; only explicit consumer rejection or changed execution facts invalidate it.
 function validateReusableOutput(node: GraphNode, run: SourceNodeRun): WorkflowNodeOutputV1 {
 	if (run.status !== "success") {
 		throw new Error(`Node run ${run.id} is ${run.status}; only successful durable outputs can be reused`);
@@ -246,66 +244,6 @@ function validateReusableOutput(node: GraphNode, run: SourceNodeRun): WorkflowNo
 		throw new Error(`Node run ${run.id} produced undeclared output port ${undeclaredPort}`);
 	}
 	return output;
-}
-
-function reusableAgentOutputContractFailure(
-	node: GraphNode,
-	output: WorkflowNodeOutputV1,
-): string | null {
-	if (resolveWorkflowNodeExecutorRef(findWorkflowNode({ nodes: [node], edges: [] }, node.id)) !== "agents.logical-task/v2") {
-		return null;
-	}
-	const outputEncoding = parseWorkflowAgentOutputEncoding(node.data.workflowAgentOutputEncoding);
-	const artifactType = text(node.data.workflowAgentOutputArtifactType);
-	if (!outputEncoding || !artifactType) {
-		return `Workflow Agent node ${node.id} has no current typed output contract`;
-	}
-	const outputPort = declaredOutputPorts(node)[0];
-	const portValue = outputPort ? output.ports[outputPort] : undefined;
-	const jsonArrayContract = outputEncoding === "json_array"
-		? applyWorkflowArtifactJsonArrayContract(
-			artifactType,
-			parseWorkflowAgentJsonArrayContract(node.data.workflowAgentJsonArrayContract),
-		)
-		: null;
-	const jsonObjectContract = outputEncoding === "json_object"
-		? applyWorkflowArtifactJsonObjectContract(
-			artifactType,
-			parseWorkflowAgentJsonObjectContract(node.data.workflowAgentJsonObjectContract),
-		)
-		: null;
-	const validateRawText = (rawText: string, itemIdentity?: string): string | null => {
-		const validation = validateWorkflowAgentOutput({
-			encoding: outputEncoding,
-			artifactType,
-			rawText,
-			jsonArrayContract,
-			jsonObjectContract,
-		});
-		return validation.ok
-			? null
-			: `Workflow Agent node ${node.id}${itemIdentity ? ` item ${itemIdentity}` : ""} violated its current ${outputEncoding} output contract: ${validation.errorMessage}`;
-	};
-	if (output.executionMode === "each") {
-		if (!isRecord(portValue) || !Array.isArray(portValue.items)) {
-			return `Workflow Agent node ${node.id} has no reusable collection output on port ${outputPort ?? "<missing>"}`;
-		}
-		for (const [index, rawItem] of portValue.items.entries()) {
-			if (!isRecord(rawItem) || !isRecord(rawItem.value)) {
-				return `Workflow Agent node ${node.id} collection item ${index} has no reusable value`;
-			}
-			const rawText = typeof rawItem.value.text === "string" ? rawItem.value.text : "";
-			const failure = validateRawText(rawText, text(rawItem.itemId) || String(index));
-			if (failure) return failure;
-		}
-		return null;
-	}
-	const rawText = isRecord(portValue) && typeof portValue.text === "string"
-		? portValue.text
-		: typeof portValue === "string"
-			? portValue
-			: "";
-	return validateRawText(rawText);
 }
 
 function descendantsIncludingRoots(
@@ -336,13 +274,24 @@ function replayCheckpointOutput(
 	node: GraphNode,
 	run: SourceNodeRun,
 	provenance: Omit<ResolvedWorkflowReplayCheckpointV1, "version" | "outputRefs">,
+	preserveAgentRepair = false,
 ): WorkflowNodeOutputV1 | null {
 	if (run.status === "success") return null;
 	const output = parseWorkflowNodeOutputV1(run.outputRefs);
-	if (!output || output.executionMode !== "each") return null;
+	if (!output) return null;
 	if (output.nodeId !== node.id || run.nodeId !== node.id) return null;
 	const executorRef = resolveWorkflowNodeExecutorRef(findWorkflowNode({ nodes: [node], edges: [] }, node.id));
 	if (!executorRef || output.executorRef !== executorRef) return null;
+	if (output.executionMode === "once") {
+		if (!preserveAgentRepair || executorRef !== "agents.logical-task/v2") return null;
+		const repairSource = node.data.workflowAgentOutputEncoding !== "plain_text"
+			? workflowAgentRepairSource({ evidence: output.evidence,
+				sourceExecutionId: provenance.sourceExecutionId, nodeId: node.id }) : null;
+		if (!readWorkflowAgentOutputRepair(output.evidence) && !repairSource) return null;
+		return { ...output, ports: {}, evidence: { ...output.evidence, executorCompleted: false,
+			...(repairSource ? { agentRepairSource: repairSource } : {}),
+			replayCheckpoint: { version: 1, ...provenance } } };
+	}
 	const successfulItems = output.itemRuns.filter((itemRun) => itemRun.status === "success");
 	// A recovery checkpoint is a receipt set, not a retry authorization. Preserve
 	// every settled or accepted item exactly. The collection runtime separately
@@ -378,6 +327,7 @@ function recoverySnapshotOutputReuse(input: Readonly<{
 	resolvedByNodeId: Map<string, ResolvedWorkflowOutputReuseV1>;
 	replayCheckpointByNodeId: Map<string, ResolvedWorkflowReplayCheckpointV1>;
 	explicitInvalidatedNodeIds: readonly string[];
+	mediaAdoptions: readonly Pick<WorkflowMediaAdoption, "nodeId" | "itemId">[];
 }>): void {
 	const currentNodeIds = new Set(input.currentGraph.nodes.map((node) => node.id));
 	const sourceNodeIds = new Set(input.sourceGraph.nodes.map((node) => node.id));
@@ -401,7 +351,6 @@ function recoverySnapshotOutputReuse(input: Readonly<{
 		changedOrIncompleteNodeIds.add(nodeId);
 	}
 	const reusableOutputs = new Map<string, Readonly<{ run: SourceNodeRun; output: WorkflowNodeOutputV1 }>>();
-	const currentContractFailures = new Map<string, string>();
 
 	for (const node of input.currentGraph.nodes) {
 		const sourceNode = sourceNodes.get(node.id);
@@ -416,13 +365,14 @@ function recoverySnapshotOutputReuse(input: Readonly<{
 		}
 		const output = validateReusableOutput(node, run);
 		reusableOutputs.set(node.id, { run, output });
-		const contractFailure = reusableAgentOutputContractFailure(node, output);
-		if (contractFailure) {
-			currentContractFailures.set(node.id, contractFailure);
-			changedOrIncompleteNodeIds.add(node.id);
-		}
+
 	}
 
+	const preserveAgentRepair = input.mediaAdoptions.length === 0
+		&& input.currentGraph.nodes.every((current) => {
+			const source = sourceNodes.get(current.id);
+			return source && nodeExecutionSignature(source) === nodeExecutionSignature(current);
+		});
 	const invalidatedNodeIds = descendantsIncludingRoots(input.currentGraph, changedOrIncompleteNodeIds);
 	for (const node of input.currentGraph.nodes) {
 		if (input.resolvedByNodeId.has(node.id)) continue;
@@ -445,13 +395,9 @@ function recoverySnapshotOutputReuse(input: Readonly<{
 		}
 
 		const checkpointProvenance = { kind: "replay_checkpoint" as const, ...provenance };
-		// A previously successful Agent output that no longer satisfies the current
-		// contract is not a retry checkpoint and is never rewritten. The replayed
-		// execution authors that node again from its frozen inputs with no old
-		// candidate or validation error injected into the model context.
-		const checkpoint = currentContractFailures.has(node.id)
-			? null
-			: replayCheckpointOutput(node, run, checkpointProvenance);
+		const amended = input.mediaAdoptions.some((item) => item.nodeId === node.id);
+		const rawCheckpoint = replayCheckpointOutput(node, amended ? { ...run, status: "failed" } : run, checkpointProvenance, preserveAgentRepair);
+		const checkpoint = rawCheckpoint ? workflowMediaAdoptionCheckpoint(rawCheckpoint, input.mediaAdoptions) : null;
 		if (checkpoint) {
 			input.replayCheckpointByNodeId.set(node.id, {
 				version: 1,
@@ -590,6 +536,10 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 				resolvedByNodeId,
 				replayCheckpointByNodeId,
 				explicitInvalidatedNodeIds: input.replay.invalidatedNodeIds ?? [],
+				mediaAdoptions: [
+					...(cleanFlowData.workflowMediaAdoptionSourceExecutionId === sourceExecutionId ? readWorkflowMediaAdoptions(cleanFlowData) : []),
+					...(cleanFlowData.workflowMediaRetrySourceExecutionId === sourceExecutionId ? readWorkflowMediaRetries(cleanFlowData) : []),
+				],
 			});
 		} else {
 			const ancestors = strictAncestorIds(currentGraph, startFromNodeId);
@@ -616,8 +566,6 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 				}
 				const output = validateReusableOutput(node, run);
 				reusableOutputs.set(node.id, { run, output });
-				const currentContractFailure = reusableAgentOutputContractFailure(node, output);
-				if (currentContractFailure) currentContractFailures.set(node.id, currentContractFailure);
 			}
 			const invalidNodeIds = new Set(currentContractFailures.keys());
 			const minimalInvalidNodeIds = new Set([...invalidNodeIds].filter((nodeId) => (

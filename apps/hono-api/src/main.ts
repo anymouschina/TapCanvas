@@ -42,6 +42,7 @@ import { resumePersistedPromptLibraryCrawls } from "./modules/prompt-library/pro
 import { ensureBootstrapAdmin } from "./modules/auth/bootstrap-admin";
 import { syncBuiltInGreetingWorkflow } from "./modules/agents/system-greeting-workflow";
 import { syncBuiltInOneClickWorkflow } from "./modules/agents/system-one-click-workflow";
+import { syncBuiltInVideoProductionWorkflow } from "./modules/agents/system-video-production-workflow";
 
 async function bootstrap() {
 	loadLocalEnvFiles();
@@ -59,6 +60,7 @@ async function bootstrap() {
 	const bootstrapAdminId = await ensureBootstrapAdmin(env.DB);
 	await syncBuiltInGreetingWorkflow(env.DB, bootstrapAdminId);
 	await syncBuiltInOneClickWorkflow(env.DB, bootstrapAdminId);
+	await syncBuiltInVideoProductionWorkflow(env.DB, bootstrapAdminId);
 	const assetHosting = assertObjectStorageStartupReady(env);
 	// Credentials are intentionally excluded from this startup diagnostic.
 	console.log("[api] asset hosting startup", assetHosting);

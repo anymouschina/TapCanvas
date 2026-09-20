@@ -34,6 +34,7 @@ import {
 } from "./execution.node-attempt";
 import { readWorkflowDurableRetryDirective } from "./execution.durable-retry";
 import { readDatabaseWithTransientRetry } from "../../platform/node/database-read-retry";
+import { buildWorkflowExternalWaitDiagnostics } from "./execution.external-wait-diagnostics";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -65,12 +66,11 @@ function parseNodeIdList(value: unknown, field: string): string[] {
 type WorkflowExecutionCancellationReason =
 	| "user_requested"
 	| "provider_balance_recovery"
-	| "agent_model_cutover"
-	| "video_production_start_deadline_exceeded";
+	| "agent_model_cutover";
 
 type WorkflowExecutionCancellationRequest = Readonly<{
 	reasonCode: WorkflowExecutionCancellationReason;
-	actorType: "owner_admin" | "owner_eval" | "owning_chat_turn" | "workflow_recovery" | "deadline_enforcer";
+	actorType: "owner_admin" | "owner_eval" | "owning_chat_turn" | "workflow_recovery";
 	actorId: string;
 }>;
 
@@ -80,21 +80,18 @@ function parseWorkflowExecutionCancellationRequest(
 	const reasonCode = body.reasonCode;
 	if (reasonCode !== "user_requested"
 		&& reasonCode !== "provider_balance_recovery"
-		&& reasonCode !== "agent_model_cutover"
-		&& reasonCode !== "video_production_start_deadline_exceeded") {
-		throw new Error("reasonCode must be user_requested, provider_balance_recovery, agent_model_cutover, or video_production_start_deadline_exceeded");
+		&& reasonCode !== "agent_model_cutover") {
+		throw new Error("reasonCode must be user_requested, provider_balance_recovery, or agent_model_cutover");
 	}
 	const actorType = body.actorType;
-	if (actorType !== "owner_admin" && actorType !== "owner_eval" && actorType !== "owning_chat_turn" && actorType !== "workflow_recovery" && actorType !== "deadline_enforcer") {
-		throw new Error("actorType must be owner_admin, owner_eval, owning_chat_turn, workflow_recovery, or deadline_enforcer");
+	if (actorType !== "owner_admin" && actorType !== "owner_eval" && actorType !== "owning_chat_turn" && actorType !== "workflow_recovery") {
+		throw new Error("actorType must be owner_admin, owner_eval, owning_chat_turn, workflow_recovery");
 	}
 	const isUserActor = actorType === "owner_admin" || actorType === "owner_eval" || actorType === "owning_chat_turn";
 	const isRecoveryReason = reasonCode === "provider_balance_recovery" || reasonCode === "agent_model_cutover";
-	const isDeadlineReason = reasonCode === "video_production_start_deadline_exceeded";
 	if ((reasonCode === "user_requested" && !isUserActor)
 		|| (reasonCode !== "user_requested" && isUserActor)
-		|| (isRecoveryReason && actorType !== "workflow_recovery")
-		|| (isDeadlineReason && actorType !== "deadline_enforcer")) {
+		|| (isRecoveryReason && actorType !== "workflow_recovery")) {
 		throw new Error("cancellation reason and actor type do not match");
 	}
 	const actorId = typeof body.actorId === "string" ? body.actorId.trim() : "";
@@ -116,12 +113,6 @@ function workflowCancellationCopy(reasonCode: WorkflowExecutionCancellationReaso
 		return {
 			nodeErrorMessage: "Canceled for Agent model cutover",
 			eventMessage: "Workflow execution fenced for Agent model cutover",
-		};
-	}
-	if (reasonCode === "video_production_start_deadline_exceeded") {
-		return {
-			nodeErrorMessage: "Canceled because video production did not start before the deadline",
-			eventMessage: "Workflow execution canceled by video production start deadline",
 		};
 	}
 	return {
@@ -180,6 +171,17 @@ export class ExecutionDO {
 		this.env = env;
 	}
 
+	/** Release only a terminal projection whose authoritative status is durable. */
+	async canRelease(): Promise<boolean> {
+		const graph = await this.loadGraphState();
+		if (graph && graph.status !== "success" && graph.status !== "failed" && graph.status !== "canceled") return false;
+		await Promise.all([this.lifecycleTail, this.scheduleTail, this.eventAppendTail]);
+		const execution = await getPrismaClient().workflow_executions.findUnique({
+			where: { id: this.executionId }, select: { status: true },
+		});
+		return execution !== null && (execution.status === "success" || execution.status === "failed" || execution.status === "canceled");
+	}
+
 	private get executionId() {
 		return this.state.id.toString();
 	}
@@ -211,6 +213,10 @@ export class ExecutionDO {
 
 	private async loadGraphState(): Promise<GraphState | null> {
 		const stored = await this.state.storage.get<GraphState>("graph");
+		if (stored && (!isRecord(stored.requiredInputPorts) || !isRecord(stored.activeInputPorts))) {
+			console.info(JSON.stringify({ message: "workflow_graph_port_state_requires_rehydration", executionId: this.executionId }));
+			return null;
+		}
 		return stored || null;
 	}
 
@@ -252,7 +258,7 @@ export class ExecutionDO {
 	/**
 	 * Node's Durable Object adapter keeps graph state in process memory. Startup
 	 * recovery normally rehydrates it before waiting jobs are dispatched, but an
-	 * already-enqueued external-check delivery can race that hydration. Rebuild
+	 * already-enqueued worker delivery can race that hydration. Rebuild
 	 * only the deterministic scheduler projection from immutable flow + persisted
 	 * node facts; do not change attempts or execute a node here.
 	 */
@@ -391,7 +397,7 @@ export class ExecutionDO {
 	private async requireCurrentNodeAttempt(
 		body: Readonly<Record<string, unknown>>,
 		nodeId: string,
-	): Promise<Readonly<{ id: string; attempt: number; status: string }> | Response> {
+	): Promise<Readonly<{ id: string; attempt: number; status: string; output_refs: string | null }> | Response> {
 		let expected: WorkflowNodeAttemptIdentity;
 		try {
 			expected = parseWorkflowNodeAttemptIdentity(body);
@@ -405,7 +411,7 @@ export class ExecutionDO {
 					node_id: nodeId,
 				},
 			},
-			select: { id: true, attempt: true, status: true },
+			select: { id: true, attempt: true, status: true, output_refs: true },
 		});
 		if (!nodeRun) return new Response("Node run not found", { status: 404 });
 		if (workflowNodeAttemptMatches(
@@ -1084,7 +1090,6 @@ export class ExecutionDO {
 	}
 
 	private async handleNodeStarted(request: Request): Promise<Response> {
-		const graph = await this.loadGraphState();
 		let body: Record<string, unknown>;
 		try {
 			body = await parseRequestBody(request);
@@ -1096,9 +1101,9 @@ export class ExecutionDO {
 		}
 		const nodeId = typeof body.nodeId === "string" ? body.nodeId.trim() : "";
 		if (!nodeId) return new Response("bad request", { status: 400 });
-		if (!graph) {
-			return new Response("Execution graph is not initialized", { status: 409 });
-		}
+		const graphState = await this.loadOrRehydrateGraphState(nodeId);
+		if (graphState instanceof Response) return graphState;
+		const graph = graphState;
 		if (!(nodeId in graph.indeg)) {
 			return new Response("Node is outside the execution graph", { status: 404 });
 		}
@@ -1257,7 +1262,10 @@ export class ExecutionDO {
 			failureStage: null,
 			finishedAt: null,
 		});
-		await this.appendEvent({ eventType: "node_external_check_started", nodeId });
+		await this.appendEvent({
+			eventType: "node_external_check_started", nodeId,
+			data: { externalWait: buildWorkflowExternalWaitDiagnostics(nodeRun.output_refs) },
+		});
 		return new Response("accepted", { status: 202 });
 	}
 
@@ -1289,7 +1297,10 @@ export class ExecutionDO {
 			failureStage: null,
 			finishedAt: null,
 		});
-		await this.appendEvent({ eventType: "node_waiting_external", nodeId, data: { receiptPersisted: true } });
+		await this.appendEvent({
+			eventType: "node_waiting_external", nodeId,
+			data: { receiptPersisted: true, externalWait: buildWorkflowExternalWaitDiagnostics(body.outputRefs) },
+		});
 		if (graph.status === "running") await this.schedule();
 		return new Response("accepted", { status: 202 });
 	}
@@ -1309,8 +1320,8 @@ export class ExecutionDO {
 		} catch (error: unknown) {
 			return new Response(error instanceof Error ? error.message : "Invalid progress output refs", { status: 400 });
 		}
-		if (!outputRefs || outputRefs.nodeId !== nodeId || outputRefs.executionMode !== "each") {
-			return new Response("Progress output must belong to the running each node", { status: 400 });
+		if (!outputRefs || outputRefs.nodeId !== nodeId) {
+			return new Response("Progress output must belong to the running node", { status: 400 });
 		}
 		const graph = await this.loadGraphState();
 		// 并行分支级联失败时 graph.status 会先翻为 failed，但其它仍在执行的 each
@@ -1373,6 +1384,30 @@ export class ExecutionDO {
 			},
 		});
 		return new Response("accepted", { status: 202 });
+	}
+
+	/** A local failure cannot terminate independent work or receipt collection. */
+	private async settleFailedExecution(graph: GraphState, nowIso: string): Promise<boolean> {
+		const runs = await this.env.DB.workflow_node_runs.findMany({
+			where: { execution_id: this.executionId },
+			select: { node_id: true, status: true, error_message: true, error_code: true, failure_stage: true },
+		});
+		if (runs.length !== Object.keys(graph.indeg).length
+			|| runs.some((run) => ["pending", "queued", "running", "waiting_external"].includes(run.status))) return false;
+		const failed = runs.find((run) => run.status === "failed");
+		if (!failed) return false;
+		graph.status = "failed";
+		graph.running = 0;
+		await this.saveGraphState(graph);
+		await updateExecutionStatus(this.env.DB, {
+			executionId: this.executionId, status: "failed", finishedAt: nowIso,
+			errorMessage: failed.error_message, errorCode: failed.error_code, failureStage: failed.failure_stage,
+		});
+		await this.appendEvent({ eventType: "execution_failed", level: "error", nodeId: failed.node_id,
+			message: "All independent work settled; unresolved node failure remains",
+			data: { errorCode: failed.error_code } });
+		await this.stripFanoutNodesAfterTerminal(nowIso);
+		return true;
 	}
 
 	private async handleNodeComplete(request: Request): Promise<Response> {
@@ -1530,12 +1565,6 @@ export class ExecutionDO {
 				await this.schedule();
 				return new Response("retry scheduled", { status: 202 });
 			}
-			graph.status = "failed";
-			// A terminal execution cannot retain active-looking sibling node runs.
-			// Already accepted media continues in its provider/task ledger and its
-			// late output remains preservable by the canceled-node completion path;
-			// only this execution's scheduling/tracking lifecycle is closed here.
-			graph.running = 0;
 			await this.saveGraphState(graph);
 			await updateNodeRun(this.env.DB, {
 				executionId: this.executionId,
@@ -1554,14 +1583,6 @@ export class ExecutionDO {
 				message: errorMessage || "node failed",
 				data: errorCode ? { errorCode } : undefined,
 			});
-			await updateExecutionStatus(this.env.DB, {
-				executionId: this.executionId,
-				status: "failed",
-				errorMessage: errorMessage || "node failed",
-				errorCode: errorCode || "workflow_node_runtime_failed",
-				failureStage: retryPolicy.failureStage,
-				finishedAt: nowIso,
-			});
 			const unsettledRuns = await this.env.DB.workflow_node_runs.findMany({
 				where: {
 					execution_id: this.executionId,
@@ -1570,8 +1591,18 @@ export class ExecutionDO {
 				},
 				select: { node_id: true, status: true },
 			});
-			const blockedRuns = unsettledRuns.filter((run) => run.status === "pending" || run.status === "queued");
-			const activeSiblingRuns = unsettledRuns.filter((run) => run.status === "running" || run.status === "waiting_external");
+			const descendants = new Set<string>();
+			const pending = [...(graph.adj[nodeId] ?? [])];
+			while (pending.length > 0) {
+				const next = pending.pop()!;
+				if (descendants.has(next)) continue;
+				descendants.add(next);
+				pending.push(...(graph.adj[next] ?? []));
+			}
+			const blockedRuns = unsettledRuns.filter((run) => descendants.has(run.node_id)
+				&& (run.status === "pending" || run.status === "queued"));
+			const blockedIds = new Set(blockedRuns.map((run) => run.node_id));
+			graph.ready = graph.ready.filter((id) => !blockedIds.has(id));
 			await updateNodeRuns(this.env.DB, {
 				executionId: this.executionId,
 				nodeIds: blockedRuns.map((run) => run.node_id),
@@ -1581,30 +1612,11 @@ export class ExecutionDO {
 					finishedAt: nowIso,
 				},
 			});
-			await updateNodeRuns(this.env.DB, {
-				executionId: this.executionId,
-				nodeIds: activeSiblingRuns.map((run) => run.node_id),
-				update: {
-					status: "canceled",
-					errorMessage: `Execution tracking closed because workflow node ${nodeId} failed; accepted external tasks and late assets remain preserved`,
-					errorCode: "workflow_execution_terminalized",
-					finishedAt: nowIso,
-				},
-			});
-			await this.appendEvent({
-				eventType: "execution_failed",
-				level: "error",
-				message: errorMessage || "node failed",
-				data: {
-					nodeId,
-					blockedNodeCount: blockedRuns.length,
-					terminalizedActiveNodeCount: activeSiblingRuns.length,
-					...(errorCode ? { errorCode } : {}),
-				},
-			});
-			// 执行失败同样剥离该执行的 fan-out 中间产物（可能残留部分已完成资产），
-			// 防 flow 主表污染；已受理的付费任务不受影响。
-			await this.stripFanoutNodesAfterTerminal(nowIso);
+			await this.appendEvent({ eventType: "node_failure_isolated", level: "warn", nodeId,
+				message: "Failed dependency recorded; independent work and accepted tasks remain active",
+				data: { blockedNodeCount: blockedRuns.length } });
+			await this.saveGraphState(graph);
+			if (!await this.settleFailedExecution(graph, nowIso)) await this.schedule();
 			return new Response("ok");
 		}
 
@@ -1627,6 +1639,8 @@ export class ExecutionDO {
 		if (resolved.notSelectedNodeIds.length > 0) {
 			await this.persistNotSelectedNodeRuns(resolved.notSelectedNodeIds, nowIso);
 		}
+
+		if (await this.settleFailedExecution(graph, nowIso)) return new Response("ok");
 
 		const terminalRuns = await this.env.DB.workflow_node_runs.findMany({
 			where: { execution_id: this.executionId },

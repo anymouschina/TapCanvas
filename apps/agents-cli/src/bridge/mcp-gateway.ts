@@ -1,3 +1,6 @@
+import { USER_INTENT_TOOL, USER_INTENT_TOOL_NAME, freezeHarnessUserIntent } from "./user-intent.js";
+import { ARTIFACT_REPORT_PARAMETERS, DELIVERY_EVIDENCE_TOOL, deliveryEvidenceCatalog, inspectArtifactDeliveryReport } from "./artifact-delivery-report.js";
+import { STRUCTURED_OUTPUT_TOOL, structuredOutputTool, inspectStructuredSubmission, type StructuredSubmission } from "./structured-output.js";
 import { createHash, randomUUID } from "node:crypto";
 
 import type {
@@ -32,6 +35,11 @@ type McpRuntime = {
   executions: RemoteToolExecution[];
   loadedDeferredSchemas: Set<string>;
   deliveryReport: HarnessDeliveryReport | null;
+  outputContract: JsonObject | null;
+  frozenContract: JsonObject | null;
+  intentMutationLocked: boolean;
+  artifactReportArgs: JsonObject | null;
+  structuredSubmission: StructuredSubmission | null;
 };
 
 const DELIVERY_REPORT_TOOL: RemoteToolDefinition = {
@@ -141,10 +149,12 @@ function buildToolRequestBody(
   name: string,
   args: JsonObject,
   config: RemoteToolConfig,
+  frozenContract: JsonObject | null,
 ): JsonObject {
   return {
     toolName: name,
     providerKind: "remote",
+    ...(frozenContract ? { userIntentContract: frozenContract, userIntentContractHash: frozenContract.contractHash } : {}),
     args,
     ...(config.projectId ? { canvasProjectId: config.projectId } : {}),
     ...(config.flowId ? { canvasFlowId: config.flowId } : {}),
@@ -203,6 +213,32 @@ async function executeRemoteTool(
     };
   }
 
+  if (name === USER_INTENT_TOOL_NAME) {
+    const frozen = freezeHarnessUserIntent({ args, previous: runtime.frozenContract, locked: runtime.intentMutationLocked });
+    if (frozen.contract) runtime.frozenContract = frozen.contract;
+    const outputText = frozen.error ?? JSON.stringify({ userIntentContract: frozen.contract, authoringCorrectionAllowed: !runtime.intentMutationLocked });
+    appendExecution(runtime, { name, args, startedAt, startedAtMs, status: frozen.contract ? 'succeeded' : 'failed', outputText });
+    return { content: [{ type: 'text', text: outputText }], ...(frozen.contract ? { structuredContent: { userIntentContract: frozen.contract } } : { isError: true }) };
+  }
+  if (name === STRUCTURED_OUTPUT_TOOL && runtime.outputContract) {
+    const inspected = inspectStructuredSubmission(runtime.outputContract, args.output);
+    runtime.structuredSubmission = inspected.submission;
+    const outputText = inspected.submission ? 'Structured output accepted. End this workflow action without rewriting the artifact.'
+      : JSON.stringify({ code: 'structured_output_contract_invalid', issues: inspected.issues, requiredAction: 'Repair these structural issues and resubmit output in this same turn.' });
+    appendExecution(runtime, { name, args, startedAt, startedAtMs, status: inspected.submission ? 'succeeded' : 'failed', outputText });
+    return { content: [{ type: 'text', text: outputText }], ...(inspected.submission ? {} : { isError: true }) };
+  }
+
+  if (name === DELIVERY_EVIDENCE_TOOL.name) {
+    return { content: [{ type: 'text', text: JSON.stringify({ evidence: deliveryEvidenceCatalog(runtime.executions) }) }] };
+  }
+  if (name === DELIVERY_REPORT_TOOL.name && isJsonObject(args.expectedDelivery)) {
+    const inspected = inspectArtifactDeliveryReport({ args, frozenContract: runtime.frozenContract, executions: runtime.executions });
+    runtime.artifactReportArgs = inspected.delivery ? args : null;
+    const outputText = inspected.error ?? 'Terminal artifact delivery self-check accepted against real workflow output evidence.';
+    appendExecution(runtime, { name, args, startedAt, startedAtMs, status: inspected.delivery ? 'succeeded' : 'failed', outputText });
+    return { content: [{ type: 'text', text: outputText }], ...(inspected.delivery ? { structuredContent: inspected.delivery } : { isError: true }) };
+  }
   if (name === DELIVERY_REPORT_TOOL.name) {
     return executeDeliveryReport(runtime, args, startedAt, startedAtMs);
   }
@@ -233,12 +269,13 @@ async function executeRemoteTool(
   if (runtime.config.apiKey) headers["x-api-key"] = runtime.config.apiKey;
 
   const wireName = definition.wireName ?? name;
+  if (name !== SCHEMA_LOADER_TOOL.name) runtime.intentMutationLocked = true;
   let response: Response;
   try {
     response = await fetch(runtime.config.endpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify(buildToolRequestBody(wireName, args, runtime.config)),
+      body: JSON.stringify(buildToolRequestBody(wireName, args, runtime.config, runtime.frozenContract)),
     });
   } catch (error: unknown) {
     const outputText = `远程工具 ${name} 传输失败：${error instanceof Error ? error.message : String(error)}`;
@@ -411,14 +448,19 @@ export class RequestMcpGateway {
     tools: readonly RemoteToolDefinition[],
     catalog: readonly RemoteToolDefinition[],
     config: RemoteToolConfig | null,
+    outputContract: JsonObject | null = null,
+    frozenContract: JsonObject | null = null,
+    intentLocked = false,
   ): string {
     const token = randomUUID();
     const visibleTools = [
-      DELIVERY_REPORT_TOOL,
+      ...(outputContract ? [structuredOutputTool(outputContract)] : [{ ...DELIVERY_REPORT_TOOL,
+        description: 'Submit final semantic delivery self-check. For a response use the response contract. For artifacts first call get_delivery_evidence, then bind every frozen must requirement to exact real terminal output evidence IDs; explain why those facts satisfy the user request.',
+        parameters: { type: "object", anyOf: [DELIVERY_REPORT_TOOL.parameters, ARTIFACT_REPORT_PARAMETERS] } }, DELIVERY_EVIDENCE_TOOL, USER_INTENT_TOOL]),
       ...tools.filter((tool) =>
-        tool.name !== "tapcanvas_tool_schema_get" && tool.name !== DELIVERY_REPORT_TOOL.name
+        tool.name !== "tapcanvas_tool_schema_get" && tool.name !== DELIVERY_REPORT_TOOL.name && tool.name !== STRUCTURED_OUTPUT_TOOL && tool.name !== DELIVERY_EVIDENCE_TOOL.name && tool.name !== USER_INTENT_TOOL_NAME
       ),
-      ...(catalog.length > 0 ? [SCHEMA_LOADER_TOOL, ...catalog] : []),
+      ...(catalog.length > 0 ? [SCHEMA_LOADER_TOOL, ...catalog.filter((tool) => tool.name !== STRUCTURED_OUTPUT_TOOL && tool.name !== DELIVERY_EVIDENCE_TOOL.name && tool.name !== USER_INTENT_TOOL_NAME && tool.name !== DELIVERY_REPORT_TOOL.name)] : []),
     ];
     this.runtimes.set(token, {
       tools: visibleTools,
@@ -426,6 +468,11 @@ export class RequestMcpGateway {
       executions: [],
       loadedDeferredSchemas: new Set<string>(),
       deliveryReport: null,
+      outputContract,
+      frozenContract,
+      intentMutationLocked: intentLocked,
+      artifactReportArgs: null,
+      structuredSubmission: null,
     });
     return token;
   }
@@ -436,6 +483,20 @@ export class RequestMcpGateway {
 
   deliveryReport(token: string): HarnessDeliveryReport | null {
     return this.runtimes.get(token)?.deliveryReport ?? null;
+  }
+
+  userIntentContract(token: string): JsonObject | null {
+    return this.runtimes.get(token)?.frozenContract ?? null;
+  }
+
+  artifactDelivery(token: string): JsonObject | null {
+    const runtime = this.runtimes.get(token);
+    if (!runtime?.artifactReportArgs) return null;
+    return inspectArtifactDeliveryReport({ args: runtime.artifactReportArgs, frozenContract: runtime.frozenContract, executions: runtime.executions }).delivery;
+  }
+
+  structuredSubmission(token: string): StructuredSubmission | null {
+    return this.runtimes.get(token)?.structuredSubmission ?? null;
   }
 
   unregister(token: string): void {

@@ -1,8 +1,10 @@
+import { updateLocalCanvasDeletions, updateDetachedExecutions } from "./persistence/canvasMembership"
 import { createWithEqualityFn } from 'zustand/traditional'
 import type { Edge, Node, OnConnect, OnEdgesChange, OnNodesChange, Connection } from '@xyflow/react'
 import { addEdge, applyEdgeChanges, applyNodeChanges } from '@xyflow/react'
 import { runNodeMock } from '../runner/mockRunner'
 import { runNodeDagToTarget } from '../runner/dag'
+import { isWorkflowMediaOutput, manualMediaDerivativeData } from '../runner/manualMediaDerivative'
 import { runFlowDag } from '../runner/dag'
 import {
   createTaskNodeInitialData,
@@ -44,6 +46,7 @@ import {
 } from './workflowNodeGeometry'
 import { computeWorkflowFlowLayout } from './workflowFlowLayout'
 import { derivedApplyGuard } from './sync/remoteApplyGuard'
+import { requestWorkflowCancellationForDeletedNodes } from './workflowExecutionDeletionCancellation'
 
 type GroupArrangeDirection = 'grid' | 'column' | 'flow'
 export type CanvasTidyOptions = Readonly<{ arrangeWorkflowGroups?: boolean }>
@@ -66,6 +69,8 @@ type RFState = {
   // useRFStore 是全局单例，SPA 导航后整图自动保存若不校验归属，会把上一页面的
   // 陈旧内容固化进另一资源行（主画布↔章节互相串台的根因），保存前必须比对。
   graphProvenanceKey: string | null
+  locallyDeletedNodeIds: string[]
+  detachedWorkflowExecutionIds: string[]
   setGraphProvenance: (key: string | null) => void
   removeSelected: () => void
   updateNodeLabel: (id: string, label: string) => void
@@ -322,7 +327,10 @@ function getTaskNodeHandles(node: Node): { targets: Set<string>; sources: Set<st
   const workflowPorts = data ? readWorkflowCanvasPorts(data) : null
   if (workflowPorts) {
     return {
-      targets: new Set(workflowPorts.inputs.map((portId) => workflowPortHandleId('input', portId))),
+      targets: new Set([
+        ...workflowPorts.inputs,
+        ...workflowPorts.optionalInputs,
+      ].map((portId) => workflowPortHandleId('input', portId))),
       sources: new Set(workflowPorts.outputs.map((portId) => workflowPortHandleId('output', portId))),
     }
   }
@@ -707,6 +715,12 @@ type TreeLayoutSize = { w: number; h: number }
 const UNSELECTABLE_TASK_NODE_KINDS = new Set<string>()
 
 function getNodeSizeForLayout(node: Node): TreeLayoutSize {
+  const data = node.data as Record<string, unknown> | undefined
+  const kind = typeof data?.kind === 'string' ? data.kind : ''
+  if (kind === 'workflowStage' || kind === 'workflowTrigger') {
+    const size = resolveWorkflowNodeCanvasSize(data ?? {})
+    return { w: size.width, h: size.height }
+  }
   // Layout must follow actual rendered box first; stale data.nodeWidth/nodeHeight
   // can otherwise create huge phantom gaps between nodes.
   const measured = getNodeSize(node)
@@ -2036,7 +2050,13 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
   nodes: [],
   edges: [],
   graphProvenanceKey: null,
-  setGraphProvenance: (key) => set({ graphProvenanceKey: key }),
+  locallyDeletedNodeIds: [],
+  detachedWorkflowExecutionIds: [],
+  setGraphProvenance: (key) => set((state) => ({
+    graphProvenanceKey: key,
+    locallyDeletedNodeIds: state.graphProvenanceKey === key ? state.locallyDeletedNodeIds : [],
+    detachedWorkflowExecutionIds: state.graphProvenanceKey === key ? state.detachedWorkflowExecutionIds : [],
+  })),
   nextId: 1,
   nextGroupId: 1,
   lastGroupArrangeDirection: 'grid',
@@ -2272,7 +2292,15 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
     }
 
     const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: updated, edges: sanitizedEdges, historyPast: past, historyFuture: [], ...userMovedUpdate }
+    const membershipChanged = changes.some(change => change.type === 'add' || change.type === 'remove' || change.type === 'replace')
+    return {
+      nodes: updated,
+      ...(membershipChanged ? {
+        locallyDeletedNodeIds: updateLocalCanvasDeletions(s.locallyDeletedNodeIds, s.nodes, updated),
+        detachedWorkflowExecutionIds: updateDetachedExecutions(s.detachedWorkflowExecutionIds, s.nodes, updated),
+      } : {}),
+      edges: sanitizedEdges, historyPast: past, historyFuture: [], ...userMovedUpdate,
+    }
   }),
   onEdgesChange: (changes) => set((s) => {
     const updated = applyEdgeChanges(changes, s.edges)
@@ -2649,6 +2677,8 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
       pendingFocusNodeId: null,
       userMovedNodeIds: new Set<string>(),
       graphProvenanceKey: null,
+      locallyDeletedNodeIds: [],
+      detachedWorkflowExecutionIds: [],
     })
   },
   load: (data) => {
@@ -2678,6 +2708,8 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
       pendingFocusNodeId: null,
       userMovedNodeIds: new Set<string>(),
       graphProvenanceKey: null,
+      locallyDeletedNodeIds: [],
+      detachedWorkflowExecutionIds: [],
     }))
   },
   removeSelected: () => set((s) => {
@@ -2723,6 +2755,8 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
 
     if (idsToDelete.size === 0) return s
 
+    requestWorkflowCancellationForDeletedNodes(s.nodes, [...idsToDelete])
+
     // 删除节点和相关边
     const remainingNodes = s.nodes.filter(n => !idsToDelete.has(n.id))
     const remainingEdges = s.edges.filter(e =>
@@ -2732,6 +2766,8 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
 
     return {
       nodes: nextNodes,
+      locallyDeletedNodeIds: updateLocalCanvasDeletions(s.locallyDeletedNodeIds, s.nodes, nextNodes),
+      detachedWorkflowExecutionIds: updateDetachedExecutions(s.detachedWorkflowExecutionIds, s.nodes, nextNodes),
       edges: remainingEdges,
       historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
@@ -3072,7 +3108,7 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
         for (let i = 1; i < total; i++) {
           const newId = genNodeId()
           cloneIds.push(newId)
-          const data: Record<string, unknown> = { ...(src.data as any) }
+          const data: Record<string, unknown> = isWorkflowMediaOutput(src) ? manualMediaDerivativeData(src) : { ...src.data }
           for (const key of RESULT_FIELDS) delete data[key]
           newNodes.push(enforceNodeSelectability({
             ...src,
@@ -3171,7 +3207,7 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
     const previous = s.historyPast[s.historyPast.length - 1]
     const rest = s.historyPast.slice(0, -1)
     const future = [snapshotGraph(s.nodes, s.edges), ...s.historyFuture].slice(0, 50)
-    return { nodes: previous.nodes, edges: previous.edges, historyPast: rest, historyFuture: future }
+    return { locallyDeletedNodeIds: updateLocalCanvasDeletions(s.locallyDeletedNodeIds, s.nodes, previous.nodes), detachedWorkflowExecutionIds: updateDetachedExecutions(s.detachedWorkflowExecutionIds, s.nodes, previous.nodes), nodes: previous.nodes, edges: previous.edges, historyPast: rest, historyFuture: future }
     })
   },
   redo: () => set((s) => {
@@ -3179,15 +3215,18 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
     const next = s.historyFuture[0]
     const future = s.historyFuture.slice(1)
     const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
-    return { nodes: next.nodes, edges: next.edges, historyPast: past, historyFuture: future }
+    return { locallyDeletedNodeIds: updateLocalCanvasDeletions(s.locallyDeletedNodeIds, s.nodes, next.nodes), detachedWorkflowExecutionIds: updateDetachedExecutions(s.detachedWorkflowExecutionIds, s.nodes, next.nodes), nodes: next.nodes, edges: next.edges, historyPast: past, historyFuture: future }
   }),
   deleteNode: (id) => set((s) => {
     const target = s.nodes.find((n) => n.id === id)
     if (target && isNodeDeleteProtected(target)) return s
+    if (target) requestWorkflowCancellationForDeletedNodes(s.nodes, [id])
     const nextNodesRaw = s.nodes.filter(n => n.id !== id)
     const nextNodes = ensureParentFirstOrder(nextNodesRaw)
     return {
       nodes: nextNodes,
+      locallyDeletedNodeIds: updateLocalCanvasDeletions(s.locallyDeletedNodeIds, s.nodes, nextNodes),
+      detachedWorkflowExecutionIds: updateDetachedExecutions(s.detachedWorkflowExecutionIds, s.nodes, nextNodes),
       edges: s.edges.filter(e => e.source !== id && e.target !== id),
       historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50),
       historyFuture: [],
@@ -3641,11 +3680,14 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
 
     const childIds = new Set(s.nodes.filter((n) => getNodeParentId(n) === id).map((n) => n.id))
     const idsToDelete = new Set<string>([id, ...childIds])
+    requestWorkflowCancellationForDeletedNodes(s.nodes, [...idsToDelete])
     const nextNodes = s.nodes.filter((n) => !idsToDelete.has(n.id))
     const nextEdges = s.edges.filter((e) => !idsToDelete.has(e.source) && !idsToDelete.has(e.target))
     const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
     return {
       nodes: nextNodes,
+      locallyDeletedNodeIds: updateLocalCanvasDeletions(s.locallyDeletedNodeIds, s.nodes, nextNodes),
+      detachedWorkflowExecutionIds: updateDetachedExecutions(s.detachedWorkflowExecutionIds, s.nodes, nextNodes),
       edges: nextEdges,
       historyPast: past,
       historyFuture: [],

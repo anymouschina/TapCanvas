@@ -70,3 +70,22 @@ export function parseWorkflowAcceptedTurnSource(
 		fingerprint,
 	};
 }
+
+/** Host-owned task identity, independent of the workflow's narrative source. */
+export const WORKFLOW_ROOT_TASK_IDENTITY_FIELD = "workflowRootTaskIdentity";
+export type WorkflowRootTaskIdentity = Readonly<{
+	version: 1;
+	ownerId: string;
+	logicalTaskBudgetRootId: string;
+}>;
+export function parseWorkflowRootTaskIdentity(value: unknown, expectedOwnerId: string): WorkflowRootTaskIdentity | null {
+	if (value === undefined || value === null) return null;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("workflow_root_task_identity_invalid");
+	const record = value as Record<string, unknown>;
+	const ownerId = readString(record.ownerId);
+	const logicalTaskBudgetRootId = readString(record.logicalTaskBudgetRootId);
+	if (record.version !== 1 || !ownerId || ownerId !== expectedOwnerId.trim() || !logicalTaskBudgetRootId) {
+		throw new Error("workflow_root_task_identity_invalid");
+	}
+	return { version: 1, ownerId, logicalTaskBudgetRootId };
+}

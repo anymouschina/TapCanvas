@@ -1,23 +1,78 @@
+.tc-workflow-execution-placeholder-wrapper {
+  position: relative;
+  max-width: 440px;
+}
+
+.tc-workflow-execution-placeholder__stop {
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tc-workflow-execution-placeholder__stop:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.16);
+  color: #f4a6a2;
+}
+
+.tc-workflow-execution-placeholder__stop:focus-visible,
+.tc-workflow-execution-placeholder__snapshot:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: 3px;
+}
+
+.tc-workflow-execution-placeholder__snapshot {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: inherit;
+}
+
+.tc-workflow-execution-placeholder__stop:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.tc-workflow-execution-placeholder__stop-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #f4a6a2;
+  overflow-wrap: anywhere;
+}
+
 .tc-workflow-execution-placeholder {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 240px;
-  max-width: 300px;
+  max-width: 440px;
   padding: 10px 12px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: var(--canvas-node-bg, #1b2333);
   color: var(--canvas-node-text, #e6ebf4);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
-  cursor: pointer;
+  cursor: grab;
   text-align: left;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.tc-workflow-execution-placeholder:hover {
+.tc-workflow-execution-placeholder:hover,
+.react-flow__node.selected .tc-workflow-execution-placeholder {
   border-color: var(--canvas-node-border, rgba(255, 255, 255, 0.14));
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.34);
+}
+
+.react-flow__node.dragging .tc-workflow-execution-placeholder {
+  cursor: grabbing;
 }
 
 .tc-workflow-execution-placeholder__icon {
@@ -65,6 +120,32 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tc-workflow-execution-placeholder__detail {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--canvas-node-subtext, #9aa7bd);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.tc-workflow-execution-placeholder--waiting .tc-workflow-execution-placeholder__status-label,
+.tc-workflow-execution-placeholder--partial .tc-workflow-execution-placeholder__status-label {
+  color: #d8ad62;
+}
+
+.tc-workflow-execution-placeholder__snapshot:disabled {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-workflow-execution-placeholder__spinner {
+    animation: none;
+  }
 }
 
 .tc-workflow-execution-placeholder__status {

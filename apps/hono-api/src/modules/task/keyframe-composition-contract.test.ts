@@ -92,4 +92,19 @@ describe("keyframe composition contract", () => {
       doesCompositionImageUrlCarryHash("https://cdn.test/gen/legacy-render.png", parsed.hash),
     ).toBe(false);
   });
+
+  it("accepts a structurally complete environment composition without invented characters", () => {
+    const parsed = parseKeyframeCompositionContract({
+      narrativeTask: "交代宫门、长廊与摄影机的空间关系",
+      focusKind: "environment",
+      focusTargetNames: ["宫门"],
+      focalPoint: [0.5, 0.4],
+      shotScale: "establishing",
+      environmentVisualWeight: "primary",
+      subjects: [],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.contract.subjects).toEqual([]);
+  });
 });

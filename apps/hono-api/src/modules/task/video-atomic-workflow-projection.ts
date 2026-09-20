@@ -70,18 +70,26 @@ type NodeBuildInput = Readonly<{
 }>;
 
 const OUTPUT_PORT_BY_NODE: Readonly<Record<VideoAtomicWorkflowNodeId, string>> = {
+	"chapter-assets-agent": "chapter-assets",
+	"clip-design-fan-out": "clip-design-inputs",
+	"clip-design-agent": "clip-designs",
+	"beat-sheet-assemble": "beat-sheet",
+	"chapter-asset-prepare": "asset-items",
+	"asset-consumer-bind": "asset-bindings",
 	"canvas-source": "canvas-facts",
+	"text-expansion-agent": "expanded-source",
 	"delivery-contract": "delivery-contract",
 	"beat-sheet-agent": "beat-sheet-draft",
 	"beat-sheet-format": "beat-sheet",
+	"background-fan-out": "asset-items",
+	"background-image-generate": "asset-bindings",
+	"blocking-diagrams": "beat-sheet",
 	"asset-coverage": "asset-plans",
 	"asset-fan-out": "asset-items",
 	"asset-image-generate": "asset-bindings",
 	"clip-fan-out": "clip-contexts",
 	"clip-writer-agent": "clip-prompts",
 	"prompt-package": "prompt-package",
-	"voice-catalog": "voice-catalog",
-	"voice-plan-agent": "voice-plan",
 	"voice-materialize": "voice-manifest",
 	"cost-estimate": "estimate",
 	"production-handoff": "production-plan",
@@ -92,18 +100,26 @@ const OUTPUT_PORT_BY_NODE: Readonly<Record<VideoAtomicWorkflowNodeId, string>> =
 };
 
 const ARTIFACT_TYPE_BY_NODE: Readonly<Record<VideoAtomicWorkflowNodeId, string>> = {
+	"chapter-assets-agent": "tapcanvas.chapter-asset-plan/v1",
+	"clip-design-fan-out": "tapcanvas.clip-design-inputs/v1",
+	"clip-design-agent": "tapcanvas.clip-design/v1",
+	"beat-sheet-assemble": "tapcanvas.beat-sheet/v2",
+	"chapter-asset-prepare": "tapcanvas.asset-plan-items/v2",
+	"asset-consumer-bind": "tapcanvas.asset-bindings/v1",
 	"canvas-source": "tapcanvas.canvas-facts/v1",
+	"text-expansion-agent": "tapcanvas.text/v1",
 	"delivery-contract": "tapcanvas.delivery-contract/v2",
 	"beat-sheet-agent": "tapcanvas.beat-sheet-draft/v1",
 	"beat-sheet-format": "tapcanvas.beat-sheet/v2",
+	"background-fan-out": "tapcanvas.asset-plan-items/v2",
+	"background-image-generate": "tapcanvas.asset-bindings/v1",
+	"blocking-diagrams": "tapcanvas.beat-sheet/v2",
 	"asset-coverage": "tapcanvas.asset-plans/v1",
 	"asset-fan-out": "tapcanvas.asset-plan-items/v2",
 	"asset-image-generate": "tapcanvas.asset-bindings/v1",
 	"clip-fan-out": "tapcanvas.clip-contracts/v1",
 	"clip-writer-agent": "tapcanvas.clip-prompt/v2",
 	"prompt-package": "tapcanvas.prompt-package/v2",
-	"voice-catalog": "tapcanvas.voice-catalog/v1",
-	"voice-plan-agent": "tapcanvas.voice-plan/v1",
 	"voice-materialize": "tapcanvas.voice-manifest/v1",
 	"cost-estimate": "tapcanvas.video-estimate/v1",
 	"production-handoff": "tapcanvas.production-plan/v1",
@@ -176,6 +192,27 @@ function artifactStatus(status: string): VideoProductionWorkflowNodeStatus {
 	if (status === "failed") return "failed";
 	if (status === "stale") return "partial";
 	return "queued";
+}
+
+type MediaReadiness = "ready" | "waiting" | "failed";
+
+function mediaReadinessFromPayload(value: unknown): MediaReadiness | null {
+	const payload = readRecord(value);
+	return payload?.mediaReadiness === "ready" || payload?.mediaReadiness === "waiting" || payload?.mediaReadiness === "failed"
+		? payload.mediaReadiness
+		: null;
+}
+
+function projectedArtifactStatus(
+	atomicNodeId: VideoAtomicWorkflowNodeId,
+	artifact: VideoAtomicWorkflowArtifactFact,
+): VideoProductionWorkflowNodeStatus {
+	const persistedStatus = artifactStatus(artifact.status);
+	if (atomicNodeId !== "video-results") return persistedStatus;
+	const readiness = mediaReadinessFromPayload(parsePayload(artifact).value);
+	if (readiness === "waiting") return "waiting_external";
+	if (readiness === "failed") return "failed";
+	return persistedStatus;
 }
 
 function effectStatus(status: string): VideoProductionWorkflowNodeStatus {
@@ -355,8 +392,9 @@ function artifactItemRuns(
 			: atomicNodeId === "video-submit" ? "video-submission:" : "video-result:");
 		if (clipIndex === null) return [];
 		const parsed = parsePayload(artifact);
-		const status = artifactStatus(artifact.status);
+		const status = projectedArtifactStatus(atomicNodeId, artifact);
 		const videoUrl = atomicNodeId === "video-results" ? videoUrlFromPayload(parsed.value) : null;
+		const mediaReadiness = atomicNodeId === "video-results" ? mediaReadinessFromPayload(parsed.value) : null;
 		const text = atomicNodeId === "clip-writer-agent" ? promptFromPayload(parsed.value) : null;
 		return [{
 			itemId: `clip-${clipIndex}`,
@@ -376,7 +414,11 @@ function artifactItemRuns(
 				type: ARTIFACT_TYPE_BY_NODE[atomicNodeId],
 				value: text ?? parsed.value,
 			}],
-			evidence: { clipIndex, artifactStatus: artifact.status },
+			evidence: {
+				clipIndex,
+				artifactStatus: artifact.status,
+				...(mediaReadiness ? { mediaReadiness } : {}),
+			},
 		}];
 	});
 }
@@ -418,7 +460,7 @@ function buildNode(input: NodeBuildInput & Readonly<{
 }>): VideoAtomicWorkflowNodeProjection {
 	const effects = input.effects ?? [];
 	const statuses = [
-		...input.artifacts.map((artifact) => artifactStatus(artifact.status)),
+		...input.artifacts.map((artifact) => projectedArtifactStatus(input.atomicNodeId, artifact)),
 		...effects.map((effect) => effectStatus(effect.status)),
 	];
 	const totalUnits = input.totalUnits === undefined
@@ -603,9 +645,14 @@ export function buildVideoAtomicWorkflowSnapshot(input: Readonly<{
 	const submissionStatus = aggregateStatus(submissionStatuses, executionScope === "media_delivery" ? clipIndexes.length || null : null);
 	const nodes: VideoAtomicWorkflowNodeProjection[] = [
 		buildNode({ runId, latestEventSeq, atomicNodeId: "canvas-source", artifacts: [], inputArtifactIds: [], outputArtifactIds: [sourceIdentity], totalUnits: 1, status: "succeeded", startedAt: input.run.created_at, updatedAt: input.run.created_at, outputRefs: sourceOutput }),
+		buildNode({ runId, latestEventSeq, atomicNodeId: "text-expansion-agent", artifacts: [], inputArtifactIds: [sourceIdentity], totalUnits: 1 }),
 		buildNode({ runId, latestEventSeq, atomicNodeId: "delivery-contract", artifacts: manifest ? [manifest] : [], inputArtifactIds: [sourceIdentity], totalUnits: 1, status: manifest?.status === "ready" ? "succeeded" : runFailed ? "failed" : undefined, startedAt: input.run.created_at, updatedAt: manifest?.updated_at ?? input.run.updated_at, outputRefs: graphOutput, extraErrors: runFailed && input.run.error_message ? [input.run.error_message] : [] }),
 		buildNode({ runId, latestEventSeq, atomicNodeId: "beat-sheet-agent", artifacts: beatSheetDraft, inputArtifactIds: manifest ? [manifest.artifact_key] : [], totalUnits: 1 }),
 		buildNode({ runId, latestEventSeq, atomicNodeId: "beat-sheet-format", artifacts: beatSheet, inputArtifactIds: beatSheetDraft.map((artifact) => artifact.artifact_key), outputArtifactIds: beatSheet.length > 0 || parsedRunBeatSheet ? ["beat_sheet"] : [], totalUnits: 1, status: beatSheet.length === 0 && parsedRunBeatSheet ? "succeeded" : undefined, startedAt: beatSheet.length > 0 || parsedRunBeatSheet ? input.run.created_at : null, updatedAt: beatSheet[0]?.updated_at ?? (parsedRunBeatSheet ? input.run.updated_at : null), outputRefs: beatSheet.length > 0 ? undefined : parsedRunBeatSheet ? { ports: { "beat-sheet": parsedRunBeatSheet.value }, artifacts: [{ identity: "beat_sheet", type: ARTIFACT_TYPE_BY_NODE["beat-sheet-format"], value: parsedRunBeatSheet.value }], evidence: { persistedOnRun: true }, itemRuns: [] } : undefined, extraErrors: parsedRunBeatSheet?.error ? [parsedRunBeatSheet.error] : [] }),
+		// Legacy authoring journals predate explicit blocking-diagram artifacts.
+		// Preserve the canonical operation as unresolved instead of inferring
+		// successful station maps from a BeatSheet or downstream clip.
+		buildNode({ runId, latestEventSeq, atomicNodeId: "blocking-diagrams", artifacts: [], inputArtifactIds: beatSheet.length > 0 || parsedRunBeatSheet ? ["beat_sheet"] : [], totalUnits: clipIndexes.length || null }),
 		buildNode({
 			runId,
 			latestEventSeq,
@@ -650,11 +697,9 @@ export function buildVideoAtomicWorkflowSnapshot(input: Readonly<{
 		buildNode({ runId, latestEventSeq, atomicNodeId: "clip-writer-agent", artifacts: clips, inputArtifactIds: clipIndexes.map((clipIndex) => `clip-context:${clipIndex}`), totalUnits: clipIndexes.length || null, outputRefs: writerOutput }),
 		buildNode({ runId, latestEventSeq, atomicNodeId: "prompt-package", artifacts: [...assembly, ...promptPackage], inputArtifactIds: clips.map((artifact) => artifact.artifact_key), totalUnits: promptPackageExpectedUnits }),
 		// Legacy authoring journals do not persist the newer voice subgraph as
-		// independently addressable artifacts. Keep those operations visible and
-		// unresolved instead of fabricating successful voice evidence from the
-		// downstream handoff or final video state.
-		buildNode({ runId, latestEventSeq, atomicNodeId: "voice-catalog", artifacts: [], inputArtifactIds: [...assembly, ...promptPackage].map((artifact) => artifact.artifact_key), totalUnits: executionScope === "media_delivery" ? 1 : null }),
-		buildNode({ runId, latestEventSeq, atomicNodeId: "voice-plan-agent", artifacts: [], inputArtifactIds: [...assembly, ...promptPackage].map((artifact) => artifact.artifact_key), totalUnits: executionScope === "media_delivery" ? 1 : null }),
+		// independently addressable artifacts. The canonical projection therefore
+		// keeps the stable voice-materialize operation unresolved instead of
+		// fabricating successful voice evidence from downstream state.
 		buildNode({ runId, latestEventSeq, atomicNodeId: "voice-materialize", artifacts: [], inputArtifactIds: estimate.map((artifact) => artifact.artifact_key), totalUnits: executionScope === "media_delivery" ? 1 : null }),
 		buildNode({ runId, latestEventSeq, atomicNodeId: "cost-estimate", artifacts: estimate, inputArtifactIds: [...assembly, ...assetCoverage].map((artifact) => artifact.artifact_key), totalUnits: executionScope === "media_delivery" ? 1 : null }),
 		buildNode({ runId, latestEventSeq, atomicNodeId: "production-handoff", artifacts: handoff, inputArtifactIds: estimate.map((artifact) => artifact.artifact_key), totalUnits: executionScope === "media_delivery" ? 1 : null }),

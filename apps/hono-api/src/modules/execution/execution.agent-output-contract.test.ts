@@ -6,13 +6,15 @@ import {
 	parseWorkflowAgentJsonArrayContract,
 	parseWorkflowAgentJsonObjectContract,
 	validateWorkflowAgentOutput,
+	WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY,
 	WORKFLOW_STRUCTURED_OUTPUT_SINGLE_INFERENCE_POLICY,
 	WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY,
 } from "./execution.agent-output-contract";
 
 describe("Workflow Agent output contract", () => {
-	it("makes one complete submission the only structured-output policy and rejects retired correction fields", () => {
+	it("keeps explicit submission policies and rejects retired correction fields", () => {
 		expect(WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY).toBe("single_submission_record_and_fail");
+		expect(WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY).toBe("repair_with_correction");
 		expect(WORKFLOW_STRUCTURED_OUTPUT_SINGLE_INFERENCE_POLICY)
 			.toBe("single_inference_no_tools_record_and_fail");
 		const baseContract = {
@@ -78,12 +80,13 @@ describe("Workflow Agent output contract", () => {
 		kind: "scene",
 		name: "连续战场",
 		physicalIdentityKey: null,
-		referenceImageNodeIds: [],
+		referenceImageNodeIds: [], referenceAssetIds: [],
 		referenceRole: "none",
 		identityInvariant: "同一连续战场的空间拓扑与光照方向不变",
 	};
 	const sceneState = (startState: string, endState: string) => ({
 		objectId: "scene-continuous",
+		referenceAssetIds: [] as string[], referenceImageNodeIds: [] as string[],
 		startState,
 		spatialRelation: "主冲突始终发生在同一空间轴线上",
 		driver: "冻结来源事件推进",
@@ -97,7 +100,15 @@ describe("Workflow Agent output contract", () => {
 			storyPromise: "冲突必须推进到不可逆决胜",
 			protagonistThroughline: "主角从受压转为掌握主动",
 			primaryPayoff: "决胜动作造成不可逆结果",
-			endingHook: "结果之后仍留下后续牵引",
+			endingHook: "结果之后仍留下后续牵引" as string | null,
+		},
+		sequenceControlPlan: {
+			protocolVersion: "tapcanvas.sequence-control-plan/v1",
+			totalDurationSeconds: 40,
+			segments: [
+				{ clipId: "clip-0", startSeconds: 0, endSeconds: 30, temporalDirectives: [], transitionFromPrevious: "从开场进入", transitionToNext: "把决胜动作交给下一段" },
+				{ clipId: "clip-1", startSeconds: 30, endSeconds: 40, temporalDirectives: [], transitionFromPrevious: "承接决胜动作", transitionToNext: "留下后续钩子" },
+			],
 		},
 		sourceCoveragePlan: { speechLedger: [] },
 		sourceFidelityAudit: {
@@ -109,6 +120,12 @@ describe("Workflow Agent output contract", () => {
 			})),
 		},
 		objectRegistry: [sceneRegistryObject],
+        blockingPlans: [30, 10].map((durationSeconds, clipIndex) => ({
+            clipIndex, title: "空间调度", sceneName: "连续战场", durationSeconds,
+            characters: [] as Array<{ name: string; at: number[]; facingTo: number[] | null; moveTo: number[] | null }>, landmarks: [], camera: { at: [0.5, 0.9], lookAt: [0.5, 0.3] },
+            backgroundPlan: { assetId: "floor-plan", displayName: "场景底图", prompt: "无人场景", negativePrompt: "无标记", referenceAssetBindings: [] },
+            compositionContract: { narrativeTask: "展示空间", focusKind: "environment", focusTargetNames: ["连续战场"], focalPoint: [0.5, 0.5], shotScale: "wide", environmentVisualWeight: "primary", subjects: [] },
+        })),
 		beats: [
 			compactBeat({
 				clipId: "clip-0",
@@ -119,7 +136,7 @@ describe("Workflow Agent output contract", () => {
 				handoffToNext: "下一段必须完成接触、反作用与后果",
 				startKeyframe: "连续战场初始状态",
 				endKeyframe: "决胜动作沿原路径越过物理边界",
-				characters: [],
+				characters: [] as string[],
 				dialogueScript: [],
 				durationSeconds: 30,
 				exitState: "决胜动作沿原路径越过物理边界",
@@ -140,7 +157,7 @@ describe("Workflow Agent output contract", () => {
 				handoffToNext: "后续必须回应已经成立的钩子",
 				startKeyframe: "决胜动作沿原路径越过物理边界",
 				endKeyframe: "钩子成立",
-				characters: [],
+				characters: [] as string[],
 				dialogueScript: [],
 				durationSeconds: 10,
 				exitState: "钩子成立",
@@ -151,6 +168,195 @@ describe("Workflow Agent output contract", () => {
 				],
 			}),
 		],
+	});
+
+	// Regression: `beats[].characters` is compiled by the host from the beat's declared
+	// character objectStates, so the Agent can neither author nor order it. Requiring the
+	// blocking plan to repeat that host-derived array in order made a self-consistent
+	// artifact permanently unrepairable, which stalled the one-click video BeatSheet.
+	it("accepts a blocking plan that places the beat's characters in another order", () => {
+		const characterRegistryObject = (objectId: string, name: string) => ({
+			objectId,
+			kind: "character",
+			name,
+			physicalIdentityKey: `body-${objectId}`,
+			referenceImageNodeIds: [], referenceAssetIds: [],
+			referenceRole: "identity",
+			identityInvariant: `${name}的骨相与服装结构不变`,
+		});
+		const characterState = (objectId: string) => ({
+			objectId,
+			referenceAssetIds: [] as string[], referenceImageNodeIds: [] as string[],
+			startState: "端坐",
+			spatialRelation: "同一考场空间内",
+			driver: "冻结来源事件推进",
+			stateChange: "端坐推进为答话",
+			endState: "答话",
+		});
+		const draft = beatSheetTimeline();
+		const beat = draft.beats[0]!;
+		// The character states declare 张羽 first; the blocking plan places 面试官 first.
+		beat.characters = ["张羽", "面试官"];
+		beat.objectStates = [
+			sceneState("初始", "决胜动作沿原路径越过物理边界"),
+			characterState("character-zhangyu"),
+			characterState("character-interviewer"),
+		];
+		draft.blockingPlans[0]!.characters = [
+			{ name: "面试官", at: [0.5, 0.35], facingTo: [0.4, 0.6], moveTo: null },
+			{ name: "张羽", at: [0.4, 0.6], facingTo: [0.5, 0.4], moveTo: null },
+		];
+		const value = {
+			...draft,
+			objectRegistry: [
+				sceneRegistryObject,
+				characterRegistryObject("character-zhangyu", "张羽"),
+				characterRegistryObject("character-interviewer", "面试官"),
+			],
+		};
+		const contract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2",
+			parseWorkflowAgentJsonObjectContract({ requiredStringFields: ["protocolVersion"], requiredArrayFields: ["beats"], allowedFields: ["protocolVersion", "beats"] }));
+		const result = validateWorkflowAgentOutput({
+			encoding: "json_object", artifactType: "tapcanvas.beat-sheet/v2", jsonObjectContract: contract,
+			rawText: JSON.stringify(value),
+		});
+		expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
+
+		const omitted = JSON.parse(JSON.stringify(value)) as typeof value;
+		omitted.blockingPlans[0]!.characters = [{ name: "面试官", at: [0.5, 0.35], facingTo: null, moveTo: null }];
+		expect(validateWorkflowAgentOutput({
+			encoding: "json_object", artifactType: "tapcanvas.beat-sheet/v2", jsonObjectContract: contract,
+			rawText: JSON.stringify(omitted),
+		})).toMatchObject({ ok: false, errorMessage: expect.stringContaining("missing=[张羽]:extra=[]") });
+
+		const invented = JSON.parse(JSON.stringify(value)) as typeof value;
+		invented.blockingPlans[0]!.characters = [
+			{ name: "面试官", at: [0.5, 0.35], facingTo: null, moveTo: null },
+			{ name: "张羽", at: [0.4, 0.6], facingTo: null, moveTo: null },
+			{ name: "路人", at: [0.1, 0.1], facingTo: null, moveTo: null },
+		];
+		expect(validateWorkflowAgentOutput({
+			encoding: "json_object", artifactType: "tapcanvas.beat-sheet/v2", jsonObjectContract: contract,
+			rawText: JSON.stringify(invented),
+		})).toMatchObject({ ok: false, errorMessage: expect.stringContaining("missing=[]:extra=[路人]") });
+	});
+
+	it.each(["", "   ", "https://assets.example/floor.png", "asset://missing", 42])("shares the optional blocking background contract with rendering: %s", (backgroundImageUrl) => {
+		const draft = beatSheetTimeline();
+		const value = {
+			...draft,
+			blockingPlans: draft.beats.map((beat, clipIndex) => ({
+				clipIndex, title: "空间调度", sceneName: "连续战场", durationSeconds: beat.durationSeconds,
+				characters: [] as string[], landmarks: [{ kind: "door", label: "门", at: [0.5, 0.1] }],
+				backgroundImageUrl,
+				compositionContract: {
+					narrativeTask: "战场空间", focusKind: "environment", focusTargetNames: ["连续战场"],
+					focalPoint: [0.5, 0.5], shotScale: "wide", environmentVisualWeight: "primary", subjects: [],
+				},
+			})),
+		};
+		const jsonObjectContract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2", parseWorkflowAgentJsonObjectContract({ requiredStringFields: ["protocolVersion"], requiredArrayFields: ["beats"], allowedFields: ["protocolVersion", "beats"] }));
+		const result = validateWorkflowAgentOutput({ encoding: "json_object", artifactType: "tapcanvas.beat-sheet/v2", jsonObjectContract, rawText: JSON.stringify(value) });
+		if (backgroundImageUrl === "asset://missing" || typeof backgroundImageUrl !== "string") {
+			expect(result).toMatchObject({ ok: false, errorMessage: expect.stringContaining("blockingPlans[0].backgroundImageUrl") });
+		} else {
+			expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
+			if (!result.ok) return;
+			const projected = JSON.parse(result.text) as { beats: Array<{ blockingPlan: Record<string, unknown> }> };
+			expect(projected.beats[0]?.blockingPlan.backgroundImageUrl).toBe(backgroundImageUrl.trim() || undefined);
+		}
+	});
+
+	it("projects each clip selection without inheriting the registry image pool", () => {
+		const selectedIds = ["front", "back", "detail", "usage"];
+		const draft = beatSheetTimeline();
+		draft.beats[0]!.objectStates[0]!.referenceAssetIds = ["detail", "front"];
+		draft.beats[1]!.objectStates[0]!.referenceAssetIds = ["back", "usage"];
+		const contract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2",
+			parseWorkflowAgentJsonObjectContract({
+				requiredStringFields: ["protocolVersion"],
+				requiredArrayFields: ["beats"],
+				allowedFields: ["protocolVersion", "sourceId", "sourceFingerprint", "sourceCoveragePlan", "sourceFidelityAudit", "chapterArc", "objectRegistry", "beats"],
+			}));
+		const result = validateWorkflowAgentOutput({
+			encoding: "json_object", artifactType: "tapcanvas.beat-sheet/v2", jsonObjectContract: contract,
+			rawText: JSON.stringify({ ...draft, objectRegistry: [{ ...sceneRegistryObject,
+				referenceImageNodeIds: [], referenceAssetIds: selectedIds, referenceRole: "environment",
+			}] }),
+		});
+		if (!result.ok) throw new Error(result.errorMessage);
+		const compiled = JSON.parse(result.text) as { beats: { assetObjectContracts: { referenceAssetIds: string[] }[] }[] };
+		expect(compiled.beats).toHaveLength(draft.beats.length);
+		expect(compiled.beats.map((beat) => beat.assetObjectContracts[0]?.referenceAssetIds))
+			.toEqual([["detail", "front"], ["back", "usage"]]);
+	});
+
+	it("rejects unknown object IDs without assigning another registry entry", () => {
+		const draft = beatSheetTimeline();
+		draft.beats[0]!.objectStates[0]!.objectId = "scene-unregistered-alias";
+		const contract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2", parseWorkflowAgentJsonObjectContract({
+			requiredStringFields: ["protocolVersion"], requiredArrayFields: ["beats"],
+			allowedFields: ["protocolVersion", "sourceId", "sourceFingerprint", "sourceCoveragePlan", "sourceFidelityAudit", "chapterArc", "objectRegistry", "beats"],
+		}));
+		const result = validateWorkflowAgentOutput({ encoding: "json_object", artifactType: "tapcanvas.beat-sheet/v2", jsonObjectContract: contract, rawText: JSON.stringify(draft) });
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.errorMessage).toContain("unknown registry object scene-unregistered-alias");
+	});
+
+	it("requires an explicit scene object in every compact video beat", () => {
+		const draft = beatSheetTimeline();
+		const contract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2", parseWorkflowAgentJsonObjectContract({
+			requiredStringFields: ["protocolVersion"], requiredArrayFields: ["beats"],
+			allowedFields: ["protocolVersion", "sourceId", "sourceFingerprint", "sourceCoveragePlan", "sourceFidelityAudit", "chapterArc", "objectRegistry", "beats"],
+		}));
+		const result = validateWorkflowAgentOutput({
+			encoding: "json_object", artifactType: "tapcanvas.beat-sheet/v2", jsonObjectContract: contract,
+			rawText: JSON.stringify({ ...draft, objectRegistry: [{ ...sceneRegistryObject, kind: "prop", referenceRole: "prop" }] }),
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.errorMessage).toContain("objectStates must reference a scene object");
+	});
+
+	it("requires endingHook to be present while allowing an explicit null hook", () => {
+		const authored = parseWorkflowAgentJsonObjectContract({
+			requiredStringFields: ["protocolVersion"],
+			requiredObjectFields: ["sourceFidelityAudit", "sourceCoveragePlan", "chapterArc"],
+			requiredArrayFields: ["beats"],
+			allowedFields: ["protocolVersion", "sourceId", "sourceFingerprint", "sourceCoveragePlan", "sourceFidelityAudit", "chapterArc", "objectRegistry", "beats"],
+		});
+		const contract = authored ? applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2", authored) : null;
+		expect(contract?.requiredNonEmptyStringPaths).toEqual(expect.arrayContaining([
+			"sequenceControlPlan.segments[].transitionFromPrevious",
+			"sequenceControlPlan.segments[].transitionToNext",
+		]));
+		expect(contract).not.toBeNull();
+
+		const noHook = beatSheetTimeline();
+		noHook.chapterArc.endingHook = null;
+		expect(validateWorkflowAgentOutput({
+			encoding: "json_object",
+			artifactType: "tapcanvas.beat-sheet/v2",
+			rawText: JSON.stringify(noHook),
+			jsonObjectContract: contract,
+		})).toMatchObject({ ok: true });
+
+		const missingHook = beatSheetTimeline();
+		Reflect.deleteProperty(missingHook.chapterArc, "endingHook");
+		expect(validateWorkflowAgentOutput({
+			encoding: "json_object",
+			artifactType: "tapcanvas.beat-sheet/v2",
+			rawText: JSON.stringify(missingHook),
+			jsonObjectContract: contract,
+		})).toMatchObject({ ok: false });
+
+		const emptyHook = beatSheetTimeline();
+		emptyHook.chapterArc.endingHook = "";
+		expect(validateWorkflowAgentOutput({
+			encoding: "json_object",
+			artifactType: "tapcanvas.beat-sheet/v2",
+			rawText: JSON.stringify(emptyHook),
+			jsonObjectContract: contract,
+		})).toMatchObject({ ok: false });
 	});
 
 	it("enforces one source-duration timeline across model-max physical Clips", () => {
@@ -261,10 +467,14 @@ describe("Workflow Agent output contract", () => {
 		});
 		const contract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2", authored);
 		expect(contract?.contractVersion).toBe(BEAT_SHEET_ARTIFACT_CONTRACT_VERSION);
-		expect(contract?.collectionCorrectionFields).toBeUndefined();
+		expect(contract).not.toHaveProperty("collectionCorrectionFields");
 
 		const compact = structuredClone(beatSheetTimeline()) as unknown as Record<string, unknown>;
-		delete compact.sourceFidelityAudit;
+		const missingLedger = { ...compact };
+		delete missingLedger.sourceFidelityAudit;
+		expect(validateWorkflowAgentOutput({ encoding: "json_object", artifactType: "tapcanvas.beat-sheet/v2",
+			rawText: JSON.stringify(missingLedger), jsonObjectContract: contract,
+		})).toMatchObject({ ok: false });
 		for (const rawBeat of compact.beats as Array<Record<string, unknown>>) {
 			delete rawBeat.clipId;
 			delete rawBeat.characters;
@@ -296,26 +506,32 @@ describe("Workflow Agent output contract", () => {
 		};
 		expect(compiled.beats[0]?.assetObjectContracts[0]).toMatchObject({
 			physicalIdentityKey: null,
-			referenceImageNodeIds: [],
+			referenceImageNodeIds: [], referenceAssetIds: [],
 			referenceRole: "none",
 		});
 		expect(compiled.beats[0]?.clipId).toBe("tapcanvas.beat-sheet/v2:clip:0");
 		expect(compiled.beats[0]?.dialogueScript).toEqual([]);
 		expect(compiled.beats[1]?.storyEvents[0]?.entryState).toBe(compiled.beats[0]?.exitState);
 
-		const missingContinuity = structuredClone(compact) as Record<string, unknown>;
-		const firstBeat = (missingContinuity.beats as Array<Record<string, unknown>>)[0]!;
+		const compilerOwnedContinuity = structuredClone(compact) as Record<string, unknown>;
+		const firstBeat = (compilerOwnedContinuity.beats as Array<Record<string, unknown>>)[0]!;
 		delete firstBeat.exitState;
 		delete (firstBeat.storyEvents as Array<Record<string, unknown>>)[1]!.entryState;
-		expect(validateWorkflowAgentOutput({
+		const continuityResult = validateWorkflowAgentOutput({
 			encoding: "json_object",
 			artifactType: "tapcanvas.beat-sheet/v2",
-			rawText: JSON.stringify(missingContinuity),
+			rawText: JSON.stringify(compilerOwnedContinuity),
 			jsonObjectContract: contract,
-		})).toMatchObject({
-			ok: false,
-			errorMessage: expect.stringContaining("storyEvents[1].entryState"),
 		});
+		expect(continuityResult).toMatchObject({ ok: true });
+		if (!continuityResult.ok) throw new Error(continuityResult.errorMessage);
+		const projectedContinuity = JSON.parse(continuityResult.text) as {
+			beats: Array<{ exitState: string; storyEvents: Array<{ entryState: string; exitState: string }> }>;
+		};
+		expect(projectedContinuity.beats[0]?.storyEvents[1]?.entryState)
+			.toBe(projectedContinuity.beats[0]?.storyEvents[0]?.exitState);
+		expect(projectedContinuity.beats[0]?.exitState)
+			.toBe(projectedContinuity.beats[0]?.storyEvents.at(-1)?.exitState);
 	});
 
 	it("canonicalizes shared launch BeatSheet machine fields before the fast fan-out boundary", () => {
@@ -351,6 +567,7 @@ describe("Workflow Agent output contract", () => {
 			{ ...sceneState("初始", "危机成立") },
 			{
 				objectId: "character-liu-xiu",
+				referenceAssetIds: [], referenceImageNodeIds: [],
 				startState: "刚醒",
 				spatialRelation: "义庄内",
 				driver: "听见求救",
@@ -359,6 +576,7 @@ describe("Workflow Agent output contract", () => {
 			},
 			{
 				objectId: "prop-gate",
+				referenceAssetIds: [], referenceImageNodeIds: [],
 				startState: "紧闭",
 				spatialRelation: "人物与求救者之间",
 				driver: "急促拍门",
@@ -377,7 +595,7 @@ describe("Workflow Agent output contract", () => {
 					kind: "character",
 					name: "刘秀",
 					physicalIdentityKey: "body-liu-xiu",
-					referenceImageNodeIds: [],
+					referenceImageNodeIds: [], referenceAssetIds: [],
 					referenceRole: "identity",
 					identityInvariant: "青色道袍的年轻道士",
 				},
@@ -386,7 +604,7 @@ describe("Workflow Agent output contract", () => {
 					kind: "prop",
 					name: "义庄大门",
 					physicalIdentityKey: null,
-					referenceImageNodeIds: [],
+					referenceImageNodeIds: [], referenceAssetIds: [],
 					referenceRole: "prop",
 					identityInvariant: "厚重木门",
 				},
@@ -395,6 +613,19 @@ describe("Workflow Agent output contract", () => {
 				sourceBeatLedger: sheet.sourceFidelityAudit.sourceBeatLedger.slice(0, 4),
 			},
 			beats: [firstBeat],
+            blockingPlans: [{ ...sheet.blockingPlans[0], characters: [{name:"刘秀",at:[0.5,0.5]}] }],
+			sequenceControlPlan: {
+				protocolVersion: "tapcanvas.sequence-control-plan/v1",
+				totalDurationSeconds: Number(firstBeat.durationSeconds),
+				segments: [{
+					clipId: String(firstBeat.clipId),
+					startSeconds: 0,
+					endSeconds: Number(firstBeat.durationSeconds),
+					temporalDirectives: [],
+					transitionFromPrevious: "从整章入口进入",
+					transitionToNext: "把首段结果交给后续",
+				}],
+			},
 		};
 		const result = validateWorkflowAgentOutput({
 			encoding: "json_object",
@@ -419,6 +650,7 @@ describe("Workflow Agent output contract", () => {
 				openingState: "义庄清晨",
 				firstClipTurn: "门外求救",
 				handoffState: "刘秀准备应门",
+				endingHook: null,
 			},
 		};
 		expect(validateWorkflowAgentOutput({
@@ -437,7 +669,7 @@ describe("Workflow Agent output contract", () => {
 		expect(validateWorkflowAgentOutput({
 			encoding: "json_object",
 			artifactType: "tapcanvas.launch-beat-sheet/v1",
-			rawText: JSON.stringify({ ...launchSheet, beats: sheet.beats }),
+			rawText: JSON.stringify({ ...launchSheet, beats: sheet.beats, blockingPlans: [launchSheet.blockingPlans[0], sheet.blockingPlans[1]] }),
 			jsonObjectContract: contract,
 		})).toEqual({
 			ok: false,
@@ -601,11 +833,11 @@ describe("Workflow Agent output contract", () => {
 		});
 		expect(result).toEqual({
 			ok: false,
-			errorMessage: "Agent BeatSheet artifact cannot be executed: sourceCoveragePlan.speechLedger[0].clipIndex must reference an existing beat",
+			errorMessage: "Agent BeatSheet artifact cannot be executed: sourceCoveragePlan.speechLedger[0].clipIndex must be a zero-based integer in range 0..1 and reference an existing beat",
 		});
 	});
 
-	it("records model-authored BeatSheet continuity drift without rewriting it", () => {
+	it("projects BeatSheet state relay before downstream workflow nodes", () => {
 		const authored = parseWorkflowAgentJsonObjectContract({
 			requiredStringFields: ["protocolVersion"],
 			requiredObjectFields: ["sourceCoveragePlan", "sourceFidelityAudit"],
@@ -615,7 +847,6 @@ describe("Workflow Agent output contract", () => {
 		const contract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2", authored);
 		const sheet = beatSheetTimeline();
 		sheet.beats[0]!.storyEvents[1]!.entryState = "provider mechanical drift";
-		delete (sheet.beats[0] as unknown as Record<string, unknown>).exitState;
 		sheet.beats[1]!.storyEvents[0]!.entryState = "stale cross-clip entry";
 
 		const result = validateWorkflowAgentOutput({
@@ -624,14 +855,15 @@ describe("Workflow Agent output contract", () => {
 			rawText: JSON.stringify(sheet),
 			jsonObjectContract: contract,
 		});
+		expect(result).toMatchObject({ ok: true });
 		if (!result.ok) throw new Error(result.errorMessage);
-		const projected = JSON.parse(result.text) as typeof sheet;
-		expect(projected.beats[0]!.storyEvents[1]!.entryState).toBe("provider mechanical drift");
-		expect(projected.beats[0]!.exitState).toBeUndefined();
-		expect(projected.beats[1]!.storyEvents[0]!.entryState).toBe("stale cross-clip entry");
-		expect(result.diagnostics).toEqual(expect.arrayContaining([
-			expect.objectContaining({ code: "model_authored_consistency" }),
-		]));
+		const projected = JSON.parse(result.text) as {
+			beats: Array<{ storyEvents: Array<{ entryState: string; exitState: string }>; exitState: string }>;
+		};
+		expect(projected.beats[0]?.storyEvents[1]?.entryState)
+			.toBe(projected.beats[0]?.storyEvents[0]?.exitState);
+		expect(projected.beats[1]?.storyEvents[0]?.entryState)
+			.toBe(projected.beats[0]?.exitState);
 	});
 
 	it("records object-state prose drift without blocking or rewriting downstream input", () => {
@@ -668,7 +900,7 @@ describe("Workflow Agent output contract", () => {
 		}]));
 	});
 
-	it("keeps over-capacity BeatSheet timing model-authored and emits a diagnostic", () => {
+	it("keeps BeatSheet timing model-authored without a parallel host capacity policy", () => {
 		const authored = parseWorkflowAgentJsonObjectContract({
 			requiredStringFields: ["protocolVersion"],
 			requiredObjectFields: ["sourceCoveragePlan", "sourceFidelityAudit"],
@@ -712,7 +944,7 @@ describe("Workflow Agent output contract", () => {
 		const ledgerDuration = projected.sourceFidelityAudit.sourceBeatLedger
 			.reduce((total, item) => total + item.durationSeconds, 0);
 		expect(ledgerDuration).toBe(physicalDuration);
-		expect(result.diagnostics?.[0]?.message).toContain("cannot carry its frozen spoken script");
+		expect(result.diagnostics?.some((diagnostic) => diagnostic.message.includes("cannot carry its frozen spoken script")) ?? false).toBe(false);
 	});
 
 	it("leaves semantic pace labels to the model and records a diagnostic", () => {
@@ -947,7 +1179,7 @@ describe("Workflow Agent output contract", () => {
 						kind: "character",
 						name: "主角",
 						referenceRole: "identity",
-						referenceImageNodeIds: [],
+						referenceImageNodeIds: [], referenceAssetIds: [],
 					}],
 				}],
 			}),
@@ -955,7 +1187,7 @@ describe("Workflow Agent output contract", () => {
 		});
 		expect(result).toEqual({
 			ok: false,
-			errorMessage: "Agent video writer artifact is invalid: clips[0].shots[0].motionDynamics.direction direction 必须是 left/right/forward/backward/upward/downward/diagonal",
+			errorMessage: "Agent video writer artifact is invalid: clips[0].shots[0].motionDynamics.direction direction 必须是 left/right/forward/backward/upward/downward/diagonal（实收 \"向前\"）",
 		});
 	});
 	it("accepts only the declared string fields for a json_object port", () => {
@@ -1136,7 +1368,7 @@ describe("Workflow Agent output contract", () => {
 		const contract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2", authoredContract);
 		expect(contract).not.toBeNull();
 		expect(contract?.arrayItemRequiredNonEmptyStringArrayFields).toBeUndefined();
-		expect(contract?.arrayItemRequiredStringArrayFields).toBeUndefined();
+		expect(contract?.arrayItemRequiredStringArrayFields).toEqual({ objectRegistry: ["referenceAssetIds"] });
 		const sheet = beatSheetTimeline();
 		for (const beat of sheet.beats) delete (beat as Record<string, unknown>).characters;
 		const result = validateWorkflowAgentOutput({
@@ -1170,7 +1402,7 @@ describe("Workflow Agent output contract", () => {
 			allowedFields: ["protocolVersion", "sourceCoveragePlan", "sourceFidelityAudit", "beats"],
 		});
 		const contract = applyWorkflowArtifactJsonObjectContract("tapcanvas.beat-sheet/v2", authoredContract);
-		expect(contract?.arrayItemRequiredStringArrayFields).toBeUndefined();
+		expect(contract?.arrayItemRequiredStringArrayFields).toEqual({ objectRegistry: ["referenceAssetIds"] });
 		const sheet = beatSheetTimeline();
 		for (const beat of sheet.beats) delete (beat as Record<string, unknown>).characters;
 		const compiledCharacters = validateWorkflowAgentOutput({
@@ -1304,10 +1536,16 @@ describe("Workflow Agent output contract", () => {
 			itemAllowedFields: ["assetId", "role"],
 		});
 		expect(contract).not.toBeNull();
-		expect(validateWorkflowAgentOutput({
+		 expect(validateWorkflowAgentOutput({
 			encoding: "json_array",
 			artifactType: "tapcanvas.asset-plans/v1",
 			rawText: JSON.stringify([{ assetId: "hero", role: "character://沈鸦" }]),
+			jsonArrayContract: contract,
+		})).toMatchObject({ ok: true });
+		expect(validateWorkflowAgentOutput({
+			encoding: "json_array",
+			artifactType: "tapcanvas.asset-plans/v1",
+			rawText: JSON.stringify([{ assetId: "scene-empty-town", role: "scene://空座町" }]),
 			jsonArrayContract: contract,
 		})).toMatchObject({ ok: true });
 		expect(validateWorkflowAgentOutput({

@@ -9,6 +9,8 @@
 // breakdown）都必须通过这个常量切段，不能把整段长片直接交给模型。
 export const ANALYZE_VIDEO_MAX_SEGMENT_SEC = 15;
 export const DECOMPOSE_MAX_SEGMENT_SEC = 120;
+// 当前视频理解供应商的取样帧率硬上限；未显式指定时统一使用最大值。
+export const VIDEO_UNDERSTAND_MAX_FPS = 5;
 
 // 视频理解模型 input_video 的硬上限是 50 MiB（实测 57 MiB 直接 400 InvalidParameter）。短但高码率的
 // 超宽幅片(如 3958x1548)会时长够短却文件超限——必须按【大小】也切段。留余量到 38 MiB/段（平均码率切，

@@ -1,3 +1,4 @@
+import { projectCanvasMembership } from "@tapcanvas/workflow-kernel-protocol";
 import type { AppContext } from "../../types";
 import { AppError } from "../../middleware/error";
 import { getAssetByIdForUser, type AssetRow } from "../asset/asset.repo";
@@ -5,7 +6,14 @@ import {
   getMaterialVersionForOwner,
   listMaterialAssets,
 } from "../material/material.repo";
-import { listProjectNodeAssetsForOwner } from "../material/material.project-node-assets.service";
+import {
+  listProjectNodeAssetsForOwner,
+  loadProjectCanvasAssetScopeForOwner,
+} from "../material/material.project-node-assets.service";
+import {
+  EMPTY_CANVAS_DEPRECATION_SCOPE,
+  isDeprecatedCanvasReference,
+} from "../material/material.canvas-visibility";
 import { PROJECT_NODE_ASSET_ID_PREFIX } from "../material/material.project-node-assets";
 import {
   mapFlowRowToDto,
@@ -168,7 +176,7 @@ function readFirstImageResult(data: Record<string, unknown>): {
 function readFlowNodes(row: FlowRow): Array<Record<string, unknown>> {
   const dto = mapFlowRowToDto(row);
   const data = sanitizeFlowDataForStorage(dto.data ?? {});
-  const record = readRecord(data);
+  const record = readRecord(projectCanvasMembership(data));
   return Array.isArray(record?.nodes)
     ? record.nodes.filter(
         (item): item is Record<string, unknown> =>
@@ -256,14 +264,28 @@ async function resolveGenericAssetImageReference(input: {
   c: AppContext;
   ownerId: string;
   assetId: string;
-}): Promise<ResolvedExecutionImageReference | null> {
+}): Promise<{
+  reference: ResolvedExecutionImageReference;
+  deprecation: Readonly<{ nodeIds: readonly string[]; taskIds: readonly string[] }>;
+} | null> {
   const genericAsset = await getAssetByIdForUser(
     input.c.env.DB,
     input.assetId,
     input.ownerId,
   );
-  if (genericAsset) return parseAssetRowImageReference(genericAsset);
-  return null;
+  if (!genericAsset) return null;
+  const reference = parseAssetRowImageReference(genericAsset);
+  if (!reference) return null;
+  // generation 资产行记录的是运行时节点 id 与供应商 taskId；taskId 是与画布节点一一
+  // 对应的稳定身份，用于在媒体 URL 漂移时仍然识别出「该画布资产已被删除」。
+  const data = readRecord(typeof genericAsset.data === "string"
+    ? (() => { try { return JSON.parse(genericAsset.data as string) as unknown; } catch { return null; } })()
+    : genericAsset.data);
+  const taskIds = [data?.taskId, data?.videoTaskId, data?.imageTaskId]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const nodeIds = [data?.sourceNodeId, data?.canvasNodeId]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  return { reference, deprecation: { nodeIds, taskIds } };
 }
 
 function resolveMaterialAssetImageReference(input: {
@@ -376,6 +398,7 @@ export async function resolveExecutionImageReferences(input: {
   const resolved: ResolvedExecutionImageReference[] = [];
   const missingNodeIds: string[] = [];
   const missingAssetIds: string[] = [];
+  const deprecatedAssetIds: string[] = [];
   for (const nodeId of nodeIds) {
     const reference = input.row
       ? resolveNodeImageReference(input.row, nodeId)
@@ -391,6 +414,12 @@ export async function resolveExecutionImageReferences(input: {
   const hasOtherAssetIds = assetIds.some(
     (assetId) => !assetId.startsWith(PROJECT_NODE_ASSET_ID_PREFIX),
   );
+  // 画布删除=废弃：已删节点派生的资产（generation 资产行 / 设定库卡 / 项目节点卡）
+  // 不得再被任何生成链路引用。身份按 URL + 画布节点 id + 供应商 taskId 三类确定性事实匹配，
+  // 不依赖展示名或语义相似度。nodeIds 走的是已投影的可见图，不需要额外读取画布台账。
+  const deprecation = projectId && assetIds.length > 0
+    ? (await loadProjectCanvasAssetScopeForOwner(input.c, input.ownerId, { projectId })).deprecation
+    : EMPTY_CANVAS_DEPRECATION_SCOPE;
   const [projectNodeAssets, materialAssets] =
     projectId && assetIds.length > 0
       ? await Promise.all([
@@ -406,11 +435,12 @@ export async function resolveExecutionImageReferences(input: {
         ])
       : [[], []];
   for (const assetId of assetIds) {
-    const genericReference = await resolveGenericAssetImageReference({
+    const generic = await resolveGenericAssetImageReference({
       c: input.c,
       ownerId: input.ownerId,
       assetId,
     });
+    const genericReference = generic?.reference ?? null;
     const projectNodeReference = resolveProjectNodeAssetImageReference({
       projectNodeAssets,
       assetId,
@@ -431,17 +461,35 @@ export async function resolveExecutionImageReferences(input: {
         : null;
     const reference =
       genericReference || projectNodeReference || materialReference || versionReference;
+    // 已删除（废弃）的画布资产一律不得进入引用集合，也不得以「已解析」身份回到生成链路。
+    const deprecated = Boolean(reference) && isDeprecatedCanvasReference({
+      urls: reference ? [reference.url] : [],
+      nodeIds: [reference?.nodeId ?? "", ...(generic?.deprecation.nodeIds ?? [])],
+      taskIds: generic?.deprecation.taskIds ?? [],
+    }, deprecation);
+    if (deprecated) {
+      deprecatedAssetIds.push(assetId);
+      console.info(JSON.stringify({ event: "deprecated_canvas_asset_reference_rejected",
+        projectId, assetId, nodeId: reference?.nodeId ?? null, reason: "canvas_node_deleted" }));
+      continue;
+    }
     if (reference) resolved.push(reference);
     else missingAssetIds.push(assetId);
   }
 
-  if (missingNodeIds.length || missingAssetIds.length) {
+  if (missingNodeIds.length || missingAssetIds.length || deprecatedAssetIds.length) {
+    // 只因为「画布上已删除」而失败时给出专门的显式拒因；这是用户规则
+    // 「我删除的资产=废弃，不可以再被使用」的可执行边界，而不是解析失败。
+    const onlyDeprecated = deprecatedAssetIds.length > 0
+      && missingNodeIds.length === 0 && missingAssetIds.length === 0;
     throw new AppError(
-      "引用 ID 无法解析为当前用户、当前画布中的真实图片资产",
+      onlyDeprecated
+        ? "引用资产已从画布删除（废弃），不可再被使用；如需复用请先在画布上重新生成或重新选定"
+        : "引用 ID 无法解析为当前用户、当前画布中的真实图片资产",
       {
         status: 422,
-        code: "agents_tool_image_reference_unresolved",
-        details: { missingNodeIds, missingAssetIds },
+        code: onlyDeprecated ? "agents_tool_image_reference_deprecated" : "agents_tool_image_reference_unresolved",
+        details: { missingNodeIds, missingAssetIds, deprecatedAssetIds },
       },
     );
   }
@@ -460,14 +508,10 @@ export async function resolveExecutionImageReferences(input: {
     );
   }
 
-  const out: ResolvedExecutionImageReference[] = [];
-  const seenUrls = new Set<string>();
-  for (const reference of resolved) {
-    if (seenUrls.has(reference.url)) continue;
-    seenUrls.add(reference.url);
-    out.push(reference);
-  }
-  return out;
+  // Resolution preserves one receipt per requested identity. Different handles
+  // can address the same image; collapsing URLs here loses binding alignment.
+  // Media request assembly deduplicates the final URL list separately.
+  return resolved;
 }
 
 type InspectionReferenceId = {

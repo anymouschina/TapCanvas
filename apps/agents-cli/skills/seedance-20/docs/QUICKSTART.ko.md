@@ -1,0 +1,85 @@
+# Seedance 2.0 Skill OS 빠른 시작
+
+> 버전 6.6.0 · 설치부터 첫 "연출된" 프롬프트까지 약 5분.
+> 자세한 내용은 [README](../README.md)와 [한국어 가이드](README.ko.md)를 참고하세요.
+
+## 한마디로
+
+Seedance 2.0 Skill OS 는 형용사를 늘어놓는 대신 영화감독처럼 Seedance 2.0 을 연출하는 agent skill 입니다. 규칙은 하나뿐입니다——**모델을 연출하되, 프레임을 한 컷씩 붙들지 마세요.** 그 장면이 "무엇을 하고 있는지"만 말해 주면, 그 의도를 바로 쓸 수 있는 프롬프트로 컴파일합니다.
+
+## 1. 설치 (약 5분)
+
+이 저장소를 `seedance-20` 이라는 **하나의** 루트 스킬로 설치합니다. 하위 스킬과 references 는 상대 경로로 자동으로 불러옵니다.
+
+**Codex (원커맨드 설치 스크립트 제공)**
+
+```bash
+python scripts/install_codex_skill.py --force
+```
+
+저장소를 `~/.codex/skills/seedance-20`(또는 `$CODEX_HOME/skills/seedance-20`)로 복사합니다. Codex 를 다시 시작한 뒤 `$seedance-20`로 불러오세요.
+
+**GitHub 에서 설치 (저장소 URL 설치를 지원하는 클라이언트)**
+
+```text
+https://github.com/Emily2040/seedance-2.0
+```
+
+**수동 복사 (그 밖의 클라이언트)**
+
+폴더를 이름 `seedance-20` 그대로 클라이언트의 스킬 디렉터리에 복사하세요. 흔한 위치는 [README 설치 표](../README.md#install)에 정리해 두었습니다(보장이 아니니 반드시 본인 클라이언트에서 확인하세요). 예: Claude Code `.claude/skills/`, Cursor `.cursor/skills/`, GitHub Copilot `.github/skills/`, Windsurf `.windsurf/skills/`.
+
+> 안전이 먼저입니다. 믿을 수 있는 agent 클라이언트에만 설치하세요. 낯설거나 서드파티 agent 에서 쓰기 전에 [SECURITY.md](../SECURITY.md)를 꼭 읽어 보세요.
+
+## 2. 상황에 맞춰 스킬 고르기
+
+| 지금 상황 | 먼저 로드 |
+|---|---|
+| 아직 막연한 아이디어 | `seedance-interview` |
+| 분명해진 장면 | `seedance-prompt` |
+| 여러 클립으로 이어지는 이야기 | `seedance-sequence` |
+| 확정된 클립의 다음 이어가기 | `seedance-continuation` |
+| 결과가 나쁘거나 막혔을 때 | `seedance-troubleshoot` |
+| 캐릭터·브랜드·유명인·실존 인물이 얽힐 때 | `seedance-copyright` |
+
+## 3. 쓰기 전에 "연출"부터 —— 네 가지 질문
+
+1. **이 장면은 무엇을 하고 있나요?** 전환인가, 폭로인가, 감정인가, 아니면 제시인가요.
+2. **카메라는 그것을 어떻게 말하나요?** 고독은 와이드로, 표정은 클로즈업으로, 깨달음은 푸시인으로.
+3. **빛은 무엇을 위해 일하나요?** 시간대, 강함과 부드러움, 따뜻함과 차가움 —— 모두 의도를 위해서.
+4. **소리는 무엇을 하나요?** 거의 무음인가, 환경음 하나인가, 아니면 대사 한 줄인가요.
+
+## 4. 한 가지 대비
+
+**치장 위주 (약함)**
+
+```
+웅장한 시네마틱 샷, 편지를 읽는 여성, 감성적, 아름다운 조명, 4K
+```
+
+**연출 (강함)**
+
+```
+미디엄 클로즈업, 눈높이. 편지를 내리자 두 손이 멈추고, 느린 푸시인이 다가옵니다. 부드러운 창빛이 얼굴을 담담하게 비춥니다. 거의 무음, 의자 긁히는 소리 하나.
+```
+
+## 5. 테이크를 아끼는 두 가지 원칙
+
+- **참조 태그는 한 글자도 바꾸지 마세요.** `@Image1`, `@Video1`, `@Audio1`, `@图片1`, `@视频1` 를 번역하거나 형식을 손대지 않습니다.
+- **이야기 전체를 한 번에 생성하려 하지 마세요.** 먼저 Clip 01 을 만들고, 그것이 "실제로" 어디서 끝났는지 본 다음, 그 진짜 결말에서 Clip 02 를 씁니다(`seedance-continuation`).
+
+## 6. 안전
+
+- **콘텐츠 안전:** 보호되는 캐릭터, 유명인, 브랜드, 로고, 노래, 또는 실존 인물의 얼굴과 목소리를 쓴다면 다른 언어로 숨기려 하지 마세요. `seedance-copyright` 로 오리지널·라이선스·후반작업 대체안처럼 안전한 형태로 바꿉니다.
+- **agent 안전:** 이 패키지는 **어떤 통신도 하지 않고 텔레메트리도 보내지 않습니다.** 스크립트는 결정론적이며 오프라인으로 동작합니다. API 키, 계정 쿠키, 비공개 소스를 믿을 수 없는 agent 에 붙여넣지 마세요. [SECURITY.md](../SECURITY.md) 참고.
+
+## 7. 더 깊이
+
+- `references/directing-engine.md` — 장면을 읽고 하나의 의도를 고르기(33개 장르 예제).
+- `references/capability-map.md` — 모델의 강점을 살리고 알려진 약점을 피해 설계하기.
+- `references/api-workflow.md` — API, 제공자, 가격, 모델 ID(모두 출처 날짜 표기).
+- `references/examples-by-mode.md` — T2V, I2V, V2V, R2V, FLF2V, 편집, 확장 예시.
+
+---
+
+다른 언어: [English](QUICKSTART.md) · [中文](QUICKSTART.zh.md) · [日本語](QUICKSTART.ja.md) · [Español](QUICKSTART.es.md) · [Русский](QUICKSTART.ru.md)

@@ -1,3 +1,4 @@
+import { verifyMediaDeliveryCoverage, type MediaDeliveryCoverage } from "./execution.media-delivery-coverage";
 import type { WorkerEnv } from "../../types";
 import {
 	freshReadFlowRow,
@@ -7,6 +8,7 @@ import {
 	type VideoFlowNode,
 } from "../task/video-orchestrator.flow-io";
 import { createWorkflowInternalContext } from "./execution.video-runner";
+import type { WorkflowMediaProbeEvidence } from "./execution.media-probe";
 
 export type WorkflowFilmProjectionRequest = Readonly<{
 	executionId: string;
@@ -25,6 +27,8 @@ export type WorkflowFilmProjectionRequest = Readonly<{
 		xfadeSeconds: number;
 		colorMatch: boolean;
 	}>;
+	mediaProbeEvidence?: WorkflowMediaProbeEvidence;
+	deliveryCoverage?: MediaDeliveryCoverage;
 }>;
 
 function readString(value: unknown): string {
@@ -81,7 +85,10 @@ export async function projectWorkflowFilmToCanvas(
 	});
 	const filmData: Record<string, unknown> = {
 		kind: "composeVideo",
-		label: `成片 ${input.targetDurationSeconds ?? ""}s`,
+		label: input.deliveryCoverage?.status === "partial"
+			? `部分成片 ${input.deliveryCoverage.deliveredDurationSeconds}/${input.deliveryCoverage.requestedDurationSeconds}s`
+			: `成片 ${input.targetDurationSeconds ?? ""}s`,
+		...(input.deliveryCoverage ? { deliveryCoverage: input.deliveryCoverage, ...verifyMediaDeliveryCoverage(input.deliveryCoverage) } : {}),
 		status: "success",
 		videoUrl,
 		assetId,
@@ -93,6 +100,10 @@ export async function projectWorkflowFilmToCanvas(
 		...(input.targetDurationSeconds !== null ? { durationSeconds: input.targetDurationSeconds } : {}),
 		...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
 		...(input.concatPolicy ? { concatPolicy: input.concatPolicy } : {}),
+		...(input.mediaProbeEvidence ? {
+			mediaProbe: input.mediaProbeEvidence.probe,
+			mediaSpecDiagnostics: input.mediaProbeEvidence.diagnostics,
+		} : {}),
 	};
 	await persistFlowPatch({
 		c,

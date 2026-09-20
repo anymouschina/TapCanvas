@@ -1,6 +1,10 @@
+import { inspectFieldRelations, FIELD_RELATIONS_KEYWORD } from "../../../../../packages/schemas/json-schema-relations/index.mjs";
+import { inspectIndexReferences, INDEX_REFERENCES_KEYWORD } from "../../../../../packages/schemas/json-schema-relations/index-references.mjs";
 export type WorkflowJsonSchemaIssue = Readonly<{ path: string; message: string }>;
 
 const WORKFLOW_SCHEMA_KEYWORDS = new Set([
+	FIELD_RELATIONS_KEYWORD,
+	INDEX_REFERENCES_KEYWORD,
 	"$comment", "$defs", "$id", "$ref", "$schema",
 	"additionalProperties", "allOf", "anyOf", "const", "contains", "contentEncoding", "contentMediaType", "contentSchema",
 	"default", "definitions", "dependentRequired", "deprecated", "description", "else", "enum", "examples",
@@ -185,6 +189,8 @@ function validate(schemaValue: unknown, value: unknown, path: string, issues: Wo
 	}
 	const objectValue = record(value);
 	if (!objectValue) return;
+	issues.push(...inspectFieldRelations(schema, objectValue, path));
+	issues.push(...inspectIndexReferences(schema, objectValue, path));
 	const objectKeys = Object.keys(objectValue);
 	if (typeof schema.minProperties === "number" && objectKeys.length < schema.minProperties) issues.push({ path, message: `${path} has too few properties` });
 	if (typeof schema.maxProperties === "number" && objectKeys.length > schema.maxProperties) issues.push({ path, message: `${path} has too many properties` });

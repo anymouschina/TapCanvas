@@ -32,6 +32,15 @@ describe("workflow execution semantics snapshot", () => {
 		});
 	});
 
+	it("freezes configured reconciliation attempts and rejects unsafe manual retries", () => {
+		const node = (executorRef: string) => ({ id: "configured", data: {
+			workflowAtomicSpec: { executorRef }, workflowRetryPolicy: { maxAttempts: 3 },
+		} });
+		const frozen = freezeWorkflowExecutionSemanticsSnapshot({ nodes: [node("tapcanvas.video.generate/v1")], edges: [] });
+		expect(readWorkflowNodeExecutionSemantics(frozen, "configured")).toMatchObject({ maxAutomaticAttempts: 3, recoveryMode: "reconcile" });
+		expect(() => freezeWorkflowExecutionSemanticsSnapshot({ nodes: [node("agents.tool.invoke/v1")], edges: [] })).toThrow(/idempotency identity/);
+	});
+
 	it("preserves a valid frozen snapshot", () => {
 		const first = freezeWorkflowExecutionSemanticsSnapshot({
 			nodes: [{ id: "output", type: "taskNode", data: { kind: "workflowStage", workflowAtomicSpec: { executorRef: "workflow.output/v1" } } }],

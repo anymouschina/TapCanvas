@@ -8,11 +8,13 @@ const {
   getMaterialVersionForOwner,
   listMaterialAssets,
   listProjectNodeAssetsForOwner,
+  loadProjectCanvasAssetScopeForOwner,
 } = vi.hoisted(() => ({
   getAssetByIdForUser: vi.fn(),
   getMaterialVersionForOwner: vi.fn(),
   listMaterialAssets: vi.fn(),
   listProjectNodeAssetsForOwner: vi.fn(),
+  loadProjectCanvasAssetScopeForOwner: vi.fn(),
 }));
 
 vi.mock("../asset/asset.repo", async () => {
@@ -31,6 +33,7 @@ vi.mock("../material/material.repo", async () => {
 
 vi.mock("../material/material.project-node-assets.service", () => ({
   listProjectNodeAssetsForOwner,
+  loadProjectCanvasAssetScopeForOwner,
 }));
 
 import {
@@ -54,12 +57,40 @@ function makeFlowRow(nodes: unknown[]): FlowRow {
 const appContext = { env: { DB: {} } } as AppContext;
 
 describe("resolveExecutionImageReferences", () => {
+	it("cannot resolve a deleted image retained only for paid task settlement", async () => {
+		const row = makeFlowRow([{ id: "deleted-image", type: "taskNode", canvasDetached: true,
+			data: { kind: "image", taskId: "old-paid-task", imageUrl: "https://assets.test/deleted.png" } }]);
+		await expect(resolveExecutionImageReferences({ c: appContext, ownerId: "user-1", row,
+			nodeIds: ["deleted-image"] })).rejects.toThrow();
+	});
   beforeEach(() => {
     vi.clearAllMocks();
     getAssetByIdForUser.mockResolvedValue(null);
     getMaterialVersionForOwner.mockResolvedValue(null);
     listMaterialAssets.mockResolvedValue([]);
     listProjectNodeAssetsForOwner.mockResolvedValue([]);
+    loadProjectCanvasAssetScopeForOwner.mockResolvedValue({
+      assets: [],
+      deprecation: { resourceUrls: new Set<string>(), nodeIds: new Set<string>(), taskIds: new Set<string>() },
+    });
+  });
+
+  it("rejects an asset whose canvas node was deleted even when the media URL drifted", async () => {
+    getAssetByIdForUser.mockResolvedValue({
+      id: "asset-old",
+      project_id: "project-1",
+      data: JSON.stringify({ type: "image", url: "https://assets.test/moved.png", taskId: "task-old" }),
+    });
+    loadProjectCanvasAssetScopeForOwner.mockResolvedValue({
+      assets: [],
+      deprecation: { resourceUrls: new Set<string>(), nodeIds: new Set<string>(), taskIds: new Set(["task-old"]) },
+    });
+    await expect(resolveExecutionImageReferences({ c: appContext, ownerId: "user-1",
+      row: makeFlowRow([]), assetIds: ["asset-old"] })).rejects.toMatchObject({
+      status: 422,
+      code: "agents_tool_image_reference_deprecated",
+      details: { deprecatedAssetIds: ["asset-old"] },
+    });
   });
 
   it("resolves a real canvas image from nodeId and hides its URL from the agent descriptor", async () => {
@@ -131,6 +162,15 @@ describe("resolveExecutionImageReferences", () => {
     });
     expect(inspected).toHaveLength(1);
     expect(inspected[0]?.previewOnly).toBe(true);
+  });
+
+  it("preserves distinct binding handles pointing to the same image", async () => {
+    getAssetByIdForUser.mockImplementation(async (_db: unknown, id: string) => ({ id, name: id,
+      data: JSON.stringify({ type: "image", url: "https://assets.test/shared.png" }),
+      owner_id: "user-1", project_id: "project-1", created_at: "2026-09-20", updated_at: "2026-09-20" }));
+    const resolved = await resolveExecutionImageReferences({ c: appContext, ownerId: "user-1", row: makeFlowRow([]), assetIds: ["one", "two"] });
+    expect(resolved.map(reference => reference.assetId)).toEqual(["one", "two"]);
+    expect(new Set(resolved.map(reference => reference.url)).size).toBe(1);
   });
 
   it("resolves an uploaded image asset from its persisted data.url", async () => {

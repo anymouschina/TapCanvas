@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	getFlowForOwner: vi.fn(),
+	reconcileReceipt: vi.fn(),
 	reconcileImageNodesForFlow: vi.fn(),
 	generateImageToCanvas: vi.fn(),
 }));
+
+vi.mock("./execution.media-receipt", () => ({ reconcileWorkflowMediaReceipt: mocks.reconcileReceipt }));
 
 vi.mock("../flow/flow.repo", () => ({
 	getFlowForOwner: mocks.getFlowForOwner,
@@ -20,6 +23,7 @@ vi.mock("../task/agents-tool-bridge.billing-scope", () => ({
 }));
 
 import {
+	composeWorkflowImagePrompt,
 	inspectPersistedWorkflowImageNode,
 	persistedWorkflowImageRequestMatches,
 	runWorkflowImageNode,
@@ -63,6 +67,66 @@ describe("workflow image runner persistence", () => {
 		mocks.reconcileImageNodesForFlow.mockReset();
 		mocks.generateImageToCanvas.mockReset();
 	});
+
+	it("places the single-subject identity-board contract after shared project style text", () => {
+		const prompt = composeWorkflowImagePrompt({
+			prompt: "短黑发、蓝白电弧",
+			stylePrompt: "两名超能力高中生在城市中持续战斗；高燃日漫风",
+			assetMetadata: {
+				referenceType: "character",
+				roleName: "physical-student-a",
+				characterAssetRole: "identity_anchor",
+				characterProfileVersion: "character-card/v3",
+			},
+		});
+		expect(prompt).toContain("两名超能力高中生在城市中持续战斗");
+		expect(prompt).toContain("【单人角色身份板约束】");
+		expect(prompt).toContain("四个信息区（正面脸、3/4脸、正面全身、背面全身）全部是同一角色的不同视角");
+		expect(prompt).toContain("不得出现第二个人、其他人物、群像、分身");
+		expect(prompt.lastIndexOf("【单人角色身份板约束】")).toBeGreaterThan(prompt.lastIndexOf("[项目统一视觉风格]"));
+	});
+
+	it("creates an explicitly authorized retry as a new effect and preserves the failed node", async () => {
+		const authorizedRetry = { nodeId: "images", itemId: "one", taskId: "old-task", canvasNodeId: "old-node", retryKey: "receipt-bound-key" };
+		const retryRequest = { ...request, runtimeNodeId: "images::item::one", authorizedRetry, previousEvidence: null, resumeOnly: false };
+		const identity = workflowImageEffectIdentity(retryRequest);
+		mocks.getFlowForOwner.mockResolvedValue(flowRow({ nodes: [{ id: "old-node", data: { status: "failed", taskId: "old-task" } }], edges: [] }));
+		mocks.generateImageToCanvas.mockResolvedValue({ status: "running", nodeId: identity.canvasNodeId, taskId: "new-task" });
+		await expect(runWorkflowImageNode({ DB: {} } as never, retryRequest)).resolves.toMatchObject({ taskId: "new-task", status: "waiting_external" });
+		expect(mocks.generateImageToCanvas.mock.calls[0][0].bodyArgs.node.id).toBe(identity.canvasNodeId);
+		expect(identity.canvasNodeId).not.toBe("old-node");
+		expect(identity.effectId).toContain("receipt-bound-key");
+	});
+
+	it("refuses retry when the old receipt is now running or contains produced media", async () => {
+		const authorizedRetry = { nodeId: "images", itemId: "one", taskId: "old-task", canvasNodeId: "old-node", retryKey: "key" };
+		for (const data of [{ status: "running", taskId: "old-task" }, { status: "failed", taskId: "old-task", imageUrl: "https://assets.test/already.png" }]) {
+			mocks.getFlowForOwner.mockResolvedValue(flowRow({ nodes: [{ id: "old-node", data }], edges: [] }));
+			await expect(runWorkflowImageNode({ DB: {} } as never, { ...request, runtimeNodeId: "images::item::one", authorizedRetry, previousEvidence: null, resumeOnly: false })).rejects.toThrow("media_retry_failed_canvas_receipt_changed");
+		}
+		expect(mocks.generateImageToCanvas).not.toHaveBeenCalled();
+	});
+
+	it("reconciles an already accepted retry instead of paying again", async () => {
+		const authorizedRetry = { nodeId: "images", itemId: "one", taskId: "old-task", canvasNodeId: "old-node", retryKey: "key" };
+		const retryRequest = { ...request, runtimeNodeId: "images::item::one", authorizedRetry, previousEvidence: null, resumeOnly: false };
+		const identity = workflowImageEffectIdentity(retryRequest);
+		mocks.getFlowForOwner.mockResolvedValue(flowRow({ nodes: [{ id: identity.canvasNodeId, data: {
+			status: "running", taskId: "accepted-new", prompt: request.prompt, negativePrompt: request.negativePrompt,
+			modelKey: request.modelKey, aspect: request.aspectRatio, imageSize: request.imageSize, referenceAssetBindings: [],
+		} }], edges: [] }));
+		await expect(runWorkflowImageNode({ DB: {} } as never, retryRequest)).resolves.toMatchObject({ status: "waiting_external", taskId: "accepted-new", reused: true });
+		expect(mocks.generateImageToCanvas).not.toHaveBeenCalled();
+	});
+
+	it("does not add character-card isolation text to non-character image assets", () => {
+		const prompt = composeWorkflowImagePrompt({
+			prompt: "雨后商业街",
+			stylePrompt: "日漫风",
+			assetMetadata: { referenceType: "scene", sceneName: "商业街" },
+		});
+		expect(prompt).not.toContain("【单人角色身份板约束】");
+	});
 	it("reuses the same accepted task and canvas node identity", () => {
 		expect(workflowImageEffectIdentity({ executionFamilyId: "family-1", runtimeNodeId: "image-1" })).toEqual({
 			canvasNodeId: "image-1::family::family-1::output::image",
@@ -76,6 +140,14 @@ describe("workflow image runner persistence", () => {
 	});
 
 	it("reuses the family-scoped image effect when a recovery lost its local receipt", async () => {
+		const assetMetadata = {
+			referenceType: "character",
+			roleName: "刘秀",
+			characterAssetRole: "identity_anchor",
+			characterProfileVersion: "character-card/v3",
+			identityAnchors: ["清瘦脸型", "青色道袍"],
+			prohibitedDrift: ["不得改变脸型、发型和年龄感"],
+		} as const;
 		mocks.getFlowForOwner.mockResolvedValue(flowRow({
 			nodes: [{
 				id: "image-1::family::family-1::output::image",
@@ -83,7 +155,7 @@ describe("workflow image runner persistence", () => {
 					kind: "image",
 					status: "running",
 					taskId: "provider-family-image-1",
-					prompt: "prompt",
+					prompt: composeWorkflowImagePrompt({ prompt: "prompt", assetMetadata }),
 					negativePrompt: "negative",
 					modelKey: "gpt-image-2",
 					aspect: "16:9",
@@ -102,14 +174,7 @@ describe("workflow image runner persistence", () => {
 
 		await expect(runWorkflowImageNode({ DB: {} } as never, {
 			...request,
-			assetMetadata: {
-				referenceType: "character",
-				roleName: "刘秀",
-				characterAssetRole: "identity_anchor",
-				characterProfileVersion: "character-card/v3",
-				identityAnchors: ["清瘦脸型", "青色道袍"],
-				prohibitedDrift: ["不得改变脸型、发型和年龄感"],
-			},
+			assetMetadata,
 			previousEvidence: null,
 			resumeOnly: false,
 		})).resolves.toMatchObject({
@@ -326,4 +391,55 @@ describe("workflow image runner persistence", () => {
 		});
 		expect(mocks.generateImageToCanvas).not.toHaveBeenCalled();
 	});
+});
+
+
+it("recovers a missing projection through the accepted receipt without resubmission", async () => {
+	mocks.getFlowForOwner.mockResolvedValue(flowRow({ nodes: [], edges: [] }));
+	mocks.generateImageToCanvas.mockClear();
+	mocks.reconcileImageNodesForFlow.mockClear();
+	mocks.reconcileReceipt.mockResolvedValue({ status: "success", nodeId: request.previousEvidence.canvasNodeId, taskId: request.previousEvidence.taskId,
+		imageUrl: "https://assets.test/result", assetId: "asset", reused: true });
+	expect(await runWorkflowImageNode({ DB: {} } as never, request)).toMatchObject({ status: "success", imageUrl: "https://assets.test/result" });
+	expect(mocks.reconcileReceipt).toHaveBeenCalledWith(expect.anything(), request.ownerId, request.previousEvidence.canvasNodeId, request.previousEvidence.taskId, "image");
+	expect(mocks.generateImageToCanvas).not.toHaveBeenCalled();
+	expect(mocks.reconcileImageNodesForFlow).not.toHaveBeenCalled();
+});
+
+it('uses the asset specification identity across different producer steps and reuses accepted receipts', async () => {
+  const assetIdentity = {assetId:'shared-image',generationSpecVersion:'spec-v1'};
+  const first = {...request,assetIdentity,runtimeNodeId:'step-a::item::shared',previousEvidence:null,resumeOnly:false};
+  const next = {...first,runtimeNodeId:'step-b::item::shared'};
+  const identity=workflowImageEffectIdentity(first);
+  expect(workflowImageEffectIdentity(next)).toEqual(identity);
+  expect(workflowImageEffectIdentity({...next,assetIdentity:{...assetIdentity,generationSpecVersion:'spec-v2'}})).not.toEqual(identity);
+  mocks.generateImageToCanvas.mockReset();
+  mocks.getFlowForOwner.mockResolvedValue(flowRow({nodes:[{id:identity.canvasNodeId,data:{
+    status:'running',taskId:'accepted-paid-task',prompt:request.prompt,negativePrompt:request.negativePrompt,
+    modelKey:request.modelKey,aspect:request.aspectRatio,imageSize:request.imageSize,referenceAssetBindings:[],
+  }}],edges:[]}));
+  const results = await Promise.all([first,next].map(item=>runWorkflowImageNode({DB:{}} as never,item)));
+  expect(results).toEqual([expect.objectContaining({taskId:'accepted-paid-task',reused:true}),expect.objectContaining({taskId:'accepted-paid-task',reused:true})]);
+  expect(mocks.generateImageToCanvas).not.toHaveBeenCalled();
+});
+
+it('waits on a competing durable claim until its receipt arrives without another submission', async () => {
+  const fresh = {...request,previousEvidence:null,resumeOnly:false,assetIdentity:{assetId:'shared',generationSpecVersion:'v1'}};
+  const identity = workflowImageEffectIdentity(fresh);
+  const data = {status:'submitting',workflowSubmissionState:'submitting',workflowEffectId:identity.effectId,
+    prompt:request.prompt,negativePrompt:request.negativePrompt,modelKey:request.modelKey,aspect:request.aspectRatio,
+    imageSize:request.imageSize,referenceAssetBindings:[]};
+  mocks.getFlowForOwner.mockReset(); mocks.generateImageToCanvas.mockReset();
+  mocks.getFlowForOwner.mockResolvedValueOnce(flowRow({nodes:[],edges:[]}))
+    .mockResolvedValue(flowRow({nodes:[{id:identity.canvasNodeId,data}],edges:[]}));
+  mocks.generateImageToCanvas.mockRejectedValue(Object.assign(new Error('already claimed'),{code:'workflow_image_effect_already_claimed'}));
+  const waiting = await runWorkflowImageNode({DB:{}} as never,fresh);
+  expect(waiting).toEqual({status:'waiting_external',nodeId:identity.canvasNodeId,taskId:null,reused:true});
+  mocks.generateImageToCanvas.mockReset();
+  await expect(runWorkflowImageNode({DB:{}} as never,{...fresh,resumeOnly:true,previousEvidence:{canvasNodeId:identity.canvasNodeId}}))
+    .resolves.toEqual(waiting);
+  expect(mocks.generateImageToCanvas).not.toHaveBeenCalled();
+  mocks.getFlowForOwner.mockResolvedValue(flowRow({nodes:[{id:identity.canvasNodeId,data:{...data,status:'running',taskId:'accepted'}}],edges:[]}));
+  await expect(runWorkflowImageNode({DB:{}} as never,{...fresh,resumeOnly:true,previousEvidence:{canvasNodeId:identity.canvasNodeId}}))
+    .resolves.toMatchObject({status:'waiting_external',taskId:'accepted',reused:true});
 });

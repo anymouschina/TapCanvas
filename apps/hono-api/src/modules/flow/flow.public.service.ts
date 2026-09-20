@@ -1,3 +1,5 @@
+import { assertLocalSourceNodeReferences } from "./flow.node-reference-contract";
+import { reconcileCanvasMembership } from '@tapcanvas/workflow-kernel-protocol';
 import { randomUUID } from "node:crypto";
 import {
 	PublicFlowCreateNodeSchema,
@@ -389,7 +391,7 @@ function orderWorkflowChildrenByTopology(
 		- (stableIndexById.get(readId(right.id)) ?? Number.MAX_SAFE_INTEGER)
 		|| readId(left.id).localeCompare(readId(right.id))
 	);
-	const indegree = new Map([...childById.keys()].map((id) => [id, 0] as const));
+	const indegree = new Map<string, number>([...childById.keys()].map((id) => [id, 0]));
 	const outgoing = new Map<string, Set<string>>();
 	for (const rawEdge of edges) {
 		const edge = asObject(rawEdge) as EdgeLike | null;
@@ -993,10 +995,15 @@ export function applyPublicFlowGraphPatch(options: {
 				details: { nodeId: id || null },
 			});
 		}
+		const requestedParentId = Object.prototype.hasOwnProperty.call(item.data, "parentId")
+			? readId(item.data.parentId)
+			: undefined;
+		const patchData = { ...item.data };
+		delete patchData.parentId;
 		const prevData = ensureNodeDataObject(existing);
 		const merged = mergeNodeData({
 			existing: prevData,
-			patch: item.data,
+			patch: patchData,
 			// 顶层 allowOverwrite 兜全量；条目级 allowOverwrite 让 agent 能精准只覆盖某一条
 			// （错误提示就是这么指引的），二者任一为真即放行。
 			allowOverwrite:
@@ -1005,7 +1012,9 @@ export function applyPublicFlowGraphPatch(options: {
 			nodeId: id,
 			recoveryArgs: options.patch,
 		});
-		const next = { ...existing, data: merged };
+		const next = requestedParentId === undefined
+			? { ...existing, data: merged }
+			: { ...existing, data: merged, parentId: requestedParentId };
 		nodeById.set(id, next);
 		patchedNodes += 1;
 		autoWireTargetNodeIds.add(id);
@@ -1034,7 +1043,13 @@ export function applyPublicFlowGraphPatch(options: {
 	]);
 	for (const nodeId of contractTouchedNodeIds) {
 		const node = nodeById.get(nodeId);
-		if (node) assertShotTableNodeContract(node);
+		if (node) {
+			assertShotTableNodeContract(node);
+			const sourceReferencesTouched = createdNodeIds.includes(nodeId)
+				|| (options.patch.patchNodeData ?? []).some((item) => item.id === nodeId && Object.prototype.hasOwnProperty.call(item.data, "sourceNodeIds"))
+				|| (options.patch.appendNodeArrays ?? []).some((item) => item.id === nodeId && item.key === "sourceNodeIds");
+			if (sourceReferencesTouched) assertLocalSourceNodeReferences({ nodeId, data: ensureNodeDataObject(node), availableNodeIds: new Set(nodeById.keys()) });
+		}
 	}
 
 	const layoutAffectedNodeIds = new Set(createdNodeIds);
@@ -1210,12 +1225,12 @@ export function applyPublicFlowGraphPatch(options: {
 		)
 		: {};
 	return {
-		data: {
+		data: reconcileCanvasMembership(options.current, {
 			...currentExtra,
 			nodes: finalNodes,
 			edges: edgeList,
 			...(typeof current.viewport === "undefined" ? {} : { viewport: current.viewport }),
-		},
+		}) as PublicFlowGraph,
 		stats: { deletedNodes, deletedEdges, createdNodes, createdEdges, patchedNodes, appendedArrays },
 		createdNodeIds,
 		reusedNodeIds,
@@ -1246,6 +1261,7 @@ export function buildCanvasSyncPatch(options: {
 	);
 	const upsertNodes = [
 		...applied.createdNodeIds.map((id) => nodeMap.get(id)),
+		...(patch.restoredNodeIds ?? []).map((id) => nodeMap.get(id)),
 		...applied.reusedNodeIds.map((id) => nodeMap.get(id)),
 		...(patch.patchNodeData ?? []).map((p) => nodeMap.get(String(p.id ?? ""))),
 		...(patch.appendNodeArrays ?? []).map((p) => nodeMap.get(String(p.id ?? ""))),
@@ -1253,6 +1269,7 @@ export function buildCanvasSyncPatch(options: {
 	const upsertEdges = applied.createdEdgeIds.map((id) => edgeMap.get(id)).filter(Boolean);
 	const syncPatch: Record<string, unknown> = {};
 	if (upsertNodes.length) syncPatch.upsertNodes = upsertNodes;
+	if (patch.restoredNodeIds?.length) syncPatch.restoredNodeIds = patch.restoredNodeIds;
 	if (patch.deleteNodeIds?.length) syncPatch.removeNodeIds = patch.deleteNodeIds;
 	if (upsertEdges.length) syncPatch.upsertEdges = upsertEdges;
 	if (applied.deletedEdgeIds.length) syncPatch.removeEdgeIds = applied.deletedEdgeIds;

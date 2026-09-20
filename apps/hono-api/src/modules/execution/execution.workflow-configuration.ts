@@ -4,11 +4,13 @@ const INHERITED_MEDIA_CONFIGURATION_FIELDS = [
 	"workflowVideoModelSelection",
 	"workflowVideoModelKey",
 	"workflowVideoResolution",
+	"workflowVideoSize",
 	"workflowVideoAspectRatio",
 	"workflowImageModelSelection",
 	"workflowImageModelKey",
 	"workflowImageAspectRatio",
 	"workflowImageSize",
+	"workflowImageQuality",
 ] as const;
 
 function isRecord(value: unknown): value is JsonRecord {

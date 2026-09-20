@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isLegacyLocalPreUpstreamVideoErrorCode,
   isOptionalReferenceAudioFailure,
+  isPreUpstreamTaskHttpRejection,
   isVideoSubmitCapacityBackpressure,
   isVideoSubmitKnownPreUpstreamFailure,
   matchVideoSubmitRejectedReferenceIds,
@@ -12,6 +13,25 @@ import {
 } from "./video-orchestrator.submit-error";
 
 describe("video submit error classification", () => {
+  it("treats a definitive 4xx relay rejection as pre-upstream without matching any message", () => {
+    for (const status of [400, 401, 402, 403, 404, 422, 429]) {
+      expect(isPreUpstreamTaskHttpRejection(status)).toBe(true);
+    }
+    for (const status of [200, 302, 500, 502, 503, 504]) {
+      expect(isPreUpstreamTaskHttpRejection(status)).toBe(false);
+    }
+    // 网关 4xx 被记为 upstreamRequestAttempted=false 后，同一合同直接判为 pre-upstream：
+    // 因此「模型不存在」这类确定性拒绝会如实暴露原因并允许安全重试，而不是被当成未知提交。
+    expect(isVideoSubmitKnownPreUpstreamFailure({
+      code: "newapi:newapi_request_failed",
+      details: { upstreamStatus: 400, upstreamRequestAttempted: false },
+    })).toBe(true);
+    expect(isVideoSubmitKnownPreUpstreamFailure({
+      code: "newapi:newapi_request_failed",
+      details: { upstreamStatus: 502 },
+    })).toBe(false);
+  });
+
   it("recognizes the structured membership concurrency code", () => {
     expect(isVideoSubmitCapacityBackpressure({
       code: "membership_concurrency_limit_reached",

@@ -4,7 +4,15 @@ import {
 	readWorkflowCanvasGroup,
 	readWorkflowCanvasGroupFromFlowData,
 	readWorkflowCanvasProjectContextFromFlowData,
+	readWorkflowCanvasProjectContextFromSnapshot,
 } from "./execution.canvas-source-runner";
+
+it("does not turn detached source groups into new production inputs", () => {
+	expect(() => readWorkflowCanvasGroupFromFlowData({ flowId: "flow-1", groupId: "deleted-group",
+		rowData: JSON.stringify({ nodes: [{ id: "deleted-group", type: "groupNode", canvasDetached: true, data: {} },
+			{ id: "retained-child", parentId: "deleted-group", data: { text: "old source" } }], edges: [] }),
+	})).toThrow("does not exist");
+});
 
 function projectContext(input: Readonly<{
 	selectedNodeIds?: readonly string[];
@@ -145,6 +153,7 @@ describe("caller project-context workflow source", () => {
 		assetId: "project-node:caller-project-1:text-1",
 		assetVersion: 8,
 		assetVersionId: "text-1-v8",
+		contentFingerprint: "text-1-content",
 		projectId: "caller-project-1",
 		name: "导演剧本",
 		canonicalName: "导演剧本",
@@ -159,8 +168,33 @@ describe("caller project-context workflow source", () => {
 		assetUsage: null,
 		assetPurpose: null,
 		productionEligible: true,
+		productionExclusionReason: null,
+		styleFingerprint: null,
+		sourceFacts: {
+			referenceType: null, roleName: null, physicalIdentityKey: null,
+			characterAssetRole: null, characterProfileVersion: null,
+			identityAnchors: [], prohibitedDrift: [], sourceNodeId: "text-1",
+			workflowExecutionId: null, taskId: null, prompt: null,
+		},
 		updatedAt: "2026-08-18T00:00:00.000Z",
 	};
+
+	it.each(["caller-flow-1", "chapter:chapter-1"])("reads frozen narrative in %s independently of unsaved or edited live canvas", (canvasId) => {
+		const snapshot = { ...(JSON.parse(rowData) as { nodes: unknown[] }), edges: [] };
+		const context = projectContext({ canvasId, sourceNodeId: "text-1", assets: [{ ...textAsset, flowId: canvasId }] });
+		const flowVersionData = { nodes: [], edges: [], workflowCallerCanvasSnapshot: snapshot };
+		const facts = readWorkflowCanvasProjectContextFromSnapshot({ flowId: canvasId, flowVersionData, projectContext: context });
+		expect(facts.nodes).toEqual(expect.arrayContaining([expect.objectContaining({ nodeId: "text-1", content: "四十秒打斗正文" })]));
+		// Workflow definition/current canvas nodes are not the source snapshot.
+		const edited = { ...flowVersionData, nodes: [{ id: "text-1", data: { kind: "text", content: "启动后的新正文" } }] };
+		expect(readWorkflowCanvasProjectContextFromSnapshot({ flowId: canvasId, flowVersionData: edited, projectContext: context })).toEqual(facts);
+	});
+
+	it("reports missing frozen input without substituting live or definition nodes", () => {
+		expect(() => readWorkflowCanvasProjectContextFromSnapshot({ flowId: "caller-flow-1",
+			flowVersionData: JSON.parse(rowData) as unknown, projectContext: projectContext({ assets: [textAsset] }),
+		})).toThrow("requires the frozen caller canvas snapshot");
+	});
 
 	it("uses the only ready text node when no canvas node is selected", () => {
 		const facts = readWorkflowCanvasProjectContextFromFlowData({
@@ -175,6 +209,35 @@ describe("caller project-context workflow source", () => {
 			sourceNodeIds: ["text-1"],
 			nodes: [{ nodeId: "text-1", kind: "text", content: "四十秒打斗正文", sourceRevision: 7 }],
 		});
+	});
+
+	it("prefers the completed text-expansion source over an older ready draft", () => {
+		const expandedAsset = {
+			...textAsset,
+			assetId: "project-node:caller-project-1:text-expanded",
+			nodeId: "text-expanded",
+		};
+		const facts = readWorkflowCanvasProjectContextFromFlowData({
+			flowId: "caller-flow-1",
+			rowData: JSON.stringify({
+				nodes: [
+					{ id: "text-1", type: "taskNode", data: { kind: "text", content: "旧草稿" } },
+					{
+						id: "text-expanded",
+						type: "taskNode",
+						data: {
+							kind: "text",
+							content: "扩写后的完整剧情",
+							workflowSourceRole: "expanded_story_source",
+						},
+					},
+				],
+			}),
+			projectContext: projectContext({ assets: [textAsset, expandedAsset] }),
+		});
+
+		expect(facts.sourceNodeIds).toEqual(["text-expanded"]);
+		expect(facts.nodes[0]).toMatchObject({ nodeId: "text-expanded", content: "扩写后的完整剧情" });
 	});
 
 	it("uses the frozen canonical chapter seed when derived text assets are also visible", () => {
@@ -230,6 +293,14 @@ describe("caller project-context workflow source", () => {
 			}),
 		});
 
+		expect(facts.authoritativeSources).toEqual([expect.objectContaining({
+			nodeId: "chapter-seed-chapter-1",
+			sourceId: "chapter-seed-chapter-1",
+			sourceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+			content: "阿乔点击方舟登录，现实机房折叠为游戏甲板。",
+			sourceRevision: 74,
+			sourceHash: "source-hash-74",
+		})]);
 		expect(facts.nodes).toEqual([{
 			nodeId: "chapter-seed-chapter-1",
 			kind: "text",
@@ -247,6 +318,7 @@ describe("caller project-context workflow source", () => {
 			projectContext: projectContext({ selectedNodeIds: ["text-1"], assets: [textAsset] }),
 		});
 		expect(selected.sourceNodeIds).toEqual(["text-1"]);
+		expect(selected.selectedNodeFacts?.[0]?.metadata).toEqual({ kind: "text" });
 
 		expect(() => readWorkflowCanvasProjectContextFromFlowData({
 			flowId: "caller-flow-1",
@@ -264,6 +336,114 @@ describe("caller project-context workflow source", () => {
 				assets: [textAsset],
 			}),
 		})).toThrow("selection does not include a ready text source node");
+	});
+
+	it("preserves selected image descriptions without substituting unrelated narrative or exposing media URLs", () => {
+		const facts = readWorkflowCanvasProjectContextFromFlowData({
+			flowId: "caller-flow-1",
+			rowData: JSON.stringify({ nodes: [
+				{ id: "text-1", data: { kind: "text", content: "unrelated story" } },
+				{ id: "image-1", data: { kind: "image", label: "用户商品", description: "红色包装", prompt: "摄影提示", imageUrl: "https://example.com/private.png" } },
+			] }),
+			projectContext: projectContext({ selectedNodeIds: ["image-1", "missing"], assets: [
+				textAsset,
+				{ ...textAsset, assetId: "image-asset", nodeId: "image-1", mediaKind: "image" },
+			] }),
+			allowNoTextSource: true,
+		});
+		expect(facts.sourceNodeIds).toEqual([]);
+		expect(facts.authoritativeSources).toEqual([]);
+		expect(facts.selectedNodeFacts).toEqual([{
+			nodeId: "image-1",
+			assetIds: ["image-asset"],
+			metadata: { kind: "image", label: "用户商品", description: "红色包装", prompt: "摄影提示" },
+		}]);
+		expect(facts.missingSelectedNodeIds).toEqual(["missing"]);
+	});
+
+	it("keeps a selected video as reference input when standalone chat has no text source", () => {
+		const facts = readWorkflowCanvasProjectContextFromFlowData({
+			flowId: "caller-flow-1",
+			rowData: JSON.stringify({
+				nodes: [{ id: "video-1", type: "taskNode", data: { kind: "video", videoUrl: "https://example.com/reference.mp4" } }],
+			}),
+			projectContext: projectContext({ selectedNodeIds: ["video-1"], assets: [] }),
+			allowNoTextSource: true,
+		});
+
+		expect(facts).toMatchObject({
+			sourceNodeIds: [],
+			referenceVideoNodeIds: ["video-1"],
+			nodes: [],
+		});
+	});
+
+	it("preserves a selected prompt-only video without requesting unavailable media analysis", () => {
+		const facts = readWorkflowCanvasProjectContextFromFlowData({
+			flowId: "caller-flow-1",
+			rowData: JSON.stringify({ nodes: [{ id: "video-1", data: { kind: "video", prompt: "retained prompt", videoResults: [{}] } }] }),
+			projectContext: projectContext({ selectedNodeIds: ["video-1"], assets: [] }),
+			allowNoTextSource: true,
+		});
+		expect(facts.referenceVideoNodeIds).toBeUndefined();
+		expect(facts.selectedNodeFacts?.[0]?.metadata.prompt).toBe("retained prompt");
+		expect(facts.referenceVideoDiagnostics).toEqual([{ nodeId: "video-1", code: "video_media_not_materialized", analysisRequested: false }]);
+	});
+
+	it("ignores a ready text projection whose canvas node has no source facts", () => {
+		const facts = readWorkflowCanvasProjectContextFromFlowData({
+			flowId: "caller-flow-1",
+			rowData: JSON.stringify({
+				nodes: [{ id: "workflow-execution-status", type: "workflowExecutionNode", data: { kind: "workflowExecution" } }],
+			}),
+			projectContext: projectContext({
+				assets: [{
+					...textAsset,
+					assetId: "project-node:workflow-execution-status",
+					nodeId: "workflow-execution-status",
+				}],
+			}),
+			allowNoTextSource: true,
+		});
+
+		expect(facts).toMatchObject({ sourceNodeIds: [], nodes: [] });
+	});
+
+	it("promotes the server-owned accepted turn to authoritative lineage when no text node exists", () => {
+		const acceptedTurnSource = {
+			protocolVersion: "tapcanvas.workflow-accepted-turn-source/v1" as const,
+			kind: "public_chat_turn" as const,
+			ownerId: "owner-1",
+			sourceId: "public-turn-1",
+			text: "15秒电商视频",
+			fingerprint: "6c6791c32b5d6d9e9eb6a2274de056480c10600d8a06701954f356dba7bda344",
+		};
+		const facts = readWorkflowCanvasProjectContextFromFlowData({
+			flowId: "caller-flow-1",
+			rowData: JSON.stringify({
+				nodes: [{ id: "workflow-execution-status", type: "workflowExecutionNode", data: { kind: "workflowExecution" } }],
+			}),
+			projectContext: projectContext({
+				assets: [{
+					...textAsset,
+					assetId: "project-node:workflow-execution-status",
+					nodeId: "workflow-execution-status",
+				}],
+			}),
+			allowNoTextSource: true,
+			acceptedTurnSource,
+		});
+
+		expect(facts).toMatchObject({
+			sourceNodeIds: [],
+			nodes: [],
+			authoritativeSources: [{
+				sourceId: "public-turn-1",
+				content: "15秒电商视频",
+				sourceFingerprint: acceptedTurnSource.fingerprint,
+				kind: "public_chat_turn",
+			}],
+		});
 	});
 
 	it("matches chapter text assets by the frozen canonical chapter canvas identity", () => {

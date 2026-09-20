@@ -6,7 +6,8 @@
  * 通过后落库 + 登记产物依赖图（beat_sheet → clip:N），authoring_state=beats_committed。
  * 之后每个 clip 独立派 writer；writer 在同一上下文加载创作与 reviewer 方法，完成
  * 首稿→语义复盘→直接修订后只交付一份最终 artifact。Hono 不评价语义质量；JSON
- * 结构或动态 editable stringBudget 失败只记录首次提交和精确拒因，不回灌、不重派。
+ * 结构或动态 editable stringBudget 失败只记录精确拒因，并由 agents-cli 在同一 ReAct 链内修订完整产物；
+ * Hono 不做字段级语义纠偏、不重放副作用，只有修订预算耗尽才结束节点。
  */
 
 import { resolveChapterTextForOrchestrate } from "./video-orchestrator.chapter-source";
@@ -54,12 +55,6 @@ import {
   validateBeatKeyframeReferences,
 } from "./video-orchestrator.blocking-context";
 import type { ParentAgentExecution } from "./agent-execution-provenance";
-import {
-  computeEffectiveCharacterStates,
-  resolveClipReferenceImageEntries,
-  type StoryPlanClip,
-} from "./video-orchestrator.orchestrate";
-import { validateSd2ClipReferenceBudget } from "./video-reference-budget";
 import { loadImageGenerationReferenceUrlsByTaskId } from "./image-generation-reference-evidence";
 import {
   BeatSheetDraftError,
@@ -164,7 +159,6 @@ export async function orchestrateVideoReferenceBudget(input: {
   const row = await freshReadFlowRow({ c: input.c, flowId: scopedFlowId, requestUserId: ownerId, devBypass: input.devBypass === true, ...(input.chapterId ? { chapterId: input.chapterId } : {}) });
   const nodeById = new Map(readFlowNodes(row).map((node) => [node.id, node] as const));
   const beats = Array.isArray(sheet.beats) ? sheet.beats : [];
-  const maximumBusinessImages = input.generationContract.referenceImagePolicy.maximumBusinessImages;
   const clipBudgets = beats.map((rawBeat, index) => {
     const beat = rawBeat && typeof rawBeat === "object" && !Array.isArray(rawBeat) ? rawBeat as Record<string, unknown> : {};
     const storyboardImageNodeId = readTrimmed(beat.storyboardImageNodeId);
@@ -187,11 +181,10 @@ export async function orchestrateVideoReferenceBudget(input: {
         return { nodeId, kind: readTrimmed(contract.kind), name: readTrimmed(contract.name), referenceRole: readTrimmed(contract.referenceRole), resolvedUniqueUrlCount: urls.length, incrementalBusinessUrlCost: incrementalUrls.length, eligible: incrementalUrls.length > 0, ...(issue ? { issue } : {}) };
       });
     });
-    return { clipIndex: Number.isInteger(Number(beat.clipIndex)) ? Number(beat.clipIndex) : index, continuityMode, storyboard: storyboardImageNodeId ? { nodeId: storyboardImageNodeId, resolvedUniqueUrlCount: storyboardUrls.length, budgetCost: storyboardCost } : null, availableBusinessImagesAfterStoryboard: Math.max(0, maximumBusinessImages - storyboardCost), candidates };
+    return { clipIndex: Number.isInteger(Number(beat.clipIndex)) ? Number(beat.clipIndex) : index, continuityMode, storyboard: storyboardImageNodeId ? { nodeId: storyboardImageNodeId, resolvedUniqueUrlCount: storyboardUrls.length, budgetCost: storyboardCost } : null, candidates };
   });
   const budgetRevision = stableContentHash({
     sourceRunId,
-    referenceImagePolicy: input.generationContract.referenceImagePolicy,
     clipBudgets,
     proposedOperations,
   }).slice(0, 16);
@@ -234,7 +227,6 @@ export async function orchestrateVideoReferenceBudget(input: {
     budgetRevision,
     proposalStored: proposedOperations.length > 0,
     generationContract: input.generationContract,
-    referenceImagePolicy: input.generationContract.referenceImagePolicy,
     clipBudgets,
     nextAction:
       proposedOperations.length > 0
@@ -1088,53 +1080,6 @@ export async function orchestrateVideoCommitBeats(input: {
         });
       }
       sheet.beats = materialized.beats;
-      if (/seedance/i.test(input.generationContract.videoModel)) {
-        const referenceClips: StoryPlanClip[] = sheet.beats.map((beat) => ({
-          clipPrompt: beat.logline,
-          characterRoleNames: [...beat.characterRoleNames],
-          ...(beat.propNames?.length ? { propNames: [...beat.propNames] } : {}),
-          ...(beat.sceneName ? { sceneName: beat.sceneName } : {}),
-          ...(beat.characterStates
-            ? { characterStates: { ...beat.characterStates } }
-            : {}),
-          videoReferenceNodeIds: buildBeatVideoReferenceNodeIds(beat),
-          continuityMode: beat.continuityMode,
-          ...(beat.storyboardImageNodeId
-            ? { storyboardImageNodeId: beat.storyboardImageNodeId }
-            : {}),
-          ...(beat.lastFrameImageNodeId
-            ? { lastFrameImageNodeId: beat.lastFrameImageNodeId }
-            : {}),
-        }));
-        for (const [clipIndex, clip] of referenceClips.entries()) {
-          const entries = resolveClipReferenceImageEntries(
-            row,
-            clip,
-            "",
-            undefined,
-            computeEffectiveCharacterStates(referenceClips, clipIndex),
-            { authority: "explicit_only" },
-          );
-          const budget = validateSd2ClipReferenceBudget({
-            clipIndex,
-            businessReferenceImages: entries.map((entry) => entry.url),
-			maximumBusinessReferences: input.generationContract.referenceImagePolicy.maximumBusinessImages,
-          });
-          if (!budget.ok) {
-            return failWithoutPatch({
-              ok: false,
-              terminal: true,
-              mode: "commit_beats",
-              code: "clip_reference_budget_exceeded",
-              runId,
-              clipIndex,
-              actualBusinessReferences: budget.actualBusinessReferences,
-              maximumBusinessReferences: budget.maximumBusinessReferences,
-              message: `${budget.message}；尚未写入 run、派发 writer、估算或提交视频。`,
-            });
-          }
-        }
-      }
     } catch (error) {
       return {
         ok: false,

@@ -3,16 +3,56 @@ import type { WorkflowNodeRunDto } from '../api/server'
 import * as apiServer from '../api/server'
 import {
   applyWorkflowNodeRuns,
+  ensureWorkflowExecutionPlaceholderNode,
   loadLatestWorkflowExecutionProjection,
   loadWorkflowExecutionProjection,
   restoreLatestWorkflowExecutionProjection,
+  resolveWorkflowExecutionSyncPollIntervalMs,
   waitForWorkflowExecutionProjectionMatch,
   workflowExecutionProjectionMatchesCanvas,
+  watchWorkflowExecution,
 } from './workflowExecutionProjection'
 import { useRFStore } from './store'
 
 describe('workflow execution node projection', () => {
   beforeEach(() => useRFStore.getState().reset())
+
+  it('backs off workflow status sync after read failures and resets after success', () => {
+    expect(resolveWorkflowExecutionSyncPollIntervalMs(0)).toBe(1_200)
+    expect(resolveWorkflowExecutionSyncPollIntervalMs(1)).toBe(2_400)
+    expect(resolveWorkflowExecutionSyncPollIntervalMs(2)).toBe(4_800)
+    expect(resolveWorkflowExecutionSyncPollIntervalMs(4)).toBe(10_000)
+    expect(resolveWorkflowExecutionSyncPollIntervalMs(99)).toBe(10_000)
+    expect(resolveWorkflowExecutionSyncPollIntervalMs(Number.NaN)).toBe(1_200)
+  })
+
+  it('recovers after more than sixty read failures without reporting the execution failed', async () => {
+    vi.useFakeTimers()
+    const getExecution = vi.spyOn(apiServer, 'getWorkflowExecution')
+    vi.spyOn(apiServer, 'listWorkflowNodeRuns').mockResolvedValue([])
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    for (let index = 0; index < 61; index += 1) getExecution.mockRejectedValueOnce(new Error('network unavailable'))
+    getExecution.mockResolvedValue({
+      id: 'execution-reconnect', flowId: 'flow-1', flowVersionId: 'version-1', ownerId: 'user-1',
+      status: 'success', concurrency: 1, executionFamilyId: 'execution-reconnect', usesProjectAssets: false,
+      createdAt: '2026-09-07T00:00:00.000Z',
+    })
+    const onFailure = vi.fn()
+    const onSyncFailure = vi.fn()
+    try {
+      const watching = watchWorkflowExecution('execution-reconnect', onFailure, onSyncFailure)
+      await vi.runAllTimersAsync()
+      await watching
+      expect(getExecution).toHaveBeenCalledTimes(62)
+      expect(onFailure).not.toHaveBeenCalled()
+      expect(onSyncFailure).toHaveBeenCalledTimes(1)
+      expect(useRFStore.getState().nodes.find((node) => node.id === 'wf-exec-execution-reconnect')?.data.workflowStatus)
+        .toBe('succeeded')
+    } finally {
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    }
+  })
 
   it('projects real typed ports, artifacts, evidence and terminal status onto the exact node', () => {
     useRFStore.setState({
@@ -75,7 +115,7 @@ describe('workflow execution node projection', () => {
       finishedAt: '2026-08-11T10:00:02.000Z',
     }
 
-    applyWorkflowNodeRuns('execution-items', [run])
+    applyWorkflowNodeRuns('execution-items', [run], 'success')
 
     // 占位节点是 workflowRuntimeReference 投影节点（不写回 flow、不同步服务端），
     // 除它之外画布不应新增任何节点。
@@ -134,6 +174,22 @@ describe('workflow execution node projection', () => {
       workflowCompletedUnits: 2,
       workflowTotalUnits: 19,
       workflowErrorCount: 1,
+    })
+  })
+
+  it('keeps a running author repair visible on the aggregate canvas placeholder', () => {
+    ensureWorkflowExecutionPlaceholderNode('execution-repair', [{
+      id: 'run-repair', executionId: 'execution-repair', nodeId: 'author', status: 'running', attempt: 1,
+      errorCode: null, errorMessage: null, failureStage: null,
+      outputRefs: { evidence: { continuationReason: 'workflow_agent_physical_retry_pending',
+        outputRepair: { error: 'compositionContract.focalPoint requires coordinates', candidate: 'PRIVATE' },
+        deliveryEvidence: { state: 'succeeded', physicalRetryOrdinal: 8 } } },
+      createdAt: '2026-09-14T07:32:35.000Z', startedAt: '2026-09-14T07:32:56.000Z', finishedAt: null,
+    }], 'running')
+    expect(useRFStore.getState().nodes.find(node => node.id === 'wf-exec-execution-repair')?.data).toMatchObject({
+      workflowStatus: 'running', workflowErrorCount: 0,
+      workflowWaitingReasonCode: 'structured_output_repair_required',
+      workflowWaitingReasonLabel: '正在修订结构化产物（执行轮次 8）：compositionContract.focalPoint requires coordinates',
     })
   })
 
@@ -206,6 +262,7 @@ describe('workflow execution node projection', () => {
     })
     vi.spyOn(apiServer, 'listWorkflowExecutions').mockResolvedValueOnce([{
       id: 'execution-latest',
+      executionFamilyId: 'family-latest',
       flowId: 'flow-1',
       flowVersionId: 'version-1',
       ownerId: 'owner-1',
@@ -268,6 +325,7 @@ describe('workflow execution node projection', () => {
   it('ignores terminal history when an AI workflow project asks for an active-only entry projection', async () => {
     vi.spyOn(apiServer, 'listWorkflowExecutions').mockResolvedValueOnce([{
       id: 'execution-complete',
+      executionFamilyId: 'family-complete',
       flowId: 'flow-1',
       flowVersionId: 'version-1',
       ownerId: 'owner-1',
@@ -291,6 +349,7 @@ describe('workflow execution node projection', () => {
     vi.spyOn(apiServer, 'listWorkflowExecutions').mockResolvedValueOnce([
       {
         id: 'execution-complete',
+        executionFamilyId: 'family-complete',
         flowId: 'flow-1',
         flowVersionId: 'version-2',
         ownerId: 'owner-1',
@@ -301,6 +360,7 @@ describe('workflow execution node projection', () => {
       },
       {
         id: 'execution-running',
+        executionFamilyId: 'family-running',
         flowId: 'flow-1',
         flowVersionId: 'version-1',
         ownerId: 'owner-1',
@@ -314,6 +374,8 @@ describe('workflow execution node projection', () => {
 
     await expect(loadLatestWorkflowExecutionProjection('flow-1', { activeOnly: true })).resolves.toEqual({
       executionId: 'execution-running',
+      executionFamilyId: 'family-running',
+      executionStatus: 'running',
       runs: [],
     })
     expect(apiServer.listWorkflowNodeRuns).toHaveBeenCalledWith('execution-running')
@@ -351,6 +413,8 @@ describe('workflow execution node projection', () => {
 
     await expect(loadWorkflowExecutionProjection(' execution-pinned ')).resolves.toEqual({
       executionId: 'execution-recovery',
+      executionFamilyId: 'execution-pinned',
+      executionStatus: 'failed',
       runs,
     })
     expect(apiServer.getWorkflowExecutionFamily).toHaveBeenCalledWith('execution-pinned', 1)
@@ -746,13 +810,30 @@ describe('workflow execution node projection', () => {
     })
   })
 
-  it('turns the execution placeholder green on full success and red on any failure', () => {
+    it('keeps a local node failure distinct from an active execution and requires its completion verdict', () => {
+    const failed: WorkflowNodeRunDto = {
+      id: 'r1', executionId: 'execution-partial', nodeId: 'a', status: 'failed',
+      attempt: 1, createdAt: '2026-09-07T01:00:00.000Z', errorMessage: 'provider rejected request',
+    }
+    const running: WorkflowNodeRunDto = { ...failed, id: 'r2', nodeId: 'b', status: 'running', errorMessage: null }
+    applyWorkflowNodeRuns('execution-partial', [failed, running], 'running')
+    expect(useRFStore.getState().nodes.find((node) => node.id === 'wf-exec-execution-partial')?.data)
+      .toMatchObject({ workflowStatus: 'partial', workflowErrorCount: 1, workflowErrorDetail: 'provider rejected request' })
+    applyWorkflowNodeRuns('execution-partial', [{ ...running, status: 'success' }])
+    expect(useRFStore.getState().nodes.find((node) => node.id === 'wf-exec-execution-partial')?.data)
+      .toMatchObject({ workflowStatus: 'running' })
+    applyWorkflowNodeRuns('execution-partial', [{ ...running, status: 'success' }], 'success')
+    expect(useRFStore.getState().nodes.find((node) => node.id === 'wf-exec-execution-partial')?.data)
+      .toMatchObject({ workflowStatus: 'succeeded' })
+  })
+
+it('turns the execution placeholder green on full success and red on any failure', () => {
     useRFStore.setState({ nodes: [], edges: [] })
 
     applyWorkflowNodeRuns('execution-xt-ok', [
       { id: 'r1', executionId: 'execution-xt-ok', nodeId: 'a', status: 'success', attempt: 1, createdAt: '2026-08-16T01:00:00.000Z', finishedAt: '2026-08-16T01:00:01.000Z', outputRefs: {} },
       { id: 'r2', executionId: 'execution-xt-ok', nodeId: 'b', status: 'success', attempt: 1, createdAt: '2026-08-16T01:00:01.000Z', finishedAt: '2026-08-16T01:00:02.000Z', outputRefs: {} },
-    ])
+    ], 'success')
     expect(useRFStore.getState().nodes.find((node) => node.id === 'wf-exec-execution-xt-ok')?.data)
       .toMatchObject({ workflowStatus: 'succeeded', workflowCompletedUnits: 2, workflowTotalUnits: 2 })
 
@@ -794,6 +875,7 @@ describe('workflow execution node projection', () => {
     useRFStore.setState({ nodes: [], edges: [] })
     vi.spyOn(apiServer, 'listWorkflowExecutions').mockResolvedValueOnce([{
       id: 'execution-xt-latest',
+      executionFamilyId: 'family-xt-latest',
       flowId: 'flow-1',
       flowVersionId: 'version-1',
       ownerId: 'owner-1',
@@ -833,4 +915,18 @@ describe('workflow execution node projection', () => {
         workflowTotalUnits: 2,
       })
   })
+})
+
+it('replaying 100 workflow node statuses publishes no store updates', () => {
+  useRFStore.getState().reset()
+  useRFStore.setState({ nodes: Array.from({ length: 100 }, (_, i) => ({ id: String(i), type: 'taskNode', position: { x: i, y: 0 }, data: { kind: 'workflowStage' } })), edges: [] })
+  const runs: WorkflowNodeRunDto[] = Array.from({ length: 100 }, (_, i) => ({ id: `run-${i}`, executionId: 'execution-100', nodeId: String(i), status: 'success', attempt: 1, createdAt: '2026-09-08T00:00:00.000Z', outputRefs: { artifacts: [], ports: { result: { value: i } } } }))
+  applyWorkflowNodeRuns('execution-100', runs, 'success')
+  const nodes = useRFStore.getState().nodes
+  const listener = vi.fn()
+  const unsubscribe = useRFStore.subscribe(listener)
+  applyWorkflowNodeRuns('execution-100', JSON.parse(JSON.stringify(runs)), 'success')
+  unsubscribe()
+  expect(listener).not.toHaveBeenCalled()
+  expect(useRFStore.getState().nodes).toBe(nodes)
 })

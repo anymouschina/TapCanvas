@@ -62,7 +62,7 @@ import {
 	runAgentsBridgeChatTask,
 	buildMemoryCoreRequestIdentity,
 } from "./task.agents-bridge";
-import { stringifyCanonicalAgentsBridgeSuccess } from "./task.agents-bridge.test-fixtures";
+import { setCanonicalAgentsBridgeFixtureLogicalTaskId, stringifyCanonicalAgentsBridgeSuccess } from "./task.agents-bridge.test-fixtures";
 import { parseInternalApiKey } from "../apiKey/internal-api-key";
 import {
 	AGENTS_BRIDGE_SESSION_AFFINITY_HEADER,
@@ -113,6 +113,7 @@ function createDeferred<T>(): {
 
 describe("runAgentsBridgeChatTask stream protocol", () => {
 	beforeEach(() => {
+		setCanonicalAgentsBridgeFixtureLogicalTaskId("req-stream-test");
 		vi.restoreAllMocks();
 		buildUserMemoryContext.mockResolvedValue({
 			rollups: { session: [], chapter: [], book: [], project: [] },
@@ -503,7 +504,7 @@ describe("runAgentsBridgeChatTask stream protocol", () => {
 					id: "bridge-task-stable-public-turn",
 					text: "已受理。",
 					trace: { toolCalls: [], turns: [] },
-				}),
+				}, { logicalTaskId: "public-chat-turn:stable-logical-task" }),
 				{ status: 200, headers: { "content-type": "application/json" } },
 			);
 		});

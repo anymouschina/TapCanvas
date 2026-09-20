@@ -63,9 +63,11 @@ export function buildClipInputEdges(input: {
 	/** 视频节点 id（边的 target）。 */
 	clipNodeId: string;
 	/** 实际提交的参考图/首尾帧/上一镜成片 URL（按对象 key 尾部反查画布节点）。 */
-	referenceImageUrls?: string[];
+	referenceImageUrls?: readonly string[];
 	/** 已知的上游节点 id 直连（storyboardImageNodeId / blockingFrameNodeId / videoReferenceNodeIds）。 */
-	sourceNodeIds?: string[];
+	sourceNodeIds?: readonly string[];
+	/** 供应商实际消费的稳定资产 ID；按画布节点 data.assetId/serverAssetId/generatedAssetId/assetRefId 反查。 */
+	sourceAssetIds?: readonly string[];
 	/** 目标节点由同一 patch 的 createNodes 创建（尚不在 current 里）时置 true，跳过目标存在性校验。 */
 	targetWillBeCreated?: boolean;
 }): ClipInputEdgeSpec[] {
@@ -86,6 +88,10 @@ export function buildClipInputEdges(input: {
 				? (n.data as Record<string, unknown>)
 				: {};
 		nodeKinds.set(id, trimmed(data.kind));
+		for (const assetKey of ["assetId", "serverAssetId", "generatedAssetId", "assetRefId"]) {
+			const assetId = trimmed(data[assetKey]);
+			if (assetId && !tailKeyToNodeId.has(`asset:${assetId}`)) tailKeyToNodeId.set(`asset:${assetId}`, id);
+		}
 		for (const key of ["imageUrl", "url", "videoUrl", "audioUrl"]) {
 			const tail = urlTailKey(trimmed(data[key]));
 			if (tail && !tailKeyToNodeId.has(tail)) tailKeyToNodeId.set(tail, id);
@@ -115,6 +121,7 @@ export function buildClipInputEdges(input: {
 		sources.push(id);
 	};
 	for (const id of input.sourceNodeIds ?? []) push(id);
+	for (const assetId of input.sourceAssetIds ?? []) push(tailKeyToNodeId.get(`asset:${trimmed(assetId)}`) ?? "");
 	for (const u of input.referenceImageUrls ?? []) {
 		const tail = urlTailKey(u);
 		if (tail) push(tailKeyToNodeId.get(tail) ?? "");

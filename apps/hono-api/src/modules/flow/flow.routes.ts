@@ -86,6 +86,8 @@ flowRouter.post("/", async (c) => {
 			ownerType: parsed.data.ownerType,
 			ownerId: parsed.data.ownerId,
 			expectedRevision: parsed.data.expectedRevision,
+			deletedNodeIds: parsed.data.deletedNodeIds,
+			restoredNodeIds: parsed.data.restoredNodeIds,
 			source: parsed.data.source,
 		});
 		const parsedFlow = FlowSchema.parse(flow);

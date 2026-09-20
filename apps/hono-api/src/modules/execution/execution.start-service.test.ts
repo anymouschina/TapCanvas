@@ -50,6 +50,27 @@ const mocks = vi.hoisted(() => ({
 		...value,
 		workflowExecutionSemantics: { protocolVersion: "workflow.execution-semantics/v2", nodes: {} },
 	})),
+	listNewApiModels: vi.fn(async () => [{
+		id: 1,
+		modelName: "minimax-h3-test",
+		requestModelKey: "minimax-h3-test",
+		routingAliases: [],
+		displayLabel: "MiniMax H3 test",
+		description: null,
+		icon: null,
+		tags: [],
+		vendorId: null,
+		endpoints: ["task.video"],
+		runtimeEndpoints: ["task.video"],
+		kind: "video" as const,
+		enabled: true,
+		syncOfficial: true,
+		nameRule: 1,
+		createdTime: 1,
+		updatedTime: 1,
+		meta: null,
+		pricing: { cost: 1, enabled: true, specCosts: [] },
+	}]),
 }));
 
 vi.mock("../flow/flow.repo", () => ({ createFlowVersion: mocks.createFlowVersion }));
@@ -70,13 +91,22 @@ vi.mock("./execution.repo", () => ({
 	updateExecutionStatus: mocks.updateExecutionStatus,
 }));
 vi.mock("./execution.flow-scope", () => ({ scopeWorkflowFlowData: mocks.scopeWorkflowFlowData }));
-vi.mock("./execution.node-runtime", () => ({ inspectWorkflowExecutionSupport: mocks.inspectWorkflowExecutionSupport }));
+vi.mock("./execution.node-runtime", async () => ({ ...await vi.importActual<typeof import("./execution.node-runtime")>("./execution.node-runtime"), inspectWorkflowExecutionSupport: mocks.inspectWorkflowExecutionSupport }));
 vi.mock("./execution.semantics-snapshot", () => ({
 	freezeWorkflowExecutionSemanticsSnapshot: mocks.freezeWorkflowExecutionSemanticsSnapshot,
 	workflowRequiresPluginSemantics: () => false,
 }));
+vi.mock("../new-api-models/new-api-models.service", () => ({
+	isSelectableNewApiModel: (item: { enabled: boolean; runtimeEndpoints: string[]; pricing?: { enabled: boolean; cost: number } }) => (
+		item.enabled && item.runtimeEndpoints.length > 0 && item.pricing?.enabled !== false && (item.pricing?.cost ?? 0) > 0
+	),
+	listNewApiModels: mocks.listNewApiModels,
+	matchesNewApiRuntimeModelIdentity: (item: { modelName: string; requestModelKey: string }, identity: string) => (
+		item.modelName === identity || item.requestModelKey === identity
+	),
+}));
 
-import { startWorkflowExecution } from "./execution.start-service";
+import { startWorkflowExecution, startDurableExecution } from "./execution.start-service";
 
 const flow: FlowRow = {
 	id: "flow-1",
@@ -125,7 +155,7 @@ describe("workflow start service", () => {
 		expect(env.EXECUTION_DO?.get).toHaveBeenCalledTimes(1);
 	});
 
-	it("rejects cross-execution recovery when the authored trigger requires a fresh chain", async () => {
+	it("does not let a retired trigger flag veto evidence-based recovery", async () => {
 		mocks.scopeWorkflowFlowData.mockReturnValueOnce({
 			nodes: [{
 				id: "trigger-1",
@@ -155,24 +185,18 @@ describe("workflow start service", () => {
 			triggerNodeId: "trigger-1",
 			trigger: "agent",
 			recoveryOfExecutionId: "execution-source",
-		})).rejects.toMatchObject({
-			code: "workflow_start_failed",
-			status: 409,
-			details: {
-				workflowExecutionRecoveryPolicy: "fresh_only",
-				recoveryOfExecutionId: "execution-source",
-			},
-		});
-		expect(mocks.createExecution).not.toHaveBeenCalled();
+		})).resolves.toMatchObject({ created: true });
+		expect(mocks.createExecution).toHaveBeenCalledTimes(1);
 	});
 
-	it("rejects a same-number one-click definition with a stale executable fingerprint before creating an execution", async () => {
+	it("executes the saved graph even when template fingerprint differs", async () => {
 		const staleFlow: FlowRow = {
 			...flow,
 			data: JSON.stringify({
 				nodes: [{
 					id: "stage",
 					data: {
+						kind: "workflowStage",
 						workflowKey: "one-click-production/v1",
 						workflowCanvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
 						workflowCanvasDefinitionFingerprint: "sha256:stale-runtime-contract",
@@ -187,26 +211,19 @@ describe("workflow start service", () => {
 			ownerId: "admin-1",
 			triggerNodeId: "trigger-1",
 			trigger: "agent",
-		})).rejects.toMatchObject({
-			code: "workflow_definition_outdated",
-			status: 409,
-			details: {
-				current: false,
-				observedFingerprints: ["sha256:stale-runtime-contract"],
-				invalidNodeIds: ["stage"],
-			},
-		});
-		expect(mocks.createFlowVersion).not.toHaveBeenCalled();
-		expect(mocks.createExecution).not.toHaveBeenCalled();
+		})).resolves.toBeDefined();
+		expect(mocks.createFlowVersion).toHaveBeenCalledOnce();
+		expect(mocks.createExecution).toHaveBeenCalledOnce();
 	});
 
-	it("freezes the admitted one-click definition authority into execution history", async () => {
+	it("does not stamp a saved workflow with authority from an internal template", async () => {
 		const currentFlow: FlowRow = {
 			...flow,
 			data: JSON.stringify({
 				nodes: [{
 					id: "stage",
 					data: {
+						kind: "workflowStage",
 						workflowKey: "one-click-production/v1",
 						workflowCanvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
 						workflowCanvasDefinitionFingerprint: VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
@@ -224,14 +241,7 @@ describe("workflow start service", () => {
 		});
 
 		const version = mocks.createFlowVersion.mock.calls[0]?.[1];
-		expect(JSON.parse(version?.data ?? "{}")).toMatchObject({
-			workflowDefinitionAuthority: {
-				protocolVersion: "tapcanvas.workflow-definition-authority/v1",
-				workflowKey: "one-click-production/v1",
-				canvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
-				canvasDefinitionFingerprint: VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
-			},
-		});
+		expect(JSON.parse(version?.data ?? "{}")).not.toHaveProperty("workflowDefinitionAuthority");
 	});
 
 	it("uses the trigger-authored DAG concurrency when the caller does not own scheduling", async () => {
@@ -330,6 +340,14 @@ describe("workflow start service", () => {
 				assetUsage: "production" as const,
 				assetPurpose: null,
 				productionEligible: true,
+				productionExclusionReason: null,
+				styleFingerprint: null,
+				sourceFacts: {
+					referenceType: null, roleName: null, physicalIdentityKey: null,
+					characterAssetRole: null, characterProfileVersion: null,
+					identityAnchors: [], prohibitedDrift: [], sourceNodeId: "node-1",
+					workflowExecutionId: null, taskId: null, prompt: null,
+				},
 				updatedAt: "2026-08-17T00:00:00.000Z",
 			}],
 			capturedAt: "2026-08-17T00:00:00.000Z",
@@ -518,6 +536,17 @@ describe("workflow start service", () => {
 		expect(mocks.createExecution).not.toHaveBeenCalled();
 	});
 
+	it("freezes all initiating execution preferences into the durable version", async () => {
+  mocks.scopeWorkflowFlowData.mockReturnValueOnce({ nodes: [], edges: [], workflowExecutionScope: { workflowKey: "generic/v1" } });
+  const initiatingAgentExecution = { model: "gpt-5.6-luna", apiStyle: "responses" as const, reasoningEffort: "xhigh" as const, serviceTier: "priority" as const };
+  await startWorkflowExecution(runtime(), { flow, ownerId: "admin-1", triggerNodeId: "video-trigger", trigger: "agent", initiatingAgentExecution });
+  expect(mocks.createFlowVersion).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+   data: expect.any(String),
+  }));
+  const saved = mocks.createFlowVersion.mock.calls[0]?.[1] as { data: string };
+  expect(JSON.parse(saved.data).workflowInitiatingAgentExecution).toEqual(initiatingAgentExecution);
+ });
+
 	it("starts one-click production through the same durable workflow runtime used by canvas and agents", async () => {
 		mocks.scopeWorkflowFlowData.mockReturnValueOnce({
 			nodes: [],
@@ -602,8 +631,25 @@ describe("workflow start service", () => {
 		expect(env.EXECUTION_DO?.get).toHaveBeenCalledTimes(1);
 	});
 
-	it("persists a terminal failure when the durable scheduler rejects start", async () => {
-		await expect(startWorkflowExecution(runtime(new Response("scheduler unavailable", { status: 503 })), {
+	it.each([503, 429, 408])("keeps a durable queued start after scheduler HTTP %s", async (status) => {
+		const result = await startWorkflowExecution(runtime(new Response("unavailable", { status })), {
+			flow, ownerId: "admin-1", triggerNodeId: "trigger-1", trigger: "manual",
+		});
+		expect(result.execution.status).toBe("queued");
+		expect(mocks.updateExecutionStatus).not.toHaveBeenCalled();
+	});
+
+	it("does not overwrite a running job when its start acknowledgement is lost", async () => {
+		const env = runtime();
+		vi.mocked(env.EXECUTION_DO!.get).mockReturnValue({
+			fetch: vi.fn(async () => { throw new TypeError("fetch failed"); }),
+		} as unknown as ReturnType<NonNullable<WorkerEnv["EXECUTION_DO"]>["get"]>);
+		await expect(startDurableExecution(env, "ack-lost")).resolves.toBeUndefined();
+		expect(mocks.updateExecutionStatus).not.toHaveBeenCalled();
+	});
+
+	it("persists a terminal failure for a deterministic scheduler rejection", async () => {
+		await expect(startWorkflowExecution(runtime(new Response("scheduler unauthorized", { status: 403 })), {
 			flow,
 			ownerId: "admin-1",
 			triggerNodeId: "trigger-1",
@@ -611,7 +657,7 @@ describe("workflow start service", () => {
 		})).rejects.toMatchObject({ code: "workflow_start_failed" });
 		expect(mocks.updateExecutionStatus).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
 			status: "failed",
-			errorMessage: expect.stringContaining("scheduler unavailable"),
+			errorMessage: expect.stringContaining("scheduler unauthorized"),
 		}));
 	});
 });
@@ -649,10 +695,11 @@ describe("workflow trigger media overrides", () => {
 			triggerPayload: {
 				source: "竖版 40s 高燃打斗",
 				targetDurationSeconds: 40,
-				videoModelKey: "doubao-seedance-2.5",
+				videoModelKey: "minimax-h3-test",
 				imageModelKey: "gpt-image-2",
+				imageQuality: "high",
 				imageSize: "2K",
-				videoResolution: "1080p",
+				videoResolution: "768p",
 				videoAspectRatio: "9:16",
 				imageAspectRatio: "9:16",
 			},
@@ -663,16 +710,17 @@ describe("workflow trigger media overrides", () => {
 		const nodeIds = (frozen.nodes as Array<Record<string, unknown>>).map((node) => node.id);
 		console.log("frozen node ids:", JSON.stringify(nodeIds));
 		const byId = new Map((frozen.nodes as Array<Record<string, unknown>>).map((node) => [node.id, node.data as Record<string, unknown>]));
-		expect((byId.get("delivery") as Record<string, unknown>).workflowVideoModelKey).toBe("doubao-seedance-2.5");
+		expect((byId.get("delivery") as Record<string, unknown>).workflowVideoModelKey).toBe("minimax-h3-test");
 		const estimate = byId.get("estimate") as Record<string, unknown>;
-		expect(estimate.workflowVideoModelKey).toBe("doubao-seedance-2.5");
-		expect(estimate.workflowVideoResolution).toBe("1080p");
+		expect(estimate.workflowVideoModelKey).toBe("minimax-h3-test");
+		expect(estimate.workflowVideoResolution).toBe("768p");
 		expect(estimate.workflowVideoAspectRatio).toBe("9:16");
 		const video = byId.get("video") as Record<string, unknown>;
-		expect(video.workflowVideoResolution).toBe("1080p");
+		expect(video.workflowVideoResolution).toBe("768p");
 		expect(video.workflowVideoAspectRatio).toBe("9:16");
 		const image = byId.get("image") as Record<string, unknown>;
 		expect(image.workflowImageModelKey).toBe("gpt-image-2");
+		expect(image.workflowImageQuality).toBe("high");
 		expect(image.workflowImageAspectRatio).toBe("9:16");
 		expect(image.workflowImageSize).toBe("2K");
 		// 非媒体节点不受影响。
@@ -709,6 +757,73 @@ describe("workflow trigger media overrides", () => {
 			details: {
 				nodeId: "estimate",
 				missingTriggerPayloadFields: ["videoResolution"],
+			},
+		});
+		expect(mocks.createFlowVersion).not.toHaveBeenCalled();
+		expect(mocks.createExecution).not.toHaveBeenCalled();
+	});
+
+	it("rejects a stale direct video-submit model before creating an execution", async () => {
+		mocks.scopeWorkflowFlowData.mockReturnValueOnce({
+			nodes: [
+				{ id: "trigger-1", data: { kind: "workflowTrigger" } },
+				{
+					id: "estimate",
+					data: {
+						kind: "workflowStage",
+						workflowAtomicSpec: { executorRef: "video.estimate/v1" },
+						workflowVideoModelKey: "live-video",
+						workflowVideoResolution: "720p",
+						workflowVideoAspectRatio: "16:9",
+					},
+				},
+				{
+					id: "video",
+					data: {
+						kind: "workflowStage",
+						workflowAtomicSpec: { executorRef: "tapcanvas.video.generate/v1" },
+						workflowVideoModelKey: "retired-video",
+					},
+				},
+			],
+			edges: [],
+		});
+		mocks.listNewApiModels.mockResolvedValueOnce([{
+			id: 1,
+			modelName: "live-video",
+			requestModelKey: "live-video",
+			routingAliases: [],
+			displayLabel: "Live video",
+			description: null,
+			icon: null,
+			tags: [],
+			vendorId: null,
+			endpoints: ["task.video"],
+			runtimeEndpoints: ["task.video"],
+			kind: "video",
+			enabled: true,
+			syncOfficial: true,
+			nameRule: 1,
+			createdTime: 1,
+			updatedTime: 1,
+			meta: null,
+			pricing: { cost: 1, enabled: true, specCosts: [] },
+		}]);
+
+		await expect(startWorkflowExecution(runtime(), {
+			flow,
+			ownerId: "admin-1",
+			triggerNodeId: "trigger-1",
+			trigger: "agent",
+		})).rejects.toMatchObject({
+			code: "workflow_flow_invalid",
+			status: 409,
+			details: {
+				unavailableVideoModels: [{
+					nodeId: "video",
+					modelKey: "retired-video",
+					executorRef: "tapcanvas.video.generate/v1",
+				}],
 			},
 		});
 		expect(mocks.createFlowVersion).not.toHaveBeenCalled();

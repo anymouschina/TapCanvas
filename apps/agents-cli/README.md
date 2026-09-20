@@ -81,7 +81,7 @@ Bridge 在 Hono 事实型 prompt 之外固定注入唯一产品身份：面向�
 
 1. 注入 Hono 提供的事实型 persona/system prompt；
 2. 注册本轮明确的 TapCanvas 模型网关与模型；
-3. 每轮挂载 request-scoped MCP server；固定只包含私有 `report_delivery` 收口工具，
+3. 每轮挂载 request-scoped MCP server；包含私有 `report_delivery` / `get_delivery_evidence`（结构化节点为 `submit_structured_output`），
    以及 Hono 本轮明确授权的远程工具。
 
 ### Skills
@@ -90,6 +90,18 @@ Bridge 在 Hono 事实型 prompt 之外固定注入唯一产品身份：面向�
 
 外部用户/商城 Skill 必须同时带有 `externalSkills`、`requiredSkillCalls` 和可信 `externalSkillResolverConfig`；缺解析器会显式拒绝请求，禁止把“未加载”伪报为成功。
 
+### Workflow 结构化产物
+
+已同步一键成片的章节编排、共享资产提取、逐 Clip 设计、逐 Clip writer 与配套技能；
+执行内核仍是 DeepSeek Harness，不加载旧自研 agent loop。
+
+声明 `outputContract` 的原子工作流节点挂载私有 `submit_structured_output`，以冻结 JSON Schema
+和显式字段、类型、数组长度约束检验提交。结构错误作为工具失败携带具体字段路径返回当前
+Harness turn，作者在同一执行链中修订后重新提交。成功提交的对象直接序列化为响应 `text`，
+并以 `structuredOutput` 返回；不从自然语言最终回答猜测或提取 JSON。
+缺少成功提交回执，即使 Harness 正常结束也明确失败。业务节点仍按其完整 typed-port 合同
+执行下游结构校验；Bridge 不判断创作内容语义、不制造默认内容。
+
 ### 请求级工具与交付收口
 
 `report_delivery` 是 Bridge 内部的 response-mode 最终自检工具，不会转发给 Hono，
@@ -97,9 +109,12 @@ Bridge 在 Hono 事实型 prompt 之外固定注入唯一产品身份：面向�
 交付类型和逐项成功标准；Bridge 冻结合同哈希，并在 Harness 真正结束后把精确最终正文
 绑定为 SHA-256 `final_response` evidence，构造
 `expectedDelivery -> deliveryEvidence -> deliveryVerification -> PhysicalRunExitV1`。
-缺少报告、正文为空、Harness 未正常结束或合同结构无效时显式失败。该工具只接受
-`delivery.mode=response`；画布写入、图片、视频等执行型交付不能用文本报告冒充成功，
-必须依赖已授权业务工具的真实回执与资产证据。
+缺少报告、正文为空、Harness 未正常结束或合同结构无效时显式失败。
+执行型交付使用同一工具的 artifact 参数形态：主代理先读取 `get_delivery_evidence` 中的
+真实终态 workflow output，逐项解释证据如何满足冻结 must，并引用精确 evidence ID。
+Bridge 只核对冻结合同、身份、引用、终态以及媒体 URL 的结构事实；语义判断归主代理。
+不存在的证据、未受理/尚未完成的执行、缺少媒体地址或遗漏要求均在同一 turn 拒绝报告，
+不把文字、受理回执或单独资产 URL 当成完整交付。
 
 ### 远程工具
 
@@ -138,3 +153,27 @@ pnpm --filter agents test
 `build` 会验证官方 `@deepseek-ai/dsh` 精确版本和可执行入口。测试覆盖请求契约、密钥隔离、延迟 schema 门禁、MCP 授权/转发、真实失败记录。
 
 DeepSeek Harness 当前仍标记为 developer preview。TapCanvas 使用精确版本锁定；升级时必须同步升级全部 Harness 包，并重新执行 profile 握手、Bridge 测试和 Hono 集成测试，禁止只升级其中一个插件。
+
+### 持久工作流交接
+
+根代理收到 `acceptedAsync` 的 queued/running 回执且执行器明确声明
+`completionBoundary=submission`、`executionOwner=durable_executor` 时，本轮只完成提交交接，
+以 `submissionHandoff.receipts` 保留执行身份，不注册对话 continuation。媒体交付保持 pending，
+后续生产和最终验收只由持久 Workflow 执行器负责。未声明该完成边界的异步执行退出为
+`waiting_external`，等待外部证据。SSE 与会话快照
+依据交付闭包投影状态，不以 Harness turn 结束代替业务成功。执行型最终交付只接受授权
+工具返回、与冻结 contractHash 一致、覆盖全部 must 且证据 ID 完整的通用
+`expectedDelivery -> deliveryEvidence -> deliveryVerification`；单独 URL、文字或受理回执
+均不足以宣称完整视频目标完成。
+
+### 用户交付合同冻结
+
+`record_user_intent` 是 request-scoped 私有工具。主代理根据真实用户意图编写 version 2
+合同，Bridge 只校验字段结构、枚举和要求身份，按 Hono 相同的排序 JSON 规则计算纯十六进制
+SHA-256。后续远程调用自动附带顶层机器字段 `userIntentContract` 与 `userIntentContractHash`，
+与原子任务和最终交付报告共用同一冻结对象；模型不能通过工具 args 替换机器字段。
+
+改写已冻结合同必须显式提供 `authoringCorrection.previousContractHash` 与原因。
+已锁定的续轮合同，以及开始远程执行后的合同不允许改写；无法确定远程副作用时同样保持锁定。
+只读动态 schema 加载不锁定合同。工具拒绝错误后，Agent 在同一 Harness turn 修订，
+不使用默认语义或自动补齐用户要求。

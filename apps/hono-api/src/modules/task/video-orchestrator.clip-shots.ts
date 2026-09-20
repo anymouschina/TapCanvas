@@ -11,9 +11,6 @@ import {
   type ClipSpeakerBinding,
 } from "./video-orchestrator.speaker-contract";
 import {
-  assetObjectContractIdentityKey,
-  formatAssetObjectReferenceLocks,
-  type AssetReferenceIndicesByContractKey,
   type AssetObjectContract,
 } from "./video-orchestrator.asset-object-contract";
 import type { ClipDramaticCoverage } from "./video-orchestrator.dramatic-coverage";
@@ -27,6 +24,8 @@ import type {
   VisualStateAnchorRequirement,
 } from "./video-orchestrator.visual-state-timeline";
 import type { TemporalFrameWindow } from "./video-orchestrator.temporal-frame-track";
+import { renderClipPromptFromShots } from "./video-orchestrator.clip-prompt-renderer";
+export { renderClipPromptFromShots, type ClipPromptRenderOptions } from "./video-orchestrator.clip-prompt-renderer";
 
 /**
  * 由 agent 在高动力镜头中显式选择的相对运动学合同。
@@ -49,7 +48,7 @@ export type ShotMotionDynamics = {
 export type ClipShot = {
   /** 镜号（1 起，clip 内局部）。 */
   shotNo?: number;
-  /** 本镜唯一要让观众读到的信息变化；由 writer 做语义导演判断，服务端只透传。 */
+  /** 本镜信息任务的内部规划证据；不进入供应商正文，实际画面写入 action。 */
   visualTask?: string;
   /**
    * 本镜实际拍出的冻结 storyEvents 下标。writer 对语义映射负责；
@@ -64,7 +63,7 @@ export type ClipShot = {
   composition?: string;
   /** 运镜（推/拉/摇/移/跟…；必须是生成式运镜，禁剪辑语法）。 */
   cameraMove?: string;
-  /** 可见动作；静态或建立镜头允许省略，visualTask 仍是必需的执行画面载体。 */
+  /** 供应商可见的完整动作或静态画面；包含本镜必需的进入、变化与退出状态。 */
   action?: string;
   /** 光效。 */
   lighting?: string;
@@ -191,8 +190,8 @@ export function validateStructuredClipExecutionContract(
         problem: `必须是从 1 开始且按数组顺序连续的整数，期望 ${shotIndex + 1}，实收 ${String(shot.shotNo)}`,
       });
     }
-    if (shot.action !== undefined && typeof shot.action !== "string") {
-      issues.push({ path: `shots[${shotIndex}].action`, problem: "提供时必须是字符串" });
+    if (typeof shot.action !== "string" || !shot.action.trim()) {
+      issues.push({ path: `shots[${shotIndex}].action`, problem: "必须是非空字符串；供应商画面正文不可仅存在于规划字段" });
     }
     if (typeof shot.visualTask !== "string" || !shot.visualTask.trim()) {
       issues.push({
@@ -254,13 +253,20 @@ export function validateStructuredClipExecutionContract(
   return issues;
 }
 
-/**
- * The authoring renderer cannot know the final provider audio manifest yet.
- * It reserves one exact address inside the authoritative voice track; the
- * paid submission boundary must replace it with the verified @音频N mapping.
- */
-export const VOICE_REFERENCE_BINDING_PLACEHOLDER =
-  "__TAPCANVAS_VERIFIED_VOICE_REFERENCE_BINDINGS__";
+function isOneOf<const T extends string>(value: unknown, values: readonly T[]): value is T {
+  return typeof value === "string" && values.includes(value as T);
+}
+
+function formatObservedMotionValue(value: unknown): string {
+  if (value === undefined) return "<missing>";
+  if (typeof value === "string") return JSON.stringify(value);
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? String(value) : serialized;
+  } catch {
+    return "<unserializable>";
+  }
+}
 
 
 /** 对持久化/工具输入进行纯结构归一；不读取或解释 action 文案。 */
@@ -281,32 +287,50 @@ export function parseShotMotionDynamics(raw: unknown): {
   const brakingMode = record.brakingMode;
   const environmentalResponse = record.environmentalResponse;
   const errors: string[] = [];
-  if (tempo !== "instant" && tempo !== "fast" && tempo !== "sustained") errors.push("tempo 必须是 instant/fast/sustained");
-  if (force !== "light" && force !== "medium" && force !== "heavy") errors.push("force 必须是 light/medium/heavy");
-  if (direction !== "left" && direction !== "right" && direction !== "forward" && direction !== "backward" && direction !== "upward" && direction !== "downward" && direction !== "diagonal") errors.push("direction 必须是 left/right/forward/backward/upward/downward/diagonal");
-  if (airborne !== "none" && airborne !== "brief" && airborne !== "extended") errors.push("airborne 必须是 none/brief/extended");
-  if (rotation !== "none" && rotation !== "partial" && rotation !== "full") errors.push("rotation 必须是 none/partial/full");
-  if (brakingMode !== "ground_friction" && brakingMode !== "wall_impact" && brakingMode !== "grip" && brakingMode !== "counterforce") {
-    errors.push("brakingMode 必须是 ground_friction/wall_impact/grip/counterforce");
+  const validTempo = ["instant", "fast", "sustained"] as const;
+  const validForce = ["light", "medium", "heavy"] as const;
+  const validDirection = ["left", "right", "forward", "backward", "upward", "downward", "diagonal"] as const;
+  const validAirborne = ["none", "brief", "extended"] as const;
+  const validRotation = ["none", "partial", "full"] as const;
+  const validBrakingMode = ["ground_friction", "wall_impact", "grip", "counterforce"] as const;
+  const validEnvironmentalResponse = ["none", "dust", "debris", "splash", "deformation"] as const;
+  if (!isOneOf(tempo, validTempo)) errors.push(`tempo 必须是 instant/fast/sustained（实收 ${formatObservedMotionValue(tempo)}）`);
+  if (!isOneOf(force, validForce)) errors.push(`force 必须是 light/medium/heavy（实收 ${formatObservedMotionValue(force)}）`);
+  if (!isOneOf(direction, validDirection)) errors.push(`direction 必须是 left/right/forward/backward/upward/downward/diagonal（实收 ${formatObservedMotionValue(direction)}）`);
+  if (!isOneOf(airborne, validAirborne)) errors.push(`airborne 必须是 none/brief/extended（实收 ${formatObservedMotionValue(airborne)}）`);
+  if (!isOneOf(rotation, validRotation)) errors.push(`rotation 必须是 none/partial/full（实收 ${formatObservedMotionValue(rotation)}）`);
+  if (!isOneOf(brakingMode, validBrakingMode)) {
+    errors.push(`brakingMode 必须是 ground_friction/wall_impact/grip/counterforce（实收 ${formatObservedMotionValue(brakingMode)}）`);
   }
   const impactSurface = record.impactSurface;
-  if (impactSurface !== undefined && impactSurface !== "ground" && impactSurface !== "wall" && impactSurface !== "water" && impactSurface !== "object") {
-    errors.push("impactSurface 必须是 ground/wall/water/object");
+  const validImpactSurface = ["ground", "wall", "water", "object"] as const;
+  if (impactSurface !== undefined && !isOneOf(impactSurface, validImpactSurface)) {
+    errors.push(`impactSurface 必须是 ground/wall/water/object（实收 ${formatObservedMotionValue(impactSurface)}）`);
   }
-  if (environmentalResponse !== "none" && environmentalResponse !== "dust" && environmentalResponse !== "debris" && environmentalResponse !== "splash" && environmentalResponse !== "deformation") errors.push("environmentalResponse 必须是 none/dust/debris/splash/deformation");
+  if (!isOneOf(environmentalResponse, validEnvironmentalResponse)) errors.push(`environmentalResponse 必须是 none/dust/debris/splash/deformation（实收 ${formatObservedMotionValue(environmentalResponse)}）`);
   if (errors.length) return { value: null, errors };
+  // Every value below has passed its corresponding finite-enum check above;
+  // make that structural proof explicit for the typed contract.
+  const validatedTempo = tempo as ShotMotionDynamics["tempo"];
+  const validatedForce = force as ShotMotionDynamics["force"];
+  const validatedDirection = direction as ShotMotionDynamics["direction"];
+  const validatedAirborne = airborne as ShotMotionDynamics["airborne"];
+  const validatedRotation = rotation as ShotMotionDynamics["rotation"];
+  const validatedBrakingMode = brakingMode as ShotMotionDynamics["brakingMode"];
+  const validatedEnvironmentalResponse = environmentalResponse as ShotMotionDynamics["environmentalResponse"];
+  const validatedImpactSurface = impactSurface as ShotMotionDynamics["impactSurface"];
   const subject = typeof record.subject === "string" && record.subject.trim() ? record.subject.trim() : undefined;
   return {
     value: {
-      tempo,
-      force,
-      direction,
-      airborne,
-      rotation,
-      brakingMode,
-      environmentalResponse,
+      tempo: validatedTempo,
+      force: validatedForce,
+      direction: validatedDirection,
+      airborne: validatedAirborne,
+      rotation: validatedRotation,
+      brakingMode: validatedBrakingMode,
+      environmentalResponse: validatedEnvironmentalResponse,
       ...(subject ? { subject } : {}),
-      ...(impactSurface !== undefined ? { impactSurface } : {}),
+      ...(validatedImpactSurface !== undefined ? { impactSurface: validatedImpactSurface } : {}),
     },
     errors: [],
   };
@@ -556,6 +580,9 @@ export function validateStructuredClip(
         problem: `shot 级人声字段已移除：${legacySpeechFields.join(", ")}；只允许 speechEventIds`,
       });
     }
+    if (typeof s.action !== "string" || !s.action.trim()) {
+      issues.push({ shotNo: no, problem: "action 必须是非空字符串" });
+    }
     const dur = Number(s.durationSeconds);
     if (!Number.isFinite(dur) || dur <= 0) {
       issues.push({ shotNo: no, problem: `durationSeconds 缺失/非法（${s.durationSeconds}）` });
@@ -649,162 +676,6 @@ export function validateStructuredClip(
     });
   }
   return issues;
-}
-
-/** 确定性渲染：shots JSON + filmBible → 最终纯文本提示词（模型只认文本）。 */
-export type ClipPromptRenderOptions = {
-  /**
-   * 最终 referenceMediaManifest 的精确资产身份与 content[] 顺序。
-   * renderer 用它统一渲染视觉资产锁和画内说话人，不接受 authoring 阶段预估图序。
-   */
-  assetReferenceIndicesByContractKey?: AssetReferenceIndicesByContractKey;
-  /**
-   * Frozen audio delivery authority for this provider request. `manifest`
-   * reserves the single VoiceManifest binding address; `provider_native`
-   * keeps SpeechEvent timing/text authoritative without claiming that an
-   * external timbre asset exists.
-   */
-  voiceReferenceMode?: "manifest" | "provider_native";
-};
-
-type ProviderTemporalStateWindow = Pick<
-  TemporalFrameWindow,
-  "startSeconds" | "endSeconds" | "startState" | "transition" | "carryState"
->;
-
-/**
- * The durable temporal track keeps every <=1s audit window. The provider text
- * does not need to repeat adjacent windows whose executable state payload is
- * byte-for-byte identical, so collapse only those contiguous runs. This is a
- * presentation projection: it performs no prose interpretation, rewriting, or
- * post-failure repair, and the full track remains on the structured clip.
- */
-function compactProviderTemporalStateWindows(
-  windows: readonly TemporalFrameWindow[],
-): ProviderTemporalStateWindow[] {
-  const compacted: ProviderTemporalStateWindow[] = [];
-  for (const window of windows) {
-    const previous = compacted.at(-1);
-    if (
-      previous
-      && previous.endSeconds === window.startSeconds
-      && previous.startState === window.startState
-      && previous.transition === window.transition
-      && previous.carryState === window.carryState
-    ) {
-      previous.endSeconds = window.endSeconds;
-      continue;
-    }
-    compacted.push({
-      startSeconds: window.startSeconds,
-      endSeconds: window.endSeconds,
-      startState: window.startState,
-      transition: window.transition,
-      carryState: window.carryState,
-    });
-  }
-  return compacted;
-}
-
-/**
- * Inject verified timbre-reference bindings at the single address reserved by
- * the structured renderer. Appending a second audio instruction block is
- * forbidden because it creates competing speech authorities for native-audio
- * video models.
- */
-export function bindVerifiedVoiceReferences(
-  prompt: string,
-  bindingInstruction: string,
-): string {
-  const source = String(prompt ?? "");
-  const binding = String(bindingInstruction ?? "").trim();
-  if (!binding) throw new Error("voice_reference_binding_instruction_required");
-  const first = source.indexOf(VOICE_REFERENCE_BINDING_PLACEHOLDER);
-  if (first < 0) throw new Error("voice_reference_binding_placeholder_missing");
-  if (source.indexOf(VOICE_REFERENCE_BINDING_PLACEHOLDER, first + 1) >= 0) {
-    throw new Error("voice_reference_binding_placeholder_duplicated");
-  }
-  return source.replace(VOICE_REFERENCE_BINDING_PLACEHOLDER, binding);
-}
-
-export function renderClipPromptFromShots(
-  clip: StructuredClip,
-  _bible?: FilmBible | null,
-  options?: ClipPromptRenderOptions,
-): string {
-  const fmtSec = (value: number): string => {
-    const rounded = Math.round(value * 10) / 10;
-    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-  };
-  const serialize = (value: unknown): string => {
-    if (value === undefined || value === null) return "";
-    if (typeof value === "string") return value;
-    const serialized = JSON.stringify(value);
-    if (serialized === undefined) throw new Error("structured_clip_prompt_value_not_serializable");
-    return serialized;
-  };
-  const cell = (value: unknown): string => serialize(value).trim().replace(/\r?\n/g, " ").replace(/\|/g, "／");
-  const speechRows = (clip.speechEvents ?? []).map((event) => {
-    const speakerImageReference = options?.assetReferenceIndicesByContractKey?.get(
-      assetObjectContractIdentityKey("character", event.speakerName),
-    )?.[0];
-    const speaker = speakerImageReference
-      ? `${speakerImageReference}（${event.speakerName}）`
-      : event.speakerName;
-    return `${event.speechEventId} | ${fmtSec(event.startSeconds)}-${fmtSec(event.endSeconds)}s | Speaker=${cell(speaker)} | Delivery=${event.delivery}${event.performance ? ` | Performance=${JSON.stringify(event.performance)}` : ""} | SpokenText=${JSON.stringify(event.spokenText ?? "")}`;
-  });
-
-  let elapsedSeconds = 0;
-  const shotRows = (clip.shots ?? []).map((shot, index) => {
-    const durationSeconds = Number(shot.durationSeconds);
-    const startSeconds = elapsedSeconds;
-    const endSeconds = elapsedSeconds + durationSeconds;
-    elapsedSeconds = endSeconds;
-    const stateWindows = compactProviderTemporalStateWindows(
-      (clip.temporalFrameTrack ?? []).filter((window) => (
-        window.startSeconds < endSeconds && window.endSeconds > startSeconds
-      )),
-    );
-    const state = stateWindows.map((window) => (
-      `${fmtSec(window.startSeconds)}-${fmtSec(window.endSeconds)}:${window.startState}→${window.transition}→${window.carryState}`
-    )).join("；");
-    const visual = [
-      shot.visualTask,
-      shot.action,
-      shot.framing,
-      shot.lensIntent,
-      shot.composition,
-      shot.cameraMove,
-      shot.lighting,
-      shot.materialResponse,
-      state ? `状态=${state}` : "",
-    ].map(cell).filter(Boolean).join("；");
-    const sfx = [shot.soundPerspective, shot.sound].map(cell).filter(Boolean).join("；");
-    return `${shot.shotNo ?? index + 1} | ${fmtSec(startSeconds)}-${fmtSec(endSeconds)}s | VISUAL_ONLY=${visual} | Speech=${(shot.speechEventIds ?? []).join(",") || "None"} | SFX_ONLY=${sfx || "None"}`;
-  });
-
-  const entryFacts = [
-    clip.continuity ? `时空=${cell(clip.continuity)}` : "",
-    clip.sceneState ? `场景=${cell(clip.sceneState)}` : "",
-    clip.characterStateVersions ? `人物=${cell(clip.characterStateVersions)}` : "",
-    clip.continuityLedger ? `边界=${cell(clip.continuityLedger)}` : "",
-  ].filter(Boolean).join(" | ");
-  const references = clip.assetObjectContracts?.length
-    ? formatAssetObjectReferenceLocks(clip.assetObjectContracts, options?.assetReferenceIndicesByContractKey)
-    : "None";
-  const speechContract = speechRows.length > 0
-    ? options?.voiceReferenceMode === "provider_native"
-      ? `${speechRows.join("\n")}\nVoiceMode=ProviderNativeAudio`
-      : `${speechRows.join("\n")}\nVoiceManifest=${VOICE_REFERENCE_BINDING_PLACEHOLDER}`
-    : "SpeechEvent=None";
-
-  return [
-    "【AUDIO】只有 SpokenText 的 JSON 字符串值允许发声；VISUAL_ONLY 与 SFX_ONLY 永不朗读。镜头切换不得截断、重启或重复独立 SpeechEvent。",
-    speechContract,
-    `【ENTRY+REFERENCES】${entryFacts || "按首镜既成状态进入"}\n${references}`,
-    `【SHOTS】\n${shotRows.join("\n")}`,
-    `【EXIT】${cell(clip.exitState) || "保持末镜可见承帧状态"}`,
-  ].join("\n");
 }
 
 /** clip 是否带结构化 shots（走新路径的判据；无 shots 的旧 clip 原文本路径零回归）。 */

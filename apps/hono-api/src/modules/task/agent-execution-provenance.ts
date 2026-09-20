@@ -43,6 +43,7 @@ export const AgentExecutionProvenanceSchema = z.object({
     decisionBasisRole: z.enum(["professional_method", "evidence_only"]).optional(),
   }).strict()).max(128).optional(),
   loadedKnowledgeSources: z.array(z.object({
+    readReceipt: z.object({ toolCallId: z.string().min(1), candidateSetId: z.string().min(1), tool: z.enum(["knowledge_read", "prompt_example_read"]), readAt: z.string().datetime() }).strict().optional(),
     cardId: z.string().trim().min(1).max(200),
     title: z.string().trim().min(1).max(500),
     description: z.string().trim().min(1).max(4_000).optional(),
@@ -52,6 +53,7 @@ export const AgentExecutionProvenanceSchema = z.object({
     contentHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     contentChars: z.number().int().min(0),
   }).strict()).max(64).optional(),
+  retrievalDecisions: z.array(z.object({ version: z.literal(1), blocking: z.literal(false), toolNames: z.array(z.string()), toolCallIds: z.array(z.string()), rationale: z.string(), status: z.enum(["tool_actions_requested", "no_body_read_requested"]), at: z.string().datetime() }).strict()).optional(),
   startedAt: z.string().datetime(),
   userIntentContractHash: z.string().trim().min(1).max(128).optional(),
   intentSelectionTrace: z.array(IntentSelectionTraceSchema).max(64).optional(),
@@ -59,7 +61,12 @@ export const AgentExecutionProvenanceSchema = z.object({
 
 export type AgentExecutionProvenance = z.infer<typeof AgentExecutionProvenanceSchema>;
 
-export const ParentAgentExecutionSchema = z.object({
+export const AgentExecutionPreferencesSchema = z.object({
+  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
+  serviceTier: z.enum(["default", "priority"]).optional(),
+});
+
+export const ParentAgentExecutionSchema = AgentExecutionPreferencesSchema.extend({
   model: z.string().trim().min(1),
   apiStyle: z.enum(["chat", "responses"]),
   provenance: AgentExecutionProvenanceSchema.optional(),

@@ -122,8 +122,10 @@ export function parseWorkflowExecutionSemanticsV2(value: unknown): WorkflowExecu
 		throw new Error("Workflow execution semantics maxAutomaticAttempts must be an integer between 1 and 8");
 	}
 	const recoveryMode = requireMember(record.recoveryMode, WORKFLOW_RECOVERY_MODES, "Workflow execution semantics recoveryMode");
-	if (recoveryMode !== "replay" && Number(maxAutomaticAttempts) !== 1) {
-		throw new Error("Only replay recovery may declare more than one automatic attempt");
+	if (Number(maxAutomaticAttempts) > 1 && recoveryMode !== "replay") {
+		if (recoveryMode !== "reconcile" || record.retrySafety !== "idempotency_key_required" || idempotency === null || resultLookupMode === "none") {
+			throw new Error("Automatic reconciliation retries require an idempotency identity and result lookup");
+		}
 	}
 	if (record.retrySafety === "idempotency_key_required" && idempotency === null) {
 		throw new Error("Idempotency-key retry safety requires an idempotency identity");

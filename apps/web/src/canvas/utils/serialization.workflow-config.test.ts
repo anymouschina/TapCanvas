@@ -14,6 +14,7 @@ describe('workflow node configuration persistence', () => {
         adminWorkflow: true,
         workflowVideoModelKey: 'doubao-seedance-2.5',
         workflowVideoResolution: '480p',
+        workflowRetryPolicy: { maxAttempts: 3 },
         workflowVideoAspectRatio: '16:9',
         workflowIconUrl: 'https://assets.example.com/video.png',
         workflowAtomicSpec: {
@@ -35,6 +36,7 @@ describe('workflow node configuration persistence', () => {
     expect(restored.nodes[0]?.data).toMatchObject({
       workflowVideoModelKey: 'doubao-seedance-2.5',
       workflowVideoResolution: '480p',
+        workflowRetryPolicy: { maxAttempts: 3 },
       workflowVideoAspectRatio: '16:9',
       workflowIconUrl: 'https://assets.example.com/video.png',
       workflowAtomicSpec: {

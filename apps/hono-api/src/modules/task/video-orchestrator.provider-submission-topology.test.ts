@@ -10,11 +10,6 @@ const generationContract = (durationOptions: number[]): VideoGenerationContract 
 	videoModel: "doubao-seedance-2.5",
 	durationOptions,
 	maxDurationSeconds: durationOptions.at(-1) ?? 0,
-	referenceImagePolicy: {
-		countUnit: "unique_url",
-		maximumTotalImages: 12,
-		maximumBusinessImages: 10,
-	},
 	referenceAudioPolicy: { minimumDurationSeconds: 1, maximumDurationSeconds: 20 },
 });
 

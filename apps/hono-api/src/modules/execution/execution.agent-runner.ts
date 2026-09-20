@@ -1,3 +1,11 @@
+import { verifyWorkflowAgentRepairHandoff } from "./execution.agent-repair-handoff";
+import { workflowPromptRecordTable } from "./execution.prompt-record-table";
+import { projectWorkflowProvenanceForPrompt } from "./execution.prompt-provenance";
+import { workflowProjectImageCatalog } from "./execution.project-image-candidates";
+import { readWorkflowAgentOutputRepair } from "./execution.agent-output-repair";
+import { enrichWorkflowMediaUnderstanding } from "./execution.media-understanding";
+import { createRuntimeWorkflowAssetResolver } from "./execution.project-context-runtime";
+import { projectAssetDiagnosticsForPrompt } from "./execution.prompt-diagnostics";
 import type { AppContext, WorkerEnv } from "../../types";
 import { AppError } from "../../middleware/error";
 import {
@@ -21,8 +29,13 @@ import {
 import type {
 	WorkflowAgentRunRequest,
 	WorkflowAgentRunResult,
+	WorkflowKnowledgeCandidateSearchObservation,
 	WorkflowPromptExampleCandidateSearchObservation,
 } from "./execution.node-executors";
+import {
+	WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX,
+	WORKFLOW_SEQUENCE_CONTROL_PLAN_PROTOCOL_VERSION,
+} from "@tapcanvas/workflow-kernel-protocol";
 import { isWorkflowProjectImageReady, type WorkflowProjectContext } from "./execution.project-context";
 import { buildInternalApiKey } from "../apiKey/internal-api-key";
 import { parseAgentExecutionProvenance } from "../task/agent-execution-provenance";
@@ -31,32 +44,43 @@ import {
 	BEAT_SHEET_ARTIFACT_CONTRACT_VERSION,
 	VIDEO_WRITER_ARTIFACT_CONTRACT_NAME,
 	VIDEO_WRITER_ARTIFACT_CONTRACT_VERSION,
-	WORKFLOW_STRUCTURED_OUTPUT_SINGLE_INFERENCE_POLICY,
-	WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY,
+	WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY,
 } from "./execution.agent-output-contract";
 import {
 	workflowAgentPublicTurnId,
+	previousWorkflowAgentTurnOrdinal,
 	workflowAgentSessionKey,
 } from "./execution.agent-identity";
 import { getExecutionTraceLifecycleSnapshot } from "../memory/execution-trace-events.repo";
-import { computeWorkflowAgentPhysicalAttemptDeadlineAt } from "./execution.production-start-deadline";
+import { WORKFLOW_ACCEPTED_TURN_SOURCE_FIELD } from "./execution.workflow-source-authority";
 
 const WORKFLOW_AGENT_STATUS_DEADLINE_MS = 10_000;
 const WORKFLOW_AGENT_INACTIVE_ADMISSION_GRACE_MS = 60_000;
+// A provider stream interruption can leave the durable turn projected as
+// running even though no process can advance it. After this quiet period the
+// exact physical generation is fenced and the same logical task opens a fresh
+// provider attempt instead of polling the dead turn forever.
+const WORKFLOW_AGENT_STALE_INTERRUPTED_TURN_MS = 2 * 60_000;
 
 const WORKFLOW_AGENT_GENERATION_FENCE_PENDING = "workflow_agent_physical_generation_fence_pending";
 
 function workflowAgentContinuationResumeOutcome(
 	error: unknown,
-): "already_active" | "not_ready" | null {
+): "already_active" | "not_ready" | "ownership_changed" | null {
 	if (!(error instanceof AppError)) return null;
 	if (error.code === "chat_resume_turn_active") return "already_active";
 	if (error.code === "chat_resume_continuation_not_ready") return "not_ready";
+	if (error.code === "chat_resume_turn_mismatch" || error.code === "chat_resume_claim_superseded") return "ownership_changed";
 	return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readString(value: Record<string, unknown>, key: string): string {
+	const candidate = value[key];
+	return typeof candidate === "string" ? candidate.trim() : "";
 }
 
 function isFreshInactiveWorkflowAgentAdmission(
@@ -71,6 +95,31 @@ function isFreshInactiveWorkflowAgentAdmission(
 	) return false;
 	const lastConfirmedMs = Date.parse(turn.lastConfirmedAt);
 	return isFreshWorkflowAgentAdmissionTimestamp(lastConfirmedMs, nowMs);
+}
+
+function isStaleInterruptedWorkflowAgentTurn(
+	previousEvidence: Record<string, unknown> | null,
+	nowMs = Date.now(),
+): boolean {
+	if (!previousEvidence) return false;
+	let current = previousEvidence;
+	for (let depth = 0; depth < 8; depth += 1) {
+		const checkpoint = current.recoveryCheckpoint;
+		const reasonCode = isRecord(checkpoint) && typeof checkpoint.reasonCode === "string"
+			? checkpoint.reasonCode.trim()
+			: "";
+		if (reasonCode === "provider_stream_interrupted") {
+			const lastConfirmedAt = typeof current.lastConfirmedAt === "string"
+				? Date.parse(current.lastConfirmedAt)
+				: Number.NaN;
+			return Number.isFinite(lastConfirmedAt)
+				&& nowMs - lastConfirmedAt >= WORKFLOW_AGENT_STALE_INTERRUPTED_TURN_MS;
+		}
+		const nested = current.deliveryEvidence;
+		if (!isRecord(nested) || nested === current) break;
+		current = nested;
+	}
+	return false;
 }
 
 function isFreshWorkflowAgentAdmissionTimestamp(
@@ -151,66 +200,150 @@ function projectBeatSheetForAssetPlanning(
 function workflowAgentPromptInputs(
 	request: WorkflowAgentRunRequest,
 ): Readonly<Record<string, readonly unknown[]>> {
+	const hasDedicatedCanvasFactsPort = (request.inputs["canvas-facts"]?.length ?? 0) > 0;
 	return Object.fromEntries(Object.entries(request.inputs).map(([port, values]) => [
 		port,
 		values.map((value) => {
+			// delivery-contract carries a projected copy of canvasFacts for downstream
+			// deterministic executors. When the Agent already has the dedicated
+			// canvas-facts port, keeping that copy in the prompt creates two competing
+			// source bodies and needlessly doubles the context. Preserve the contract
+			// envelope and mark the canonical source port instead.
+			if (port === "delivery-contract" && hasDedicatedCanvasFactsPort && isRecord(value) && "canvasFacts" in value) {
+				const { canvasFacts: _duplicateCanvasFacts, ...contractFacts } = value;
+				return {
+					...contractFacts,
+					canvasFactsSourcePort: "canvas-facts",
+				};
+			}
 			if (!isRecord(value) || typeof value.text !== "string") return value;
 			const text = request.outputArtifactType === "tapcanvas.asset-plans/v1"
 				? projectBeatSheetForAssetPlanning(value.text, request.projectContext)
 				: value.text;
 			return {
-				...pickRecordFields(value, ["taskId", "assets"]),
+				...pickRecordFields(value, [
+					"taskId",
+					"assets",
+					"executionProvenance",
+					"executionProvenanceHistory",
+					"knowledgeCandidateSearch",
+					"promptExampleCandidateSearch",
+					"retrievalCandidateSets",
+				]),
 				text,
 			};
 		}),
 	]));
 }
 
+/**
+ * Retrieval receipts are audit evidence, not prompt content. A previous Agent
+ * may have searched hundreds of candidate cards; carrying every candidate
+ * body into the next node makes the next model call grow with the entire
+ * retrieval frontier. Keep the receipt identity and count so provenance is
+ * preserved, while requiring the current Agent to perform a fresh bounded
+ * search when it needs to choose evidence.
+ */
+function compactRetrievalReceipt(value: unknown, depth = 0): unknown {
+	if (depth > 8) return value;
+	if (Array.isArray(value)) return value.map((item) => compactRetrievalReceipt(item, depth + 1));
+	const record = isRecord(value);
+	if (!record) return value;
+	const compact: Record<string, unknown> = {};
+	for (const [key, child] of Object.entries(record)) {
+		if ((key === "entries" || key === "candidates") && Array.isArray(child)) {
+			compact[`${key}Count`] = child.length;
+			continue;
+		}
+		compact[key] = compactRetrievalReceipt(child, depth + 1);
+	}
+	return compact;
+}
+
+function compactWorkflowRetrievalFacts(value: unknown, depth = 0): unknown {
+	if (depth > 8) return value;
+	if (Array.isArray(value)) return value.map((item) => compactWorkflowRetrievalFacts(item, depth + 1));
+	if (!isRecord(value)) return value;
+	const compact: Record<string, unknown> = {};
+	for (const [key, child] of Object.entries(value)) {
+		if (key === "executionProvenance" || key === "executionProvenanceHistory"
+			|| key === "dependencyProvenance" || key === "dependencyProvenanceHistory") {
+			compact[key] = projectWorkflowProvenanceForPrompt(child);
+			continue;
+		}
+		if (key === "knowledgeCandidateSearch"
+			|| key === "promptExampleCandidateSearch"
+			|| key === "retrievalCandidateSets") {
+			compact[key] = compactRetrievalReceipt(child);
+			continue;
+		}
+		compact[key] = compactWorkflowRetrievalFacts(child, depth + 1);
+	}
+	return compact;
+}
+
+function compactWorkflowPromptFacts(
+	inputs: Readonly<Record<string, readonly unknown[]>>,
+): Readonly<Record<string, readonly unknown[]>> {
+	return Object.fromEntries(
+		Object.entries(inputs).map(([port, values]) => [
+			port,
+			values.map((value) => compactWorkflowRetrievalFacts(value)),
+		]),
+	);
+}
+
 function workflowAgentProjectContextPromptFacts(
 	projectContext: NonNullable<WorkflowAgentRunRequest["projectContext"]>,
 	outputArtifactType: string,
 ): Readonly<Record<string, unknown>> {
+	const visualStyle = projectContext.visualStyle ?? {
+		referenceImages: [],
+		styleLock: null,
+		styleFingerprint: null,
+	};
+    // These typed stages consume their source/registry through declared ports.
+    // Asset catalog discovery belongs to the separate shared-assets producer.
+    if (outputArtifactType === "tapcanvas.chapter-beat-plan/v1" || outputArtifactType === "tapcanvas.clip-design/v1") {
+        return { version: projectContext.version, projectId: projectContext.projectId,
+            canvasId: projectContext.canvasId, sourceNodeId: projectContext.sourceNodeId,
+            permissions: projectContext.permissions, visualStyle: {
+                styleLock: visualStyle.styleLock, styleFingerprint: visualStyle.styleFingerprint,
+                referenceImageCount: visualStyle.referenceImages.length,
+            }, capturedAt: projectContext.capturedAt };
+    }
 	const selectedAssetIds = new Set(projectContext.selectedAssetIds);
-	const visibleAssetIds = new Set(projectContext.projectAssetIds);
-	const projectAssetCandidates = isWorkflowBeatSheetArtifactType(outputArtifactType)
-		? projectContext.assetSnapshot
-			.filter((asset) => (
-				asset.projectId === projectContext.projectId
-				&& visibleAssetIds.has(asset.assetId)
-				&& asset.mediaKind === "image"
-				&& asset.state === "ready"
-				&& asset.productionEligible
-			))
-			.map((asset) => ({
-				assetId: asset.assetId,
-				name: asset.name,
-				canonicalName: asset.canonicalName,
-				kind: asset.kind,
-				referenceType: asset.referenceType,
-				approvalStatus: asset.approvalStatus,
-				origin: asset.origin,
-				flowId: asset.flowId,
-				nodeId: asset.nodeId,
-				sourceFacts: asset.sourceFacts,
-				selected: selectedAssetIds.has(asset.assetId),
-				updatedAt: asset.updatedAt,
-			}))
+	const projectAssetCandidates = (isWorkflowBeatSheetArtifactType(outputArtifactType) || outputArtifactType === "tapcanvas.chapter-asset-plan/v1")
+		? workflowProjectImageCatalog(projectContext)
 		: undefined;
+	const candidateIds = new Set(projectAssetCandidates?.map((asset) => asset.assetId) ?? []);
 	return {
 		version: projectContext.version,
 		projectId: projectContext.projectId,
 		canvasId: projectContext.canvasId,
 		sourceNodeId: projectContext.sourceNodeId,
 		selectedAssetIds: projectContext.selectedAssetIds,
+		assetSelectionDiagnostics: projectContext.assetSelectionDiagnostics,
 		projectAssetCount: projectContext.projectAssetIds.length,
 		assetSnapshotCount: projectContext.assetSnapshot.length,
 		timeline: projectContext.timeline,
 		selection: projectContext.selection,
 		permissions: projectContext.permissions,
+		// Candidate-local receipts retain these exact facts; do not serialize them twice.
+		mediaUnderstanding: projectContext.mediaUnderstanding?.filter((item) => (item.referenceId === null || !candidateIds.has(item.referenceId))),
+		mediaUnderstandingDiagnostics: projectAssetDiagnosticsForPrompt(
+			projectContext.mediaUnderstandingDiagnostics?.filter((item) => item.referenceId === null || !candidateIds.has(item.referenceId)) ?? [],
+			selectedAssetIds,
+		),
+		visualStyle: {
+			referenceImageCount: visualStyle.referenceImages.length,
+			styleLock: visualStyle.styleLock,
+			styleFingerprint: visualStyle.styleFingerprint,
+		},
 		selectedAssetSnapshot: projectContext.assetSnapshot.filter((asset) => (
 			selectedAssetIds.has(asset.assetId)
 		)),
-		...(projectAssetCandidates ? { projectAssetCandidates } : {}),
+		...(projectAssetCandidates ? { projectAssetCandidates: workflowPromptRecordTable(projectAssetCandidates) } : {}),
 		capturedAt: projectContext.capturedAt,
 	};
 }
@@ -290,6 +423,51 @@ function parsePromptExampleCandidateSearchObservation(
 	};
 }
 
+function parseKnowledgeCandidateSearchObservation(
+	value: unknown,
+): WorkflowKnowledgeCandidateSearchObservation | null {
+	if (!isRecord(value) || value.version !== 1) return null;
+	const statuses = new Set<WorkflowKnowledgeCandidateSearchObservation["status"]>([
+		"not_attempted",
+		"candidate_found",
+		"no_match",
+		"retrieval_failed",
+		"invalid_evidence",
+		"tool_unavailable",
+	]);
+	if (
+		typeof value.status !== "string"
+		|| !statuses.has(value.status as WorkflowKnowledgeCandidateSearchObservation["status"])
+	) return null;
+	if (
+		typeof value.attempted !== "boolean"
+		|| typeof value.candidateCount !== "number"
+		|| !Number.isInteger(value.candidateCount)
+		|| value.candidateCount < 0
+		|| value.blocking !== false
+		|| typeof value.rationale !== "string"
+		|| !Array.isArray(value.domains)
+		|| value.domains.some((domain) => typeof domain !== "string")
+	) return null;
+	const toolCallId = typeof value.toolCallId === "string" && value.toolCallId.trim()
+		? value.toolCallId.trim()
+		: null;
+	const candidateSetId = typeof value.candidateSetId === "string" && value.candidateSetId.trim()
+		? value.candidateSetId.trim()
+		: null;
+	return {
+		version: 1,
+		status: value.status as WorkflowKnowledgeCandidateSearchObservation["status"],
+		attempted: value.attempted,
+		candidateCount: value.candidateCount,
+		blocking: false,
+		rationale: value.rationale.trim(),
+		domains: value.domains.map((domain) => domain.trim()).filter(Boolean),
+		...(candidateSetId ? { candidateSetId } : {}),
+		...(toolCallId ? { toolCallId } : {}),
+	};
+}
+
 function readAgentResponse(result: unknown): WorkflowAgentRunResult {
 	if (!isRecord(result)) throw new Error("Agents workflow node returned an invalid result");
 	const taskId = typeof result.id === "string" ? result.id.trim() : "";
@@ -302,9 +480,21 @@ function readAgentResponse(result: unknown): WorkflowAgentRunResult {
 	const rawAssets = Array.isArray(result.assets) ? result.assets : [];
 	const executionProvenance = parseAgentExecutionProvenance(meta.executionProvenance);
 	const runtime = isRecord(meta.runtime) ? meta.runtime : null;
+	const structuredOutputFailure = isRecord(meta.structuredOutputExecutionFailure)
+		? meta.structuredOutputExecutionFailure
+		: null;
 	const promptExampleCandidateSearch = parsePromptExampleCandidateSearchObservation(
 		runtime?.promptExampleCandidateSearch,
 	);
+	const knowledgeCandidateSearch = parseKnowledgeCandidateSearchObservation(
+		runtime?.knowledgeCandidateSearch,
+	);
+	const retrievalCandidateSets = Array.isArray(runtime?.retrievalCandidateSets)
+		? runtime.retrievalCandidateSets.filter((item): item is Record<string, unknown> => isRecord(item))
+		: [];
+	const upstreamRequestContexts = Array.isArray(runtime?.upstreamRequestContexts)
+		? runtime.upstreamRequestContexts.filter((item): item is Record<string, unknown> => isRecord(item)).slice(-16)
+		: [];
 	const assets = rawAssets.flatMap((asset) => {
 		if (!isRecord(asset)) return [];
 		const type = typeof asset.type === "string" ? asset.type.trim() : "";
@@ -326,8 +516,15 @@ function readAgentResponse(result: unknown): WorkflowAgentRunResult {
 		deliveryEvidence: meta.deliveryEvidence ?? null,
 		deliveryVerification: meta.deliveryVerification ?? null,
 		requestTerminal: meta.requestTerminal ?? null,
+		...(structuredOutputFailure ? { structuredOutputFailure } : {}),
 		...(executionProvenance ? { executionProvenance } : {}),
 		...(promptExampleCandidateSearch ? { promptExampleCandidateSearch } : {}),
+		...(knowledgeCandidateSearch ? { knowledgeCandidateSearch } : {}),
+		...(retrievalCandidateSets.length > 0 ? { retrievalCandidateSets } : {}),
+		...(upstreamRequestContexts.length > 0 ? { upstreamRequestContexts } : {}),
+		...(isRecord(runtime?.structuredOutputReview)
+			? { structuredOutputReview: runtime.structuredOutputReview }
+			: {}),
 	};
 }
 
@@ -370,20 +567,20 @@ function unwrapWorkflowAgentTransportEnvelope(
 	};
 }
 
-function attachSuspendedWorkflowTurnIdentity(
+function attachWorkflowTurnIdentity(
 	result: WorkflowAgentRunResult,
 	request: WorkflowAgentRunRequest,
 	publicTurnId: string,
 ): WorkflowAgentRunResult {
-	const terminal = isRecord(result.requestTerminal) ? result.requestTerminal : null;
-	if (terminal?.status !== "suspended") return result;
 	const upstreamEvidence = isRecord(result.deliveryEvidence) ? result.deliveryEvidence : null;
 	const physicalRetryOrdinal = workflowAgentPhysicalRetryOrdinal(request);
 	const recoveryWindow = previousRecoveryWindow(request.previousEvidence);
 	return {
 		...result,
+		taskId: publicTurnId,
 		deliveryEvidence: {
 			...(upstreamEvidence ?? {}),
+			transportTaskId: result.taskId,
 			sessionKey: sessionKeyForWorkflowAgent(request),
 			logicalTaskId: publicTurnId,
 			...(physicalRetryOrdinal === null ? {} : { physicalRetryOrdinal }),
@@ -518,12 +715,13 @@ async function fencePreviousWorkflowAgentPhysicalGeneration(
 	request: WorkflowAgentRunRequest,
 	currentPublicTurnId: string,
 	currentPhysicalRetryOrdinal: number,
+	observedPreviousOrdinal = currentPhysicalRetryOrdinal - 1,
 ): Promise<Readonly<{
 	fenced: boolean;
 	previousPublicTurnId: string;
 	errorCode: string | null;
 }>> {
-	const previousPhysicalRetryOrdinal = currentPhysicalRetryOrdinal - 1;
+	const previousPhysicalRetryOrdinal = observedPreviousOrdinal;
 	const previousPublicTurnId = workflowAgentPublicTurnId({
 		executionId: request.executionId,
 		nodeId: request.nodeId,
@@ -538,7 +736,7 @@ async function fencePreviousWorkflowAgentPhysicalGeneration(
 		userId: request.ownerId,
 		interruptReasonCode: "provider_stream_interrupted",
 		targets: [{
-			sessionId: previousPublicTurnId,
+			sessionId: sessionKeyForWorkflowAgent(request),
 			turnId: previousPublicTurnId,
 			nodeId: request.nodeId,
 			runtimeNodeId: request.nodeId,
@@ -593,6 +791,7 @@ function workflowAgentExpectedDelivery(
 		taskGoal: request.instruction,
 		requestedOutput: request.outputArtifactType,
 		successCriteria: [request.deliveryRequirement],
+		...(request.userIntentContract ? { parentUserIntentContract: request.userIntentContract } : {}),
 		requiresExecutionDelivery: false,
 	};
 }
@@ -609,6 +808,16 @@ function workflowClipWriterRequiresSpeechEvents(request: WorkflowAgentRunRequest
 	return false;
 }
 
+function workflowClipWriterSpeechContract(request: WorkflowAgentRunRequest): Readonly<Record<string, unknown>> | null {
+	const contexts = request.inputs["clip-contexts"] ?? [];
+	const value = contexts[0];
+	if (!isRecord(value) || !Array.isArray(value.spokenScript)) return null;
+	return {
+		dialoguePaceRate: value.dialoguePaceRate ?? null,
+		lines: value.spokenScript,
+	};
+}
+
 function workflowClipWriterTimelineDurationSeconds(request: WorkflowAgentRunRequest): number | null {
 	if (request.outputArtifactType !== "tapcanvas.clip-prompts/v2") return null;
 	for (const value of request.inputs["clip-contexts"] ?? []) {
@@ -621,9 +830,49 @@ function workflowClipWriterTimelineDurationSeconds(request: WorkflowAgentRunRequ
 	return null;
 }
 
-function workflowAgentStructuredOutput(
+function workflowClipWriterTimelineEventIntervals(
+	request: WorkflowAgentRunRequest,
+): ReadonlyArray<Readonly<{ startSeconds: number; endSeconds: number }>> | null {
+	if (request.outputArtifactType !== "tapcanvas.clip-prompts/v2") return null;
+	for (const value of request.inputs["clip-contexts"] ?? []) {
+		if (!isRecord(value) || !isRecord(value.beat) || !Array.isArray(value.beat.storyEvents)) continue;
+		const intervals = value.beat.storyEvents.flatMap((rawEvent): Array<{ startSeconds: number; endSeconds: number }> => {
+			if (!isRecord(rawEvent)) return [];
+			const startSeconds = rawEvent.startSeconds;
+			const endSeconds = rawEvent.endSeconds;
+			return typeof startSeconds === "number" && Number.isFinite(startSeconds)
+				&& startSeconds >= 0 && typeof endSeconds === "number" && Number.isFinite(endSeconds)
+				&& endSeconds > startSeconds
+				? [{ startSeconds, endSeconds }]
+				: [];
+		});
+		if (intervals.length !== value.beat.storyEvents.length || intervals.length === 0) return null;
+		const durationSeconds = workflowClipWriterTimelineDurationSeconds(request);
+		const first = intervals[0];
+		const last = intervals[intervals.length - 1];
+		if (
+			durationSeconds !== null
+			&& first
+			&& last
+			&& first.startSeconds > 0
+			&& Number((last.endSeconds - first.startSeconds).toFixed(6)) === Number(durationSeconds.toFixed(6))
+		) {
+			return intervals.map((interval) => ({
+				startSeconds: Number((interval.startSeconds - first.startSeconds).toFixed(6)),
+				endSeconds: Number((interval.endSeconds - first.startSeconds).toFixed(6)),
+			}));
+		}
+		return intervals;
+	}
+	return null;
+}
+
+export function workflowAgentStructuredOutput(
 	request: WorkflowAgentRunRequest,
 ): Readonly<Record<string, unknown>> | null {
+	// Every structured authoring port is governed by a caller-frozen contract.
+	// Invalid candidates stay ephemeral and are fed back to the same ReAct
+	// execution chain for structural repair; no local field rewrite is allowed.
 	if (request.outputEncoding === "json_array") {
 		const contract = request.jsonArrayContract;
 		const requiredFields = [
@@ -656,7 +905,7 @@ function workflowAgentStructuredOutput(
 		return {
 			outputContract: {
 				kind: "json",
-				submissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY,
+				submissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY,
 				requiredArrayField: "items",
 				allowedTopLevelFields: ["items"],
 				...(contract?.minimumArrayLength === undefined
@@ -701,7 +950,7 @@ function workflowAgentStructuredOutput(
 		const expectedArrayLengths = { ...(contract.expectedArrayLengths ?? {}) };
 		const singleRequiredArrayField = requiredArrayFields.length === 1 ? requiredArrayFields[0] : null;
 		const expectedArrayLengthKeys = Object.keys(expectedArrayLengths);
-		const canUseSingleArrayContract = Boolean(singleRequiredArrayField)
+		const canUseSingleArrayContract = !contract.jsonSchema && Boolean(singleRequiredArrayField)
 			&& requiredStringFields.length === 0
 			&& requiredNumberFields.length === 0
 			&& requiredObjectFields.length === 0
@@ -715,8 +964,12 @@ function workflowAgentStructuredOutput(
 			canUseSingleArrayContract
 			&& singleRequiredArrayField
 		) {
+			const itemSpeechContract = compilerOwnsClipEnvelope ? workflowClipWriterSpeechContract(request) : null;
 			const itemTimelineDurationSeconds = compilerOwnsClipEnvelope
 				? workflowClipWriterTimelineDurationSeconds(request)
+				: null;
+			const itemTimelineEventIntervals = compilerOwnsClipEnvelope
+				? workflowClipWriterTimelineEventIntervals(request)
 				: null;
 			const exactAssetIds = !compilerOwnsClipEnvelope
 				&& contract.itemExactAssetIds && "expected" in contract.itemExactAssetIds
@@ -728,23 +981,23 @@ function workflowAgentStructuredOutput(
 			return {
 				outputContract: {
 					kind: "json",
-					submissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY,
-					...(compilerOwnsClipEnvelope
-						? { executionPolicy: WORKFLOW_STRUCTURED_OUTPUT_SINGLE_INFERENCE_POLICY }
-						: {}),
+					submissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY,
+					// Typed writer output remains schema-checked, but structural failures
+					// must be repairable by the same ReAct execution chain.
 					...contractIdentity,
 					requiredArrayField: singleRequiredArrayField,
 					...(expectedArrayLengths[singleRequiredArrayField] === undefined
 						? {}
 						: { expectedArrayLength: expectedArrayLengths[singleRequiredArrayField] }),
+					...(itemSpeechContract ? { itemSpeechContract } : {}),
 					...(itemTimelineDurationSeconds === null ? {} : { itemTimelineDurationSeconds }),
+					...(itemTimelineEventIntervals === null ? {} : { itemTimelineEventIntervals }),
 					...(requiredNonEmptyArrayPaths.length
 						? { requiredNonEmptyArrayPaths }
 						: {}),
 					...(exactAssetIds ? { itemExactAssetIds: exactAssetIds } : {}),
-					// 顶层严格化：根对象只允许声明合同内的顶层字段。模型必须在
-					// 唯一提交中满足；偏差只记录并失败，不进入纠偏链。
-					allowedTopLevelFields: [...contract.allowedFields],
+					// 顶层严格化：根对象只允许声明合同内的顶层字段。
+					allowedTopLevelFields: [...new Set([...contract.allowedFields, ...(compilerOwnsClipEnvelope ? ["creativeReview", "selfQaNote"] : [])])],
 					description: `Workflow typed port ${request.outputArtifactType} requires one non-empty top-level array field`,
 				},
 				responseFormat: { type: "json_object" },
@@ -790,18 +1043,34 @@ function workflowAgentStructuredOutput(
 		return {
 			outputContract: {
 				kind: "json",
-				submissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY,
-				...(compilerOwnsClipEnvelope
-					? { executionPolicy: WORKFLOW_STRUCTURED_OUTPUT_SINGLE_INFERENCE_POLICY }
-					: {}),
+				submissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY,
 				...contractIdentity,
 				requiredStringFields,
+				...(contract.jsonSchema ? { jsonSchema: contract.jsonSchema } : {}),
 				...(contract.exactStringFields ? { exactStringFields: contract.exactStringFields } : {}),
 				...(requiredNumberFields.length > 0 ? { requiredNumberFields } : {}),
 				...(requiredObjectFields.length > 0 ? { requiredObjectFields } : {}),
+				...(contract.requiredNonEmptyStringPaths?.length
+					? { requiredNonEmptyStringPaths: [...contract.requiredNonEmptyStringPaths] }
+					: {}),
+				...(contract.requiredObjectPaths?.length
+					? { requiredObjectPaths: [...contract.requiredObjectPaths] }
+					: {}),
+				...(contract.requiredArrayPaths?.length
+					? { requiredArrayPaths: [...contract.requiredArrayPaths] }
+					: {}),
+				...(contract.optionalNonEmptyStringPaths?.length
+					? { optionalNonEmptyStringPaths: [...contract.optionalNonEmptyStringPaths] }
+					: {}),
+				...(contract.exactStringPaths && Object.keys(contract.exactStringPaths).length > 0
+					? { exactStringPaths: { ...contract.exactStringPaths } }
+					: {}),
 				...(requiredArrayFields.length > 0 ? { requiredArrayFields } : {}),
 				...(Object.keys(expectedArrayLengths).length > 0 ? { expectedArrayLengths } : {}),
 				...(Object.keys(arrayItemRequiredStringFields).length > 0 ? { arrayItemRequiredStringFields } : {}),
+				...(Object.keys(contract.arrayItemStringFormats ?? {}).length > 0
+					? { arrayItemStringFormats: contract.arrayItemStringFormats }
+					: {}),
 				...(Object.keys(arrayItemRequiredStringArrayFields).length > 0
 					? { arrayItemRequiredStringArrayFields }
 					: {}),
@@ -824,7 +1093,7 @@ function workflowAgentStructuredOutput(
 	return {
 		outputContract: {
 			kind: "json",
-			submissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY,
+			submissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY,
 			requiredStringFields: ["artifactType", "text"],
 			exactStringFields: { artifactType: request.outputArtifactType },
 			allowedFields: ["artifactType", "text"],
@@ -854,9 +1123,63 @@ function workflowAgentPhysicalClipNotice(inputs: WorkflowAgentRunRequest["inputs
 		const count = topology.expectedClipCount;
 		const durations = topology.minimumClipDurations;
 		if (typeof count !== "number" || !Number.isInteger(count) || !Array.isArray(durations)) continue;
-		return `服务端已冻结 providerSubmissionTopology（source=${String(topology.source)}）：物理视频必须严格提交 ${String(count)} 个 Clip，BeatSheet 的 beats 必须按顺序逐项对应这 ${String(count)} 个物理 Clip，durationSeconds 必须严格等于 ${JSON.stringify(durations)}；不得再按语义拆成更多或更少的物理 Clip。语义事件仍写在每个 beat 的 storyEvents 内。Agent 必须在首稿中一次性提交每个 storyEvent 的 entryState/exitState 与每个 beat 的 exitState；runtime 只验收和记录，不会补写状态链。`;
+		return `服务端已冻结 providerSubmissionTopology（source=${String(topology.source)}）：物理视频必须严格提交 ${String(count)} 个 Clip，BeatSheet 的 beats 必须按顺序逐项对应这 ${String(count)} 个物理 Clip，durationSeconds 必须严格等于 ${JSON.stringify(durations)}；不得再按语义拆成更多或更少的物理 Clip。语义事件仍写在每个 beat 的 storyEvents 内。Agent 只提交 startKeyframe 与每个 storyEvent 的 exitState；runtime 在唯一提交边界按物理顺序确定性投影每个 entryState 与 beat.exitState，不存在可冲突的重复状态字段。`;
 	}
 	return "";
+}
+
+function workflowLatestUserRequestInstruction(request: WorkflowAgentRunRequest): string {
+	const inputs = request.inputs;
+	const seen = new Set<object>();
+	let userIntentContract: Record<string, unknown> | null = request.userIntentContract ?? null;
+	let userRequest: Record<string, unknown> | null = null;
+	const collectFacts = (value: unknown, depth = 0): void => {
+		if ((!isRecord(value) && !Array.isArray(value)) || seen.has(value) || depth > 12) return;
+		seen.add(value);
+		if (Array.isArray(value)) {
+			for (const child of value) collectFacts(child, depth + 1);
+			return;
+		}
+		const intent = value.userIntentContract;
+		if (!userIntentContract && isRecord(intent) && typeof intent.contractHash === "string") {
+			userIntentContract = intent;
+		}
+		const direct = value.userRequest;
+		if (!userRequest && isRecord(direct) && readString(direct, "kind") === "public_chat_turn" && readString(direct, "content")) {
+			userRequest = direct;
+		}
+		const accepted = value[WORKFLOW_ACCEPTED_TURN_SOURCE_FIELD] ?? value.acceptedTurnSource;
+		if (!userRequest && isRecord(accepted) && readString(accepted, "text")) {
+			userRequest = {
+				kind: "public_chat_turn",
+				requestId: readString(accepted, "sourceId"),
+				content: readString(accepted, "text"),
+				requestFingerprint: readString(accepted, "fingerprint"),
+			};
+		}
+		// Accepted text and the frozen intent can live in sibling input artifacts.
+		// Finding either one must not discard the other (including standing preferences).
+		for (const child of Object.values(value)) collectFacts(child, depth + 1);
+	};
+	for (const values of Object.values(inputs)) collectFacts(values);
+	if (userRequest) {
+		const content = readString(userRequest, "content");
+		return [
+				"本次 accepted public-chat turn 是当前执行链中最新的用户指令，优先级高于旧画布文本对呈现方式的隐含要求。",
+				"userRequest 是当前请求；UserIntentContract 是父 Agent 冻结的完整目标与已确认事实；authoritativeSources 是保留来源身份的输入内容，来源可能是叙事正文或创作请求。它们不是可互换的字段，具体创作决策由 Agent 根据这些事实与 Skill 作出。expandedSourceDraft 保持辅助草稿身份，不得冒充已确认来源。",
+				...(userIntentContract
+					? [`同一执行链携带的 UserIntentContract 是已冻结的父任务目标；本节点只交付其声明的产物，按合同要求落实本节点承担的内容，不重复执行父任务的媒体动作：${JSON.stringify(userIntentContract)}`]
+					: []),
+				`当前 accepted public-chat turn（逐字事实）：${JSON.stringify({ content, requestId: readString(userRequest, "requestId") })}`,
+		].join("\n");
+	}
+	if (userIntentContract) {
+		return [
+			"当前执行链携带一份已冻结的 UserIntentContract；它是父任务的用户目标、出口形态、要求与已确认事实，优先级高于旧文本和领域默认方法。本节点只交付其声明的产物，落实本节点承担的内容，不重复执行父任务的媒体动作。",
+			`当前 UserIntentContract（逐字结构化事实）：${JSON.stringify(userIntentContract)}`,
+		].join("\n");
+	}
+	return "当前执行链没有可验证的 accepted public-chat turn；不得从旧文本、模板或模型常识推断用户未提出的节奏、收束、悬念或结果。";
 }
 
 function isWorkflowBeatSheetArtifactType(artifactType: string): boolean {
@@ -864,16 +1187,21 @@ function isWorkflowBeatSheetArtifactType(artifactType: string): boolean {
 		|| artifactType === "tapcanvas.launch-beat-sheet/v1";
 }
 
-function workflowAgentPrompt(request: WorkflowAgentRunRequest): string {
-	const promptInputs = workflowAgentPromptInputs(request);
+export function workflowAgentPrompt(request: WorkflowAgentRunRequest): string {
+	const promptInputs = compactWorkflowPromptFacts(workflowAgentPromptInputs(request));
+	const frozenAssetRead = request.projectContext ? JSON.stringify({ tool: "tapcanvas_workflow_execution_inspect", executionId: request.executionId, view: "assets", assetIds: "exact IDs from projectAssetCandidates" }) : null;
+	const canonicalSourcePort = (request.inputs["canvas-facts"]?.length ?? 0) > 0
+		? "canvas-facts"
+		: "delivery-contract.canvasFacts";
 	const clipWriterFirstPassChecklist = request.outputArtifactType === "tapcanvas.clip-prompts/v2"
 		? [
 			"视频 Clip writer 首稿提交检查：clip-contexts[0].spokenScript 是冻结的人声唯一来源，不能省略、改写或换字段名。",
 			"shots[].durationSeconds 是最终可执行秒数，不是相对权重。提交前从 cursor=0 开始按数组顺序计算每镜半开区间 [shotStart,shotEnd)：shotStart=cursor，shotEnd=cursor+durationSeconds，再令 cursor=shotEnd；最后 cursor 必须精确等于冻结 beat.durationSeconds。runtime 不会缩放、吸收余差或改写任何镜头时长。",
-			"对每个 shots[N].depictedStoryEventIndices 中声明的零基事件 i，必须使用上述最终镜头区间验证 shotStart < storyEvents[i].endSeconds 且 shotEnd > storyEvents[i].startSeconds。边界相等不算相交：事件在 16 秒结束、镜头从 16 秒开始时，该镜绝不能继续声明该事件。每个冻结事件仍必须至少由一个真正演出它且时间相交的镜头声明。",
+			`冻结 storyEvents 的实际半开区间按零基下标为 ${JSON.stringify(workflowClipWriterTimelineEventIntervals(request) ?? [])}；对每个 shots[N].depictedStoryEventIndices 中声明的零基事件 i，必须使用最终镜头区间验证 shotStart < storyEvents[i].endSeconds 且 shotEnd > storyEvents[i].startSeconds。边界相等不算相交；每个冻结事件仍必须至少由一个真正演出它且时间相交的镜头声明。`,
 			"当 spokenScript 为空时，speakerBindings 必须省略或严格输出 []，speechEvents 必须是 []；shots 不得出现任何人声正文或人声字段。",
-			"当 spokenScript 非空时，每个冻结 lineId 必须由一个且仅一个 speechEvents 项完整承载：先逐字复制 spokenScript[].lineId，lineId 必须与冻结 ID 完全相等（例如 ch1-l005 不能写成 speech-ch1-l005 或 line-ch1-l005）；speechEventId 才是独立的事件标识，可采用 speech-<lineId> 形式。事件还必须给出 startOffset=0、endOffset=该行 Unicode 码点长度、clip 内独立 startSeconds/endSeconds、speakerName、delivery、performance；performance 只写语速、音量、气息、停顿、重音和潜台词，禁止人物站位、肢体/道具动作、镜头或剧情事件；禁止按镜头切分台词。",
+			"当 spokenScript 非空时，speechEvents 必须按 spokenScript 原始顺序一项对应一条冻结人声；不要输出 lineId 或 speechEventId（宿主在唯一提交边界按数组位置绑定冻结 lineId 并生成稳定 transport ID）。每个事件仍必须给出 startOffset=0、endOffset=对应冻结行 Unicode 码点长度、clip 内独立 startSeconds/endSeconds、speakerName、delivery、performance；performance 只写语速、音量、气息、停顿、重音和潜台词，禁止人物站位、肢体/道具动作、镜头或剧情事件；禁止按镜头切分台词。",
 			"shots 不得提交 speechEventIds；调用方会在模型首稿已经闭合的最终镜头时钟上按时间窗相交关系确定性编译。同一 SpeechEvent 可以跨多个镜头，切镜不得截断、重启或重复发声。writer 不得提交 spokenText、dialogue 或其它台词正文。",
+			"motionDynamics 是语义可选的机器执行合同：只有当前 shot 明确属于高动力、且主体存在可声明的实际位移或受力时才输出对象；低动力或没有合法方向时语义上省略整个对象。若当前严格提交工具 schema 要求该属性存在，用 JSON null 表示省略；禁止构造 motionDynamics.direction=none、空字符串或其它占位对象。若输出 motionDynamics，motionDynamics.direction 表示主体实际位移/受力方向，不表示镜头运动方向，只能使用 ASCII 枚举 left、right、forward、backward、upward、downward 或 diagonal；不要输出中文方向、自然语言句子、箭头符号或自造枚举。tempo 只能是 instant|fast|sustained，force 只能是 light|medium|heavy，airborne 只能是 none|brief|extended，rotation 只能是 none|partial|full，brakingMode 只能是 ground_friction|wall_impact|grip|counterforce，environmentalResponse 只能是 none|dust|debris|splash|deformation；不要把动作说明塞进枚举字段。",
 			"有对白时 speakerBindings 必须只包含冻结说话人且顺序一致，每项 name 非空、assetKind 只能是 character 或 voice，禁止空字符串；角色入画的说话人用 character，纯声音通道才用 voice。",
 			"顶层 selfQaNote、creativeReview 与 sourceFidelityAudit 都只是可选追溯证据；缺失或格式不完整不得阻止生产，也不得用审计文字代替 clips 中的真实内容。",
 			"不要把对白放进 dialogueScript、speech 或 shot 文案来规避事件合同；只有一个冻结对白行时，建立一个覆盖 [0,N) 的完整 SpeechEvent，逐镜引用仍由调用方编译。",
@@ -881,18 +1209,22 @@ function workflowAgentPrompt(request: WorkflowAgentRunRequest): string {
 		].join("\n")
 		: "";
 	return [
+		frozenAssetRead ? `frozenAssetRead: ${frozenAssetRead}` : "",
 		"执行当前工作流 Agent 原子节点。",
-		"本节点没有执行期纠偏通道：模型只提交一次完整首稿；runtime 不回灌错误、不补字段、不重生成、不切换模型。提交前必须自行完成整体复核。",
+		"本节点必须直接交付完整结构化候选。runtime 不改写语义字段、不切换模型、不重复已成功的副作用；runtime 不缩放镜头时长、不重映射事件索引，也不回灌修订已冻结的语义事实。若首轮结构不完整，runtime 会保留精确字段路径与失败证据，并把它回灌同一 ReAct 链允许一次额外 format 修复；只有确定性协议边界才会关闭当前动作。",
 		clipWriterFirstPassChecklist,
+		isWorkflowBeatSheetArtifactType(request.outputArtifactType)
+			? "BeatSheet 状态字段硬约束：每个 storyEvents 项只由 Agent 提交 sourceBeatId、event、exitState、startSeconds、endSeconds；严禁输出 entryState。Beat 项严禁输出 exitState。首事件入口使用 startKeyframe，后续 entryState 与 Beat exitState 由提交边界按顺序确定性投影。"
+			: "",
 		`任务目标：${request.instruction}`,
 		`声明输出产物：${request.outputArtifactType}`,
 		`本节点交付合同：${request.deliveryRequirement}`,
 			request.outputArtifactType === "tapcanvas.beat-sheet/v2"
-				? `当前 BeatSheet 运行时合同版本为 ${BEAT_SHEET_ARTIFACT_CONTRACT_VERSION}，采用单一事实源：章级 Agent 在唯一提交前完成来源审查与戏剧分析，只提交 sourceCoveragePlan、chapterArc、objectRegistry、beats 中的执行事实。chapterArc 只包含 storyPromise、protagonistThroughline、primaryPayoff、endingHook。sourceCoveragePlan.speechLedger 逐字声明人声；每个 storyEvent 必须一次写全 sourceBeatId、event、entryState、exitState 与本地时间轴，每个 beat.exitState 必须等于本 Beat 最后一项 storyEvent.exitState，跨事件和跨 Beat 连续性由 Agent 自行保证。每段声明 dominantFunction、causalEntry、irreversibleResult、handoffToNext。对象只在根级 objectRegistry 注册一次，每个对象必须显式提交 physicalIdentityKey、referenceImageNodeIds 与 referenceRole，且只能绑定冻结 ProjectContext 能验真的 referenceAssetIds；character 的 physicalIdentityKey 非空，其它 kind 严格为 null。只为成片中真正需要跨 Clip 保持可辨认身份或空间连续性的对象建立参考职责；一次性路人、匿名围观者、背景人群和只承担群体反应的非核心群体，若个体身份无需跨 Clip 连续，必须由模型在唯一首稿中设为 referenceRole=none 且两个引用 ID 数组为空，不为其创建角色卡。beat.objectStates 只通过 objectId 提交状态增量。sourceFidelityAudit 可省略；若输出，只是模型自检诊断，宿主不会生成或改写。clipId、characters、speakers、dialogueScript 与 assetObjectContracts 由宿主根据已提交的确定性事实编译；显式所选资产只能由模型写入根级 objectRegistry[].referenceAssetIds，宿主不会代替模型猜测或补绑。最终 JSON 是下游执行合同，不是分析报告；逐秒摄影调度仍由后续 Clip writer 创作。`
+				? `当前 BeatSheet 运行时合同版本为 ${BEAT_SHEET_ARTIFACT_CONTRACT_VERSION}，采用单一事实源：章级 Agent 在唯一提交前完成来源审查、戏剧分析和整段成片序列设计，只提交 sourceCoveragePlan、chapterArc、sequenceControlPlan、objectRegistry、beats 中的执行事实。sourceCoveragePlan 是必填根对象；即使当前来源没有任何对白，也必须原样输出 {"speechLedger":[]}，不得省略或用 null/空数组替代该对象。若来源有对白，speechLedger 逐字声明人声。chapterArc 只包含 storyPromise、protagonistThroughline、primaryPayoff、endingHook；endingHook 只有用户明确要求或 authoritativeSources 已有未闭合事件时填写非空字符串，否则必须填写 null，禁止为满足字段而编造悬念、收势、胜负未决或生死未明。sequenceControlPlan 必须声明 protocolVersion=${WORKFLOW_SEQUENCE_CONTROL_PLAN_PROTOCOL_VERSION}、totalDurationSeconds，以及按 beats 顺序逐项声明 segments：clipId、连续 startSeconds/endSeconds、temporalDirectives 和 transitionFromPrevious/transitionToNext。temporalDirectives 是通用时间处理指令，每项只声明非空 kind、时间窗和 reason；它可以表达由当前视频任务决定的任意时间处理，runtime 不按 kind 做语义路由。sequenceControlPlan 是整段生命链唯一的时间处理和跨 Clip 承接事实源；后续 Clip writer 只能执行当前 segment，不得另行发明节奏、重复闭环或改写总时长。时间处理、动作密度、收束方式和出口状态必须依据最新用户指令与已加载领域 Skill 的结构化判断；不得由运行时自行补写未授权的叙事功能。每个 storyEvent 只提交 sourceBeatId、event、exitState、startSeconds、endSeconds，严禁提交 entryState；每个 beat 也严禁提交 exitState。首事件入口来自 startKeyframe，后续 entryState 与 beat.exitState 由提交边界按顺序确定性投影，保证跨事件和跨 Beat 连续性。每段声明 dominantFunction、causalEntry、irreversibleResult、handoffToNext。对象只在根级 objectRegistry 注册一次，每个对象必须显式提交 physicalIdentityKey、referenceImageNodeIds 与 referenceRole，referenceRole 只能是 none/identity/wardrobe/prop/environment/palette/composition/vfx；scale（如需）只能是非空字符串，禁止数字。且只能绑定冻结 ProjectContext 能验真的 referenceAssetIds；character 的 physicalIdentityKey 非空，其它 kind 严格为 null。只为成片中真正需要跨 Clip 保持可辨认身份或空间连续性的对象建立参考职责；一次性路人、匿名围观者、背景人群和只承担群体反应的非核心群体，若个体身份无需跨 Clip 连续，必须由模型在唯一首稿中设为 referenceRole=none 且两个引用 ID 数组为空，不为其创建角色卡。beat.objectStates 必须按 objectRegistry 中的对象各提交至多一项，禁止同一 objectId 在同一 beat 重复；每项通过 objectId 提交该对象的状态增量，并显式提交本段 referenceAssetIds/referenceImageNodeIds 两个数组：只能选该对象 registry 内的 ID；无已有图片时均为空数组，禁止省略后继承全局集合。sourceFidelityAudit.sourceBeatLedger 是必填来源事件账本，通过 sourceBeatId 对应 storyEvents；宿主只验证结构与引用，不判定语义覆盖，也不会生成或改写账本。clipId、characters、speakers、dialogueScript 与 assetObjectContracts 由宿主根据已提交的确定性事实编译；显式所选资产由模型在根级 objectRegistry 中绑定 referenceAssetIds 或当前画布的 referenceImageNodeIds；同一对象允许多图，宿主只按冻结 ID 映射解析，不猜测对象。最终 JSON 是下游执行合同，不是分析报告；BeatSheet 冻结整段序列控制，Clip writer 只负责执行。`
 			: request.outputArtifactType === "tapcanvas.launch-beat-sheet/v1"
-				? `当前首 Clip BeatSheet 与章级 BeatSheet 使用同一个单一事实源合同版本 ${BEAT_SHEET_ARTIFACT_CONTRACT_VERSION}，只是 beats 必须恰好一项且 clipIndex=0。一次提交 sourceCoveragePlan、chapterArc、objectRegistry 和唯一 beat 的执行事实；每个 storyEvent 写全 entryState、exitState 与本地时间轴，beat.exitState 等于最后一个 storyEvent.exitState。每个 objectRegistry 项显式提交 physicalIdentityKey、referenceImageNodeIds、referenceRole 与已验真 referenceAssetIds。只为成片中真正需要持续可辨认身份或空间连续性的对象建立参考职责；无需身份连续的一次性路人、匿名围观者、背景人群和非核心群体必须设为 referenceRole=none 且两个引用 ID 数组为空。sourceFidelityAudit 可省略；若输出，只是模型自检诊断，宿主不会生成或改写。clipId、characters、speakers、dialogueScript 和 assetObjectContracts 由宿主根据已提交的确定性事实编译。没有新增叙事人声时 narrativeAudioPlan 必须输出 {\"lines\":[]}。`
+				? `当前首 Clip BeatSheet 与章级 BeatSheet 使用同一个单一事实源合同版本 ${BEAT_SHEET_ARTIFACT_CONTRACT_VERSION}，只是 beats 必须恰好一项且 clipIndex=0。一次提交 sourceCoveragePlan、chapterArc、sequenceControlPlan、objectRegistry 和唯一 beat 的执行事实；sequenceControlPlan 仍需包含一个覆盖该 beat 全部时长的 segment、开放的 temporalDirectives 与前后转场接口，不能省略。每个 storyEvent 只提交 sourceBeatId、event、exitState 与本地时间轴，严禁提交 entryState；beat.exitState 也由提交边界确定性投影。每个 objectStates 项必须显式提交 referenceAssetIds/referenceImageNodeIds，选择该对象 registry 的本段有序子集；没有已有引用时提交空数组，宿主不会自动继承全局引用。每个 objectRegistry 项显式提交 physicalIdentityKey、referenceImageNodeIds、referenceRole 与已验真 referenceAssetIds；referenceRole 只能是 none/identity/wardrobe/prop/environment/palette/composition/vfx，scale（如需）只能是非空字符串。只为成片中真正需要持续可辨认身份或空间连续性的对象建立参考职责；无需身份连续的一次性路人、匿名围观者、背景人群和非核心群体必须设为 referenceRole=none 且两个引用 ID 数组为空。sourceFidelityAudit.sourceBeatLedger 是必填来源事件账本，宿主仅检查结构和引用，不判定语义覆盖或改写账本。clipId、characters、speakers、dialogueScript 和 assetObjectContracts 由宿主根据已提交的确定性事实编译。没有新增叙事人声时 narrativeAudioPlan 必须输出 {\"lines\":[]}。`
 			: request.outputArtifactType === "tapcanvas.clip-prompts/v2"
-				? `当前视频 writer 运行时合同版本为 ${VIDEO_WRITER_ARTIFACT_CONTRACT_VERSION}：writer 创作有序 shots、独立 speechEvents、动作、摄影、表演、逐镜 depictedStoryEventIndices 和创作自检。每条冻结人声必须由一个完整 SpeechEvent 承载并可跨镜头。shots[].durationSeconds 是最终可执行秒数，必须精确加总到冻结 clip durationSeconds；speechEvents 与累计 shot 区间使用同一绝对时钟。每个 depictedStoryEventIndices 声明必须同时满足语义真实承载和半开时间区间严格相交，边界相等不算相交。runtime 不缩放镜头时长、不重映射事件索引，也不回灌修订。shots[].speechEventIds、sourceEventCoverage、temporalFrameTrack 与 temporalFrameCoverage 均由调用方确定性编译；writer 禁止复制任何机器字段。`
+				? `当前视频 writer 运行时合同版本为 ${VIDEO_WRITER_ARTIFACT_CONTRACT_VERSION}：writer 创作有序 shots、独立 speechEvents、动作、摄影、表演、逐镜 depictedStoryEventIndices 和创作自检，但必须把 sequenceContext.sequenceControlPlan、sequenceContext.sequenceTimeline、current.timing 视为父 Agent 已冻结的整段序列合同。writer 只执行当前 Beat，不创建独立 clip 闭环；首镜承接 previous 的退出与 current.timing.transitionFromPrevious，末镜落实 current.timing.transitionToNext 并把未完成动作交给 next。所有时间处理只能落在 current.timing.temporalDirectives 声明的区间内；writer 不得自行添加、删除或更改任何时间处理指令。每条冻结人声必须由一个完整 SpeechEvent 承载并可跨镜头。shots[].durationSeconds 是最终可执行秒数，必须精确加总到冻结 clip durationSeconds；speechEvents 与累计 shot 区间使用同一绝对时钟。用户明确给出的数值边界按原值执行；节奏、动作、摄影与切点由 agents 根据用户事实和已加载 Skill 决定，宿主不从语义用词推导额外数值规格。每个 depictedStoryEventIndices 声明必须同时满足语义真实承载和半开时间区间严格相交，边界相等不算相交。runtime 不缩放镜头时长、不重映射事件索引、不改写语义字段；首轮结构失败会保留精确路径、候选长度与哈希并回灌同一 ReAct 链，允许额外一次 format 修复。shots[].speechEventIds、sourceEventCoverage、temporalFrameTrack 与 temporalFrameCoverage 均由调用方确定性编译；writer 禁止复制任何机器字段。`
 					: "",
 			isWorkflowBeatSheetArtifactType(request.outputArtifactType)
 				? [
@@ -909,22 +1241,33 @@ function workflowAgentPrompt(request: WorkflowAgentRunRequest): string {
 				"本次冻结 ProjectContext（这是运行时权限过滤后的事实，不是提示词猜测）：",
 				JSON.stringify(workflowAgentProjectContextPromptFacts(request.projectContext, request.outputArtifactType)),
 				isWorkflowBeatSheetArtifactType(request.outputArtifactType)
-					? "projectAssetCandidates 是当前项目在本次执行快照中全部已就绪、可生产的图片身份候选。提交唯一首稿前，必须按角色肉身、场景空间及来源事实完成语义核对；展示名、canonicalName 或章节内称谓不同不代表新身份。确认是同一角色肉身或同一场景状态时，把候选 assetId 原样写入对应 objectRegistry[].referenceAssetIds；character 同时优先沿用候选 sourceFacts.physicalIdentityKey。确认是新人物、新地点或可见状态确实不同才保持引用为空并生成新资产。不得仅因字符串不完全相同重复生图，也不得把相似但不同身份强行复用。这个判断只在本次 BeatSheet 首稿中完成，runtime 后续只验证精确 ID 的项目归属、图片就绪状态和单对象绑定，不会返回语义纠偏。"
+					? "projectAssetCandidates 是当前项目在本次执行快照中全部已就绪、可生产图片的精简身份目录；sourceFacts、analysisEvidence 和 analysisDiagnostics 通过 frozenAssetRead 指定的只读工具按所需 assetIds 读取。按任务需要自主选择读取哪些详情，没有最低读取数量。提交唯一首稿前，必须按角色肉身、场景空间及来源事实完成语义核对；展示名、canonicalName 或章节内称谓不同不代表新身份。确认是同一角色肉身或同一场景状态时，把候选 assetId 原样写入对应 objectRegistry[].referenceAssetIds；character 同时优先沿用候选 physicalIdentityKey（详情中为 sourceFacts.physicalIdentityKey）。确认是新人物、新地点或可见状态确实不同才保持引用为空并生成新资产。不得仅因字符串不完全相同重复生图，也不得把相似但不同身份强行复用。这个判断只在本次 BeatSheet 首稿中完成，runtime 后续只验证精确 ID 的项目归属、图片就绪状态和单对象绑定，不会返回语义纠偏。"
 					: "完整 projectAssetIds/assetSnapshot 仍由服务端保存并用于权限、复用身份和输出合同校验，不在模型提示中重复展开。标准资产能力语义：list_project_assets=读取服务端快照；get_asset/search_project_assets 只能返回许可集合内条目；get_current_selection=读取 selection。不得尝试访问快照外资产。",
 			].join("\n")
 			: "",
 		request.projectContext && isWorkflowBeatSheetArtifactType(request.outputArtifactType) && request.projectContext.selectedAssetIds.length > 0
 			? [
-				"显式所选资产是一等执行事实，不是可选参考。对下面 selectedAssetIds 中的每个 ID，必须在本次唯一首稿提交前依据 selectedAssetSnapshot 的 canonicalName、kind、referenceType 与 sourceFacts 完成语义匹配，并把该 ID 原样写入恰好一个匹配对象的根级 objectRegistry[].referenceAssetIds；同一根对象最多绑定一个 canonical selected asset。必须覆盖全部 selectedAssetIds，不得遗漏、替换、另生成相似对象或把 ID 写进 beats。beats[].assetObjectContracts 由宿主从 objectRegistry 与 objectStates 确定性派生，模型不得输出；runtime 只验证绑定，不会补绑、猜测或把拒因回灌给模型。",
+				"显式所选资产是一等执行事实，不是可选参考。对下面 selectedAssetIds 中的每个 ID，必须在本次唯一首稿提交前依据 selectedAssetSnapshot 的 canonicalName、kind、referenceType 与 sourceFacts 完成语义匹配，并把该 ID 原样写入恰好一个匹配对象的根级 objectRegistry[].referenceAssetIds；同一根对象可绑定多张真实参考图，完整保留其有序 ID；节点 ID 由宿主依据冻结画布精确解析为资产 ID。必须覆盖全部 selectedAssetIds，不得遗漏、替换、另生成相似对象。全局 registry 是素材池；每个 beat.objectStates 必须显式提交 referenceAssetIds/referenceImageNodeIds，只选择该对象在本段使用的有序子集，不能省略。beats[].assetObjectContracts 由宿主从 objectRegistry 与 objectStates 确定性派生，模型不得输出；runtime 只解析和验证显式绑定，不按名称猜测；结构性缺项通过同一逻辑任务的 outputRepair 回灌。",
 				"唯一提交前逐项复核：selectedAssetIds 的每个 ID 都在 objectRegistry[].referenceAssetIds 中精确出现一次，并且匹配对象的 name、physicalIdentityKey、referenceRole、identityInvariant 与 selectedAssetSnapshot 来源事实一致。",
 				JSON.stringify({ selectedAssetIds: request.projectContext.selectedAssetIds, selectedAssetSnapshot: request.projectContext.assetSnapshot.filter((asset) => request.projectContext?.selectedAssetIds.includes(asset.assetId)) }),
 			].join("\n")
 			: "",
+		request.projectContext && (
+			(request.projectContext.visualStyle?.referenceImages.length ?? 0) > 0
+			|| Boolean(request.projectContext.visualStyle?.styleLock)
+		)
+			? "本次执行已冻结项目级视觉锚点 visualStyle：后续所有人物、场景、道具和视频 Clip 必须继承同一组风格参考图与 styleLock.stylePrompt；不得在不同 Clip 间切换动漫/写实等媒介或色彩体系。风格图只承担 style/palette 职责，不替代角色身份图；若锚点来自 Project Look Bible 的文本合同，即使没有风格图，也必须把该合同作为每个视觉资产计划和视频 Clip 的共享风格输入。"
+			: "本次执行未发现已锁定的项目风格参考图；不得假装存在风格图或精确色卡，保持风格未知并在产物诊断中记录。",
 		workflowAgentPhysicalClipNotice(request.inputs),
-		"若上游 canvas-facts 携带 authoritativeSources，它是本次工作流的唯一来源正文投影；先逐字读取该字段，再使用 nodes 里的其他结构事实，禁止从历史会话、素材名称或模型常识补写来源。",
+		workflowLatestUserRequestInstruction(request),
+		`上下文来源采用单一事实源：${canonicalSourcePort} 中的 authoritativeSources 保留来源正文和身份；delivery-contract 冻结时长、供应商和交付边界${canonicalSourcePort === "canvas-facts" ? "，并通过 canvasFactsSourcePort 指向 canvas-facts，不重复承载来源正文" : "，其 canvasFacts 是本节点的来源正文投影"}。父 UserIntentContract 中的要求和 confirmedFacts 与来源正文各保留原有身份；二者均可供 Agent 使用，不能以正文未提供最终产物为由抹去已明确的创作目标。素材名称、Skill 示例和模型常识不构成观察事实。`,
+		"若上游 canvas-facts 携带 referenceVideoAnalyses，它是本次明确选中的参考视频的唯一视觉/听觉事实来源；必须先读取其中的逐秒镜头、动作、场景、剪辑与声音信息，再编写 BeatSheet 或 clip prompt。参考视频只用于理解，禁止把原视频 URL 或原视频本体作为生成接口输入。",
 		"若上游 canvas-facts 携带 userRequest，它是当前用户本轮逐字冻结的执行与创作要求；必须按其中明确的 adaptationMode 落实到本节点产物。faithful 模式不得改写 authoritativeSources 故事事实；creative 模式把 authoritativeSources 当作创作底稿，在核心人物关系、世界规则、主线因果与关键结果不偏离的前提下允许新增桥段、对白、冲突、反转、视觉包装和商业化表达，新增人声单独进入 narrativeAudioPlan 并保留来源锚点与创作理由。userRequest 不是故事正文，不得把其中的操作说明、模型名或规格写成剧情。",
-		"上游端口事实（JSON）：",
+		`上游端口事实（JSON，${canonicalSourcePort === "canvas-facts" ? "delivery-contract 中的 canvasFactsSourcePort 仅表示引用，不是第二份来源正文" : "delivery-contract.canvasFacts 是唯一来源正文投影"}）：`,
 		JSON.stringify(promptInputs),
+		request.outputArtifactType === "tapcanvas.clip-prompts/v2"
+			? "authoringEvidencePacket 保存上游读取来源与回执；来源元数据不等于当前上下文已包含正文，不能据此伪称掌握正文内容。asset-bindings 是已验真的物化图片集合，assetPlan.consumerClipIds 声明其消费者。sequenceContext.previous/current/next 保存同一来源下相邻段的事件、逐字人声、关键帧与对象状态；它们是冻结输入，当前节点输出作用域仍是当前 clip。"
+			: "",
 		request.outputEncoding === "json_array" && request.jsonArrayContract
 			? `数组结构合同（JSON）：${JSON.stringify(request.jsonArrayContract)}`
 			: "",
@@ -934,16 +1277,14 @@ function workflowAgentPrompt(request: WorkflowAgentRunRequest): string {
 		"本节点产物由最终响应的 text 端口接收；禁止用 write_file、bash 或 exec_command 保存中间文件，必须在最终响应中直接交付声明产物。",
 		[
 			request.requiredSkills.length > 0
-				? `本节点的冻结 Workflow Skill 依赖已经预载：${JSON.stringify(request.requiredSkills)}。按预载骨架给出的精确 sectionId/resource 使用 Skill 渐进读取所需正文；禁止调用 skill_search 重新发现或替换这些依赖。知识证据仍按需要使用 knowledge_search → knowledge_read，候选可见不等于正文已读，禁止伪称引用。完成必要读取后直接交付本节点声明的产物。`
+				? `本节点的冻结 Workflow Skill 依赖已经预载：${JSON.stringify(request.requiredSkills)}。按预载骨架给出的精确 sectionId/resource 使用 Skill 渐进读取所需正文；skill_search 仍可用于发现当前请求需要的额外 Skill，但不得用它替换或否定这些预载依赖。知识证据仍按需要使用 knowledge_search → knowledge_read，候选可见不等于正文已读，禁止伪称引用。完成必要读取后直接交付本节点声明的产物。`
 				: "本节点默认拥有完整 Skill 目录与完整向量知识库的检索权限，无需节点挂载。仅在当前产物需要专业方法或声明性证据时，按本轮原始任务使用 skill_search → Skill、knowledge_search → knowledge_read 渐进读取；候选或目录可见不等于正文已读，禁止伪称引用。完成必要读取后直接交付本节点声明的产物。",
 			request.promptExampleRetrievalScope
-				? request.promptExampleRetrievalScope.searchPolicy === "required_non_blocking"
-					? `本节点还是 typed 结构化设计资产提示词作者：案例检索被限定在 ${request.promptExampleRetrievalScope.mediaType} 媒体源。runtime 会在首次创作推理前发起恰好一次候选检索尝试；搜索只返回候选元数据，writer 再按相关性、信息增益与上下文成本读取零条、一条或多条正文，不设固定候选数、最少读取数或自动正文预取。零命中、工具未注册、索引或检索故障都必须如实写入 trace/diagnostics 并继续原创；禁止伪称引用，也禁止把召回数量或质量升级为失败。`
-					: `本节点还是 typed 结构化设计资产提示词作者：案例检索被限定在 ${request.promptExampleRetrievalScope.mediaType} 媒体源。仅在当前产物需要案例证据时调用 prompt_example_search 获取候选，再按相关性、信息增益与上下文成本读取零条、一条或多条正文；不设固定数量或自动正文预取。搜索、读取、零命中、工具未注册、索引或检索故障都必须如实写入 trace/diagnostics；无可用正文时继续原创，禁止伪称引用，也禁止把召回数量或质量升级为失败。`
+				? `本节点的案例源限定为 ${request.promptExampleRetrievalScope.mediaType}；检索工具由 Agent 按当前证据缺口选择使用，不是首次创作前的固定步骤。复用上游已有候选和正文回执；无证据时允许原创，只有实际读取的正文才可声明来源。`
 				: "",
 		].filter(Boolean).join("\n"),
 		isWorkflowBeatSheetArtifactType(request.outputArtifactType)
-			? "BeatSheet 的 narrativeAudioPlan 必须始终是对象（至少包含 lines 数组）；没有新增叙事人声时使用 {\"lines\":[]}，禁止使用空数组。"
+			? "BeatSheet 的 narrativeAudioPlan 必须始终是对象（至少包含 lines 数组）；没有新增叙事人声时使用 {\"lines\":[]}，禁止使用空数组。strategy=source_speech_only 时，lines 可以显式复述当前 Beat 的冻结源对白以声明其音频策略；宿主会将其视为同一份源语音账本，绝不重复追加。strategy=source_grounded_voice 或 mixed 时，lines 才表示真正新增、且不属于 sourceCoveragePlan.speechLedger 或 dialogueScript 的人声；不得复制、改写或重新编号任何源对白。每条新增人声必须使用与 dialogueScript 完全不同的 lineId；afterSourceLineId 只能是 null 或当前 Beat 的源对白 lineId。没有源对白时全部为 null，并按 lines 数组顺序执行；不得引用新增人声或跨 Beat 的 lineId。"
 			: "",
 		request.outputEncoding === "json_artifact"
 			? `最终响应必须只包含一个严格 JSON 对象，结构为 {"artifactType":${JSON.stringify(request.outputArtifactType)},"text":"完整产物正文"}；禁止 Markdown 代码围栏、前后说明和额外顶层字段。text 必须是实际产物，不得是完成声明或产物摘要。`
@@ -956,7 +1297,16 @@ function workflowAgentPrompt(request: WorkflowAgentRunRequest): string {
 	].filter(Boolean).join("\n\n");
 }
 
-function workflowAgentRetrievalUserRequest(request: WorkflowAgentRunRequest): string {
+export const WORKFLOW_AGENT_RETRIEVAL_QUERY_MAX_CHARS = 24_000;
+
+function boundWorkflowAgentRetrievalText(value: string): string {
+	if (value.length <= WORKFLOW_AGENT_RETRIEVAL_QUERY_MAX_CHARS) return value;
+	const headLength = Math.floor(WORKFLOW_AGENT_RETRIEVAL_QUERY_MAX_CHARS / 2);
+	const tailLength = WORKFLOW_AGENT_RETRIEVAL_QUERY_MAX_CHARS - headLength;
+	return `${value.slice(0, headLength)}\n…[retrieval query structurally bounded]…\n${value.slice(-tailLength)}`;
+}
+
+export function workflowAgentRetrievalUserRequest(request: WorkflowAgentRunRequest): string {
 	const promptInputs = workflowAgentPromptInputs(request);
 	const visit = (value: unknown, depth: number): string => {
 		if (depth > 8 || !value) return "";
@@ -989,10 +1339,10 @@ function workflowAgentRetrievalUserRequest(request: WorkflowAgentRunRequest): st
 		}
 		return "";
 	};
-	return visit(promptInputs, 0) || JSON.stringify(promptInputs);
+	return boundWorkflowAgentRetrievalText(visit(promptInputs, 0) || JSON.stringify(promptInputs));
 }
 
-function workflowAgentRetrievalContext(request: WorkflowAgentRunRequest): Readonly<{
+export function workflowAgentRetrievalContext(request: WorkflowAgentRunRequest): Readonly<{
 	protocolVersion: "retrieval-context/v1";
 	facts: readonly Readonly<{
 		id: string;
@@ -1015,6 +1365,9 @@ function workflowAgentRetrievalContext(request: WorkflowAgentRunRequest): Readon
 	const facts: RetrievalFact[] = [
 		{ id: "node-instruction", text: request.instruction, source: "instruction" },
 		{ id: "delivery-requirement", text: request.deliveryRequirement, source: "delivery" },
+		...(request.userIntentContract
+			? [{ id: "parent-user-intent", text: JSON.stringify(request.userIntentContract), source: "input" as const }]
+			: []),
 		{ id: "output-artifact-type", text: request.outputArtifactType, source: "delivery" },
 		...(request.forcedAgentRole
 			? [{ id: "forced-agent-role", text: request.forcedAgentRole, source: "scope" as const }]
@@ -1034,9 +1387,16 @@ const WORKFLOW_AGENT_NO_PROGRESS_WINDOW_LIMIT = 5;
 const WORKFLOW_AGENT_NO_PROGRESS_RETRY_BASE_DELAY_MS = 60_000;
 const WORKFLOW_AGENT_NO_PROGRESS_RETRY_MAX_DELAY_MS = 15 * 60_000;
 const WORKFLOW_AGENT_NO_PROGRESS_PHYSICAL_FAILURE = "workflow_agent_no_progress_window_exhausted";
+// 无进展退避的总上限：退避只吸收供应商抖动，超过即显式失败，禁止无限换窗口空转。
+const WORKFLOW_AGENT_NO_PROGRESS_RECOVERY_EPOCH_LIMIT = 6;
 const RETRYABLE_WORKFLOW_AGENT_PHYSICAL_FAILURE_CODES = new Set([
 	"workflow_agent_role_timeout",
 	"provider_stream_interrupted",
+	// The local workflow worker can restart after admission but before the
+	// durable Agent turn writes a structured candidate. Treat that infrastructure
+	// boundary like the other transport interruptions so recovery reuses the
+	// frozen node input instead of terminalising the typed submission window.
+	"workflow_runtime_restarted",
 	"llm_response_too_large",
 ]);
 
@@ -1235,6 +1595,33 @@ function deferWorkflowAgentNoProgressRecovery(input: Readonly<{
 	const currentPhysicalRetryOrdinal = workflowAgentPhysicalRetryOrdinal(input.request) ?? 0;
 	const physicalRetryOrdinal = currentPhysicalRetryOrdinal + 1;
 	const noProgressRecoveryEpoch = workflowAgentNoProgressRecoveryEpoch(input.request) + 1;
+	/*
+	 * 无进展退避是有界的。退避只能用来吸收供应商侧的短时抖动，不是无限重试：
+	 * 计数随 deliveryEvidence 跨窗口持久化，超过总上限即显式失败并交出已累积的
+	 * 无进展证据（本窗口计数与上限），而不是继续以最长 15 分钟一轮的节奏换窗口空转。
+	 * 每窗口修正预算保持按窗口计，不因此改动。
+	 */
+	if (noProgressRecoveryEpoch > WORKFLOW_AGENT_NO_PROGRESS_RECOVERY_EPOCH_LIMIT) {
+		return {
+			taskId: input.publicTurnId,
+			text: input.text ?? "",
+			assets: [],
+			expectedDelivery: workflowAgentExpectedDelivery(input.request),
+			deliveryEvidence: {
+				...input.baseEvidence,
+				noProgressRecoveryEpoch,
+				noProgressWindowsWithoutProgress: input.recoveryWindow.windowsWithoutProgress,
+				noProgressWindowLimit: input.recoveryWindow.limit,
+				physicalFailureReason: WORKFLOW_AGENT_NO_PROGRESS_PHYSICAL_FAILURE,
+			},
+			deliveryVerification: null,
+			requestTerminal: {
+				status: "failed",
+				reason: WORKFLOW_AGENT_NO_PROGRESS_PHYSICAL_FAILURE,
+			},
+			...(input.provenance ?? {}),
+		};
+	}
 	const retryAfterMs = Math.min(
 		WORKFLOW_AGENT_NO_PROGRESS_RETRY_BASE_DELAY_MS
 			* (2 ** Math.min(noProgressRecoveryEpoch - 1, 20)),
@@ -1431,6 +1818,18 @@ async function recoverWorkflowAgentNodeFromDurableTurn(
 		{ timeoutMs: WORKFLOW_AGENT_STATUS_DEADLINE_MS },
 	);
 	const turn = snapshot.turn;
+	console.info(JSON.stringify({
+		message: "workflow_agent_recovery_observation",
+		executionId: request.executionId,
+		nodeId: request.nodeId,
+		publicTurnId,
+		observedTurnId: turn?.turnId ?? null,
+		physicalRetryOrdinal: workflowAgentPhysicalRetryOrdinal(request),
+		activeTurn: snapshot.activeTurn,
+		state: turn?.state ?? null,
+		reasonCode: turn?.reasonCode ?? null,
+		hasRecoveryCheckpoint: Boolean(turn?.recoveryCheckpoint),
+	}));
 	if (!turn) {
 		// Admission and durable turn projection are two causally ordered facts,
 		// not one atomic write. Concurrent reconcilers can observe the immutable
@@ -1493,6 +1892,42 @@ async function recoverWorkflowAgentNodeFromDurableTurn(
 		});
 	}
 	if (turn.turnId !== publicTurnId) {
+		const ordinal = workflowAgentPhysicalRetryOrdinal(request);
+		const predecessorOrdinal = ordinal !== null ? previousWorkflowAgentTurnOrdinal({
+			executionId: request.executionId, nodeId: request.nodeId,
+			currentOrdinal: ordinal, observedTurnId: turn.turnId,
+		}) : null;
+		if (predecessorOrdinal !== null) {
+			// The stable session can still expose its previous generation before
+			// the new turn's admission. Normal submission fences that exact turn
+			// and admits the requested idempotent public identity with its checkpoint.
+			const fence = await fencePreviousWorkflowAgentPhysicalGeneration(context.env, request, publicTurnId, ordinal!, predecessorOrdinal);
+			if (!fence.fenced) return waitingWorkflowAgentGenerationFenceResult({
+				request, currentPublicTurnId: publicTurnId, previousPublicTurnId: fence.previousPublicTurnId,
+				physicalRetryOrdinal: ordinal!, physicalFailureReason: "provider_stream_interrupted", fenceErrorCode: fence.errorCode,
+			});
+			const admission = await getExecutionTraceLifecycleSnapshot(context.env.DB, {
+				traceId: publicTurnId,
+				userId: request.ownerId,
+			});
+			if (admission?.logicalTaskId === publicTurnId && admission.rootTraceId === publicTurnId) {
+				// An older session projection does not revoke immutable admission.
+				// Never repost an accepted identity: reconcile the handoff, then use
+				// the existing physical-retry ledger if its projection was lost.
+				if ((admission.status === "running" || admission.status === "waiting_async")
+					&& isFreshWorkflowAgentAdmissionTimestamp(admission.updatedAt)) {
+					return waitingAcceptedWorkflowTurnProjectionResult({
+						request, publicTurnId, sessionKey,
+						traceStartedAt: admission.startedAt, traceUpdatedAt: admission.updatedAt, traceStatus: admission.status,
+					});
+				}
+				return retryWorkflowAgentMissingDurableTurn({
+					request, publicTurnId, sessionKey,
+					traceStatus: admission.status, traceUpdatedAt: admission.updatedAt,
+				});
+			}
+			return runFreshWorkflowAgentAttempt(context.env, request, publicTurnId);
+		}
 		throw new AppError("Workflow Agent durable turn identity changed", {
 			status: 409,
 			code: "workflow_agent_durable_turn_mismatch",
@@ -1504,6 +1939,15 @@ async function recoverWorkflowAgentNodeFromDurableTurn(
 		});
 	}
 	if (snapshot.activeTurn || turn.state === "running") {
+		if (isStaleInterruptedWorkflowAgentTurn(request.previousEvidence)) {
+			return retryWorkflowAgentPhysicalRun({
+				request,
+				publicTurnId,
+				sessionKey,
+				turn,
+				failureReason: "provider_stream_interrupted",
+			});
+		}
 		const recoveryWindow = previousRecoveryWindow(request.previousEvidence);
 		return waitingAgentResult({
 			request,
@@ -1514,7 +1958,14 @@ async function recoverWorkflowAgentNodeFromDurableTurn(
 			...(recoveryWindow ? { recoveryWindow } : {}),
 		});
 	}
-	if (turn.state === "suspended") {
+	if (
+		turn.state === "suspended"
+		|| (turn.state === "failed"
+			&& turn.recoveryCheckpoint != null
+			&& turn.suspension?.physicalRunId === turn.recoveryCheckpoint.physicalRunId)
+	) {
+		// A matching durable physical suspension remains a continuation even if
+		// a transport finalizer recorded a failed physical checkpoint.
 		// Provider balance is an external deterministic boundary, not an
 		// ineffective recovery window. agents-cli may legitimately preserve a
 		// recovery checkpoint beside this suspension so the exact typed-output
@@ -1561,6 +2012,12 @@ async function recoverWorkflowAgentNodeFromDurableTurn(
 			} catch (error: unknown) {
 				const resumeOutcome = workflowAgentContinuationResumeOutcome(error);
 				if (resumeOutcome === null) throw error;
+				if (resumeOutcome === "ownership_changed") {
+					const result = waitingAgentResult({ request, publicTurnId, sessionKey, turn,
+						reason: "workflow_agent_resume_ownership_changed" });
+					return { ...result, deliveryEvidence: { ...(isRecord(result.deliveryEvidence) ? result.deliveryEvidence : {}),
+						reconciliationFailure: { action: "resume", code: agentsBridgeErrorCode(error) } } };
+				}
 				continuationScheduled = resumeOutcome === "already_active";
 			}
 			if (!continuationScheduled) {
@@ -1605,32 +2062,23 @@ async function recoverWorkflowAgentNodeFromDurableTurn(
 			reason: turn.reasonCode ?? "workflow_agent_turn_suspended",
 		});
 	}
-	// A typed Agent turn gets exactly one complete structured submission. Expose
-	// the persisted raw candidate once so the node boundary can record the same
-	// immutable failure evidence; neither this runner nor the node executor may
-	// resume that turn, feed the error back, merge a candidate or schedule a new
-	// structured attempt.
+	// A repairable typed Agent turn must never be projected as success merely
+	// because its first physical run recorded an invalid candidate. Preserve the
+	// exact durable evidence and open the normal physical retry path; the next
+	// run reuses the same logical task/identity and lets agents-cli continue the
+	// format-repair conversation without replaying side effects.
 	if (
 		turn.state === "failed"
 		&& turn.reasonCode === "structured_output_invalid"
 		&& request.outputEncoding !== "plain_text"
 	) {
-		return {
-			taskId: publicTurnId,
-			text: turn.finalResponse ?? "",
-			assets: [],
-			expectedDelivery: workflowAgentExpectedDelivery(request),
-			deliveryEvidence: {
-				...durableTurnEvidence({ request, sessionKey, turn }),
-				physicalActionTerminal: "structured_output_invalid",
-			},
-			deliveryVerification: null,
-			requestTerminal: {
-				status: "succeeded",
-				reason: "agents_cli_single_submission_recorded",
-			},
-			...durableTurnProvenance(turn),
-		};
+		return retryWorkflowAgentPhysicalRun({
+			request,
+			publicTurnId,
+			sessionKey,
+			turn,
+			failureReason: "structured_output_invalid",
+		});
 	}
 	if (
 		turn.state === "failed"
@@ -1694,6 +2142,12 @@ async function recoverWorkflowAgentNodeFromDurableTurn(
 		} catch (error: unknown) {
 			const resumeOutcome = workflowAgentContinuationResumeOutcome(error);
 			if (resumeOutcome === null) throw error;
+			if (resumeOutcome === "ownership_changed") {
+				const result = waitingAgentResult({ request, publicTurnId, sessionKey, turn,
+					reason: "workflow_agent_resume_ownership_changed" });
+				return { ...result, deliveryEvidence: { ...(isRecord(result.deliveryEvidence) ? result.deliveryEvidence : {}),
+					reconciliationFailure: { action: "resume", code: agentsBridgeErrorCode(error) } } };
+			}
 			continuationScheduled = resumeOutcome === "already_active";
 		}
 		if (!continuationScheduled) {
@@ -1746,6 +2200,13 @@ async function recoverWorkflowAgentNodeFromDurableTurn(
 			},
 			...durableTurnProvenance(turn),
 		};
+	}
+	const outputRepair = readWorkflowAgentOutputRepair(request.previousEvidence);
+	if (outputRepair?.sourceTurnId === publicTurnId) {
+		return retryWorkflowAgentPhysicalRun({
+			request, publicTurnId, sessionKey, turn,
+			failureReason: "structured_output_invalid",
+		});
 	}
 	if (!turn.finalResponse) {
 		throw new AppError("Workflow Agent succeeded without a persisted terminal response", {
@@ -1844,15 +2305,16 @@ export async function runWorkflowAgentNode(
 		}
 		return await runFreshWorkflowAgentAttempt(env, request, publicTurnId);
 	} catch (error: unknown) {
+		let interruptionError = error;
 		if (error instanceof AppError && error.code === "agents_chat_turn_already_exists") {
-			return await recoverWorkflowAgentNodeFromDurableTurn(
-				context,
-				request,
-				publicTurnId,
-			);
+			try {
+				return await recoverWorkflowAgentNodeFromDurableTurn(context, request, publicTurnId);
+			} catch (recoveryError: unknown) {
+				interruptionError = recoveryError;
+			}
 		}
-		if (!isRecoverableWorkflowAgentInterruption(error)) throw error;
-		return interruptedAgentResult(request, publicTurnId, error);
+		if (!isRecoverableWorkflowAgentInterruption(interruptionError)) throw interruptionError;
+		return interruptedAgentResult(request, publicTurnId, interruptionError);
 	}
 }
 
@@ -1884,18 +2346,33 @@ async function runFreshWorkflowAgentAttempt(
 	publicTurnId: string,
 ): Promise<WorkflowAgentRunResult> {
 	const context = createInternalWorkflowContext(env, request, publicTurnId);
+	if (request.projectContext) {
+		request = { ...request, projectContext: await enrichWorkflowMediaUnderstanding({
+			c: context, ownerId: request.ownerId, context: request.projectContext,
+			resolver: createRuntimeWorkflowAssetResolver({ c: context, ownerId: request.ownerId, context: request.projectContext }),
+		}) };
+	}
 	const structuredOutput = workflowAgentStructuredOutput(request);
-	const attemptMaxOutputTokens = request.maxOutputTokens;
+	// A typed authoring turn has to pay for both provider-hidden reasoning and
+	// the visible JSON artifact. `maxOutputTokens` is a single physical
+	// inference ceiling, not a visible-text quota: reasoning-capable providers
+	// can otherwise exhaust a legacy 4k/8k node value before emitting the first
+	// JSON byte. Reserve the protocol maximum for every repairable structured
+	// Workflow Agent, independent of model name, artifact kind or workflow.
+	const attemptMaxOutputTokens = structuredOutput
+		? WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX
+		: request.maxOutputTokens;
 	const effectiveRequiredSkills: readonly string[] = request.requiredSkills;
-	const effectiveMountedKnowledgeCardIds: readonly string[] = [];
+	// Preserve explicit upstream knowledge consumption across workflow stages.
+	// The previous implementation unconditionally erased this list, so a card
+	// read by text expansion/BeatSheet was invisible to Clip Writer and had to be
+	// rediscovered (or was silently not consumed at all).
+	const effectiveMountedKnowledgeCardIds: readonly string[] = request.mountedKnowledgeCardIds;
 	const effectiveAllowedTools = request.allowedTools;
-	const workflowPhysicalAttemptDeadlineAt = request.productionStartDeadline
-		? computeWorkflowAgentPhysicalAttemptDeadlineAt({
-			productionStartDeadline: request.productionStartDeadline,
-		  })
-		: null;
 	const requestInput: AgentsChatRequestDto = {
-		prompt: workflowAgentPrompt(request),
+		prompt: [workflowAgentPrompt(request), ...(request.productionStartDeadline ? [
+			`生产启动时间目标（仅事实诊断，不是动作截止或任务终止条件）：${JSON.stringify({ ...request.productionStartDeadline, blocking: false })}`,
+		] : [])].join("\n\n"),
 		modelKey: request.modelKey,
 		sessionKey: sessionKeyForWorkflowAgent(request),
 		...(request.deliveryScope?.chapterId
@@ -1928,12 +2405,59 @@ async function runFreshWorkflowAgentAttempt(
 		stream: false,
 	};
 	const taskRequest = buildTaskRequest(requestInput);
+	const outputRepair = readWorkflowAgentOutputRepair(request.previousEvidence);
+	const structuredOutputSourceFacts = {
+		inputs: workflowAgentPromptInputs(request),
+		userIntentContract: request.userIntentContract ?? null,
+		projectContext: request.projectContext
+			? workflowAgentProjectContextPromptFacts(request.projectContext, request.outputArtifactType) : null,
+	};
+	const structuredOutputSourceContext = JSON.stringify(structuredOutputSourceFacts);
+	let retainedRepair: Record<string, unknown> | null = outputRepair ? {
+		version: 1, candidate: outputRepair.candidate, correction: outputRepair.error,
+		sourceContext: structuredOutputSourceContext,
+	} : null;
+	const repairSource = request.previousEvidence?.agentRepairSource;
+	if (isRecord(repairSource)) {
+		if (!structuredOutput || typeof repairSource.sessionKey !== "string" || typeof repairSource.turnId !== "string") {
+			throw new Error("workflow_agent_repair_source_invalid");
+		}
+		const snapshot = await getAgentsChatTurnStatus(context, request.ownerId, repairSource.sessionKey,
+			{ timeoutMs: WORKFLOW_AGENT_STATUS_DEADLINE_MS, includeStructuredOutputRepair: true });
+		if (snapshot.activeTurn || snapshot.turn?.turnId !== repairSource.turnId) {
+			throw new Error("workflow_agent_repair_source_owner_changed");
+		}
+		if (snapshot.structuredOutputRepair) {
+			retainedRepair = verifyWorkflowAgentRepairHandoff({ checkpoint: snapshot.structuredOutputRepair,
+				sourceContext: structuredOutputSourceContext });
+		} else if (!retainedRepair) {
+			throw new Error("workflow_agent_repair_checkpoint_missing");
+		}
+	}
+
+	if (structuredOutput) {
+		// Measurement only: changing a frozen source string during physical
+		// recovery would invalidate its exact checkpoint identity.
+		const projectedSourceContext = JSON.stringify({ ...structuredOutputSourceFacts,
+			inputs: compactWorkflowPromptFacts(structuredOutputSourceFacts.inputs) });
+		console.info(JSON.stringify({
+			message: "workflow_agent_context_volume", executionId: request.executionId, nodeId: request.nodeId,
+			promptCharacters: requestInput.prompt?.length ?? 0,
+			frozenSourceCharacters: structuredOutputSourceContext.length,
+			diagnosticProjectionCharacters: projectedSourceContext.length,
+			diagnosticProjectionApplied: false,
+			retainedCandidateCharacters: typeof retainedRepair?.candidate === "string" ? retainedRepair.candidate.length : 0,
+		}));
+	}
 	Object.assign(taskRequest.extras as Record<string, unknown>, {
 		publicTurnId,
 		logicalTaskId: publicTurnId,
+		workflowExecutionFamilyId: request.executionFamilyId,
+		...(request.logicalTaskBudgetRootId ? { logicalTaskBudgetRootId: request.logicalTaskBudgetRootId } : {}),
 		maxOutputTokens: attemptMaxOutputTokens,
+		requestedMaxOutputTokens: request.maxOutputTokens,
 		...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}),
-		...(workflowPhysicalAttemptDeadlineAt ? { workflowPhysicalAttemptDeadlineAt } : {}),
+		...(request.serviceTier ? { serviceTier: request.serviceTier } : {}),
 		workflowKey: request.workflowKey ?? "agent-workflow/v1",
 		retrievalUserRequest: workflowAgentRetrievalUserRequest(request),
 		retrievalContext: workflowAgentRetrievalContext(request),
@@ -1941,18 +2465,26 @@ async function runFreshWorkflowAgentAttempt(
 		mountedKnowledgeCardIds: [...effectiveMountedKnowledgeCardIds],
 		disabledKnowledgeCardIds: [],
 		diagnosticsLabel: `workflow-node:${request.nodeId}`,
-		structuredOutputSubmissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY,
+		structuredOutputSubmissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY,
+		...(structuredOutput ? { structuredOutputSourceContext } : {}),
+		...(structuredOutput && workflowAgentPhysicalRetryOrdinal(request) !== null ? { resumeStructuredOutput: true } : {}),
+		...(retainedRepair ? { structuredOutputRepair: retainedRepair } : {}),
 		...(request.promptExampleRetrievalScope
 			? { promptExampleRetrievalScope: request.promptExampleRetrievalScope }
 			: {}),
 		...(structuredOutput ?? {}),
 		continuationExecutionContract: {
+			...(structuredOutput ? { structuredOutputSourceContext, resumeStructuredOutput: true } : {}),
+			...(retainedRepair ? { structuredOutputRepair: retainedRepair } : {}),
+			workflowExecutionFamilyId: request.executionFamilyId,
+			...(request.logicalTaskBudgetRootId ? { logicalTaskBudgetRootId: request.logicalTaskBudgetRootId } : {}),
 			version: 1,
 			directForcedAgentExecution: true,
-			structuredOutputSubmissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_SUBMISSION_POLICY,
+			structuredOutputSubmissionPolicy: WORKFLOW_STRUCTURED_OUTPUT_REPAIRABLE_POLICY,
 			maxOutputTokens: attemptMaxOutputTokens,
+			requestedMaxOutputTokens: request.maxOutputTokens,
 			...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}),
-			...(workflowPhysicalAttemptDeadlineAt ? { workflowPhysicalAttemptDeadlineAt } : {}),
+			...(request.serviceTier ? { serviceTier: request.serviceTier } : {}),
 			retrievalUserRequest: workflowAgentRetrievalUserRequest(request),
 			retrievalContext: workflowAgentRetrievalContext(request),
 			disabledSkills: [],
@@ -1978,7 +2510,7 @@ async function runFreshWorkflowAgentAttempt(
 		trustedInternalExecution: true,
 		...(request.abortSignal ? { abortSignal: request.abortSignal } : {}),
 	});
-	const transportResult = attachSuspendedWorkflowTurnIdentity(
+	const transportResult = attachWorkflowTurnIdentity(
 		unwrapWorkflowAgentTransportEnvelope(request, readAgentResponse(persisted.result)),
 		request,
 		publicTurnId,

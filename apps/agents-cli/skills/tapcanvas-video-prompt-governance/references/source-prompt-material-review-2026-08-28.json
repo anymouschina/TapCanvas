@@ -1,0 +1,169 @@
+{
+  "baseContract": "tapcanvas/video-prompt-authoring@3.3.3",
+  "source": {
+    "path": "/Users/libiqiang/workspace/TapCanvas-pro/apps/source/前置成品提示词资料2.docx",
+    "sha256": "c3fbe8ee168fac2019863a0e74cf875a624bc3e711a9f80583d2427457a26f52",
+    "coverageLedger": "source-prompt-material-coverage-2026-08-28.json",
+    "structure": {
+      "pages": 249,
+      "paragraphs": 125,
+      "nonEmptyParagraphs": 54,
+      "tables": 46,
+      "embeddedImages": 3
+    }
+  },
+  "sourceInventory": [
+    {
+      "tableRange": [0, 4],
+      "topic": "短视频小说钩子、冲突公式与改写节奏",
+      "disposition": "只保留受众可读性和因果前置原则；拒绝固定三句开头、固定字数、固定冲突间隔与第一人称模板"
+    },
+    {
+      "tableRange": [4, 8],
+      "topic": "小说转剧本、事实守恒、层级拆分与连续记忆",
+      "disposition": "采用事实/线索/因果守恒与状态接力；映射既有 source coverage、story facts 与 continuity 合同"
+    },
+    {
+      "tableRange": [8, 14],
+      "topic": "分镜、Seedance、运镜与输出审查",
+      "disposition": "采用调度、轴线、物理动作、镜内状态链与同链自检；拒绝固定时间段、固定镜数、关键词黑名单和单体超长提示词"
+    },
+    {
+      "tableRange": [14, 19],
+      "topic": "角色多视图参考板",
+      "disposition": "现有 character-card/v3 与 identity-board/v3 已覆盖；保留中性身份锚与状态版分层"
+    },
+    {
+      "tableRange": [19, 20],
+      "topic": "道具三视图与结构拆解",
+      "disposition": "提炼为新的 prop-card/v1、prop-board/v1、prop-function/v1；视图按几何和交互歧义动态选择"
+    },
+    {
+      "tableRange": [20, 21],
+      "topic": "场景六视图概念板",
+      "disposition": "空间拓扑、锚点与灯光事实已由 scene-card/v1 覆盖；拒绝固定六格与固定画幅"
+    },
+    {
+      "tableRange": [21, 23],
+      "topic": "站位、阻挡关系与轴线图",
+      "disposition": "映射现有 scene_space_and_blocking、camera_composition_and_lens 与 action_causality_physics"
+    },
+    {
+      "tableRange": [23, 46],
+      "topic": "风格词、模型名、画质参数、海报与题材样例",
+      "disposition": "只作为非阻塞设计参考；拒绝模型品牌、8K、渲染器、固定比例和题材词堆叠进入权威合同"
+    }
+  ],
+  "claims": [
+    {
+      "claimId": "source-fact-causality-conservation",
+      "source": "tables 4-7",
+      "evidence": "改编提示反复要求人物、线索、事件顺序与因果结果不丢失",
+      "appliesTo": "跨题材",
+      "proposal": "沿用现有来源覆盖、事实账本、事件覆盖和连续性合同，不新增平行改编模板"
+    },
+    {
+      "claimId": "source-prop-functional-topology",
+      "source": "table 19 and embedded prop-board examples",
+      "evidence": "道具参考板要求多角度识别、结构拆解、材质与使用关系",
+      "appliesTo": "可复用道具、武器、器物与关键物件",
+      "proposal": "新增 canonical 道具身份、动态视图选择、交互锚、受力路径、可动部件与状态版本合同"
+    },
+    {
+      "claimId": "source-blocking-axis-physical-action",
+      "source": "tables 8-13 and 21-22",
+      "evidence": "分镜与站位示意强调人物相对位置、180 度轴线、接触点和动作承接",
+      "appliesTo": "跨题材镜头生产",
+      "proposal": "映射现有调度、机位、动作因果与镜内状态链，不增加关键词式防崩清单"
+    },
+    {
+      "claimId": "source-state-neutral-identity-assets",
+      "source": "tables 14-20",
+      "evidence": "角色、道具、场景参考板试图区分基础设定与具体镜头表现",
+      "appliesTo": "角色、场景与道具资产",
+      "proposal": "canonical 基态保持中性，剧情损坏、展开、污染与灯光变化使用精确状态版本"
+    },
+    {
+      "claimId": "source-pre-output-review",
+      "source": "tables 8-13",
+      "evidence": "若干提示词在输出前检查人物一致性、镜头连贯和格式完整",
+      "appliesTo": "agent 创作链",
+      "proposal": "沿用 embedded review evidence，同一 agent 修订首稿；不得投影为 Hono/Web 运行时质量门禁"
+    },
+    {
+      "claimId": "source-fixed-formulas-and-provider-piles",
+      "source": "tables 0-3 and 23-45",
+      "evidence": "包含固定句式、字数、镜数、时间比例、模型名、渲染器、8K 与比例词堆叠",
+      "appliesTo": "题材样例或特定供应商历史经验",
+      "proposal": "不进入权威合同；供应商边界只取实时 generationContract，审美词只作为非阻塞参考"
+    }
+  ],
+  "mappings": [
+    {
+      "claimId": "source-fact-causality-conservation",
+      "classification": "non_blocking_heuristic",
+      "dimensionIds": ["source_coverage_and_causality", "immutable_clip_fact_projection", "continuity_and_exit_state"],
+      "targetFiles": [],
+      "reason": "现有通用合同已经能表达事实、事件覆盖和状态接力，资料没有提供需要新增字段的跨题材事实"
+    },
+    {
+      "claimId": "source-prop-functional-topology",
+      "classification": "domain_extension",
+      "dimensionIds": ["asset_roles_and_identity", "action_causality_physics", "continuity_and_exit_state"],
+      "targetFiles": [
+        "apps/agents-cli/skills/tapcanvas-prop-card/SKILL.md",
+        "apps/hono-api/src/modules/ai/tool-schemas.ts",
+        "apps/hono-api/src/modules/task/task.agents-bridge.ts",
+        "apps/hono-api/src/modules/task/material-auto-register.ts"
+      ],
+      "reason": "道具身份与可交互结构是前置资产领域能力；视频合同已经有资产、物理和连续性维度，无需复制为第二套最终提示词标准"
+    },
+    {
+      "claimId": "source-blocking-axis-physical-action",
+      "classification": "non_blocking_heuristic",
+      "dimensionIds": ["scene_space_and_blocking", "camera_composition_and_lens", "action_causality_physics", "intra_clip_state_chain"],
+      "targetFiles": [],
+      "reason": "现有维度已覆盖调度、轴线、接触受力与逐时窗状态；固定镜数与黑名单不具有通用性"
+    },
+    {
+      "claimId": "source-state-neutral-identity-assets",
+      "classification": "domain_extension",
+      "dimensionIds": ["asset_roles_and_identity", "character_visible_state", "lighting_material_and_atmosphere", "continuity_and_exit_state"],
+      "targetFiles": [
+        "apps/agents-cli/skills/tapcanvas-prop-card/SKILL.md",
+        "apps/agents-cli/skills/tapcanvas-character-card/SKILL.md",
+        "apps/agents-cli/skills/tapcanvas-scene-card/SKILL.md"
+      ],
+      "reason": "保持各资产 Skill 单一职责，并用精确 ID 状态版本承接现有视频维度"
+    },
+    {
+      "claimId": "source-pre-output-review",
+      "classification": "presentation_projection",
+      "dimensionIds": ["embedded_review_evidence"],
+      "targetFiles": [],
+      "reason": "现有 writer 同链复盘已覆盖；资料中的用户可见审查报告不应成为独立 reviewer 或运行时闸门"
+    },
+    {
+      "claimId": "source-fixed-formulas-and-provider-piles",
+      "classification": "conflict_or_reject",
+      "dimensionIds": ["delivery_scope_and_duration", "deterministic_render_projection"],
+      "targetFiles": [],
+      "reason": "固定形式与静态模型参数会与用户事实、实时 generationContract、无硬闸和最小充分信息原则冲突"
+    }
+  ],
+  "contractChanges": [],
+  "writerChanges": [],
+  "reviewerChanges": [],
+  "conflicts": [
+    "固定三句钩子、固定第一人称、固定字数或每 200 字一个冲突不能成为跨题材合同",
+    "固定镜头数量、固定时间百分比、固定三格/六格、固定画幅和强制 X 光不能取代 agent 的结构判断",
+    "关键词、正则、negative prompt 黑名单和本地语义路由违反 agents 优先与无硬闸原则",
+    "模型名、渲染器、8K、分辨率、时长与参考数属于实时 provider facts，不能写死在 Skill 合同",
+    "输出前审查只能驱动同链修订，不能拦截、回滚或丢弃已受理媒体"
+  ],
+  "evalCases": [
+    "apps/agents-cli/skills/tapcanvas-prop-card/evals/evals.json#prop-card-key-with-ambiguous-scale",
+    "apps/agents-cli/skills/tapcanvas-prop-card/evals/evals.json#prop-card-transforming-crossbow",
+    "apps/agents-cli/skills/tapcanvas-prop-card/evals/evals.json#prop-card-damaged-state-variant"
+  ]
+}

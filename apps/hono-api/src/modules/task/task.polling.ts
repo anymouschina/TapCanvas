@@ -96,6 +96,8 @@ export async function fetchTaskResultForPolling(
 		mode: TaskPollingMode;
 		/** 单次上游 fetch 超时 ms（不传=无限等待，慎用于后台 tick）。 */
 		timeoutMs?: number;
+		/** Explicit receipt reconciliation verifies a cached failure with its provider. */
+		refreshFailedResult?: boolean;
 	},
 ): Promise<TaskPollingOutcome> {
 	const taskId = (input.taskId || "").trim();
@@ -119,7 +121,9 @@ export async function fetchTaskResultForPolling(
 					typeof storedRow?.completed_at === "string" && storedRow.completed_at.trim()
 						? String(storedRow.completed_at).trim()
 						: null;
+				const refreshCachedFailure = input.refreshFailedResult === true && parsed.data.status === "failed";
 				const terminalAction =
+					refreshCachedFailure ? "bypass_poll_upstream" :
 					parsed.data.status === "succeeded" || parsed.data.status === "failed"
 						? resolveStoredTerminalAction({
 								status: parsed.data.status,
@@ -133,7 +137,8 @@ export async function fetchTaskResultForPolling(
 							})
 						: null;
 				if (terminalAction === "bypass_poll_upstream") {
-					storedRow = null;
+					if (!refreshCachedFailure) storedRow = null;
+					else console.info("[task-poll] refreshing cached failure from provider receipt", { taskId });
 				} else
 				if (terminalAction === "return_stored" || terminalAction === "return_stored_stale") {
 					return {

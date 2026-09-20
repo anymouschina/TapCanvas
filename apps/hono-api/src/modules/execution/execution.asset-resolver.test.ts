@@ -10,6 +10,7 @@ function asset(input: Readonly<{
 	expiresAt?: string;
 	status?: string;
 	previewOnly?: boolean;
+	styleFingerprint?: string;
 }>): MaterialAssetDto {
 	return {
 		id: input.id,
@@ -35,6 +36,7 @@ function asset(input: Readonly<{
 				} : {}),
 				...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
 				...(input.status ? { status: input.status } : {}),
+				...(input.styleFingerprint ? { styleFingerprint: input.styleFingerprint } : {}),
 			},
 			note: null,
 			createdAt: "2026-08-17T00:00:00.000Z",
@@ -260,7 +262,7 @@ describe("workflow ProjectContext and Asset Resolver", () => {
 					approvalStatus: "approved",
 					canvasRevision: 11,
 					status: "success",
-					urlExpiresAt: "2026-09-18T00:00:00.000Z",
+					urlExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
 				},
 			} : null,
 		};
@@ -318,6 +320,24 @@ describe("workflow ProjectContext and Asset Resolver", () => {
 		await expect(resolver.resolveAssetResource(frozen.id, "image")).resolves.toMatchObject({
 			assetId: frozen.id,
 			url: "https://cdn.test/generated-scene.png",
+		});
+	});
+
+	it("preserves source style provenance when resolving a reusable project asset", async () => {
+		const source = asset({
+			id: "project-node:chapter:chapter-3:hero",
+			projectId: "project-a",
+			url: "https://cdn.test/hero.png",
+			styleFingerprint: "sha256:source-look",
+		});
+		const resolver = createWorkflowAssetResolver({
+			context: context("project-a", [source]),
+			loadVisibleAssets: async () => [source],
+		});
+
+		await expect(resolver.resolveAssetResource(source.id, "image")).resolves.toMatchObject({
+			assetId: source.id,
+			styleFingerprint: "sha256:source-look",
 		});
 	});
 

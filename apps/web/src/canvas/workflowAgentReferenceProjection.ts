@@ -1,10 +1,14 @@
+import { applyCanvasGraphPatch } from './sync/applyCanvasGraphPatch'
 import type { Edge, Node } from '@xyflow/react'
 import type { AgentExecutionProvenanceDto } from '../api/server'
 import { WORKFLOW_ICON_NODE_SIZE } from './workflowNodeGeometry'
 import {
   isWorkflowAgentNode,
+  readWorkflowKnowledgeSearchObservations,
   readWorkflowAgentExecutionProvenanceHistory,
   readWorkflowPromptExampleSearchObservations,
+  type WorkflowKnowledgeSearchObservation,
+  type WorkflowKnowledgeCandidate,
   type WorkflowPromptExampleSearchObservation,
 } from './workflowAgentContext'
 import {
@@ -46,6 +50,16 @@ export type WorkflowRuntimeReferenceItem = Readonly<{
   evidence: readonly Record<string, unknown>[]
 }>
 
+export type WorkflowRuntimeReferenceCandidate = Readonly<{
+  cardId: string
+  candidateSetId: string
+  title?: string
+  rank: number
+  score: number
+  sourceRoot?: string
+  state: 'candidate' | 'read' | 'adopted'
+}>
+
 export type WorkflowAgentReferenceProjection = Readonly<{
   nodes: readonly Node[]
   edges: readonly Edge[]
@@ -70,6 +84,33 @@ function stableIdPart(value: string): string {
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.filter(Boolean))]
+}
+
+function readAdoptedCandidateIds(value: unknown): ReadonlySet<string> {
+  const adopted = new Set<string>()
+  const visit = (current: unknown, depth: number): void => {
+    if (depth > 6) return
+    if (typeof current === 'string' && current.trim().startsWith('{') && current.length <= 200_000) {
+      try {
+        visit(JSON.parse(current) as unknown, depth + 1)
+      } catch {
+        // Arbitrary agent text is not adoption evidence.
+      }
+      return
+    }
+    if (!isRecord(current)) return
+    const provenance = isRecord(current.learningProvenance) ? current.learningProvenance : null
+    if (provenance && Array.isArray(provenance.adoptedCandidateIds)) {
+      provenance.adoptedCandidateIds.forEach((id) => {
+        if (typeof id === 'string' && id.trim()) adopted.add(id.trim())
+      })
+    }
+    Object.values(current).forEach((child) => {
+      if (isRecord(child) || Array.isArray(child)) visit(child, depth + 1)
+    })
+  }
+  visit(value, 0)
+  return adopted
 }
 
 function skillDescriptors(
@@ -201,9 +242,28 @@ type PromptExampleSearchSummary = Readonly<{
   candidateCount: number
 }>
 
+type KnowledgeSearchSummary = PromptExampleSearchSummary
+
 function summarizePromptExampleSearch(
   observations: readonly WorkflowPromptExampleSearchObservation[],
 ): PromptExampleSearchSummary {
+  const attempted = observations.filter((observation) => observation.attempted)
+  const failures = attempted.filter((observation) => (
+    observation.status === 'retrieval_failed'
+    || observation.status === 'invalid_evidence'
+    || observation.status === 'tool_unavailable'
+  ))
+  return {
+    attemptCount: attempted.length,
+    successCount: attempted.length - failures.length,
+    failureCount: failures.length,
+    candidateCount: attempted.reduce((sum, observation) => sum + observation.candidateCount, 0),
+  }
+}
+
+function summarizeKnowledgeSearch(
+  observations: readonly WorkflowKnowledgeSearchObservation[],
+): KnowledgeSearchSummary {
   const attempted = observations.filter((observation) => observation.attempted)
   const failures = attempted.filter((observation) => (
     observation.status === 'retrieval_failed'
@@ -223,14 +283,16 @@ function referenceSummary(
   items: readonly WorkflowRuntimeReferenceItem[],
   search: PromptExampleSearchSummary,
   historicalExecutionObserved: boolean,
+  knowledgeSearchObserved: boolean,
 ): string {
   if (kind === 'knowledge' && search.attemptCount > 0) {
+    const searchLabel = knowledgeSearchObserved ? '知识候选检索' : '案例检索'
     if (search.failureCount === search.attemptCount) {
-      return `${search.attemptCount} 次案例检索均失败 · 本轮未读取正文`
+      return `${search.attemptCount} 次${searchLabel}均失败 · 本轮未读取正文`
     }
     const failure = search.failureCount > 0 ? ` · ${search.failureCount} 次失败` : ''
     const bodyRead = items.length > 0 ? ` · ${items.length} 项正文已读` : ' · 本轮未读取正文'
-    return `${search.attemptCount} 次案例检索 · ${search.candidateCount} 个候选${failure}${bodyRead}`
+    return `${search.attemptCount} 次${searchLabel} · ${search.candidateCount} 个候选${failure}${bodyRead}`
   }
   if (kind === 'knowledge' && historicalExecutionObserved && items.length === 0) {
     return '历史运行未采集案例检索回执 · 本轮未读取正文'
@@ -246,7 +308,9 @@ function aggregateReferenceNode(input: Readonly<{
   workflowExecutionId: string
   readOnly: boolean
   promptExampleSearchObservations: readonly WorkflowPromptExampleSearchObservation[]
+  knowledgeSearchObservations: readonly WorkflowKnowledgeSearchObservation[]
   historicalExecutionObserved: boolean
+  outputRefs: unknown
 }>): Node {
   const data = isRecord(input.agentNode.data) ? input.agentNode.data : {}
   const operation = input.kind === 'skill' ? 'skill_reference' : 'knowledge_reference'
@@ -261,15 +325,31 @@ function aggregateReferenceNode(input: Readonly<{
     physicalExecutionIds: [...descriptor.physicalExecutionIds],
     evidence: [...descriptor.evidence],
   }))
+  const readCardIds = new Set(items.map((item) => item.identity))
+  const adoptedCardIds = readAdoptedCandidateIds(input.outputRefs)
+  const candidates: WorkflowRuntimeReferenceCandidate[] = input.kind === 'knowledge'
+    ? input.knowledgeSearchObservations.flatMap((observation) => (observation.candidates ?? []).map((candidate: WorkflowKnowledgeCandidate) => ({
+        ...candidate,
+        state: adoptedCardIds.has(candidate.cardId)
+          ? 'adopted' as const
+          : readCardIds.has(candidate.cardId)
+            ? 'read' as const
+            : 'candidate' as const,
+      })))
+    : []
   const actualReadCount = items.filter((item) => item.evidenceState === 'actual_read').length
   const promptExampleSearch = summarizePromptExampleSearch(input.promptExampleSearchObservations)
-  const allSearchAttemptsFailed = promptExampleSearch.attemptCount > 0
-    && promptExampleSearch.failureCount === promptExampleSearch.attemptCount
+  const knowledgeSearch = summarizeKnowledgeSearch(input.knowledgeSearchObservations)
+  const search = input.kind === 'knowledge'
+    ? input.knowledgeSearchObservations.length > 0 ? knowledgeSearch : promptExampleSearch
+    : promptExampleSearch
+  const allSearchAttemptsFailed = search.attemptCount > 0
+    && search.failureCount === search.attemptCount
   const aggregateEvidenceState: RuntimeReferenceAggregateEvidenceState = actualReadCount > 0
     ? 'actual_read'
     : allSearchAttemptsFailed
       ? 'search_failed'
-      : promptExampleSearch.attemptCount > 0
+      : search.attemptCount > 0
         ? 'searched'
         : input.kind === 'knowledge' && input.historicalExecutionObserved
           ? 'unrecorded'
@@ -278,14 +358,15 @@ function aggregateReferenceNode(input: Readonly<{
   const description = referenceSummary(
     input.kind,
     items,
-    promptExampleSearch,
+    search,
     input.historicalExecutionObserved,
+    input.knowledgeSearchObservations.length > 0,
   )
   const nodeLabel = items.length > 0
     ? `${label} · 已读 ${items.length}`
     : input.kind === 'knowledge' && allSearchAttemptsFailed
       ? `${label} · 检索异常`
-      : input.kind === 'knowledge' && promptExampleSearch.attemptCount > 0
+      : input.kind === 'knowledge' && search.attemptCount > 0
         ? `${label} · 已检索`
         : input.kind === 'knowledge' && input.historicalExecutionObserved
           ? `${label} · 历史未采集`
@@ -343,12 +424,17 @@ function aggregateReferenceNode(input: Readonly<{
       workflowRuntimeReferenceActualReadCount: actualReadCount,
       workflowRuntimeReferenceOwnerNodeId: input.agentNode.id,
       workflowRuntimeReferenceItems: items,
+      workflowRuntimeReferenceCandidates: candidates,
       workflowRuntimeReferenceEvidenceState: aggregateEvidenceState,
-      workflowRuntimeReferenceSearchAttemptCount: promptExampleSearch.attemptCount,
-      workflowRuntimeReferenceSearchSuccessCount: promptExampleSearch.successCount,
-      workflowRuntimeReferenceSearchFailureCount: promptExampleSearch.failureCount,
-      workflowRuntimeReferenceCandidateCount: promptExampleSearch.candidateCount,
-      workflowRuntimeReferenceSearchObservations: input.promptExampleSearchObservations,
+      workflowRuntimeReferenceSearchAttemptCount: search.attemptCount,
+      workflowRuntimeReferenceSearchSuccessCount: search.successCount,
+      workflowRuntimeReferenceSearchFailureCount: search.failureCount,
+      workflowRuntimeReferenceCandidateCount: search.candidateCount,
+      workflowRuntimeReferenceSearchObservations: input.kind === 'knowledge'
+        ? input.knowledgeSearchObservations.length > 0
+          ? input.knowledgeSearchObservations
+          : input.promptExampleSearchObservations
+        : input.promptExampleSearchObservations,
     },
   }
 }
@@ -417,6 +503,7 @@ export function buildWorkflowAgentReferenceProjection(input: Readonly<{
 }>): WorkflowAgentReferenceProjection {
   const provenanceHistory = readWorkflowAgentExecutionProvenanceHistory(input.outputRefs)
   const promptExampleSearchObservations = readWorkflowPromptExampleSearchObservations(input.outputRefs)
+  const knowledgeSearchObservations = readWorkflowKnowledgeSearchObservations(input.outputRefs)
   const descriptorsByKind: Readonly<Record<RuntimeReferenceKind, readonly RuntimeReferenceDescriptor[]>> = {
     skill: skillDescriptors(provenanceHistory),
     knowledge: knowledgeDescriptors(provenanceHistory),
@@ -429,7 +516,9 @@ export function buildWorkflowAgentReferenceProjection(input: Readonly<{
     workflowExecutionId: input.workflowExecutionId,
     readOnly: input.readOnly,
     promptExampleSearchObservations: kind === 'knowledge' ? promptExampleSearchObservations : [],
+    knowledgeSearchObservations: kind === 'knowledge' ? knowledgeSearchObservations : [],
     historicalExecutionObserved: provenanceHistory.length > 0,
+    outputRefs: input.outputRefs,
   }))
   return {
     nodes,
@@ -507,29 +596,25 @@ export function applyWorkflowAgentReferenceProjection(input: Readonly<{
   })
   const projectedNodeIds = new Set(projection.nodes.map((node) => node.id))
   useRFStore.setState((state) => {
-    const retainedNodes = state.nodes.filter((node) => {
-      if (!isRecord(node.data)) return true
-      return node.data.workflowRuntimeReferenceOwnerNodeId !== input.agentNodeId
-        || projectedNodeIds.has(node.id)
+    const currentNodes = new Map(state.nodes.map(node => [node.id, node]))
+    const projectedEdgeIds = new Set(projection.edges.map(edge => edge.id))
+    const graph = applyCanvasGraphPatch({
+      nodes: state.nodes,
+      edges: state.edges,
+      patch: {
+        upsertNodes: projection.nodes.map(node => ({ ...currentNodes.get(node.id), ...node, selected: currentNodes.get(node.id)?.selected })),
+        removeNodeIds: state.nodes.filter(node => isRecord(node.data)
+          && node.data.workflowRuntimeReferenceOwnerNodeId === input.agentNodeId
+          && !projectedNodeIds.has(node.id)).map(node => node.id),
+        upsertEdges: projection.edges,
+        removeEdgeIds: state.edges.filter(edge => isRecord(edge.data)
+          && edge.data.executionRole === 'reference_only'
+          && (edge.data.relationKind === 'agent_skill_reference' || edge.data.relationKind === 'agent_knowledge_reference')
+          && (edge.source === input.agentNodeId || edge.target === input.agentNodeId)
+          && !projectedEdgeIds.has(edge.id)).map(edge => edge.id),
+      },
     })
-    const projectionById = new Map(projection.nodes.map((node) => [node.id, node] as const))
-    const updatedNodes = retainedNodes.map((node) => {
-      const replacement = projectionById.get(node.id)
-      if (!replacement) return node
-      projectionById.delete(node.id)
-      return { ...replacement, selected: node.selected }
-    })
-    const retainedEdges = state.edges.filter((edge) => {
-      if (!isRecord(edge.data)) return true
-      return edge.data.executionRole !== 'reference_only'
-        || (edge.data.relationKind !== 'agent_skill_reference'
-          && edge.data.relationKind !== 'agent_knowledge_reference')
-        || (edge.source !== input.agentNodeId && edge.target !== input.agentNodeId)
-    })
-    return {
-      nodes: [...updatedNodes, ...projectionById.values()],
-      edges: [...retainedEdges, ...projection.edges],
-    }
+    return graph.nodes === state.nodes && graph.edges === state.edges ? state : graph
   })
 }
 

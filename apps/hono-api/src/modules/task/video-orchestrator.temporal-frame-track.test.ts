@@ -35,6 +35,31 @@ const window = (input: Readonly<{
 });
 
 describe("temporal frame track", () => {
+	it("records state only at frozen event boundaries, not interior sampling timestamps", () => {
+		const compiled = compileTemporalFrameContract({
+			durationSeconds: 6,
+			storyEvents: [{ startSeconds: 0, endSeconds: 6, entryState: "held", exitState: "released" }],
+			exitState: "released",
+			shots: [
+				{ shotNo: 1, durationSeconds: 2.5, visualTask: "approach", action: "move to target", depictedStoryEventIndices: [0] },
+				{ shotNo: 2, durationSeconds: 3.5, visualTask: "release", action: "finish transfer", depictedStoryEventIndices: [0] },
+			],
+			field: "clip",
+		});
+		expect(compiled.temporalFrameTrack.flatMap((window) => window.stateAnchors ?? [])).toEqual([
+			{ seconds: 0, state: "held" }, { seconds: 6, state: "released" },
+		]);
+		expect(compiled.temporalFrameTrack.find((window) => window.startSeconds === 2.5)?.stateAnchors).toEqual([]);
+		expect(() => parseTemporalFrameTrack({
+			value: compiled.temporalFrameTrack.map((window) => window.windowIndex === 0
+				? { ...window, stateAnchors: [{ seconds: 0.5, state: "released" }] } : window),
+			durationSeconds: 6,
+			storyEvents: [{ startSeconds: 0, endSeconds: 6, entryState: "held", exitState: "released" }],
+			exitState: "released",
+			field: "clip",
+		})).toThrow("exact frozen event boundary");
+	});
+
 	it("compiles event and temporal coverage from frozen events plus authored shots", () => {
 		const compiled = compileTemporalFrameContract({
 			durationSeconds: 2,
@@ -66,14 +91,14 @@ describe("temporal frame track", () => {
 		]);
 	});
 
-	it("reuses visualTask verbatim as the transition for a static shot without action", () => {
+	it("uses explicit static scene descriptions without borrowing audit prose", () => {
 		const compiled = compileTemporalFrameContract({
 			durationSeconds: 2,
 			storyEvents,
 			exitState: "人物贴墙完成制动",
 			shots: [
-				{ shotNo: 1, durationSeconds: 1, visualTask: "门外空间关系保持稳定", action: "", depictedStoryEventIndices: [0] },
-				{ shotNo: 2, durationSeconds: 1, visualTask: "人物贴墙后的稳定构图", depictedStoryEventIndices: [1] },
+				{ shotNo: 1, durationSeconds: 1, visualTask: "建立门外关系", action: "门外空间关系保持稳定", depictedStoryEventIndices: [0] },
+				{ shotNo: 2, durationSeconds: 1, visualTask: "观察贴墙位置", action: "人物贴墙后的稳定构图", depictedStoryEventIndices: [1] },
 			],
 			field: "clip",
 		});
@@ -93,15 +118,15 @@ describe("temporal frame track", () => {
 		expect(() => compileTemporalFrameContract({
 			...base,
 			shots: [
-				{ shotNo: 1, durationSeconds: 1, visualTask: "第一事件", depictedStoryEventIndices: [0] },
-				{ shotNo: 2, durationSeconds: 1, visualTask: "第二事件", depictedStoryEventIndices: [0] },
+				{ shotNo: 1, durationSeconds: 1, visualTask: "第一事件", action: "人物在当前空间内移动", depictedStoryEventIndices: [0] },
+				{ shotNo: 2, durationSeconds: 1, visualTask: "第二事件", action: "人物在当前空间内移动", depictedStoryEventIndices: [0] },
 			],
 		})).toThrow("outside the shot clock interval");
 		expect(() => compileTemporalFrameContract({
 			...base,
 			shots: [
-				{ shotNo: 1, durationSeconds: 1, visualTask: "第一事件", depictedStoryEventIndices: [0] },
-				{ shotNo: 2, durationSeconds: 1, visualTask: "第二事件", depictedStoryEventIndices: [] },
+				{ shotNo: 1, durationSeconds: 1, visualTask: "第一事件", action: "人物在当前空间内移动", depictedStoryEventIndices: [0] },
+				{ shotNo: 2, durationSeconds: 1, visualTask: "第二事件", action: "人物在当前空间内移动", depictedStoryEventIndices: [] },
 			],
 		})).toThrow("must be a non-empty array");
 		expect(() => compileTemporalFrameContract({
@@ -111,8 +136,8 @@ describe("temporal frame track", () => {
 				{ startSeconds: 0, endSeconds: 2, entryState: "同一时段的第二事件入口", exitState: "同一时段的第二事件出口" },
 			],
 			shots: [
-				{ shotNo: 1, durationSeconds: 1, visualTask: "先声明第二事件", depictedStoryEventIndices: [1] },
-				{ shotNo: 2, durationSeconds: 1, visualTask: "再回写第一事件", depictedStoryEventIndices: [0] },
+				{ shotNo: 1, durationSeconds: 1, visualTask: "先声明第二事件", action: "人物在当前空间内移动", depictedStoryEventIndices: [1] },
+				{ shotNo: 2, durationSeconds: 1, visualTask: "再回写第一事件", action: "人物在当前空间内移动", depictedStoryEventIndices: [0] },
 			],
 		})).toThrow("must preserve frozen storyEvent order");
 	});
@@ -266,4 +291,11 @@ describe("temporal frame track", () => {
 			field: "clip.temporalFrameCoverage",
 		})).toThrow("intersecting this time window");
 	});
+});
+
+
+it("identifies each unmapped event and its frozen clock interval", () => {
+  expect(() => compileTemporalFrameContract({ durationSeconds: 2, storyEvents, exitState: "人物贴墙完成制动", field: "clip", shots: [
+    { shotNo: 1, durationSeconds: 2, visualTask: "完整镜头", action: "动作", depictedStoryEventIndices: [0] },
+  ] })).toThrow("storyEvents[1] interval=[1,2)");
 });

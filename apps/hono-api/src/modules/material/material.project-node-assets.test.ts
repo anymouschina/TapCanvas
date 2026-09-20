@@ -1,7 +1,41 @@
 import { describe, expect, it } from "vitest";
+import { reconcileCanvasMembership } from "@tapcanvas/workflow-kernel-protocol";
+import { createWorkflowCallerCanvasSnapshot } from "../execution/execution.project-context";
 import { projectNodeAssetsFromCanvases } from "./material.project-node-assets";
 
 describe("project node material projection", () => {
+	it("keeps display names distinct from internal identities when projecting the asset catalog", () => {
+		const assets = projectNodeAssetsFromCanvases([{ projectId: "project", ownerType: "chapter", ownerId: "chapter",
+			flowId: "chapter:chapter", canvasRevision: 1, createdAt: "2026-09-20T00:00:00Z", updatedAt: "2026-09-20T00:00:00Z",
+			data: JSON.stringify({ nodes: [{ id: "person", type: "taskNode", data: {
+				kind: "image", imageUrl: "https://assets.test/person.png", referenceType: "character",
+				displayName: "张羽", roleName: "zhangyu_boy_student", physicalIdentityKey: "zhangyu_boy_student",
+				identityAnchors: ["作者确认的外观"], prohibitedDrift: ["作者指定的连续性约束"],
+				characterProfileVersion: "character-card/v3", characterAssetRole: "identity_anchor",
+				prompt: "原始作者提示词", workflowExecutionId: "source-run",
+			} }], edges: [] }),
+		}]);
+		expect(assets[0]?.name).toBe("张羽");
+		expect(assets[0]?.latestVersion?.data).toMatchObject({ displayName: "张羽", physicalIdentityKey: "zhangyu_boy_student",
+			identityAnchors: ["作者确认的外观"], prohibitedDrift: ["作者指定的连续性约束"],
+			characterProfileVersion: "character-card/v3", characterAssetRole: "identity_anchor", prompt: "原始作者提示词", workflowExecutionId: "source-run" });
+	});
+
+	it("excludes deleted settlement records from discovery and new caller snapshots without removing receipts", () => {
+		const retained = { id: "old-output", type: "taskNode", data: {
+			kind: "image", taskId: "paid-task", imageUrl: "https://assets.test/old.png",
+		} };
+		const visible = { id: "input", type: "taskNode", data: { kind: "image", imageUrl: "https://assets.test/input.png" } };
+		const graph = reconcileCanvasMembership({ nodes: [visible, retained], edges: [] },
+			{ nodes: [visible], edges: [] }, { deletedNodeIds: [retained.id] });
+		const persisted = JSON.stringify(graph);
+		const assets = projectNodeAssetsFromCanvases([{ projectId: "project-1", ownerType: "project", ownerId: "project-1",
+			flowId: "flow-1", canvasRevision: 2, createdAt: "2026-09-08T00:00:00Z", updatedAt: "2026-09-08T00:01:00Z", data: persisted }]);
+		expect(assets.map((asset) => asset.origin?.nodeId)).toEqual(["input"]);
+		expect(createWorkflowCallerCanvasSnapshot(persisted).nodes).toEqual([visible]);
+		expect(JSON.stringify(graph)).toBe(persisted);
+		expect(persisted).toContain("paid-task");
+	});
 	it("projects every durable project/chapter node without creating a second material identity", () => {
 		const result = projectNodeAssetsFromCanvases([
 			{

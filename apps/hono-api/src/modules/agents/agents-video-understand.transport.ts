@@ -1,9 +1,9 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import type { WorkerEnv } from "../../types";
 import {
 	createObjectStorageClientFromConfig,
+	createObjectStorageSignedUrl,
 	resolveObjectStorageConfig,
 } from "../asset/rustfs.client";
 
@@ -21,10 +21,10 @@ export async function createVideoUnderstandingModelInputUrl(input: {
 	if (!objectKey) throw new Error("视频理解代理缺少对象存储 key");
 	const storage = resolveObjectStorageConfig(input.env);
 	if (!storage) throw new Error("对象存储未配置，无法签发视频理解读取地址");
-	const signedUrl = await getSignedUrl(
+	const signedUrl = await createObjectStorageSignedUrl(
 		createObjectStorageClientFromConfig(storage),
 		new GetObjectCommand({ Bucket: storage.bucket, Key: objectKey }),
-		{ expiresIn: MODEL_INPUT_URL_TTL_SECONDS },
+		MODEL_INPUT_URL_TTL_SECONDS,
 	);
 	let parsed: URL;
 	try {

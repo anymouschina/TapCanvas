@@ -89,10 +89,20 @@ export function parseVideoSpeechAuditEnvelope(input: {
 			},
 		});
 	}
+	// The branch above is the single structural protocol guard. Keep the
+	// validated id concrete for durable execution evidence.
+	const responseId = input.envelope.id;
+	if (!responseId) {
+		throw new AppError("视频人声转写证据缺少响应 id", {
+			status: 502,
+			code: "video_speech_audit_response_invalid",
+			details: { issues: ["response_id_missing"] },
+		});
+	}
 	return {
 		transcript,
 		execution: {
-			responseId: input.envelope.id,
+			responseId,
 			model: input.expectedModel,
 			outputSha256: createHash("sha256").update(input.envelope.text).digest("hex"),
 			outputLength: input.envelope.text.length,

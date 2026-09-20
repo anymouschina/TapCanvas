@@ -50,6 +50,21 @@ describe("buildClipInputEdges", () => {
 		expect(edges.map((e) => e.source)).toEqual(["card-a"]);
 	});
 
+	it("按稳定 assetId 反查画布资产并连到视频节点", () => {
+		const edges = buildClipInputEdges({
+			current: {
+				nodes: [
+					node("asset-scene", { kind: "image", assetId: "asset-scene-1" }),
+					node(CLIP, { kind: "video" }),
+				],
+				edges: [],
+			},
+			clipNodeId: CLIP,
+			sourceAssetIds: ["asset-scene-1"],
+		});
+		expect(edges).toMatchObject([{ source: "asset-scene", target: CLIP, sourceHandle: "out-image", targetHandle: "in-any" }]);
+	});
+
 	it("sourceNodeIds 直连（分镜板/站位图），幻觉 id 与自环被剔除", () => {
 		const current = {
 			nodes: [node("sb-1", { kind: "storyboardImage" }), node(CLIP, { kind: "video" })],

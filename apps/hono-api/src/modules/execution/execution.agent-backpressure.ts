@@ -1,7 +1,10 @@
-const WORKFLOW_AGENT_RATE_LIMIT_FAILURE_CODE = "llm_http_429";
-const WORKFLOW_AGENT_RATE_LIMIT_BASE_DELAY_MS = 65_000;
-const WORKFLOW_AGENT_RATE_LIMIT_MAX_DELAY_MS = 300_000;
-const WORKFLOW_AGENT_RATE_LIMIT_MAX_JITTER_MS = 15_000;
+export const WORKFLOW_AGENT_RATE_LIMIT_FAILURE_CODE = "llm_http_429" as const;
+// A provider 429 is a transport/backpressure event, not a semantic failure.
+// Keep the retry contract deterministic: persist exponential quiet windows and reopen the same
+// logical Agent item. A retry count alone cannot terminate the user task.
+const WORKFLOW_AGENT_RATE_LIMIT_BASE_DELAY_MS = 5_000;
+const WORKFLOW_AGENT_RATE_LIMIT_MAX_DELAY_MS = 180_000;
+const WORKFLOW_AGENT_RATE_LIMIT_MAX_JITTER_MS = 1_000;
 
 export type WorkflowAgentPhysicalFailureEvidence = Readonly<{
 	retryOrdinal: number;
@@ -61,6 +64,50 @@ export function isWorkflowAgentRateLimitFailureCode(value: unknown): value is st
 	return value === WORKFLOW_AGENT_RATE_LIMIT_FAILURE_CODE;
 }
 
+export const WORKFLOW_AGENT_SESSION_TURN_INFLIGHT_CODE = "chat_turn_inflight" as const;
+const WORKFLOW_AGENT_SESSION_TURN_INFLIGHT_POLL_MS = 15_000;
+
+/**
+ * The bridge refuses a second physical turn for a session that already owns one
+ * and reports `acceptance=rejected` / `operationOutcome=not_started`. That
+ * rejection proves no model call or tool action ran, so it is a scheduling
+ * conflict between our own dispatch paths, not a user-goal failure. Classifying
+ * it structurally (exact code plus status) keeps the same rule the async
+ * continuation path already applies: wait for ownership, do not spend the
+ * physical retry budget, do not terminalise the node.
+ */
+export function isWorkflowAgentSessionTurnInflightError(error: unknown): boolean {
+	if (!isRecord(error)) return false;
+	return error.status === 409 && error.code === WORKFLOW_AGENT_SESSION_TURN_INFLIGHT_CODE;
+}
+
+/** Persist the exact rejection plus the next ownership check; no retry budget is spent. */
+export function createWorkflowAgentSessionTurnInflightEvidence(
+	previousEvidence: Record<string, unknown> | null,
+	error: unknown,
+	nowMs = Date.now(),
+): Readonly<Record<string, unknown>> {
+	const previous = deliveryEvidence(previousEvidence);
+	const record = isRecord(error) ? error : null;
+	const details = isRecord(record?.details) ? record.details : null;
+	const observedAt = new Date(nowMs).toISOString();
+	return {
+		...(previous ?? {}),
+		version: 1,
+		source: "workflow_agent_session_turn_inflight",
+		observedAt,
+		reason: WORKFLOW_AGENT_SESSION_TURN_INFLIGHT_CODE,
+		rejection: {
+			status: typeof record?.status === "number" ? record.status : null,
+			code: typeof record?.code === "string" ? record.code : null,
+			acceptance: typeof details?.acceptance === "string" ? details.acceptance : null,
+			operationOutcome: typeof details?.operationOutcome === "string" ? details.operationOutcome : null,
+			activeTurnId: typeof details?.activeTurnId === "string" ? details.activeTurnId : null,
+		},
+		retryNotBeforeAt: new Date(nowMs + WORKFLOW_AGENT_SESSION_TURN_INFLIGHT_POLL_MS).toISOString(),
+	};
+}
+
 export function parseWorkflowAgentPhysicalFailureEvidence(
 	previousEvidence: Record<string, unknown> | null,
 ): WorkflowAgentPhysicalFailureEvidence | null {
@@ -87,8 +134,8 @@ export function parseWorkflowAgentPhysicalFailureEvidence(
 /**
  * Build a restart-safe scheduler checkpoint for a rejected LLM request. A 429
  * means the provider did not accept the generation, so a later same-model
- * attempt is safe. Backoff is persisted as an absolute timestamp so frequent
- * workflow reconciliation performs no model calls while the window is quiet.
+ * attempt is safe. The increasing retry window is persisted as an absolute
+ * timestamp so workflow reconciliation performs no model calls while waiting.
  */
 export function createWorkflowAgentRateLimitBackpressureEvidence(
 	previousEvidence: Record<string, unknown> | null,
@@ -99,17 +146,15 @@ export function createWorkflowAgentRateLimitBackpressureEvidence(
 	const previousRetryOrdinal = nonNegativeInteger(previous?.physicalRetryOrdinal) ?? 0;
 	const previousDeferralCount = nonNegativeInteger(previous?.rateLimitDeferralCount) ?? 0;
 	const rateLimitDeferralCount = previousDeferralCount + 1;
-	const exponentialDelayMs = WORKFLOW_AGENT_RATE_LIMIT_BASE_DELAY_MS
-		* (2 ** Math.min(previousDeferralCount, 20));
 	const retryBaseDelayMs = Math.min(
-		exponentialDelayMs,
-		WORKFLOW_AGENT_RATE_LIMIT_MAX_DELAY_MS - WORKFLOW_AGENT_RATE_LIMIT_MAX_JITTER_MS,
+		WORKFLOW_AGENT_RATE_LIMIT_BASE_DELAY_MS * (2 ** Math.min(previousDeferralCount, 20)),
+		WORKFLOW_AGENT_RATE_LIMIT_MAX_DELAY_MS,
 	);
 	const jitterRangeMs = Math.min(
 		WORKFLOW_AGENT_RATE_LIMIT_MAX_JITTER_MS,
 		Math.floor(retryBaseDelayMs / 4),
 	);
-	const retryJitterMs = jitterIdentity
+	const retryJitterMs = jitterIdentity && jitterRangeMs > 0
 		? stableUnsignedHash(`${jitterIdentity}:${rateLimitDeferralCount}`) % (jitterRangeMs + 1)
 		: 0;
 	const retryAfterMs = retryBaseDelayMs + retryJitterMs;

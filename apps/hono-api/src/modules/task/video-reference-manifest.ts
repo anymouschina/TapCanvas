@@ -372,11 +372,11 @@ export function buildVideoReferenceMediaManifest(input: {
  */
 export function renderVideoReferenceContinuationNote(videoNote?: string): string {
   const note = readString(videoNote);
-  return note ? `[参考视频绑定] ${note}` : "";
+  return note ? `连续承接：${note}` : "";
 }
 
 /**
- * 只清理历史运行遗留的提交注记，再追加本轮必要的参考视频事实。
+ * 只清理历史运行遗留的机器提交注记，再追加本轮必要的参考视频事实。
  * 不扫描或改写正文；最终 @图N 由结构化 renderer 从 manifest 构造，不依赖本函数。
  */
 export function withAuthoritativePromptAnnotation(
@@ -390,7 +390,8 @@ export function withAuthoritativePromptAnnotation(
       (paragraph) =>
         paragraph &&
         !paragraph.startsWith("[参考图绑定]") &&
-        !paragraph.startsWith("[参考视频绑定]"),
+        !paragraph.startsWith("[参考视频绑定]") &&
+        !paragraph.startsWith("连续承接："),
     );
   const normalizedNote = readString(note);
   if (normalizedNote) paragraphs.push(normalizedNote);

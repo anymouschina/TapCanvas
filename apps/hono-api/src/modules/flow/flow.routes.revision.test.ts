@@ -61,13 +61,13 @@ describe("POST /flows revision handling", () => {
 		const res = await app.request("/flows", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ id: "f1", name: "n", data: {}, expectedRevision: 5, source: "user" }),
+			body: JSON.stringify({ id: "f1", name: "n", data: {}, expectedRevision: 5, source: "user", deletedNodeIds: ["removed"], restoredNodeIds: ["restored"] }),
 		});
 		expect(res.status).toBe(200);
 		expect(upsertUserFlow).toHaveBeenCalledWith(
 			expect.anything(),
 			"user-1",
-			expect.objectContaining({ expectedRevision: 5, source: "user" }),
+			expect.objectContaining({ expectedRevision: 5, source: "user", deletedNodeIds: ["removed"], restoredNodeIds: ["restored"] }),
 		);
 		const body = await res.json();
 		expect(body.canvasRevision).toBe(6);

@@ -181,6 +181,22 @@ docker-compose exec api dreamina version
 
 ## AI 对话架构（当前）
 
+DSH 的 `record_user_intent` 冻结语义合同后，网关通过执行请求顶层 `userIntentContract` / `userIntentContractHash` 成对携带机器字段。装备工作流启动时后端验证规范 hash 与所有者，写入冻结 trigger 的 `workflowUserIntent`；模型参数或 trigger 中伪造同名字段会显式失败。
+
+- 持久 Workflow 的受理回执明确声明 `completionBoundary=submission` 与 `executionOwner=durable_executor`。Bridge 的 `submissionHandoff` 只结束本轮提交交接，Hono 记录聊天边界 succeeded、媒体交付 pending，并且不登记另一份聊天 continuation；实际生成与最终交付仍由唯一 Workflow 执行器推进。只有真实成功终态的 `workflowOutputs` 可进入后续媒体验收。交付覆盖存在缺项时，验证节点保存全部既有 outputRefs/资产并显式报告 `workflow_delivery_coverage_unsatisfied`，不会把部分成片标成完整交付。
+
+交付回执的 `workflowOutputs` 读取执行时冻结图：标准 `workflow.output/v1` 边界及显式 `delivery` 分类的无下游终端节点，只暴露已成功节点所声明的输出端口。中间媒体节点不构成整轮交付证据，失败产物仍保留于执行记录。
+
+### 2026-09-20 一键成片 v90 与 DSH 适配
+
+- 一键成片从 TapCanvas-pro 当前工作区同步到 Workflow IR v90，保留本仓库 DeepSeek Harness 内核与统一聊天入口。章节剧情、共享资产、逐 Clip 视觉设计使用独立结构化产物；同一持久执行器继续负责资产生成、writer、视频和合成，不能把节点受理当作成片成功。
+- 编辑器的纯定义位于 `apps/web/src/canvas/videoWorkflowDefinition.ts`。`node scripts/export-system-video-workflow.mjs` 在构建期生成后端 `system-video-production-workflow.graph.json`；`--check` 校验两端无漂移。该产物是当前代码的编译结果，不从文档、用户数据库或分析资产读取运行时知识。
+- API 启动通过 `syncBuiltInVideoProductionWorkflow` 发布独立的系统级 v90 工作流（31 个节点、51 条边），使用不可变版本和新保留身份；重复启动验证已发布版本，不覆盖历史运行、资产或用户工作流。原先按字长拆分的系统工作流仍只服务该显式操作。模型和媒体规格由动态目录与真实调用配置提供，不在发布定义中固化新模型。
+- 本次代码同步不执行数据库发布、不重启服务、不提交付费媒体任务。实际生效需部署/重启 API 与新版 Web/bridge；运行中的旧执行仍保留原冻结版本。 发布 SQL 可通过 `pnpm --filter @tapcanvas/api exec node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/export-system-one-click-workflow.ts --video-production` 生成；该命令仅导出文件，不连接数据库。
+
+
+- 一键成片的执行层同步 TapCanvas-pro 最新原子节点合同：章节来源与资产注册表被冻结在 execution，创作输出按 BeatSheet、资产准备、镜头写作和交付证据分阶段记录；blocking diagram、背景引用、图像/视频真实 URL 以及节点归属采用共享结构 schema 验证。执行层保留已成功媒体回执并追加重试、探测与交付覆盖记录，不因后续诊断删除已有资产。集合节点持久化每项 checkpoint，恢复只处理尚未满足合同的项。运行内核仍为当前 DeepSeek Harness，未恢复旧自研 agent loop；结构化候选修复通过同一 Bridge 的提交合同与显式 repair checkpoint 继续，Hono 仅传递真实失败与冻结来源。
+
 - HeyRoute 渠道通过 new-api 的动态模型目录接入同一条 Harness 模型网关，不引入另一套 agent loop 或本地意图路由。2026-09-11 初始化补丁提供 7 个默认停用、空 Key 渠道（15 个文本、5 个图片、11 个视频模型）；管理员填写自己的 Key 并启用后才进入可执行目录。文本结算使用所选渠道的输入/输出/缓存价格；图片 SSE 和视频任务协议适配在 new-api 内完成。配置与部署边界见 [HeyRoute 接入说明](../new-api/docs/heyroute.md)。
 
 - `apps/agents-cli` 的执行内核已硬切到 DeepSeek Harness 官方 `sdk` profile（精确锁定 `0.1.2-alpha.2`）：Harness 负责主 agent loop、会话、Todo、Skills 与子代理；TapCanvas bridge 只负责本轮模型网关注入、HTTP/SSE 事件投影和 request-scoped MCP 授权代理。旧自研 agent loop、`agents.config.json` 与 `AGENTS_PROFILE` 不再是运行路径。Hono 每轮从动态模型目录确认唯一模型后，为当前用户签发短期内部委托凭据，并把 Harness 的模型流量统一送入 owner-scoped `/agents/llm/v1/chat/completions` 或原生 `/agents/llm/v1/responses`；只有 Hono 才持有 `NEW_API_INTERNAL_BASE_URL` 与 `NEW_API_INTERNAL_TOKEN`，bridge 不再接触 new-api 管理凭据，也不会绕过用户归属与计费边界。代理地址或委托凭据缺失时显式失败，不在 Harness 内猜测默认地址或模型。内部委托允许由 Harness 的 OpenAI 客户端按标准 `Authorization: Bearer tc_internal:v2:*` 承载，鉴权层只对白名单内部前缀和 `tc_sk_*` 作 API-key 解析，普通 JWT 不会被误判。Hono 每轮传入的真实输出合同、项目/画布事实、角色与检索约束按字段白名单进入上下文，凭据与内部 bearer token 不进入模型消息。`remoteTools` 直接映射为当轮 MCP tools；`remoteToolCatalog` 必须先经 `tapcanvas_get_tool_schema -> tapcanvas_tool_schema_get` 取得精确 schema，同一请求才允许执行该冷工具，网络/认证/schema/业务错误全部进入真实 tool trace，禁止静默降级。Bridge 还固定提供仅在进程内结算的 `report_delivery`：纯文本根任务由 Harness 主代理在最终回答前完成语义自检并声明 response 合同，Bridge 冻结合同后只绑定实际最终正文 SHA-256，构造 `expectedDelivery -> deliveryEvidence -> deliveryVerification -> PhysicalRunExitV1`；该工具不转发 Hono，也不能用于把 state change 或媒体文本声明冒充为真实执行证据。

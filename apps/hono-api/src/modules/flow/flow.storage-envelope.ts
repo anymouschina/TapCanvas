@@ -1,3 +1,5 @@
+import { reconcileCanvasMembership, type CanvasMembershipChanges } from '@tapcanvas/workflow-kernel-protocol';
+
 const FLOW_GRAPH_STORAGE_KEYS = new Set(["nodes", "edges", "viewport"]);
 
 export type FlowOwnerType = "project" | "chapter" | "shot";
@@ -55,7 +57,7 @@ export function readFlowOwnerMeta(value: unknown): FlowOwnerMeta {
  * an independent envelope and must survive a graph-only replacement. A caller
  * can still update a metadata key explicitly by including that key in nextData.
  */
-export function mergeFlowStorageEnvelope(currentData: string, nextData: string): string {
+export function mergeFlowStorageEnvelope(currentData: string, nextData: string, changes?: CanvasMembershipChanges): string {
 	const current = parseFlowStorageRecord(currentData, "current data");
 	const next = parseFlowStorageRecord(nextData, "next data");
 	const merged: Record<string, unknown> = { ...next };
@@ -66,5 +68,5 @@ export function mergeFlowStorageEnvelope(currentData: string, nextData: string):
 		merged[key] = value;
 	}
 
-	return JSON.stringify(merged);
+	return JSON.stringify(reconcileCanvasMembership(current, merged, changes));
 }

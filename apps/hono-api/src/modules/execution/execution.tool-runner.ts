@@ -1,6 +1,6 @@
 import type { WorkerEnv } from "../../types";
 import { buildInternalApiKey } from "../apiKey/internal-api-key";
-import { buildAgentsBridgeRemoteTools } from "../task/task.agents-bridge";
+import { inspectAgentsBridgeRemoteToolSurface } from "../task/task.agents-bridge";
 import { validateWorkflowToolArguments } from "./execution.json-schema-validator";
 
 export type WorkflowToolInvocationRequest = Readonly<{
@@ -28,14 +28,17 @@ function internalBaseUrl(env: WorkerEnv): string {
 }
 
 export async function invokeWorkflowTool(env: WorkerEnv, request: WorkflowToolInvocationRequest): Promise<WorkflowToolInvocationResult> {
-	const tool = buildAgentsBridgeRemoteTools({
+	const surface = inspectAgentsBridgeRemoteToolSurface({
 		publicAgentsRequest: true,
 		canvasProjectId: request.projectId,
 		canvasFlowId: request.flowId,
 		chapterId: request.chapterId,
 		executionId: request.executionId,
 		adminWorkflowAccess: true,
-	}).find((candidate) => candidate.name === request.toolName);
+	});
+	// Progressive schema disclosure is not authorization: registered catalog
+	// tools are callable in the same verified scope as directly exposed tools.
+	const tool = [...surface.tools, ...surface.catalog].find((candidate) => candidate.name === request.toolName);
 	if (!tool || !tool.parameters) {
 		throw new Error(`Workflow tool '${request.toolName}' is not authorized in the current project/flow scope`);
 	}

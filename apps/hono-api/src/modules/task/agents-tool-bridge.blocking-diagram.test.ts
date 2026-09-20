@@ -56,7 +56,7 @@ describe("clamp01 / normToPx / degToUnit", () => {
 });
 
 describe("parseBlockingDiagram", () => {
-	it("解析并稳定哈希构图合同，且角色覆盖不完整时显式失败", () => {
+	it("保留构图与全部站位，覆盖差异只记录诊断并继续绘图", () => {
 		const plan = parseBlockingDiagram({
 			characters: [{ name: "孟川", at: [0.3, 0.6] }],
 			compositionContract: singleCharacterComposition,
@@ -64,15 +64,17 @@ describe("parseBlockingDiagram", () => {
 		expect(plan.compositionContract?.narrativeTask).toBe("孟川在场景中保持远距观察");
 		expect(plan.compositionContractHash).toMatch(/^[a-f0-9]{64}$/);
 
-		expect(() =>
-			parseBlockingDiagram({
+		const partial = parseBlockingDiagram({
 				characters: [
 					{ name: "孟川", at: [0.3, 0.6] },
 					{ name: "后土", at: [0.7, 0.6] },
 				],
 				compositionContract: singleCharacterComposition,
-			}),
-		).toThrowError("关键帧构图合同未逐项覆盖站位角色");
+			});
+		expect(partial.characters.map((character) => character.name)).toEqual(["孟川", "后土"]);
+		expect(partial.compositionContract?.subjects).toEqual(plan.compositionContract?.subjects);
+		expect(partial.compositionDiagnostics).toEqual(["compositionContract.subjects 缺少站位角色：后土"]);
+		expect(renderBlockingDiagram(partial).subarray(1, 4).toString()).toBe("PNG");
 	});
   it("丢弃非法角色，保留合法的(含默认色)", () => {
     const plan = parseBlockingDiagram({
@@ -191,6 +193,18 @@ describe("renderBlockingDiagram", () => {
 });
 
 describe("backgroundImageUrl 户型底图（2026-07-06 用户拍板）", () => {
+  it.each([undefined, "", "   "])("没有提供背景图时仍绘制真实空间拓扑：%s", (backgroundImageUrl) => {
+    const plan = parseBlockingDiagram({
+      characters: [{ name: "张羽", at: [0.3, 0.5] }],
+      backgroundImageUrl,
+    });
+    expect(plan.backgroundImageUrl).toBeUndefined();
+    expect(plan.characters).toHaveLength(1);
+  });
+
+  it.each([null, 42, {}, "https://", "/floorplan.png", "data:image/png;base64,AAAA"])("显式非法背景不可被当成无背景：%s", (backgroundImageUrl) => {
+    expect(() => parseBlockingDiagram({ backgroundImageUrl })).toThrowError("backgroundImageUrl 必须是可下载的 http(s) URL");
+  });
   it("http(s) URL 被解析保留；非法/相对路径显式失败", () => {
     const ok = parseBlockingDiagram({
       characters: [{ name: "孟川", at: [0.3, 0.5] }],
@@ -205,8 +219,14 @@ describe("backgroundImageUrl 户型底图（2026-07-06 用户拍板）", () => {
     ).toThrowError("backgroundImageUrl 必须是可下载的 http(s) URL");
   });
 
-  it("显式底图不可访问时禁止退回抽象纸底", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("missing", { status: 404 }));
+  it("显式底图不可访问时禁止退回抽象纸底：按统一策略重试后如实失败", async () => {
+    const sleeps: number[] = [];
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: () => void, delay?: number) => {
+      sleeps.push(Number(delay ?? 0));
+      handler();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("missing", { status: 404 }));
     const context = {
       env: {
         OBJECT_STORAGE_PROVIDER: "tos",
@@ -232,6 +252,10 @@ describe("backgroundImageUrl 户型底图（2026-07-06 用户拍板）", () => {
 		).rejects.toMatchObject({
 			code: "agents_tool_blocking_background_unavailable",
 			terminal: false,
+			details: { stage: "download", httpStatus: 404, attempts: 3, reason: "HTTP 404" },
 		});
+    // 写入后短暂不可见是可重试的瞬时事实；重试耗尽后仍然失败，不退回抽象纸底。
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([1_000, 3_000]);
   });
 });

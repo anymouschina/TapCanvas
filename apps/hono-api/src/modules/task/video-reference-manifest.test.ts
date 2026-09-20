@@ -114,10 +114,10 @@ describe("video reference media manifest", () => {
       note,
     );
 
-    expect(note).toBe("[参考视频绑定] 参考视频=上一镜成片");
+    expect(note).toBe("连续承接：参考视频=上一镜成片");
     expect(prompt).not.toContain("旧错误映射");
     expect(prompt).toContain("@图2对@图3说：『原文对白』");
-    expect(prompt).toContain("[参考视频绑定] 参考视频=上一镜成片");
+    expect(prompt).toContain("连续承接：参考视频=上一镜成片");
     expect(prompt).not.toContain("[参考图绑定]");
   });
 

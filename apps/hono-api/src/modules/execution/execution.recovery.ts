@@ -17,6 +17,8 @@ export type WorkflowExecutionGraphState = {
 	routes: Record<string, WorkflowCompiledRoute[]>;
 	incoming: Record<string, number>;
 	activeIncoming: Record<string, number>;
+	activeInputPorts: Record<string, string[]>;
+	requiredInputPorts: Record<string, string[]>;
 	selectiveOutputPorts: Record<string, string[]>;
 	notSelected: string[];
 	ready: string[];
@@ -25,6 +27,7 @@ export type WorkflowExecutionGraphState = {
 export type WorkflowCompiledRoute = Readonly<{
 	target: string;
 	sourcePort: string | null;
+	targetPort: string | null;
 }>;
 
 export type WorkflowNodeRestartPolicy = "replay_safe" | "reconcile_effect" | "fail_explicitly";
@@ -46,6 +49,7 @@ export type CompiledWorkflowGraph = Readonly<{
 	adj: Record<string, string[]>;
 	routes: Record<string, WorkflowCompiledRoute[]>;
 	incoming: Record<string, number>;
+	requiredInputPorts: Record<string, string[]>;
 	selectiveOutputPorts: Record<string, string[]>;
 }>;
 
@@ -214,6 +218,7 @@ export function compileWorkflowGraph(input: ReactFlowLike): CompiledWorkflowGrap
 	const routes: Record<string, WorkflowCompiledRoute[]> = {};
 	const incoming: Record<string, number> = {};
 	const selectivePortsByNode: Record<string, string[]> = {};
+	const requiredInputPorts: Record<string, string[]> = {};
 	for (const nodeId of nodeIds) {
 		indeg[nodeId] = 0;
 		adj[nodeId] = [];
@@ -223,6 +228,7 @@ export function compileWorkflowGraph(input: ReactFlowLike): CompiledWorkflowGrap
 		const declaredSelectivePorts = node ? selectiveOutputPorts(node) : [];
 		const declaredOutputs = node ? declaredPorts(node, "output") : [];
 		const declaredInputs = node ? declaredPorts(node, "input") : [];
+		requiredInputPorts[nodeId] = declaredInputs.filter((port) => !node || !optionalInputPorts(node).includes(port));
 		const portContract = node ? resolveCoreWorkflowExecutorPortContract(executorRef(node) ?? "") : null;
 		const missingContractPort = portContract?.requiredInputPorts.find((port) => !declaredInputs.includes(port));
 		if (missingContractPort) {
@@ -291,7 +297,7 @@ export function compileWorkflowGraph(input: ReactFlowLike): CompiledWorkflowGrap
 		}
 		edgeIdentities.add(edgeIdentity);
 		adj[source].push(target);
-		routes[source].push({ target, sourcePort });
+		routes[source].push({ target, sourcePort, targetPort });
 		indeg[target] = (indeg[target] ?? 0) + 1;
 		incoming[target] = (incoming[target] ?? 0) + 1;
 	}
@@ -305,7 +311,7 @@ export function compileWorkflowGraph(input: ReactFlowLike): CompiledWorkflowGrap
 			if (!connected) throw new Error(`Workflow graph node ${nodeId} has no edge for required input port ${inputPort}`);
 		}
 	}
-	return { nodeIds, indeg, adj, routes, incoming, selectiveOutputPorts: selectivePortsByNode };
+	return { nodeIds, indeg, adj, routes, incoming, requiredInputPorts, selectiveOutputPorts: selectivePortsByNode };
 }
 
 function outputPortNames(outputRefs: unknown): ReadonlySet<string> {
@@ -340,9 +346,12 @@ export function resolveWorkflowGraphNode(
 				|| current.ports.has(route.sourcePort)
 			);
 			graph.indeg[route.target] = Math.max(0, (graph.indeg[route.target] ?? 0) - 1);
-			if (active) graph.activeIncoming[route.target] = (graph.activeIncoming[route.target] ?? 0) + 1;
+			if (active) {
+				graph.activeIncoming[route.target] = (graph.activeIncoming[route.target] ?? 0) + 1;
+				if (route.targetPort) graph.activeInputPorts[route.target].push(route.targetPort);
+			}
 			if (graph.indeg[route.target] !== 0) continue;
-			if ((graph.incoming[route.target] ?? 0) === 0 || (graph.activeIncoming[route.target] ?? 0) > 0) {
+			if (workflowInputsSelected(graph, route.target)) {
 				readyNodeIds.push(route.target);
 				continue;
 			}
@@ -398,6 +407,8 @@ export function rebuildWorkflowExecutionGraph(input: Readonly<{
 		routes: compiled.routes,
 		incoming: compiled.incoming,
 		activeIncoming: Object.fromEntries(compiled.nodeIds.map((nodeId) => [nodeId, 0])),
+		activeInputPorts: Object.fromEntries(compiled.nodeIds.map((nodeId) => [nodeId, []])),
+		requiredInputPorts: compiled.requiredInputPorts,
 		selectiveOutputPorts: compiled.selectiveOutputPorts,
 		notSelected: input.nodeRuns.filter((run) => run.status === "not_selected").map((run) => run.nodeId),
 		ready: [],
@@ -425,9 +436,14 @@ export function rebuildWorkflowExecutionGraph(input: Readonly<{
 			statusByNodeId.get(nodeId) === "pending"
 			&& !graph.notSelected.includes(nodeId)
 			&& (graph.indeg[nodeId] ?? 0) === 0
-			&& ((graph.incoming[nodeId] ?? 0) === 0 || (graph.activeIncoming[nodeId] ?? 0) > 0)
+			&& workflowInputsSelected(graph, nodeId)
 		))
 		: [];
 	graph.ready = ready;
 	return graph;
+}
+
+function workflowInputsSelected(graph: WorkflowExecutionGraphState, nodeId: string): boolean {
+ return ((graph.incoming[nodeId] ?? 0) === 0 || (graph.activeIncoming[nodeId] ?? 0) > 0)
+  && graph.requiredInputPorts[nodeId].every((port) => graph.activeInputPorts[nodeId].includes(port));
 }

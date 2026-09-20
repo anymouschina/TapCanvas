@@ -36,6 +36,7 @@ const INSPECTOR_TABS: readonly Readonly<{ id: WorkflowNodeInspectorTab; label: s
   { id: 'output', label: '输出' },
   { id: 'history', label: '历史' },
   { id: 'run', label: '运行' },
+  { id: 'diagnostics', label: '诊断' },
 ]
 
 const INSPECTOR_VIEWPORT_GAP_PX = 16
@@ -307,8 +308,24 @@ export function WorkflowNodeInspectorPanel(props: WorkflowNodeInspectorPanelProp
           </div>
         ) : null}
         {activeTab === 'run' ? <RunTab nodeId={node.id} data={data} readOnly={props.readOnly} /> : null}
+        {activeTab === 'diagnostics' ? <WorkflowDiagnosticsTab data={data} /> : null}
       </div>
       </aside>
     </BodyPortal>
+  )
+}
+
+function WorkflowDiagnosticsTab({ data }: Readonly<{ data: Record<string, unknown> }>): React.JSX.Element {
+  const diagnostics = Array.isArray(data.workflowDiagnostics) ? data.workflowDiagnostics : []
+  const errors = typeof data.workflowErrorCount === 'number' ? data.workflowErrorCount : 0
+  const waiting = typeof data.workflowWaitingReasonLabel === 'string' ? data.workflowWaitingReasonLabel : ''
+  return (
+    <div className="workflow-node-inspector__tab-content" aria-label="工作流诊断">
+      <div className="workflow-node-inspector__section">
+        <h3 className="workflow-node-inspector__section-title">当前诊断</h3>
+        <p className="workflow-node-inspector__evidence">{waiting || (errors > 0 ? `${errors} 个结构化错误` : '当前节点没有已记录的诊断')}</p>
+      </div>
+      {diagnostics.length > 0 ? <pre className="workflow-node-inspector__code-block">{JSON.stringify(diagnostics, null, 2)}</pre> : null}
+    </div>
   )
 }

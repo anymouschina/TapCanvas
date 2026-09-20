@@ -33,8 +33,10 @@ export const VIDEO_ASSET_REPAIR_VERSION = 3 as const;
 const ASSET_REPAIR_CONTINUATION_PROVIDER = "agents_async_continuation";
 
 function resolveAssetRepairFrontierClaimOwner(c: AppContext): AssetRepairFrontierClaimOwner | null {
-  const continuationId = c.get("activeAsyncContinuationId")?.trim() ?? "";
-  const continuationClaimToken = c.get("activeAsyncContinuationClaimToken")?.trim() ?? "";
+  const continuationIdValue: unknown = c.get("activeAsyncContinuationId");
+  const continuationClaimTokenValue: unknown = c.get("activeAsyncContinuationClaimToken");
+  const continuationId = typeof continuationIdValue === "string" ? continuationIdValue.trim() : "";
+  const continuationClaimToken = typeof continuationClaimTokenValue === "string" ? continuationClaimTokenValue.trim() : "";
   if (continuationId || continuationClaimToken) {
     return continuationId && continuationClaimToken
       ? {
@@ -45,7 +47,8 @@ function resolveAssetRepairFrontierClaimOwner(c: AppContext): AssetRepairFrontie
         }
       : null;
   }
-  const requestId = c.get("requestId")?.trim() ?? "";
+  const requestIdValue: unknown = c.get("requestId");
+  const requestId = typeof requestIdValue === "string" ? requestIdValue.trim() : "";
   return requestId ? { kind: "request", executionId: requestId } : null;
 }
 
@@ -296,24 +299,25 @@ export function carryAssetRepairProgress(input: {
   const resolvedBindings = previousProgress.resolvedBindings.filter(
     (binding) => !requiredKeys.has(assetRepairIdentityKey(binding)),
   );
+  const candidateProgress: VideoAssetRepairProgress = {
+    revision: previousProgress.revision,
+    totalCount: Math.max(
+      previousProgress.totalCount,
+      resolvedBindings.length + input.declaration.requiredAssets.length,
+    ),
+    resolvedBindings,
+  };
   const candidateAtCurrentRevision: VideoAssetRepairDeclaration = {
     ...input.declaration,
     executionGeneration: input.previous?.executionGeneration ?? input.declaration.executionGeneration,
-    progress: {
-      revision: previousProgress.revision,
-      totalCount: Math.max(
-        previousProgress.totalCount,
-        resolvedBindings.length + input.declaration.requiredAssets.length,
-      ),
-      resolvedBindings,
-    },
+    progress: candidateProgress,
   };
   const frontierChanged = stableContentHash(candidateAtCurrentRevision) !== stableContentHash(input.previous);
   return frontierChanged
     ? {
         ...candidateAtCurrentRevision,
         progress: {
-          ...candidateAtCurrentRevision.progress,
+          ...candidateProgress,
           revision: previousProgress.revision + 1,
         },
       }
@@ -1824,8 +1828,15 @@ export async function repairVideoRunAssets(input: {
   }
 
   const repair = await readVideoAssetRepairFromFlow({ c: input.c, flowId: input.flowId, ownerId: input.requestUserId, runId, ...(input.chapterId ? { chapterId: input.chapterId } : {}) });
+  const activeRepairDeclaration = repairDeclaration;
+  if (!activeRepairDeclaration) {
+    throw new AppError("补资产执行完成后缺少当前声明", {
+      status: 409,
+      code: "asset_repair_declaration_missing",
+    });
+  }
   const repairedClipIndexes = [...new Set(bindings.flatMap((binding) => binding.clipIndexes ?? (
-    plan ? plan.clips.map((_, index) => index) : repairDeclaration.requiredAssets.flatMap((asset) => asset.clipIndexes)
+    plan ? plan.clips.map((_, index) => index) : activeRepairDeclaration.requiredAssets.flatMap((asset) => asset.clipIndexes)
   )))].sort((a, b) => a - b);
   const productionArtifactRoots = authoringAssetRepair
     ? []

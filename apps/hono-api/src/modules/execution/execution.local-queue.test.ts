@@ -60,3 +60,38 @@ describe("local workflow node queue", () => {
 		expect(scheduled).toHaveLength(3);
 	});
 });
+
+it("an earlier wakeup replaces a delayed poll and its stale timer cannot consume the successor", async () => {
+	const scheduled: Array<{ run: () => void; delay: number }> = [];
+	const dispatch = vi.fn().mockResolvedValue(undefined);
+	const queue = createLocalWorkflowNodeQueue({
+		dispatch,
+		now: () => 1_000,
+		schedule: (run, delay) => scheduled.push({ run, delay }),
+		onFailure: vi.fn(),
+	});
+	expect(queue.send(job, 600)).toBe(true);
+	expect(queue.send(job, 0)).toBe(true);
+	expect(scheduled.map(({ delay }) => delay)).toEqual([600_000, 0]);
+	scheduled[1]!.run();
+	await Promise.resolve();
+	expect(dispatch).toHaveBeenCalledTimes(1);
+	expect(queue.send(job, 900)).toBe(true);
+	scheduled[0]!.run();
+	expect(dispatch).toHaveBeenCalledTimes(1);
+	expect(queue.pendingCount()).toBe(1);
+	scheduled[2]!.run();
+	await Promise.resolve();
+	expect(dispatch).toHaveBeenCalledTimes(2);
+});
+
+it("does not deduplicate a distinct durable node run with the same attempt", () => {
+	const queue = createLocalWorkflowNodeQueue({
+		dispatch: vi.fn().mockResolvedValue(undefined),
+		schedule: vi.fn(),
+		onFailure: vi.fn(),
+	});
+	expect(queue.send(job, 5)).toBe(true);
+	expect(queue.send({ ...job, nodeRunId: "distinct-node-run" }, 5)).toBe(true);
+	expect(queue.pendingCount()).toBe(2);
+});

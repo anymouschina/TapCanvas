@@ -75,6 +75,40 @@ export const AgentPayloadCaptureHealthSchema = z.object({
 	lastErrorCode: z.string().trim().min(1).max(160).nullable(),
 }).strict();
 
+export const AgentRepairProgressSchema = z.object({
+	version: z.literal(1),
+	logicalTaskId: z.string().min(1),
+	observations: z.array(z.object({
+		toolCallId: z.string(),
+		toolName: z.string(),
+		argumentsHash: z.string().regex(/^[a-f0-9]{64}$/),
+		resultHash: z.string().regex(/^[a-f0-9]{64}$/),
+		status: z.enum(["succeeded", "failed", "blocked", "denied"]),
+		previousCallId: z.string().nullable(),
+		followsFailure: z.boolean(),
+		argumentsChanged: z.boolean().nullable(),
+		resultChanged: z.boolean().nullable(),
+		receiptReplayed: z.boolean(),
+		effectReceipt: z.boolean(),
+	}).strict()).max(64),
+}).strict();
+
+export const AgentPromptObservationSchema = z.object({
+	version: z.literal(1),
+	cacheScope: z.string().min(1),
+	hasStableBoundary: z.boolean(),
+	stableHash: z.string().regex(/^[a-f0-9]{64}$/),
+	systemHash: z.string().regex(/^[a-f0-9]{64}$/),
+	toolsHash: z.string().regex(/^[a-f0-9]{64}$/),
+	stableChars: z.number().int().min(0),
+	systemChars: z.number().int().min(0),
+	toolsChars: z.number().int().min(0),
+	messageChars: z.number().int().min(0),
+	stableChanged: z.boolean().nullable(),
+	systemChanged: z.boolean().nullable(),
+	toolsChanged: z.boolean().nullable(),
+}).strict();
+
 export const AgentRuntimeLlmSpanSchema = z.object({
 	spanId: W3CSpanIdSchema,
 	parentSpanId: W3CSpanIdSchema,
@@ -86,6 +120,7 @@ export const AgentRuntimeLlmSpanSchema = z.object({
 	status: z.enum(["succeeded", "failed"]),
 	stopReason: z.string().trim().min(1).max(160).nullable(),
 	providerStopReason: z.string().trim().min(1).max(160).nullable(),
+	prompt: AgentPromptObservationSchema.optional(),
 	usage: AgentTokenUsageSchema,
 }).strict();
 

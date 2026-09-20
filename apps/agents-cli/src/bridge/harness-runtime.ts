@@ -44,8 +44,9 @@ const TAPCANVAS_DELIVERY_SYSTEM_PROTOCOL = [
   "When the user's requested delivery is a plain final response, you MUST call mcp__tapcanvas__report_delivery exactly once immediately before emitting the final answer. The call must describe the actual semantic task, response delivery, and every requirement that the planned final answer satisfies.",
   "A normal assistant answer without that successful tool receipt is an explicit failed logical task, even if the prose appears useful.",
   "Classify delivery by what the user must finally receive, not by whether an execution tool was used. When a successful workflow returns authored user-facing text and the final answer must reproduce that text, the final delivery is response-mode: first require the workflow's terminal factual receipt, then call report_delivery to verify the planned exact response.",
-  "For a state change or artifact delivery, do not misuse the response reporter: use authorized execution tools and rely on their factual receipts. Never claim completion from prose alone.",
+  "For artifact delivery, use authorized tools, obtain terminal output evidence through get_delivery_evidence, and submit the artifact form of report_delivery with exact evidence IDs for every frozen requirement. Never use a response-mode report to substitute for artifact evidence.",
   "If a required delivery tool is unavailable or its receipt fails, state the exact failure; do not omit the protocol or manufacture success.",
+  "When an authorized durable workflow receipt explicitly declares completionBoundary=submission and executionOwner=durable_executor, end this conversation with an accurate submission handoff. Do not poll, register a conversation continuation, or report media completion; the durable executor owns subsequent production and verification.",
   "</deepseek_harness_delivery_protocol>",
 ].join("\n");
 const TAPCANVAS_EQUIPPED_WORKFLOW_PROTOCOL = [
@@ -137,14 +138,18 @@ function structuredPrompt(
 ): string {
   const requiredPreFinalAction = [
     "<tapcanvas_required_pre_final_action>",
+    "Before invoking side-effectful tools, use record_user_intent to freeze the user-authored semantic delivery contract unless a locked userIntentContract is already supplied. Preserve that exact returned contract in artifact delivery reporting.",
     "Before starting any final assistant message, classify the actual delivery by what the user must finally receive, not by whether tools were used: either a user-facing response or a persistent state/artifact result.",
     "For a plain response, you MUST call mcp__tapcanvas__report_delivery exactly once and receive its successful result before emitting any final-response text. This is mandatory regardless of task complexity or whether another tool is needed.",
     "A workflow whose successful terminal output is user-facing text still has a response-mode final delivery. Require its factual receipt first, then use report_delivery to verify the exact response; the reporter does not replace workflow execution.",
-    "For a state/artifact delivery, do not call report_delivery; use authorized execution tools and require their factual receipts before claiming completion.",
+    "For a state/artifact delivery, require terminal authorized workflow output, call get_delivery_evidence, and call report_delivery with the frozen expectedDelivery and semantic criteria bound to exact evidence IDs. Async acceptance is only waiting, never finished media.",
+    "An explicit completionBoundary=submission and executionOwner=durable_executor receipt completes only the submission handoff. End the conversation without report_delivery or polling, clearly state that final media remains pending, and leave production to that durable owner.",
     "If the required pre-final action cannot succeed, expose that exact failure instead of emitting an unverified final answer.",
     "</tapcanvas_required_pre_final_action>",
   ].join("\n");
-  const sections: string[] = [requiredPreFinalAction, request.prompt];
+  const sections: string[] = [isJsonObject(request.turnContext.outputContract)
+    ? 'This is an atomic structured workflow action. You MUST call mcp__tapcanvas__submit_structured_output with the required JSON artifact before ending. If rejected, repair the reported structural issues and resubmit in this same turn. Do not call report_delivery. An accepted submission is the authoritative artifact; do not rewrite it in your final answer.'
+    : requiredPreFinalAction, request.prompt];
   const requiredSkillNames = [
     ...request.requiredSkills,
     ...request.requiredSkillCalls.map((key) => externalSkillNames.get(key) ?? key),
@@ -182,13 +187,13 @@ function structuredPrompt(
       ].join("\n"),
     );
   }
-  sections.push(
+  if (!isJsonObject(request.turnContext.outputContract)) sections.push(
     [
       "<tapcanvas_completion_gate>",
       "Before producing the final answer, self-check the actual deliverable, actions performed, result location, and completion state against the user's request and any frozen userIntentContract above.",
       "For a response-mode delivery, call mcp__tapcanvas__report_delivery exactly once immediately before the final answer. Declare the semantic task goal, response contract, and every must requirement that the planned final answer satisfies.",
       "If an authorized workflow produced the response text, include preservation of its terminal authored output among those requirements and call report_delivery only after the successful workflow receipt is known.",
-      "For state-changing or artifact delivery, never use report_delivery to convert prose into success and never claim success unless authorized tools produced the required factual evidence. If the contract cannot be satisfied, report the exact failure instead of fabricating completion.",
+      "For artifact delivery, report_delivery must use its artifact form and cite exact get_delivery_evidence IDs. Explain whether the real outputs satisfy every user requirement; if they do not, continue work or expose the gap.",
       "</tapcanvas_completion_gate>",
     ].join("\n"),
   );
@@ -349,6 +354,8 @@ function buildResponse(input: {
   deliveryReport: ReturnType<RequestMcpGateway["deliveryReport"]>;
   remoteExecutions: readonly RemoteToolExecution[];
   elapsedMs: number;
+  structuredSubmission?: ReturnType<RequestMcpGateway["structuredSubmission"]>;
+  artifactDelivery?: JsonObject | null;
 }): JsonObject {
   const termination = terminalReason(input.result);
   const completed = termination.kind === "completed";
@@ -358,12 +365,15 @@ function buildResponse(input: {
     harnessCompleted: completed,
     deliveryReport: input.deliveryReport,
     remoteExecutions: input.remoteExecutions,
+    structuredSubmission: input.structuredSubmission,
+    artifactDelivery: input.artifactDelivery,
   });
   const failedToolCalls = input.tools.filter((tool) => tool.status === "failed").length;
   const todoTrace = input.projector.todoTrace();
   return {
     id: `harness_${randomUUID()}`,
     text: input.text,
+    ...(input.structuredSubmission ? { structuredOutput: input.structuredSubmission.value } : {}),
     trace: {
       runtime: {
         engine: "deepseek-harness",
@@ -495,6 +505,9 @@ export class HarnessRuntime {
       request.remoteTools,
       request.remoteToolCatalog,
 			remoteToolConfig,
+      isJsonObject(request.turnContext.outputContract) ? request.turnContext.outputContract : null,
+      isJsonObject(request.turnContext.userIntentContract) ? request.turnContext.userIntentContract : null,
+      request.turnContext.userIntentContractLocked === true,
     );
     const requestTimeoutMs = positiveInteger(this.environment.AGENTS_REQUEST_TIMEOUT_MS);
     const contextWindow = positiveInteger(this.environment.DSH_CONTEXT_WINDOW) ?? 262_144;
@@ -547,16 +560,20 @@ export class HarnessRuntime {
         sessionId: buildHarnessExecutionSessionId(request, randomUUID()),
         onNotification: (notification: HarnessNotification) => projector.accept(notification),
       });
-      const text = projector.responseText(result.finalResponse);
+      const structuredSubmission = this.gateway.structuredSubmission(mcpToken);
+      const text = structuredSubmission ? JSON.stringify(structuredSubmission.value) : projector.responseText(result.finalResponse);
       const remoteExecutions = this.gateway.executions(mcpToken);
       const tools = projector.tools(remoteExecutions);
+      const frozenIntent = this.gateway.userIntentContract(mcpToken);
       const response = buildResponse({
-        request,
+        request: frozenIntent ? { ...request, turnContext: { ...request.turnContext, userIntentContract: frozenIntent } } : request,
         result,
         text,
         projector,
         tools,
         deliveryReport: this.gateway.deliveryReport(mcpToken),
+        structuredSubmission,
+        artifactDelivery: this.gateway.artifactDelivery(mcpToken),
         remoteExecutions,
         elapsedMs: Math.max(0, Date.now() - startedAt),
       });

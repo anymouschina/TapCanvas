@@ -1,4 +1,6 @@
 import type { AppContext } from "../../types";
+import type { CanvasMembershipChanges } from '@tapcanvas/workflow-kernel-protocol';
+import { projectCanvasMembership } from '@tapcanvas/workflow-kernel-protocol';
 import { AppError } from "../../middleware/error";
 import {
   getFlowByIdUnsafe,
@@ -61,7 +63,7 @@ async function readChapterCanvasAsFlowRow(
   userId: string,
   chapterId: string,
 ): Promise<FlowRow> {
-  const { flow } = await getChapterCanvasFlow(c, userId, chapterId);
+  const { flow } = await getChapterCanvasFlow(c, userId, chapterId, true);
   const nowIso = new Date().toISOString();
   // 章节画布是项目子级：解出归属 project_id 填到 synthetic row。否则 orchestrateVideoStart
   // 读到的 projectId=null，video_runs.project_id 留空 → 前端 run-status SSE/进度 chip 静默
@@ -200,6 +202,14 @@ export function findFlowNode(row: FlowRow, nodeId: string): VideoFlowNode | null
   return readFlowNodes(row).find((n) => n.id === nodeId) ?? null;
 }
 
+/** Creative discovery reads visible membership; settlement reads above retain
+ * hidden provider receipts so deletion cannot cause duplicate paid submissions. */
+export function readVisibleFlowNodes(row: FlowRow): VideoFlowNode[] {
+  const graph = projectCanvasMembership(sanitizeFlowDataForStorage(mapFlowRowToDto(row).data ?? {})) as Record<string, unknown>;
+  const visible = new Set(toRecordArray(graph.nodes).map((node) => readTrimmedString(node.id)));
+  return readFlowNodes(row).filter((node) => visible.has(node.id));
+}
+
 /**
  * 应用一个 flow patch 并 fresh-read 持久化。返回更新后的 row + 受影响节点快照（供 SSE/Yjs 广播）。
  * 调用方应传入 **基于最新 row** 计算出的 patch。
@@ -213,6 +223,7 @@ export async function persistFlowPatch(input: {
   patch: LooseFlowPatch;
   affectedNodeIds: string[];
   chapterId?: string;
+  canvasMembershipChanges?: CanvasMembershipChanges;
 }): Promise<{ row: FlowRow }> {
   const chapterId = readTrimmedString(input.chapterId);
   if (chapterId) {
@@ -222,6 +233,7 @@ export async function persistFlowPatch(input: {
       requestUserId: input.requestUserId,
       patch: input.patch,
       affectedNodeIds: input.affectedNodeIds,
+      canvasMembershipChanges: input.canvasMembershipChanges,
     });
   }
   const conflictTimeoutMs = DEFAULT_CANVAS_REVISION_CONFLICT_TIMEOUT_MS;
@@ -255,6 +267,7 @@ export async function persistFlowPatch(input: {
             nowIso,
             expectedRevision: dto.canvasRevision,
             source: "agent",
+            canvasMembershipChanges: input.canvasMembershipChanges,
           })
         : await updateFlow(input.c.env.DB, {
             id: input.flowId,
@@ -265,6 +278,7 @@ export async function persistFlowPatch(input: {
             nowIso,
             expectedRevision: dto.canvasRevision,
             source: "agent",
+            canvasMembershipChanges: input.canvasMembershipChanges,
           });
     } catch (error) {
       if (error instanceof FlowRevisionConflictError) {
@@ -302,8 +316,9 @@ export async function persistFlowPatch(input: {
       : input.requestUserId;
     // 广播受影响节点 + 新建边到项目 SSE / Yjs。
     if (currentRow.project_id) {
+      const persistedGraph = PublicFlowGraphSchema.parse(sanitizeFlowDataForStorage(mapFlowRowToDto(updated).data));
       const nodeMap = new Map(
-        (nextParsed.data.nodes ?? []).map((node) => [readFlowItemId(node), node]),
+        (persistedGraph.nodes ?? []).map((node) => [readFlowItemId(node), node]),
       );
       const upsertNodes = input.affectedNodeIds
         .map((id) => nodeMap.get(id))
@@ -311,13 +326,14 @@ export async function persistFlowPatch(input: {
       // 【治「split 丢边」根因】edge 必须一起广播：否则浏览器只收到节点、本地 store 无边，其
       // autosave 整图 PUT 会把服务端刚建的边清空（ch129 实测 split 后 21 节点 / 0 边）。
       const edgeMap = new Map(
-        (nextParsed.data.edges ?? []).map((edge) => [readFlowItemId(edge), edge]),
+        (persistedGraph.edges ?? []).map((edge) => [readFlowItemId(edge), edge]),
       );
       const upsertEdges = applied.createdEdgeIds
         .map((id) => edgeMap.get(id))
         .filter((edge) => edge !== undefined);
       const broadcast: Record<string, unknown> = {
         revision: updated.canvas_revision ?? dto.canvasRevision + 1,
+        ...(input.canvasMembershipChanges?.restoredNodeIds?.length ? { restoredNodeIds: input.canvasMembershipChanges.restoredNodeIds } : {}),
       };
       if (upsertNodes.length) broadcast.upsertNodes = upsertNodes;
       if (upsertEdges.length) broadcast.upsertEdges = upsertEdges;
@@ -344,6 +360,7 @@ async function persistChapterCanvasPatch(input: {
   patch: LooseFlowPatch;
   affectedNodeIds: string[];
   conflictTimeoutMs?: number;
+  canvasMembershipChanges?: CanvasMembershipChanges;
 }): Promise<{ row: FlowRow }> {
   return withChapterCanvasWriteQueue(input.chapterId, async () => {
     const conflictTimeoutMs = input.conflictTimeoutMs
@@ -354,6 +371,7 @@ async function persistChapterCanvasPatch(input: {
       input.c,
       input.requestUserId,
       input.chapterId,
+      true,
     );
     const current = sanitizeFlowDataForStorage(flow ?? { nodes: [], edges: [] });
     const applied = applyPublicFlowGraphPatch({
@@ -382,7 +400,9 @@ async function persistChapterCanvasPatch(input: {
         flow: nextFlow,
         // agent 回灌：撞版本走 CAS 取并集重试（reconcile 并回最新节点），不硬挡 409。
         source: "agent",
-      });
+        deletedNodeIds: input.canvasMembershipChanges?.deletedNodeIds ? [...input.canvasMembershipChanges.deletedNodeIds] : undefined,
+        restoredNodeIds: input.canvasMembershipChanges?.restoredNodeIds ? [...input.canvasMembershipChanges.restoredNodeIds] : undefined,
+      }, true);
       savedRevision = saveResult.revision;
       savedFlow = saveResult.authoritativeFlow ?? nextFlow;
     } catch (err) {
@@ -422,7 +442,9 @@ async function persistChapterCanvasPatch(input: {
     const upsertEdges = applied.createdEdgeIds
       .map((id) => edgeMap.get(id))
       .filter(Boolean) as Record<string, unknown>[];
-    const patch: Record<string, unknown> = { revision: savedRevision };
+    const patch: Record<string, unknown> = { revision: savedRevision,
+      ...(input.canvasMembershipChanges?.restoredNodeIds?.length ? { restoredNodeIds: input.canvasMembershipChanges.restoredNodeIds } : {}),
+    };
     if (upsertNodes.length) patch.upsertNodes = upsertNodes;
     if (upsertEdges.length) patch.upsertEdges = upsertEdges;
     if (upsertNodes.length || upsertEdges.length) {

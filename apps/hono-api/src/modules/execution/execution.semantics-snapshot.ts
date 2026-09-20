@@ -3,6 +3,7 @@ import {
 	deriveWorkflowExecutionSemanticsV2,
 	hasWorkflowPluginExecutorRefPrefix,
 	parseWorkflowExecutionSemanticsSnapshotV2,
+	parseWorkflowExecutionSemanticsV2,
 	parseWorkflowPluginExecutorRefV1,
 	parseWorkflowPluginManifestV1,
 	type WorkflowExecutionSemanticsSnapshotV2,
@@ -103,7 +104,14 @@ export function freezeWorkflowExecutionSemanticsSnapshot(
 		const semantics = resolveCoreWorkflowExecutorSemantics(executorRef)
 			?? (hasWorkflowPluginExecutorRefPrefix(executorRef) ? resolvePluginSemantics(executorRef, manifests) : null);
 		if (!semantics) throw new Error(`Workflow executor ${executorRef} has no registered execution semantics`);
-		nodes[node.id] = Object.freeze({ executorRef, semantics });
+		const retryPolicy = node.data.workflowRetryPolicy;
+		if (retryPolicy !== undefined && (!isRecord(retryPolicy) || !Number.isInteger(retryPolicy.maxAttempts))) {
+			throw new Error(`Workflow node ${node.id} retry policy requires an integer maxAttempts`);
+		}
+		const configuredSemantics = isRecord(retryPolicy)
+			? parseWorkflowExecutionSemanticsV2({ ...semantics, maxAutomaticAttempts: retryPolicy.maxAttempts })
+			: semantics;
+		nodes[node.id] = Object.freeze({ executorRef, semantics: configuredSemantics });
 	}
 	return {
 		...flowData,

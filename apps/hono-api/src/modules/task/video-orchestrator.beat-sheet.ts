@@ -36,6 +36,44 @@ function describeMarkerCandidates(
   if (!candidates.length) return "";
   return `。${label}（逐字抄任一条即可过闸）：${candidates.map((t) => `「${t}」`).join("、")}`;
 }
+
+function readVisualStateAnchorRequirements(value: unknown): VisualStateAnchorRequirement[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const requirements: VisualStateAnchorRequirement[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const characterName = typeof record.characterName === "string" ? record.characterName.trim() : "";
+    const stateKey = typeof record.stateKey === "string" ? record.stateKey.trim() : "";
+    const stateVersionId = typeof record.stateVersionId === "string" ? record.stateVersionId.trim() : "";
+    if (!characterName || !stateKey || !stateVersionId) continue;
+    const stateScopes = Array.isArray(record.stateScopes)
+      ? record.stateScopes.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    const clipIndexes = Array.isArray(record.clipIndexes)
+      ? record.clipIndexes.filter((entry): entry is number => typeof entry === "number" && Number.isInteger(entry))
+      : [];
+    const visualFacts = Array.isArray(record.visualFacts)
+      ? record.visualFacts.filter((entry): entry is { key: string; value: string } => (
+        !!entry && typeof entry === "object" && !Array.isArray(entry)
+        && typeof (entry as Record<string, unknown>).key === "string"
+        && typeof (entry as Record<string, unknown>).value === "string"
+      ))
+      : [];
+    requirements.push({
+      characterName,
+      stateKey,
+      stateVersionId,
+      stateScopes,
+      clipIndexes,
+      visualFacts,
+      ...(typeof record.anchorNodeId === "string" && record.anchorNodeId.trim()
+        ? { anchorNodeId: record.anchorNodeId.trim() }
+        : {}),
+    });
+  }
+  return requirements;
+}
 import {
   DIALOGUE_PACE_CEILING,
   parseDialoguePaceRate,
@@ -993,21 +1031,25 @@ export function validateBeatSheet(
       allowMissingReferenceImageNodeIds: acceptsUnmaterializedAssets,
     });
     errors.push(...objectContracts.errors);
+    const visualStateAnchorRequirements = readVisualStateAnchorRequirements(
+      b.visualStateAnchorRequirements,
+    );
+    if (
+      b.visualStateAnchorRequirements !== undefined
+      && (
+        !Array.isArray(b.visualStateAnchorRequirements)
+        || visualStateAnchorRequirements?.length !== b.visualStateAnchorRequirements.length
+      )
+    ) {
+      errors.push(
+        `beats[${i}].visualStateAnchorRequirements 必须是完整的结构化状态锚需求数组`,
+      );
+    }
     const canonicalVideoReferenceNodeIds = buildCanonicalVideoReferenceNodeIds({
       videoReferenceNodeIds,
       assetObjectContracts: objectContracts.contracts,
-      visualStateAnchorRequirements: b.visualStateAnchorRequirements,
+      visualStateAnchorRequirements,
     });
-    const businessReferenceCount = canonicalVideoReferenceNodeIds.length + (storyboardImageNodeId ? 1 : 0);
-    const maximumBusinessImages = generationContract?.referenceImagePolicy.maximumBusinessImages;
-    if (
-      typeof maximumBusinessImages === "number" &&
-      businessReferenceCount > maximumBusinessImages
-    ) {
-      errors.push(
-        `beats[${i}] 的 storyboardImageNodeId、videoReferenceNodeIds 与 assetObjectContracts 合并后需要 ${businessReferenceCount} 个业务图片槽，当前 generationContract 仅允许 ${maximumBusinessImages} 个；禁止静默删引用`,
-      );
-    }
     if (canonicalVideoReferenceNodeIds.includes(storyboardImageNodeId)) {
       errors.push(`beats[${i}] 的业务参考合同不得重复 storyboardImageNodeId`);
     }

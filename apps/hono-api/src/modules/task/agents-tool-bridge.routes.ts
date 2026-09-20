@@ -1,3 +1,4 @@
+import { bindWorkflowUserIntentToTrigger } from "../execution/execution.workflow-user-intent";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   WORKFLOW_CONCURRENCY_MAX,
@@ -366,6 +367,8 @@ export const AgentsToolExecuteRequestSchema = z.object({
   chapterId: z.string().min(1).optional(),
   executionId: z.string().min(1).optional(),
   parentAgentExecution: ParentAgentExecutionSchema.optional(),
+  userIntentContract: z.record(z.string(), z.unknown()).optional(),
+  userIntentContractHash: z.string().min(1).optional(),
   publicTurnId: z.string().min(1).max(200).optional(),
   requestedWorkflowExecutionVariant: z.enum(["full_video", "first_video"]).optional(),
 });
@@ -1069,7 +1072,7 @@ function resolveWorkflowDeliveryScope(input: Readonly<{
 }
 
 export function buildWorkflowExecutionReceipt(
-	execution: WorkflowExecutionDto,
+	execution: Pick<WorkflowExecutionDto, "id" | "executionFamilyId" | "status">,
 ): Readonly<{
 	protocolVersion: "tapcanvas.workflow-execution-receipt/v1";
 	runId: string;
@@ -1077,6 +1080,8 @@ export function buildWorkflowExecutionReceipt(
 	executionFamilyId: string;
 	status: WorkflowExecutionDto["status"];
 	acceptedAsync: boolean;
+	completionBoundary?: "submission";
+	executionOwner?: "durable_executor";
 	inspection: Readonly<{
 		toolName: "tapcanvas_workflow_execution_inspect";
 		familyArgs: Readonly<{ executionId: string; view: "family" }>;
@@ -1090,6 +1095,7 @@ export function buildWorkflowExecutionReceipt(
 		executionFamilyId: execution.executionFamilyId,
 		status: execution.status,
 		acceptedAsync: execution.status === "queued" || execution.status === "running",
+		...(execution.status === "queued" || execution.status === "running" ? { completionBoundary: "submission" as const, executionOwner: "durable_executor" as const } : {}),
 		inspection: {
 			toolName: "tapcanvas_workflow_execution_inspect",
 			familyArgs: { executionId: execution.id, view: "family" },
@@ -2168,7 +2174,13 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
         c: c as unknown as AppContext,
         triggerPayload: parsedTriggerPayload,
       });
-      let triggerPayload = admittedVideoPlan.triggerPayload;
+      let triggerPayload = bindWorkflowUserIntentToTrigger({
+        ownerId: requestUserId,
+        contract: body.userIntentContract,
+        expectedContractHash: body.userIntentContractHash,
+        triggerPayload: admittedVideoPlan.triggerPayload,
+        args: body.args,
+      });
       const callerProjectId = readTrimmedString(body.canvasProjectId);
       const callerChapterId = resolveChapterCanvasId({
         chapterId: body.chapterId,
@@ -2291,7 +2303,7 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
               }
             : {}),
 			trackingHint:
-				"这是持久 Workflow IR 执行。若回执尚未 terminal，使用 inspection 指定的 tapcanvas_workflow_execution_inspect 跟踪同一执行族；成功终态的 workflowOutputs 是 workflow.output/v1 标准交付边界，必须原样转交其中的用户输出。不要把 executionId 传给 tapcanvas_pipeline_run_get。",
+				"这是持久 Workflow IR 执行。submission + durable_executor 回执表示已交接，结束本轮提交，媒体仍待执行器完成，不创建第二个轮询 owner。用户后续查询时可用 inspection 读取同一执行族事实；成功终态 workflowOutputs 来自显式输出边界或冻结图声明的终端 delivery 端口，交付验收必须引用真实输出。不要把 executionId 传给 tapcanvas_pipeline_run_get。",
         };
         return c.json({ ok: true, content: JSON.stringify(response), data: response });
       } catch (error: unknown) {
@@ -4358,8 +4370,8 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
         !execution ||
 		!workflowExecutionMatchesCanvasScope({
 			executionFlowId: execution.flow_id,
-			executionCanvasId: execution.canvas_id,
-			executionProjectId: execution.project_id,
+			executionCanvasId: execution.canvas_id ?? null,
+			executionProjectId: execution.project_id ?? null,
 			scopeFlowId: row.id,
 			scopeProjectId: projectId,
 			isChapterScope: Boolean(chapterCanvasId),
@@ -4457,6 +4469,8 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
 				})
 				: [];
 			const response = {
+				...buildWorkflowExecutionReceipt({ id: parsedFamily.latestExecutionId, executionFamilyId: parsedFamily.executionFamilyId, status: parsedFamily.latestExecutionStatus }),
+				terminal: parsedFamily.latestExecutionStatus === "success" || parsedFamily.latestExecutionStatus === "failed" || parsedFamily.latestExecutionStatus === "canceled",
 				view,
 				family: parsedFamily,
 				...(parsedFamily.latestExecutionStatus === "success" ? { workflowOutputs } : {}),
@@ -5512,8 +5526,8 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
           const reqUserId = requireUserId(c);
           const nodeId = `agent-breakdown-${Date.now().toString(36)}`;
           const loglineHead = String(distilled.breakdown.logline || "参考片").slice(0, 20);
-          const nodeData: Record<string, unknown> = {
-            kind: "text",
+          const nodeData = {
+            kind: "text" as const,
             label: `拆片卡｜${loglineHead}`,
             prompt: renderDirectorBreakdownMarkdown(distilled.breakdown),
             directorBreakdown: distilled.breakdown as unknown as Record<string, unknown>,
@@ -5546,8 +5560,8 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
         try {
           const nodeId = `agent-breakdown-${readTrimmedString(distillArgs.nodeId) || "reference"}`;
           const loglineHead = String(distilled.breakdown.logline || "参考片").slice(0, 20);
-          const nodeData: Record<string, unknown> = {
-            kind: "text",
+          const nodeData = {
+            kind: "text" as const,
             label: `拆片卡｜${loglineHead}`,
             prompt: renderDirectorBreakdownMarkdown(distilled.breakdown),
             directorBreakdown: distilled.breakdown as unknown as Record<string, unknown>,
@@ -5572,7 +5586,7 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
                 createNodes: [
                   {
                     id: nodeId,
-                    type: "taskNode",
+                    type: "taskNode" as const,
                     position: { x: -420, y: 0 },
                     data: nodeData,
                   },
@@ -5716,8 +5730,8 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
         flowId: chapterResponse.flowId,
         updatedAt: chapterResponse.updatedAt,
         stats: chapterResponse.stats,
-        createdNodeSnapshots: chapterResponse.createdNodeSnapshots,
-        createdEdgeSnapshots: chapterResponse.createdEdgeSnapshots,
+        createdNodeSnapshots: chapterResponse.createdNodeSnapshots ?? [],
+        createdEdgeSnapshots: chapterResponse.createdEdgeSnapshots ?? [],
       });
       return c.json(
         AgentsToolExecuteResponseSchema.parse({
@@ -5828,8 +5842,8 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
       flowId: response.flowId,
       updatedAt: response.updatedAt,
       stats: response.stats,
-      createdNodeSnapshots: response.createdNodeSnapshots,
-      createdEdgeSnapshots: response.createdEdgeSnapshots,
+      createdNodeSnapshots: response.createdNodeSnapshots ?? [],
+      createdEdgeSnapshots: response.createdEdgeSnapshots ?? [],
     });
     return c.json(
       AgentsToolExecuteResponseSchema.parse({

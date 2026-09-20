@@ -1,3 +1,4 @@
+import { MEDIA_ASSET_PURPOSES } from "../../../../../packages/schemas/media-asset-purpose/index.mjs";
 import { z } from "zod";
 import {
 	PUBLIC_FLOW_ANCHOR_BINDING_KINDS,
@@ -77,6 +78,7 @@ function normalizePublicFlowPatchRequest(value: unknown): unknown {
 				? (raw.patch as Record<string, unknown>)
 				: {};
 	const deleteNodeIds = toArray(raw.deleteNodeIds ?? ops.deleteNodeIds);
+	const restoredNodeIds = toArray(raw.restoredNodeIds ?? ops.restoredNodeIds);
 	const deleteEdgeIds = toArray(raw.deleteEdgeIds ?? ops.deleteEdgeIds);
 	const createNodes = [
 		...(toArray(raw.createNodes ?? ops.createNodes) || []),
@@ -97,6 +99,7 @@ function normalizePublicFlowPatchRequest(value: unknown): unknown {
 	return {
 		allowOverwrite: raw.allowOverwrite ?? ops.allowOverwrite,
 		...(deleteNodeIds?.length ? { deleteNodeIds } : {}),
+		...(restoredNodeIds?.length ? { restoredNodeIds } : {}),
 		...(deleteEdgeIds?.length ? { deleteEdgeIds } : {}),
 		...(createNodes.length ? { createNodes } : {}),
 		...(createEdges.length ? { createEdges } : {}),
@@ -108,6 +111,7 @@ function normalizePublicFlowPatchRequest(value: unknown): unknown {
 export const PublicFlowGraphSchema = z.object({
 	nodes: z.array(z.unknown()).default([]),
 	edges: z.array(z.unknown()).default([]),
+	canvasMembership: z.object({ deletedNodeIds: z.array(z.string()), detachedExecutionIds: z.array(z.string()) }).optional(),
 	viewport: z
 		.object({
 			x: z.number(),
@@ -425,7 +429,7 @@ export const PublicFlowTaskNodeDataSchema = z
 		creationStage: PublicFlowCreationStageSchema.optional(),
 		approvalStatus: PublicFlowApprovalStatusSchema.optional(),
 		assetUsage: z.enum(["production", "preview_only"]).optional(),
-		assetPurpose: z.enum(["story_preview"]).optional(),
+		assetPurpose: z.enum(MEDIA_ASSET_PURPOSES).optional(),
 		productionEligible: z.boolean().optional(),
 		previewSeriesId: z.string().min(1).optional(),
 		previewBoardIndex: z.number().int().min(0).optional(),
@@ -537,6 +541,7 @@ export const PublicFlowPatchRequestSchema = z.preprocess(
 	z.object({
 		allowOverwrite: z.boolean().optional(),
 		deleteNodeIds: z.array(z.string().min(1)).optional(),
+		restoredNodeIds: z.array(z.string().min(1)).optional(),
 		deleteEdgeIds: z.array(z.string().min(1)).optional(),
 		createNodes: z.array(PublicFlowCreateNodeSchema).optional(),
 		createEdges: z.array(PublicFlowCreateEdgeSchema).optional(),

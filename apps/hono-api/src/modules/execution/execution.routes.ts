@@ -23,6 +23,7 @@ import {
 import { RunFlowExecutionRequestSchema, WorkflowExecutionFamilySchema, WorkflowExecutionHistoryPageSchema, WorkflowExecutionResumeRequestSchema, WorkflowHumanApprovalResponseSchema, WorkflowNodeAttemptPageSchema } from "./execution.schemas";
 import { getPrismaClient } from "../../platform/node/prisma";
 import { parseWorkflowNodeOutputV1 } from "./execution.node-runtime";
+import { workflowExternalPollAt } from "./execution.external-check";
 import { isAdminRequest } from "../team/team.service";
 import { parseWorkflowTriggerSpec } from "@tapcanvas/workflow-kernel-protocol";
 import {
@@ -36,6 +37,9 @@ import { deliverWorkflowEvent, deliverWorkflowWebhook } from "./execution.trigge
 import { projectWorkflowGraphForViewer } from "@tapcanvas/workflow-kernel-protocol";
 import { prepareWorkflowExecutionSnapshotRerun } from "./execution.snapshot-runtime";
 import { buildWorkflowProjectContextForRun } from "./execution.project-context-runtime";
+import { createRuntimeWorkflowAssetResolver } from "./execution.project-context-runtime";
+import { enrichWorkflowMediaUnderstanding } from "./execution.media-understanding";
+import { parseWorkflowProjectContext } from "./execution.project-context";
 import {
 	getWorkflowExecutionFamilyPageForOwner,
 	listWorkflowNodeAttemptsPageForExecutionOwner,
@@ -190,6 +194,7 @@ executionRouter.post("/run", async (c) => {
 				ownerId: userId,
 				projectId: flow.project_id,
 				canvasId: flow.id,
+				...(parsed.data.triggerPayload ? { triggerPayload: parsed.data.triggerPayload } : {}),
 			})
 			: undefined;
 		const result = await startWorkflowExecution(c.env, {
@@ -207,6 +212,7 @@ executionRouter.post("/run", async (c) => {
 				: {}),
 			trigger: parsed.data.trigger ?? "manual",
 			concurrency: parsed.data.concurrency,
+			...(parsed.data.triggerPayload ? { triggerPayload: parsed.data.triggerPayload } : {}),
 			...(runContext ? {
 				projectContext: runContext.projectContext,
 				callerCanvasSnapshot: runContext.callerCanvasSnapshot,
@@ -316,6 +322,12 @@ executionRouter.get("/:id/context", async (c) => {
 	const row = await getExecutionForOwner(c.env.DB, c.req.param("id"), userId);
 	if (!row) return c.json({ error: "Execution not found" }, 404);
 	const execution = mapExecutionRow(row);
+	const appContext = c as unknown as AppContext;
+	const frozenContext = parseWorkflowProjectContext(execution.projectContext);
+	const observedContext = frozenContext ? await enrichWorkflowMediaUnderstanding({
+		c: appContext, ownerId: userId, context: frozenContext,
+		resolver: createRuntimeWorkflowAssetResolver({ c: appContext, ownerId: userId, context: frozenContext }),
+	}) : null;
 	return c.json({
 		executionId: execution.id,
 		projectId: execution.projectId ?? null,
@@ -323,6 +335,11 @@ executionRouter.get("/:id/context", async (c) => {
 		projectContext: execution.projectContext ?? null,
 		assetSnapshot: execution.assetSnapshot ?? [],
 		usesProjectAssets: execution.usesProjectAssets === true,
+		mediaUnderstanding: {
+			frozen: frozenContext?.mediaUnderstanding !== undefined,
+			evidence: observedContext?.mediaUnderstanding ?? [],
+			diagnostics: observedContext?.mediaUnderstandingDiagnostics ?? [],
+		},
 	});
 });
 
@@ -385,7 +402,17 @@ executionRouter.post("/:id/resume", async (c) => {
 			details: parsed.error.flatten(),
 		}, 400);
 	}
+	/*
+	 * 恢复执行是"所有者对自己的执行"的动作：resumeWorkflowExecution 全程按 ownerId 取源执行、
+	 * 校验冻结快照与家族归属，越权者取不到任何资源。此前这里一律要求 admin，而 UI 的"重试"
+	 * 对普通用户同样展示，个人账号点下去必然 403，把"从失败节点继续"变成不可用路径。
+	 * 管理员仍可恢复任意执行；所有者可恢复自己的执行；非所有者仍需显式外部原因标志。
+	 */
+	const ownedExecution = isAdminRequest(c)
+		? null
+		: await getExecutionForOwner(c.env.DB, c.req.param("id").trim(), userId);
 	if (!isAdminRequest(c)
+		&& ownedExecution === null
 		&& parsed.data.providerBalanceRestored !== true
 		&& parsed.data.cancellationRevoked !== true) {
 		return c.json({ error: "Administrator workflow access required", code: "admin_required" }, 403);
@@ -396,6 +423,7 @@ executionRouter.post("/:id/resume", async (c) => {
 			env: c.env,
 			ownerId: userId,
 			sourceExecutionId: c.req.param("id").trim(),
+			...(parsed.data.nodeId ? { nodeId: parsed.data.nodeId } : {}),
 			trigger: "manual",
 			...(parsed.data.providerBalanceRestored ? { providerBalanceRestored: true as const } : {}),
 			...(parsed.data.cancellationRevoked ? { cancellationRevoked: true as const } : {}),
@@ -406,6 +434,9 @@ executionRouter.post("/:id/resume", async (c) => {
 				},
 			} : {}),
 			...(parsed.data.definitionCutover ? { definitionCutover: parsed.data.definitionCutover } : {}),
+			...(parsed.data.planningRevision ? { planningRevision: parsed.data.planningRevision } : {}),
+			...(parsed.data.mediaAdoptions ? { mediaAdoptions: parsed.data.mediaAdoptions } : {}),
+			...(parsed.data.mediaRetries ? { mediaRetries: parsed.data.mediaRetries } : {}),
 		}));
 	} catch (error: unknown) {
 		if (error instanceof WorkflowResumeError) {
@@ -530,6 +561,9 @@ executionRouter.post("/:id/human-response", async (c) => {
 	const respondedAt = new Date().toISOString();
 	const nextOutputRefs = {
 		...outputRefs,
+		// Persist the wakeup together with its signal evidence, before publishing.
+		// A crash or lost queue delivery can then be recovered by the common scanner.
+		externalCheck: workflowExternalPollAt(respondedAt),
 		evidence: {
 			...outputRefs.evidence,
 			humanResponse: parsed.data.response,
@@ -563,6 +597,23 @@ executionRouter.get("/:id/node-runs", async (c) => {
 	return c.json(rows.map(mapNodeRunRow));
 });
 
+// Bounded persisted event history also works for completed executions.
+executionRouter.get("/:id/event-history", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const executionId = c.req.param("id");
+	const owner = await getExecutionForOwner(c.env.DB, executionId, userId);
+	if (!owner) return c.json({ error: "Execution not found" }, 404);
+	const after = Number(c.req.query("after") ?? 0);
+	const limit = Number(c.req.query("limit") ?? 200);
+	if (!Number.isSafeInteger(after) || after < 0 || !Number.isInteger(limit) || limit < 1 || limit > 200) {
+		return c.json({ error: "Invalid event cursor or limit", code: "workflow_event_page_invalid" }, 400);
+	}
+	const rows = await listExecutionEvents(c.env.DB, { executionId, afterSeq: after, limit });
+	const items = rows.slice(0, limit).map(mapExecutionEventRow);
+	return c.json({ items, nextCursor: rows.length === limit ? items[items.length - 1]!.seq : null });
+});
+
 // SSE stream for execution logs (DB-backed; resumable via `?after=<seq>`)
 executionRouter.get("/:id/events", async (c) => {
 	const userId = c.get("userId");
@@ -576,14 +627,31 @@ executionRouter.get("/:id/events", async (c) => {
 
 	return streamSSE(c, async (stream) => {
 		const HEARTBEAT_MS = 15_000;
+		const INITIAL_POLL_MS = 800;
+		const MAX_POLL_MS = 5_000;
 		let closed = false;
 		const abortSignal = c.req.raw.signal as AbortSignal;
 		abortSignal.addEventListener("abort", () => {
 			closed = true;
 		});
 
-		const sleep = (ms: number) =>
-			new Promise<void>((resolve) => setTimeout(resolve, ms));
+		const sleep = (ms: number) => new Promise<boolean>((resolve) => {
+			if (abortSignal.aborted) {
+				resolve(false);
+				return;
+			}
+			let settled = false;
+			const finish = (result: boolean): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				abortSignal.removeEventListener("abort", onAbort);
+				resolve(result);
+			};
+			const onAbort = (): void => finish(false);
+			const timer = setTimeout(() => finish(true), ms);
+			abortSignal.addEventListener("abort", onAbort, { once: true });
+		});
 
 		try {
 			await stream.writeSSE({
@@ -596,6 +664,7 @@ executionRouter.get("/:id/events", async (c) => {
 			});
 
 			let lastPingAt = Date.now();
+			let pollIntervalMs = INITIAL_POLL_MS;
 			while (!closed) {
 				const rows = await listExecutionEvents(c.env.DB, {
 					executionId,
@@ -603,10 +672,15 @@ executionRouter.get("/:id/events", async (c) => {
 					limit: 50,
 				});
 				if (rows.length) {
+					pollIntervalMs = INITIAL_POLL_MS;
 					for (const r of rows) {
 						const dto = mapExecutionEventRow(r);
 						cursor = Math.max(cursor, dto.seq);
 						await stream.writeSSE({
+							// The client persists this cursor and sends it back as `after` on
+							// reconnect. Without the SSE id, every reconnect restarts at zero
+							// and replays the entire execution event log indefinitely.
+							id: String(dto.seq),
 							event: dto.eventType,
 							data: JSON.stringify(dto),
 						});
@@ -621,7 +695,8 @@ executionRouter.get("/:id/events", async (c) => {
 					});
 					lastPingAt = Date.now();
 				}
-				await sleep(800);
+				if (!(await sleep(pollIntervalMs))) return;
+				pollIntervalMs = Math.min(MAX_POLL_MS, pollIntervalMs * 2);
 			}
 		} finally {
 			closed = true;

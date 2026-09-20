@@ -1,3 +1,4 @@
+import { workflowAgentPublicTurnId, workflowAgentSessionKey } from "./execution.agent-identity";
 import { describe, expect, it, vi } from "vitest";
 import {
 	prepareWorkflowOutputReuse,
@@ -302,7 +303,7 @@ describe("workflow durable output reuse", () => {
 		expect(readResolvedWorkflowReplayCheckpoints(prepared)).toEqual([]);
 	});
 
-	it("revalidates a successful Agent ancestor against the current contract before reuse", async () => {
+	it("reuses delivered artifacts without reapplying the compact authoring schema", async () => {
 		const sourceGraph = graph({
 			workflowAgentOutputArtifactType: "tapcanvas.beat-sheet/v2",
 			workflowAgentOutputEncoding: "json_object",
@@ -349,6 +350,7 @@ describe("workflow durable output reuse", () => {
 		expect(readResolvedWorkflowOutputReuses(prepared).map(({ nodeId }) => nodeId)).toEqual([
 			"trigger",
 			"source",
+			"planner",
 		]);
 		expect(readResolvedWorkflowReplayCheckpoints(prepared)).toEqual([]);
 	});
@@ -392,10 +394,11 @@ describe("workflow durable output reuse", () => {
 
 		const plannerReuse = readResolvedWorkflowOutputReuses(prepared)
 			.find(({ nodeId }) => nodeId === "planner");
-		expect(plannerReuse).toBeUndefined();
+		expect(plannerReuse?.reuse.outputRefs.ports.result).toMatchObject({ text: JSON.stringify({ protocolVersion: "legacy/v1", plan: "保留创作内容" }) });
 		expect(readResolvedWorkflowOutputReuses(prepared).map(({ nodeId }) => nodeId)).toEqual([
 			"trigger",
 			"source",
+			"planner",
 		]);
 		expect(readResolvedWorkflowReplayCheckpoints(prepared)).toEqual([]);
 	});
@@ -502,6 +505,27 @@ describe("workflow durable output reuse", () => {
 				},
 			},
 		});
+	});
+
+	it("replays only an authorized failed item even when its collection was marked successful", async () => {
+		const sourceGraph = mediaGraph();
+		const media = failedCollectionMediaOutput();
+		const repository: WorkflowOutputReuseRepository = { loadExecutionBundle: vi.fn(async () => ({
+			flowData: sourceGraph, nodeRuns: [
+				{ id: "run-trigger", nodeId: "trigger", status: "success", outputRefs: output("trigger", "workflow.trigger/v1", "trigger", {}) },
+				{ id: "run-source", nodeId: "source", status: "success", outputRefs: output("source", "workflow.input.text/v1", "text", "source") },
+				{ id: "run-images", nodeId: "planner", status: "success", outputRefs: media },
+			],
+		})) };
+		const prepared = await prepareWorkflowOutputReuse({
+			flowData: { ...mediaGraph(), workflowMediaRetrySourceExecutionId: "source-execution", workflowMediaRetries: [{
+				nodeId: "planner", itemId: "asset-02", taskId: "task-02", canvasNodeId: "canvas-02", retryKey: "authorized-key",
+			}] }, flowId: "flow-1", ownerId: "owner-1", repository,
+			replay: { sourceExecutionId: "source-execution", startFromNodeId: "planner", scope: "recovery_snapshot", invalidatedNodeIds: ["planner"] },
+		});
+		const checkpoint = readResolvedWorkflowReplayCheckpoints(prepared)[0].checkpoint.outputRefs;
+		expect(checkpoint.itemRuns.map((item) => item.itemId)).toEqual(["asset-01"]);
+		expect((media.itemRuns as Array<{ itemId: string }>).map((item) => item.itemId)).toEqual(["asset-01", "asset-02"]);
 	});
 
 	it("keeps an exact failed media receipt beside successful items without authorizing a new submission", async () => {
@@ -757,4 +781,49 @@ describe("workflow durable output reuse", () => {
 		]);
 		expect(readResolvedWorkflowOutputReuses(prepared).map(({ nodeId }) => nodeId)).not.toContain("planner");
 	});
+});
+
+it.each([false, true])("reuses a once-Agent draft only under the same frozen contract (changed=%s)", async (changed) => {
+ const sourceFlowData = graph();
+ const flowData = changed ? graph({ workflowInstruction: "A new authoring contract" }) : sourceFlowData;
+ const repair = { version: 1, sourceTurnId: "turn-source", candidate: '{"authored":"kept"}', error: "required field absent" };
+ const prepared = await prepareWorkflowOutputReuse({ flowData, flowId: "flow-1", ownerId: "admin-1",
+  replay: { sourceExecutionId: "execution-source", startFromNodeId: "planner", scope: "recovery_snapshot", invalidatedNodeIds: ["planner"] },
+  repository: { loadExecutionBundle: async () => ({ flowData: sourceFlowData, nodeRuns: [
+   { id: "run-planner", nodeId: "planner", status: "failed", outputRefs: {
+    ...output("planner", "agents.logical-task/v2", "result", "unverified"),
+    evidence: { executorCompleted: false, outputRepair: repair, deliveryEvidence: { sessionKey: "old-session" } },
+   } },
+  ] }) },
+ });
+ const checkpoints = readResolvedWorkflowReplayCheckpoints(prepared);
+ expect(checkpoints).toHaveLength(changed ? 0 : 1);
+ if (changed) return;
+ expect(checkpoints[0].checkpoint.outputRefs.ports).toEqual({});
+ expect(checkpoints[0].checkpoint.outputRefs.evidence.outputRepair).toEqual(repair);
+ expect(readResolvedWorkflowOutputReuses(prepared)).toEqual([]);
+});
+
+
+it.each([false, true])("hands off an inactive once-Agent checkpoint without host-submitted output (changed=%s)", async (changed) => {
+ const sourceFlowData = graph({ workflowAgentOutputEncoding: "json_object" });
+ const flowData = changed ? graph({ workflowInstruction: "changed", workflowAgentOutputEncoding: "json_object" }) : sourceFlowData;
+ const identity = { executionId: "execution-source", nodeId: "planner", physicalRetryOrdinal: null };
+ const source = { sessionKey: workflowAgentSessionKey(identity), turnId: workflowAgentPublicTurnId(identity) };
+ const prepared = await prepareWorkflowOutputReuse({ flowData, flowId: "flow-1", ownerId: "admin-1",
+  replay: { sourceExecutionId: "execution-source", startFromNodeId: "planner", scope: "recovery_snapshot", invalidatedNodeIds: ["planner"] },
+  repository: { loadExecutionBundle: async () => ({ flowData: sourceFlowData, nodeRuns: [
+   { id: "run-planner", nodeId: "planner", status: "failed", outputRefs: {
+    ...output("planner", "agents.logical-task/v2", "result", ""),
+    evidence: { executorCompleted: false, deliveryEvidence: { sessionKey: source.sessionKey,
+      logicalTaskId: source.turnId, recoveryCheckpoint: { physicalRunId: "old-physical" } } },
+   } },
+  ] }) },
+ });
+ const checkpoints = readResolvedWorkflowReplayCheckpoints(prepared);
+ expect(checkpoints).toHaveLength(changed ? 0 : 1);
+ if (!changed) {
+  expect(checkpoints[0].checkpoint.outputRefs.evidence.agentRepairSource).toEqual(source);
+  expect(checkpoints[0].checkpoint.outputRefs.ports).toEqual({});
+ }
 });

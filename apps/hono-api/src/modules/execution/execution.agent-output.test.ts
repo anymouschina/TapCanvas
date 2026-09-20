@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NodeRunRow } from "./execution.repo";
-import { projectWorkflowExecutionAgentOutputs } from "./execution.agent-output";
+import { declaredTerminalDeliveryOutputs, projectWorkflowExecutionAgentOutputs } from "./execution.agent-output";
 
 function nodeRun(overrides: Partial<NodeRunRow>): NodeRunRow {
 	return {
@@ -40,5 +40,29 @@ describe("projectWorkflowExecutionAgentOutputs", () => {
 			ports: { output: { text: ["固定交付"] } },
 			artifacts: [],
 		}]);
+	});
+});
+
+
+describe("declared terminal delivery outputs", () => {
+	it.each(["agents.delivery.verify/v2", "tapcanvas.video.prepare/v1"])("exports %s terminal facts without intermediate results", (executorRef) => {
+		const graph = {
+			nodes: ["intermediate", "delivery"].map((id) => ({ id, data: {
+				workflowAtomicSpec: { category: "delivery", executorRef, outputPorts: ["result"] },
+			} })),
+			edges: [{ source: "intermediate", target: "delivery" }],
+		};
+		const rows = ["intermediate", "delivery"].map((id) => nodeRun({
+			id: `run-${id}`, node_id: id, node_type: executorRef,
+			output_refs: JSON.stringify({ protocolVersion: "1", executorRef, nodeId: id,
+				executionMode: "once", ports: { result: { videoUrl: "https://media.example/movie.mp4" } },
+				artifacts: [], evidence: { executorCompleted: true }, itemRuns: [] }),
+		}));
+		expect(projectWorkflowExecutionAgentOutputs(rows, declaredTerminalDeliveryOutputs(graph)))
+			.toEqual([{ nodeId: "delivery", nodeRunId: "run-delivery", ports: {
+				result: { videoUrl: "https://media.example/movie.mp4" },
+			}, artifacts: [] }]);
+		expect(projectWorkflowExecutionAgentOutputs(rows.map((row) => ({ ...row, status: "failed" })),
+			declaredTerminalDeliveryOutputs(graph))).toEqual([]);
 	});
 });

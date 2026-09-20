@@ -135,6 +135,19 @@ type BookContextSnapshot = {
   storyFacts: StoryFactRecord[];
 };
 
+/**
+ * Compact, source-preserving style facts from the latest project book index.
+ * These facts are only used to seed a workflow ProjectContext when the project
+ * has not yet persisted its own canvas-level style lock.
+ */
+export type ProjectBookStyleFacts = Readonly<{
+	styleName: string;
+	visualDirectives: readonly string[];
+	consistencyRules: readonly string[];
+	negativeDirectives: readonly string[];
+	referenceImages: readonly string[];
+}>;
+
 type ContextFileMeta = {
   updatedAt: string;
   updatedBy: string;
@@ -510,6 +523,35 @@ async function resolveLatestReadableBookIndexPath(projectId: string, ownerId: st
     return left.path.localeCompare(right.path);
   });
   return candidates[0]?.path ?? null;
+}
+
+/**
+ * Read only the book's already-authored visual facts.  No creative defaults are
+ * derived here; an absent or incomplete styleBible remains an absent style.
+ */
+export async function getProjectBookStyleFacts(input: {
+	projectId: string;
+	ownerId: string;
+}): Promise<ProjectBookStyleFacts | null> {
+	const indexPath = await resolveLatestReadableBookIndexPath(input.projectId, input.ownerId);
+	if (!indexPath) return null;
+	const index = await readBookIndexForContext(indexPath);
+	if (!index) return null;
+	const assets = readRecord(index.assets);
+	const styleBible = readRecord(assets?.styleBible);
+	if (!styleBible) return null;
+	const readStrings = (value: unknown): string[] => Array.isArray(value)
+		? [...new Set(value.flatMap((item) => typeof item === "string" && item.trim() ? [item.trim()] : []))]
+		: [];
+	const styleName = readText(styleBible.styleName);
+	const visualDirectives = readStrings(styleBible.visualDirectives);
+	const consistencyRules = readStrings(styleBible.consistencyRules);
+	const negativeDirectives = readStrings(styleBible.negativeDirectives);
+	const referenceImages = readStrings(styleBible.referenceImages);
+	if (!styleName && visualDirectives.length === 0 && consistencyRules.length === 0 && negativeDirectives.length === 0 && referenceImages.length === 0) {
+		return null;
+	}
+	return { styleName, visualDirectives, consistencyRules, negativeDirectives, referenceImages };
 }
 
 async function collectBookIndexCandidates(

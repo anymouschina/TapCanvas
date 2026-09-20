@@ -156,9 +156,11 @@ describe("source coverage plan", () => {
 			"continuityLedger",
 			"assetObjectContracts",
 		]);
-		expect(beatSheetDraftBeatSchema.properties.videoReferenceNodeIds).not.toHaveProperty("maxItems");
-		expect(beatSheetDraftBeatSchema.properties.videoReferenceNodeIds?.description).toContain(
-			"generationContract.referenceImagePolicy.maximumBusinessImages",
+		const properties = beatSheetDraftBeatSchema.properties;
+		if (!properties) throw new Error("Expected beat schema properties");
+		expect(properties.videoReferenceNodeIds).not.toHaveProperty("maxItems");
+		expect(properties.videoReferenceNodeIds?.description).toContain(
+			"不因目录参考图上限裁剪或阻止流程",
 		);
 	});
 

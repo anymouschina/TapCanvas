@@ -5,12 +5,21 @@ import { listFlowsByProject, mapFlowRowToDto } from "../flow/flow.repo";
 import { getProjectForUserAccess } from "../project/project.repo";
 import type { MaterialAssetDto, MaterialKind } from "./material.schemas";
 import { projectNodeAssetsFromCanvases } from "./material.project-node-assets";
+import { deprecatedCanvasScope, type CanvasDeprecationScope } from "./material.canvas-visibility";
 
 export async function listProjectNodeAssetsForOwner(
 	c: AppContext,
 	userId: string,
 	input: { projectId: string; kind?: MaterialKind },
 ): Promise<MaterialAssetDto[]> {
+	return (await loadProjectCanvasAssetScopeForOwner(c, userId, input)).assets;
+}
+
+export async function loadProjectCanvasAssetScopeForOwner(
+	c: AppContext,
+	userId: string,
+	input: { projectId: string; kind?: MaterialKind },
+): Promise<{ assets: MaterialAssetDto[]; deprecation: CanvasDeprecationScope }> {
 	const project = await getProjectForUserAccess(c.env.DB, input.projectId, userId);
 	if (!project) {
 		throw new AppError("Project not found", {
@@ -59,8 +68,9 @@ export async function listProjectNodeAssetsForOwner(
 		createdAt: chapter.created_at,
 		updatedAt: chapter.updated_at,
 	}));
-	return projectNodeAssetsFromCanvases(
-		[...flowCanvases, ...chapterCanvases],
-		input.kind ? { kind: input.kind } : undefined,
-	);
+	const canvases = [...flowCanvases, ...chapterCanvases];
+	return {
+		assets: projectNodeAssetsFromCanvases(canvases, input.kind ? { kind: input.kind } : undefined),
+		deprecation: deprecatedCanvasScope(canvases),
+	};
 }

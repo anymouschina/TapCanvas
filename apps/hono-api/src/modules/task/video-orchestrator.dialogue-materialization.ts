@@ -22,11 +22,11 @@ export type WriterDialogueMaterializationResult =
  * references only after final shot-duration reconciliation.
  *
  * This is intentionally a projection rather than a semantic fallback. It does
- * not invent speech events, alter their timing, or infer a role from a name.
- * For an event that already points at an exact frozen lineId, the Unicode range,
- * speaker, frozen delivery and absence of copied source text are deterministic
- * protocol facts, so they are compiled instead of spending a second model turn
- * repairing coordinates the model does not own.
+ * not invent speech events or alter their timing. Speech-event and frozen line
+ * IDs are transport fields, so the host binds submitted events to the frozen
+ * spoken ledger by array position and assigns deterministic IDs before the
+ * downstream contract is evaluated. Duplicate or stale model IDs therefore
+ * cannot become a downstream repair trigger.
  */
 export function projectWriterSpeechStructure(input: Readonly<{
   clip: Record<string, unknown>;
@@ -70,13 +70,14 @@ export function projectWriterSpeechStructure(input: Readonly<{
     delete shot.speechEventIds;
     return shot;
   }) : input.clip.shots;
-  const lineById = new Map(input.dialogueScript.map((line) => [line.lineId, line] as const));
   const projectedSpeechEvents = Array.isArray(input.clip.speechEvents)
-    ? input.clip.speechEvents.map((rawEvent) => {
+    ? input.clip.speechEvents.map((rawEvent, eventIndex) => {
         if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent)) return rawEvent;
         const event = { ...(rawEvent as Record<string, unknown>) };
-        const line = lineById.get(readText(event.lineId));
+        const line = input.dialogueScript[eventIndex];
         if (!line) return event;
+        event.lineId = line.lineId;
+        event.speechEventId = `speech-${line.lineId}`;
         event.startOffset = 0;
         event.endOffset = Array.from(line.text).length;
         event.speakerName = line.speakerName;
@@ -182,6 +183,10 @@ export function materializeWriterSpeechEvents(input: {
   const materializedEvents: MaterializedSpeechEvent[] = [];
   const seenEventIds = new Set<string>();
   const seenLineIds = new Set<string>();
+
+  if (rawEvents.length !== input.dialogueScript.length) {
+    issues.push({ path: "speechEvents", problem: `必须按冻结脚本顺序提交恰好 ${input.dialogueScript.length} 项，当前 ${rawEvents.length} 项；每项对应一整行，禁止合并或拆分。目标索引与原始行：${JSON.stringify(input.dialogueScript.map((line, index) => ({ index, lineId: line.lineId, speakerName: line.speakerName, codePointLength: Array.from(line.text).length })))}` });
+  }
 
   if (input.dialogueScript.length === 0 && rawEvents.length > 0) {
     issues.push({ path: "speechEvents", problem: "冻结人声脚本为空时必须是空数组" });

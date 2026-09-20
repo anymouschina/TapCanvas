@@ -128,7 +128,7 @@ describe("agents chat runtime status", () => {
 			get: () => undefined,
 		} as unknown as AppContext;
 
-		await getAgentsChatTurnStatus(context, "user-1", "session-1", { timeoutMs: 1_000 });
+		await getAgentsChatTurnStatus(context, "user-1", "session-1", { timeoutMs: 1_000, includeStructuredOutputRepair: true });
 		await interruptAgentsChatTurn(context, "user-1", {
 			sessionId: "session-1",
 			turnId: "turn-1",
@@ -140,6 +140,7 @@ describe("agents chat runtime status", () => {
 			sessionId: "session-1",
 		});
 		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ sessionId: "session-1", includeStructuredOutputRepair: true });
 		for (const call of fetchMock.mock.calls) {
 			const init = call[1];
 			expect(new Headers(init?.headers).get(

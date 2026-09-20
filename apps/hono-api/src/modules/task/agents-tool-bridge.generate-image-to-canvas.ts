@@ -1,3 +1,6 @@
+import { buildWorkflowImageClaim } from "./workflow-image-effect-claim";
+import { persistVideoNodePatch } from "./agents-tool-bridge.generate-video-to-canvas";
+import { appendSceneCardConstraint } from "../../../../../packages/schemas/scene-card-prompt";
 import { z } from "zod";
 import { loadImageViewControlsModule } from "../../platform/node/shared-schema-loader";
 
@@ -14,7 +17,7 @@ import {
   type FlowRow,
 } from "../flow/flow.repo";
 import { runPublicTask } from "../apiKey/apiKey.routes";
-import { fetchTaskResultForPolling } from "./task.polling";
+import { fetchTaskResultForPolling, isPermanentUpstreamTaskError } from "./task.polling";
 import { isProviderTaskPendingStatus } from "./provider-task-status";
 import { freshReadFlowRow, persistFlowPatch } from "./video-orchestrator.flow-io";
 import { pollUntilSettled } from "./task.polling-core";
@@ -38,7 +41,9 @@ import { listProjectNodeAssetsForOwner } from "../material/material.project-node
 import {
   buildProjectStyleProvenance,
   type ProjectStyleProvenance,
+  resolveProjectStyleAnchorSources,
 } from "./authoring-style-provenance";
+import { getProjectBookStyleFacts } from "../agents/project-context.service";
 import { appendCinematicCameraPrompt } from "./cinematic-camera-prompt";
 import {
   maybeAutoRegisterCanvasCard,
@@ -48,7 +53,7 @@ import {
 import {
   selectCanonicalPropBaseImageUrl,
 } from "./prop-material-identity";
-import { parseUserGenerationPrefs, resolveImageGenerateDefaults } from "../auth/generation-prefs";
+import { parseUserGenerationPrefs, resolveImageGenerateDefaults, resolveImageGenerationQuality } from "../auth/generation-prefs";
 import { getPrismaClient } from "../../platform/node/prisma";
 import {
   resolveKeyframeBlockingReference,
@@ -1592,24 +1597,31 @@ async function generateSingleImageNode(
     .join(", ");
   // 显式节点选择优先，其次为账号最近选择；新账号由 generation-prefs 提供固定初始值。
   // 偏好查询失败不是“新账号”，必须原地失败，禁止掩盖数据库故障后继续付费提交。
-  const prefRow = await getPrismaClient().users.findUnique({
+  const frozenWorkflow = Boolean(readTrimmedString(nodeData.workflowExecutionId));
+  const prefRow = frozenWorkflow ? null : await getPrismaClient().users.findUnique({
     where: { id: input.requestUserId },
     select: { generation_prefs: true },
   });
-  if (!prefRow) {
+  if (!frozenWorkflow && !prefRow) {
     throw new AppError("用户不存在，无法解析生成偏好", {
       status: 404,
       code: "generation_preferences_user_not_found",
     });
   }
-  const userGenPrefs = parseUserGenerationPrefs(prefRow.generation_prefs);
+  const userGenPrefs = parseUserGenerationPrefs(prefRow?.generation_prefs);
+  const modelKey = readTrimmedString(nodeData.modelKey);
   const modelAlias = resolveImageGenerateDefaults({
     prefs: userGenPrefs,
+    explicitModelKey: modelKey,
     explicitModelAlias: readTrimmedString(nodeData.modelAlias),
     explicitImageModel: readTrimmedString(nodeData.imageModel),
     explicitSize: "",
   }).modelAlias;
-  const modelKey = readTrimmedString(nodeData.modelKey);
+  const imageQuality = resolveImageGenerationQuality({
+    prefs: userGenPrefs,
+    modelAlias,
+    explicitQuality: readTrimmedString(nodeData.imageQuality),
+  });
   const isGptImage = isGptImageModel({ modelKey, modelAlias });
   const lookProjectId = readTrimmedString(input.row.project_id);
   const lookOwnerId = readTrimmedString(input.row.owner_id) || input.requestUserId;
@@ -1618,7 +1630,11 @@ async function generateSingleImageNode(
       ownerId: lookOwnerId,
       projectId: lookProjectId,
     });
-    if (activeLookBible) {
+    // A canvas-level style anchor is authoritative. Do not append a second,
+    // competing Look Bible prompt when the project already has one.
+    const canvasStyleImages = await readCanvasIndexStyleImages(lookProjectId, lookOwnerId);
+    const canvasStyleLock = await readCanvasIndexStyleLock(lookProjectId, lookOwnerId);
+    if (activeLookBible && canvasStyleImages.length === 0 && canvasStyleLock === null) {
       const cardClassification = classifyCanvasCardForRegistry(nodeData);
       const lookPrompt = buildProjectLookBibleImagePrompt({
         active: activeLookBible,
@@ -1633,10 +1649,11 @@ async function generateSingleImageNode(
       nodeData.projectLookBibleHash = activeLookBible.lookBibleHash;
     }
   }
-  const aspectRatio = readTrimmedString(nodeData.aspect);
+  const aspectRatio = readTrimmedString(nodeData.aspect) || (userGenPrefs?.imagePreferenceEnabled === true && userGenPrefs.imageModel === modelAlias ? userGenPrefs.imageAspect ?? "" : "");
   // 显式节点规格优先；否则使用账号最近选择，新账号初始规格为 1K。
   const imageSize = resolveImageGenerateDefaults({
     prefs: userGenPrefs,
+    explicitModelKey: modelAlias,
     explicitModelAlias: "",
     explicitImageModel: "",
     explicitSize: readTrimmedString(nodeData.imageSize),
@@ -1712,24 +1729,44 @@ async function generateSingleImageNode(
   const styleOwnerId = readTrimmedString(input.row.owner_id) || input.requestUserId;
   if (styleProjectId && styleOwnerId) {
     try {
-      projectStyleReferenceImages = await readCanvasIndexStyleImages(styleProjectId, styleOwnerId);
-      if (projectStyleReferenceImages.length) {
-        const styleLock = await readCanvasIndexStyleLock(styleProjectId, styleOwnerId);
-        projectStyleProvenance = buildProjectStyleProvenance({
-          styleReferenceImages: projectStyleReferenceImages,
-          styleLock,
-        });
+      const [canvasStyleImages, canvasStyleLock, activeLookBible, bookStyleFacts] = await Promise.all([
+        readCanvasIndexStyleImages(styleProjectId, styleOwnerId),
+        readCanvasIndexStyleLock(styleProjectId, styleOwnerId),
+        getActiveProjectLookBible({ ownerId: styleOwnerId, projectId: styleProjectId }),
+        getProjectBookStyleFacts({ ownerId: styleOwnerId, projectId: styleProjectId }),
+      ]);
+      const styleSources = resolveProjectStyleAnchorSources({
+        canvasStyleReferenceImages: canvasStyleImages,
+        canvasStyleLock,
+        activeLookBible,
+        triggerStyleFacts: null,
+        bookStyleFacts,
+      });
+      projectStyleReferenceImages = [...styleSources.styleReferenceImages];
+      projectStyleProvenance = buildProjectStyleProvenance({
+        styleReferenceImages: projectStyleReferenceImages,
+        styleLock: styleSources.styleLock,
+      });
+      const lookBiblePromptAlreadyApplied = styleSources.styleLock?.styleId.startsWith("project-look-bible:") === true;
+      if (projectStyleProvenance.stylePrompt && !lookBiblePromptAlreadyApplied) {
+        prompt = `${prompt}\n【项目统一风格锚】${projectStyleProvenance.stylePrompt}`;
       }
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[style-provenance] direct image project anchor unavailable", {
+        projectId: styleProjectId,
+        ownerId: styleOwnerId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
       projectStyleReferenceImages = [];
       projectStyleProvenance = null;
     }
   }
-  // 回退：node 自身没带风格图时，注入项目级「全局风格图」（canvas-index.json，前端 picker / agent set-style
-  // 工具写的同一源）。这让 agent 驱动的服务端出图、以及没显式带 styleImages 的提交，都自动锁全局风格。
-  if (styleImages.length === 0) {
-    styleImages = projectStyleReferenceImages;
-  }
+  // 项目级「全局风格图」（canvas-index.json，前端 picker / agent set-style 工具写的同一源）
+  // 是所有图片入口的统一风格锚。节点显式携带的风格图不能把项目锚点遮掉；两者按真实 URL
+  // 合并去重，最终由供应商能力合同决定是否可提交，不能在这里静默裁剪。
+  styleImages = [
+    ...new Set([...styleImages, ...projectStyleReferenceImages]),
+  ];
   // 项目级摄像机规格（canvas-index.json cinematicCamera，与前端摄像机 chip 同源）：agent 出图
   // 自动拼进 prompt，与前端手动出图（客户端 buildCinematicCameraPrompt 拼接）行为对齐。幂等：
   // prompt 已含「摄影机参数（」标记（上游已拼过）则不重复。
@@ -1740,8 +1777,12 @@ async function generateSingleImageNode(
       const cinematicCamera = await readCanvasIndexCinematicCamera(camProjectId, camOwnerId);
       prompt = appendCinematicCameraPrompt(prompt, cinematicCamera);
     }
-  } catch {
-    /* best-effort：拉不到摄像机规格照常出图，不阻断 */
+  } catch (error: unknown) {
+    console.warn("[camera-provenance] direct image camera contract unavailable", {
+      projectId: readTrimmedString(input.row.project_id),
+      ownerId: readTrimmedString(input.row.owner_id) || input.requestUserId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
   }
   // 章节非身份锚自动绑定：这里只保留风格锚与道具锚。
   // 角色/场景必须由 agents-cli 通过新版结构化节点 ID / 资产 ID 显式绑定。
@@ -1774,7 +1815,13 @@ async function generateSingleImageNode(
         };
         const sel = selectAnchorReferenceImages(nodes, lockedAnchors);
         // 风格锚 → styleImages 最前（优先于旧全局风格），且当前节点自己不是风格锚时才注入。
-        const selfIsStyleAnchor = /风格锚|style[\s_-]?anchor/i.test(readTrimmedString(nodeData.label));
+        // Style-anchor identity is a persisted structural fact.  Do not infer it
+        // from a display label: labels are user-facing text and are not a routing
+        // contract.
+        const selfIsStyleAnchor =
+          readTrimmedString(nodeData.referenceRole).toLowerCase() === "style" ||
+          readTrimmedString(nodeData.productionLayer).toLowerCase() === "style" ||
+          readTrimmedString(nodeData.referenceType).toLowerCase() === "style";
         if (sel.styleAnchorUrl && !selfIsStyleAnchor && !styleImages.includes(sel.styleAnchorUrl)) {
           styleImages = [sel.styleAnchorUrl, ...styleImages];
         }
@@ -1794,6 +1841,7 @@ async function generateSingleImageNode(
   const baseAssetInputs = [
     ...boundStyleAssetInputs,
     ...normalizeAssetInputs(nodeData.assetInputs),
+    ...normalizeAssetInputs(nodeData.styleDescriptionSources),
   ];
   const existingUrls = new Set(baseAssetInputs.map((a) => a.url).filter(Boolean));
   const styleAssetInputs: CanvasAssetInput[] = styleImages
@@ -1811,27 +1859,8 @@ async function generateSingleImageNode(
     ];
   }
 
-  // 【参考图封顶·gpt-image-2 上限 16】referenceImages + assetInputs(含风格图) 合并送上游 images[]，
-  // 超 16 上游直接 build 失败「reference_images exceeds max 16」整请求挂掉（实测 ch129 多格设计板：
-  // agent 显式传十余张锚定卡 + 服务端 CHAPTER_ANCHOR_AUTOBIND 再自动注入 → 撞上限）。确定性截到 ≤16：
-  // 风格图(画风一致性命脉)优先全保留，referenceImages 保留前部（显式引用优先于自动注入的尾部），超出截断并告警。
-  if (isGptImage) {
-    const GPT_IMAGE_MAX_REFS = 16;
-    const total = referenceImages.length + assetInputs.length;
-    if (total > GPT_IMAGE_MAX_REFS) {
-      // 风格图最多占 4 席，给 referenceImages 留足空间（画风锚通常 1~2 张即够）。
-      const styleCap = Math.min(assetInputs.length, 4);
-      if (assetInputs.length > styleCap) assetInputs = assetInputs.slice(0, styleCap);
-      const keepRefs = Math.max(0, GPT_IMAGE_MAX_REFS - assetInputs.length);
-      const droppedRefs = Math.max(0, referenceImages.length - keepRefs);
-      const droppedStyle = styleAssetInputs.length - Math.max(0, styleCap - baseAssetInputs.length);
-      if (droppedRefs > 0) referenceImages = referenceImages.slice(0, keepRefs);
-      console.warn(
-        `[image-ref-cap] gpt-image-2 参考图超上限 ${GPT_IMAGE_MAX_REFS}（原 ref=${total - styleAssetInputs.length + baseAssetInputs.length}）→ 截断 refs(drop=${droppedRefs}) style(drop=${droppedStyle > 0 ? droppedStyle : 0}) node=${readTrimmedString(nodeData.label) || "?"} chapter=${input.chapterId ?? "-"}`,
-      );
-    }
-  }
-
+  // Preserve all required image inputs. Catalog capacity is descriptive;
+  // the provider response decides whether this individual submission is accepted.
   const taskKind: TaskRequestDto["kind"] =
     referenceImages.length > 0 || assetInputs.length > 0 ? "image_edit" : "text_to_image";
   const generationProjectId = readTrimmedString(input.row.project_id);
@@ -1850,6 +1879,10 @@ async function generateSingleImageNode(
       }
     : null;
 
+  // Scene cards are reusable spatial identity assets. Their structured contract
+  // explicitly excludes visible people; enforce that contract at the provider
+  // boundary so chapter/canvas character context cannot leak into the image.
+  prompt = appendSceneCardConstraint(prompt, nodeData.referenceType);
   const taskRequest: TaskRequestDto = {
     kind: taskKind,
     prompt,
@@ -1862,12 +1895,34 @@ async function generateSingleImageNode(
       ...(modelKey ? { modelKey } : {}),
       ...(aspectRatio ? { aspectRatio } : {}),
       ...(imageSize ? { imageSize } : {}),
+      ...(imageQuality ? { quality: imageQuality } : {}),
       ...(referenceImages.length ? { referenceImages } : {}),
-      ...(assetInputs.length ? { assetInputs } : {}),
+      ...(assetInputs.some((asset) => asset.role !== "style")
+        ? { assetInputs: assetInputs.filter((asset) => asset.role !== "style") } : {}),
+      styleDescriptionSources: assetInputs.filter((asset) => asset.role === "style").map((asset) =>
+        asset.url && projectStyleReferenceImages.includes(asset.url) && projectStyleProvenance?.stylePrompt
+          ? { ...asset, stylePrompt: projectStyleProvenance.stylePrompt, stylePromptApplied: true }
+          : asset),
       ...(generationContext ? { generationContext } : {}),
       persistAssets: true,
     },
   };
+
+  const workflowEffectId = readTrimmedString(nodeData.workflowEffectId);
+  if (workflowEffectId) {
+    const claimNodeId = readTrimmedString(taskNode.id);
+    if (!claimNodeId) throw new AppError('Workflow image effect requires a stable node identity', { status: 400, code: 'workflow_image_identity_required' });
+    const claimedAt = new Date().toISOString();
+    const claimed = await persistVideoNodePatch({
+      c: input.c, requestUserId: input.requestUserId, devBypass: input.devBypass,
+      flowId: input.flowId, fallbackRow: input.row, broadcastNodeId: claimNodeId,
+      ...(input.chapterId ? { chapterId: input.chapterId } : {}),
+      buildPatch: current => buildWorkflowImageClaim({ current, node: taskNode,
+        nodeId: claimNodeId, effectId: workflowEffectId, claimedAt }),
+    });
+    if (!claimed) throw new AppError('Workflow image claim was not persisted', { status: 503, code: 'workflow_image_claim_persist_failed' });
+    input.row = { ...input.row, data: JSON.stringify(claimed.data), updated_at: claimed.updatedAt };
+  }
 
   await imageGlobalSemaphore.acquire();
   let created: Awaited<ReturnType<typeof runPublicTask>>;
@@ -1936,12 +1991,13 @@ async function generateSingleImageNode(
 
   let finalNodeData: Record<string, unknown> = {
     ...nodeData,
-    // Persist the exact references submitted to the image model. The effective
-    // list includes server-resolved blocking/style/identity inputs and is the
-    // generation provenance consumed by downstream asset verification.
+    // Content references and style-understanding sources have distinct roles.
+    // Actual prompt/understanding receipts are recorded by the task executor.
     ...(referenceImages.length ? { referenceImages: [...referenceImages] } : {}),
-    ...(assetInputs.length ? { assetInputs: assetInputs.map((item) => ({ ...item })) } : {}),
+    assetInputs: assetInputs.filter((item) => item.role !== "style").map((item) => ({ ...item })),
+    styleDescriptionSources: taskRequest.extras?.styleDescriptionSources,
     status: nodeStatus,
+    ...(workflowEffectId ? { workflowSubmissionState: resolvedImageUrl ? 'materialized' : 'accepted' } : {}),
     imageUrl: resolvedImageUrl,
     // running 占位无 url：跳过 imageResults（前端/reconcile 回写时再补），避免空 url 结果。
     ...(resolvedImageUrl
@@ -1959,8 +2015,10 @@ async function generateSingleImageNode(
     ...(generatedAssetId ? { assetId: generatedAssetId } : {}),
     ...(resolvedTaskId ? { taskId: resolvedTaskId, imageTaskId: resolvedTaskId } : {}),
     imageTaskKind: taskKind,
+    ...(imageQuality ? { imageQuality } : {}),
+    ...(aspectRatio && !readTrimmedString(nodeData.aspect) ? { aspect: aspectRatio } : {}),
     ...(resolvedVendor ? { vendor: resolvedVendor } : {}),
-    ...(modelAlias && !readTrimmedString(nodeData.imageModel) ? { imageModel: modelAlias } : {}),
+    ...(modelAlias ? { imageModel: modelAlias, modelAlias } : {}),
     ...(imageSize && !readTrimmedString(nodeData.imageSize) ? { imageSize } : {}),
     ...(projectStyleProvenance
       ? {
@@ -2116,6 +2174,7 @@ export async function reconcileImageNodesForFlow(input: {
   const IMAGE_KINDS = new Set(["image", "imageEdit", "storyboardImage"]);
   const pending: Array<{ nodeId: string; d: Record<string, unknown>; taskId: string }> = [];
   const orphans: Array<{ nodeId: string; d: Record<string, unknown> }> = [];
+  let targetFound = false;
   for (const n of nodes) {
     const d =
       n.data && typeof n.data === "object" && !Array.isArray(n.data)
@@ -2123,6 +2182,7 @@ export async function reconcileImageNodesForFlow(input: {
         : {};
     if (!IMAGE_KINDS.has(readTrimmedString(d.kind))) continue;
     const nodeId = String(n.id ?? "");
+    if (input.target && nodeId === input.target.nodeId) targetFound = true;
     const st = readTrimmedString(d.status).toLowerCase();
     if (!isProviderTaskPendingStatus(st)) continue;
     const persistedTaskId = readTrimmedString(d.imageTaskId) || readTrimmedString(d.taskId);
@@ -2143,6 +2203,27 @@ export async function reconcileImageNodesForFlow(input: {
     pending.push({ nodeId, d, taskId });
   }
 
+  // A resume cursor is only valid while its persisted canvas receipt exists.
+  // If an older execution was autosaved over and removed that node, treating
+  // the orphaned task id as "still running" creates an infinite wait with no
+  // addressable place to write a result. Surface this deterministic loss as a
+  // terminal diagnostic; the already accepted provider task remains untouched.
+  if (input.target && !targetFound) {
+    const message = `Persisted image output node ${input.target.nodeId} is missing; provider task cannot be reconciled`;
+    return {
+      ok: true,
+      reconciled: 0,
+      failed: 1,
+      stillRunning: 0,
+      details: [{
+        nodeId: input.target.nodeId,
+        taskId: input.target.taskId,
+        status: "failed",
+        errorMessage: message,
+      }],
+    };
+  }
+
   let reconciled = 0;
   let failed = 0;
   let stillRunning = 0;
@@ -2156,23 +2237,8 @@ export async function reconcileImageNodesForFlow(input: {
     let outcomeStatus = "running";
     let outcomeErrorMessage = "";
     try {
-      const taskKind =
-        (readTrimmedString(item.d.imageTaskKind) as TaskRequestDto["kind"]) || "text_to_image";
-      const outcome = await fetchTaskResultForPolling(input.c, input.requestUserId, {
-        taskId: item.taskId,
-        vendor: readTrimmedString(item.d.vendor) || "newapi",
-        taskKind,
-        prompt: readTrimmedString(item.d.prompt),
-        mode: "public",
-      });
-      if (!outcome.ok) {
-        stillRunning += 1;
-        details.push({ nodeId: item.nodeId, taskId: item.taskId, status: "running" });
-        continue;
-      }
-      const status = readTrimmedString(outcome.result.status).toLowerCase();
-      const url = extractImageUrlFromTaskResult(outcome.result);
-      // 每节点写回前 fresh-read 当前 flow，避免多节点串行用旧快照互相覆盖。
+      // Persist through a fresh scoped read so a terminal poll error cannot
+      // leave an accepted-but-unobservable provider task spinning forever.
       const persist = async (nodeData: Record<string, unknown>) => {
         const cur = chapterId
           ? input.row
@@ -2196,6 +2262,49 @@ export async function reconcileImageNodesForFlow(input: {
           ...(chapterId ? { chapterId } : {}),
         });
       };
+      const taskKind =
+        (readTrimmedString(item.d.imageTaskKind) as TaskRequestDto["kind"]) || "text_to_image";
+      const outcome = await fetchTaskResultForPolling(input.c, input.requestUserId, {
+        taskId: item.taskId,
+        vendor: readTrimmedString(item.d.vendor) || "newapi",
+        taskKind,
+        prompt: readTrimmedString(item.d.prompt),
+        mode: "public",
+      });
+      if (!outcome.ok) {
+        const body = outcome.body && typeof outcome.body === "object" && !Array.isArray(outcome.body)
+          ? outcome.body as Record<string, unknown>
+          : {};
+        const upstreamMessage = readTrimmedString(body.message) || readTrimmedString(body.error);
+        if (isPermanentUpstreamTaskError(outcome.status, upstreamMessage)) {
+          const providerFailure = upstreamMessage || `Image task polling failed with HTTP ${outcome.status}`;
+          await persist({
+            ...item.d,
+            status: "error",
+            taskId: item.taskId,
+            imageTaskId: item.taskId,
+            error: providerFailure,
+            errorMessage: providerFailure,
+            providerStatus: "failed",
+          });
+          failed += 1;
+          outcomeStatus = "failed";
+          outcomeErrorMessage = providerFailure;
+          details.push({
+            nodeId: item.nodeId,
+            taskId: item.taskId,
+            status: outcomeStatus,
+            errorMessage: outcomeErrorMessage,
+          });
+          continue;
+        }
+        stillRunning += 1;
+        details.push({ nodeId: item.nodeId, taskId: item.taskId, status: "running" });
+        continue;
+      }
+      const status = readTrimmedString(outcome.result.status).toLowerCase();
+      const url = extractImageUrlFromTaskResult(outcome.result);
+      // 每节点写回前 fresh-read 当前 flow，避免多节点串行用旧快照互相覆盖。
       if (status === "succeeded" && url) {
         const assetId = extractImageAssetIdFromTaskResult(outcome.result, url);
         let completedData: Record<string, unknown> = {

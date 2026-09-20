@@ -159,8 +159,7 @@ export async function cancelWorkflowAgentTurns(input: Readonly<{
 	targets: readonly WorkflowAgentTurnIdentity[];
 	interruptReasonCode?:
 		| "chat_turn_user_interrupt"
-		| "provider_stream_interrupted"
-		| "video_production_start_deadline_exceeded";
+		| "provider_stream_interrupted";
 }>): Promise<readonly WorkflowAgentTurnCancellationResult[]> {
 	return Promise.all(input.targets.map(async (target): Promise<WorkflowAgentTurnCancellationResult> => {
 		try {

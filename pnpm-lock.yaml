@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    dependencies:
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
 
   apps/agents-cli:
     dependencies:

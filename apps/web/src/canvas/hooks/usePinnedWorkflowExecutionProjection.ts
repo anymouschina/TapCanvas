@@ -5,9 +5,7 @@ import {
   ensureWorkflowExecutionPlaceholderNode,
   loadWorkflowExecutionProjection,
 } from '../workflowExecutionProjection'
-import { workflowExecutionProjectionGuard } from '../workflowExecutionProjectionData'
 import { WORKFLOW_EXECUTION_SYNC_REQUEST_EVENT } from '../workflowExecutionRequest'
-import { remoteApplyGuard } from '../sync/remoteApplyGuard'
 
 const ACTIVE_EXECUTION_STATUSES = new Set([
   'queued',
@@ -76,11 +74,17 @@ export function usePinnedWorkflowExecutionProjection(scopeKey: string): void {
       if (!projection) return
       if (useRFStore.getState().graphProvenanceKey !== scopeKey) return
       if (selectPinnedExecutionField('workflowExecutionId') !== executionId) return
-      remoteApplyGuard.run(() => {
-        workflowExecutionProjectionGuard.run(() => {
-          ensureWorkflowExecutionPlaceholderNode(projection.executionId, projection.runs)
-        })
+      // The durable status card is user-owned canvas content. Polling may refresh a
+      // card that is still present, but must never recreate one after the user deleted it.
+      // The server projection sync is responsible for applying updates to the existing node.
+      const hasPinnedCard = useRFStore.getState().nodes.some((node) => {
+        const data = node.data
+        return Boolean(data)
+          && typeof data === 'object'
+          && !Array.isArray(data)
+          && (data as Record<string, unknown>).managedProjection === 'workflow_execution'
       })
+      if (hasPinnedCard) ensureWorkflowExecutionPlaceholderNode(projection.executionId, projection.runs, projection.executionStatus, projection.executionFamilyId)
       reportedErrorRef.current = ''
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : '无法同步工作流执行状态'

@@ -2,8 +2,9 @@ import type { WorkflowNodeItemRunV1 } from "./execution.node-runtime";
 
 /**
  * A terminal media failure is evidence, not authorization to pay for another
- * submission. Recovery may reconcile accepted receipts, but a fresh provider
- * submission requires a new explicit execution family.
+ * submission. Ordinary recovery only reconciles receipts. Explicit mediaRetries
+ * admission removes the authorized item from the new replay cursor and assigns
+ * a separate effect identity in the same family; this predicate grants no retry.
  */
 export function isRetryableTerminalMediaItemRun(
 	_executorRef: string,

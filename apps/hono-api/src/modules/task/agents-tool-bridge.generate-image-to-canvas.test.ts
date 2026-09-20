@@ -1297,7 +1297,7 @@ describe("generateImageToCanvas", () => {
               flowId: "flow-1",
               nodeId: "result-role-aware",
             },
-            assetInputs: [
+            styleDescriptionSources: [
               expect.objectContaining({
                 assetId: "style-1",
                 role: "style",
@@ -1733,8 +1733,10 @@ describe("generateImageToCanvas", () => {
   it("uses the account's most recently selected image model and size", async () => {
     mockedUserFindUnique.mockResolvedValueOnce({
       generation_prefs: JSON.stringify({
+        imagePreferenceEnabled: true,
         imageModel: "account-image-model",
         imageSize: "2K",
+        imageQuality: "max",
       }),
     });
     mockedRunPublicTask.mockRejectedValueOnce(new Error("stop after request capture"));
@@ -1773,10 +1775,65 @@ describe("generateImageToCanvas", () => {
           extras: expect.objectContaining({
             modelAlias: "account-image-model",
             imageSize: "2K",
+            quality: "max",
           }),
         }),
       }),
     );
+  });
+
+  it.each([undefined, "execution-frozen"])("keeps explicit model identity isolated from current preferences (%s)", async (workflowExecutionId) => {
+    mockedUserFindUnique.mockResolvedValueOnce({
+      generation_prefs: JSON.stringify({
+        imagePreferenceEnabled: true,
+        imageModel: workflowExecutionId ? "gpt-image-2" : "account-image-model",
+        imageSize: "2K",
+        imageQuality: "max",
+      }),
+    });
+    mockedRunPublicTask.mockRejectedValueOnce(new Error("stop after request capture"));
+    const row: FlowRow = {
+      id: "flow-1",
+      name: "Flow",
+      data: JSON.stringify({ nodes: [], edges: [] }),
+      owner_id: "user-1",
+      project_id: "project-1",
+      created_at: "2026-03-26T00:00:00.000Z",
+      updated_at: "2026-03-26T00:00:00.000Z",
+    };
+
+    await expect(
+      generateImageToCanvas({
+        c: { env: { DB: {} } } as AppContext,
+        requestUserId: "user-1",
+        devBypass: false,
+        flowId: "flow-1",
+        row,
+        bodyArgs: {
+          node: {
+            type: "taskNode",
+            position: { x: 0, y: 0 },
+            data: { kind: "image", prompt: "account preference", modelKey: "gpt-image-2", imageSize: "1K", workflowExecutionId },
+          },
+        },
+      }),
+    ).rejects.toThrow("stop after request capture");
+
+    expect(mockedRunPublicTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      "user-1",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          extras: expect.objectContaining({
+            modelAlias: "gpt-image-2",
+            modelKey: "gpt-image-2",
+            imageSize: "1K",
+          }),
+        }),
+      }),
+    );
+    const captured = mockedRunPublicTask.mock.calls.at(-1)?.[2];
+    expect(captured?.request.extras).not.toHaveProperty("quality");
   });
 
   it("appends camera and lighting controls into the executable prompt when provided", async () => {

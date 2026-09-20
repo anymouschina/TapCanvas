@@ -63,4 +63,24 @@ describe('agent workflow projection sync', () => {
     expect(nodes.find((node) => node.id === 'stage')?.data.workflowTraceId).toBe('trace-1')
     expect(nodes.find((node) => node.id === 'other')?.data.workflowTraceId).toBeUndefined()
   })
+
+  it('settles queued and running nodes when the workflow reaches a terminal failure', () => {
+    useRFStore.setState({
+      nodes: [
+        { id: 'queued', type: 'taskNode', position: { x: 0, y: 0 }, data: { workflowInstanceId: 'wf-1', status: 'queued' } },
+        { id: 'running', type: 'taskNode', position: { x: 0, y: 0 }, data: { workflowInstanceId: 'wf-1', status: 'running' } },
+        { id: 'success', type: 'taskNode', position: { x: 0, y: 0 }, data: { workflowInstanceId: 'wf-1', status: 'success' } },
+      ],
+    })
+
+    const failedTrace = trace('trace-failed', '2026-08-11T08:00:03.000Z', 'failed')
+    failedTrace.errorCode = 'async_dependency_terminal'
+    failedTrace.errorDetail = '异步依赖已失败或取消'
+    applyAgentWorkflowTrace('wf-1', failedTrace)
+
+    const nodes = useRFStore.getState().nodes
+    expect(nodes.find((node) => node.id === 'queued')?.data.status).toBe('error')
+    expect(nodes.find((node) => node.id === 'running')?.data.status).toBe('error')
+    expect(nodes.find((node) => node.id === 'success')?.data.status).toBe('success')
+  })
 })

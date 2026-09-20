@@ -1,6 +1,12 @@
 ---
 name: seedance-2-video-gen
 description: Seedance 2.0 生视频「方法论」参考：三种模式(文生视频/图生视频/参考生视频)、时长、分辨率、音频、比例、参考图/视频/音频限制等参数知识。仅提供方法论——本项目通过自有 new-api / 画布生视频工具(doubao-seedance)执行，不直连外部 API、不需要任何外部 API key。
+disable-model-invocation: true
+knowledge-role: generation
+knowledge-domains:
+  - AI视频提示词
+related-skills:
+  - sd2-pe
 ---
 
 # Seedance 2.0 生视频方法论（本地版）

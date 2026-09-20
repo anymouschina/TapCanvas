@@ -34,6 +34,11 @@ export const UpsertFlowSchema = z.object({
 	// 版本落后抛 FlowRevisionConflictError，调用方重读后再合并自身变更。
 	expectedRevision: z.number().int().min(0).optional(),
 	source: z.enum(["user", "agent"]).optional(),
+	deletedNodeIds: z.array(z.string().min(1)).optional(),
+	restoredNodeIds: z.array(z.string().min(1)).optional(),
+}).refine((value) => !value.deletedNodeIds?.length && !value.restoredNodeIds?.length
+	|| typeof value.expectedRevision === 'number', {
+	message: 'Canvas membership changes require expectedRevision', path: ['expectedRevision'],
 });
 
 export const FlowVersionSchema = z.object({

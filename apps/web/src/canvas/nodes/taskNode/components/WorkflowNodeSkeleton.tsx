@@ -97,11 +97,15 @@ export function WorkflowNodeSkeleton({ nodeId, data, label, overview }: Workflow
     <article
       className={`tc-workflow-node-shell tc-workflow-node-shell--${presentation.variant}${showsResult ? ' tc-workflow-node-shell--result' : ''}${overview ? ' tc-workflow-node-shell--overview' : ''}`}
       data-workflow-variant={presentation.variant}
+      data-workflow-operation={presentation.operation}
       data-workflow-display={showsResult ? 'result' : 'icon'}
       data-workflow-status={status.key}
       aria-label={accessibleLabel}
       title={accessibleLabel}
     >
+      {data.workflowShowLabel === true && !isReferenceAggregate ? (
+        <span className="tc-workflow-node-shell__persistent-title">{label || presentation.operationLabel}</span>
+      ) : null}
       {showsResult ? (
         <div className="tc-workflow-node-shell__preview-frame">
           {media.primaryAsset?.kind === 'image' ? (
@@ -146,19 +150,21 @@ export function WorkflowNodeSkeleton({ nodeId, data, label, overview }: Workflow
           ) : null}
         </div>
       ) : (
-        <span className="tc-workflow-node-shell__icon-frame" aria-hidden="true">
-          <WorkflowNodeGlyph
-            presentation={presentation}
-            className="tc-workflow-node-shell__glyph"
-            size={overview ? 21 : 25}
-            nodeId={nodeId}
-          />
-          {isReferenceAggregate ? (
-            <span className={`tc-workflow-node-shell__reference-count tc-workflow-node-shell__reference-count--${referenceKind}`}>
-              {referenceCount > 0 ? referenceCount : '全'}
-            </span>
-          ) : null}
-        </span>
+        <div className="tc-workflow-node-shell__body">
+          <span className="tc-workflow-node-shell__icon-frame" aria-hidden="true">
+            <WorkflowNodeGlyph
+              presentation={presentation}
+              className="tc-workflow-node-shell__glyph"
+              size={overview ? 18 : 21}
+              nodeId={nodeId}
+            />
+            {isReferenceAggregate ? (
+              <span className={`tc-workflow-node-shell__reference-count tc-workflow-node-shell__reference-count--${referenceKind}`}>
+                {referenceCount > 0 ? referenceCount : '全'}
+              </span>
+            ) : null}
+          </span>
+        </div>
       )}
       {isReferenceAggregate ? (
         <span className={`tc-workflow-node-shell__reference-caption tc-workflow-node-shell__reference-caption--${referenceKind}`} aria-hidden="true">

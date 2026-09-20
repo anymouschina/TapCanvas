@@ -1,3 +1,4 @@
+import { parseWorkflowSubmissionHandoff } from "./workflow-submission-handoff";
 import type {
 	AgentLogicalTaskStateV1,
 	AgentPhysicalRunExitV1,
@@ -73,12 +74,20 @@ export function projectPublicChatLogicalTaskState(input: Readonly<{
 	exit: AgentPhysicalRunExitV1;
 	expectedLogicalTaskId: string;
 	deliveryVerified: boolean;
+	submissionHandoff?: unknown;
 }>): AgentLogicalTaskStateV1 {
 	validatePhysicalExitIdentity({
 		exit: input.exit,
 		expectedLogicalTaskId: input.expectedLogicalTaskId,
 		ownerLabel: "public chat",
 	});
+	const submissionHandoff = parseWorkflowSubmissionHandoff(input.submissionHandoff);
+	if (submissionHandoff) {
+		if (input.exit.kind !== "logical_terminal" || input.exit.taskStatus !== "satisfied" || input.exit.continuationTicket !== null) {
+			throw new Error("Workflow submission handoff must close without a chat continuation owner");
+		}
+		return { ...projectPhysicalRunExit(input.exit), deliveryStatus: "pending" };
+	}
 	if (
 		input.exit.kind === "logical_terminal"
 		&& input.exit.taskStatus === "satisfied"

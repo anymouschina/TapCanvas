@@ -53,6 +53,7 @@ function reconcile(input: Readonly<{
 	failureStage: WorkflowFailureStage;
 	sideEffect: "external_mutation" | "paid_generation";
 	resultField: string;
+	maxAutomaticAttempts?: number;
 }>): WorkflowExecutionSemanticsV2 {
 	return semantics({
 		sideEffect: input.sideEffect,
@@ -61,7 +62,7 @@ function reconcile(input: Readonly<{
 		idempotency: { source: "runtime_node", inputField: null },
 		resultLookup: { mode: "provider_receipt", outputField: input.resultField },
 		recoveryMode: "reconcile",
-		maxAutomaticAttempts: 1,
+		maxAutomaticAttempts: input.maxAutomaticAttempts ?? 1,
 		backoffClass: "none",
 		failureStage: input.failureStage,
 	});
@@ -79,9 +80,16 @@ export const CORE_WORKFLOW_EXECUTOR_SEMANTICS = Object.freeze({
 	"workflow.collection.concat/v1": replay("control"),
 	"workflow.collection.empty/v1": replay("control"),
 	"video.beat-sheet.take/v1": replay("control"),
+	"video.clip-design-inputs/v1": replay("control"),
+	"video.beat-sheet.assemble/v1": replay("control"),
+	"tapcanvas.blocking-diagrams.materialize/v1": reconcile({ failureStage: "media_generation", sideEffect: "external_mutation", resultField: "blockingDiagramNodeIds" }),
 	"tapcanvas.canvas.group.read/v1": replay("asset_access"),
 	"agents.delivery.contract/v2": replay("delivery_verification"),
 	"video.asset-plans.project/v1": replay("control"),
+	"tapcanvas.blocking-backgrounds.split/v1": replay("control"),
+	"video.chapter-assets.prepare/v1": replay("control"),
+	"video.asset-consumers.bind/v1": replay("control"),
+	"tapcanvas.chapter-backgrounds.split/v1": replay("control"),
 	"video.asset-plans.split/v1": replay("control"),
 	"video.clip-contexts/v1": replay("control"),
 	"video.prompt-package.persist/v1": replay("artifact_persistence"),
@@ -92,7 +100,8 @@ export const CORE_WORKFLOW_EXECUTOR_SEMANTICS = Object.freeze({
 	"video.production.handoff/v1": replay("assembly"),
 	"video.concat/v1": reconcile({ failureStage: "assembly", sideEffect: "external_mutation", resultField: "videoUrl" }),
 	"tapcanvas.image.generate/v1": reconcile({ failureStage: "media_generation", sideEffect: "paid_generation", resultField: "taskId" }),
-	"tapcanvas.video.generate/v1": reconcile({ failureStage: "media_generation", sideEffect: "paid_generation", resultField: "taskId" }),
+	"tapcanvas.video.prepare/v1": replay("artifact_persistence"),
+	"tapcanvas.video.generate/v1": reconcile({ failureStage: "media_generation", sideEffect: "paid_generation", resultField: "taskId", maxAutomaticAttempts: 3 }),
 	"agents.skill.require/v1": replay("agent_authoring"),
 	"agents.tool.allow/v1": replay("tool_execution"),
 	"agents.tool.invoke/v1": manual("tool_execution"),
@@ -127,6 +136,13 @@ export type CoreWorkflowExecutorPortContract = Readonly<{
 export const CORE_WORKFLOW_EXECUTOR_PORT_CONTRACTS = Object.freeze({
 	"workflow.collection.take/v1": { requiredInputPorts: ["items"] },
 	"video.beat-sheet.take/v1": { requiredInputPorts: ["beat-sheet"] },
+	"video.clip-design-inputs/v1": { requiredInputPorts: ["chapter-plan", "chapter-assets"] },
+	"video.beat-sheet.assemble/v1": { requiredInputPorts: ["chapter-plan", "chapter-assets", "clip-designs"] },
+	"tapcanvas.blocking-diagrams.materialize/v1": { requiredInputPorts: ["beat-sheet"] },
+	"tapcanvas.blocking-backgrounds.split/v1": { requiredInputPorts: ["beat-sheet"] },
+	"video.chapter-assets.prepare/v1": { requiredInputPorts: ["chapter-assets"] },
+	"video.asset-consumers.bind/v1": { requiredInputPorts: ["asset-bindings", "asset-items"] },
+	"tapcanvas.chapter-backgrounds.split/v1": { requiredInputPorts: ["chapter-assets"] },
 	"video.voice-manifest.materialize/v1": { requiredInputPorts: ["voice-catalog", "voice-plan", "estimate"] },
 	"video.production.handoff/v1": { requiredInputPorts: ["prompt-package", "estimate", "asset-bindings", "voice-manifest"] },
 } satisfies Partial<Record<CoreWorkflowExecutorRef, CoreWorkflowExecutorPortContract>>);

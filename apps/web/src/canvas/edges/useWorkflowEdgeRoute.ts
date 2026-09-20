@@ -1,4 +1,6 @@
 import { useStore } from '@xyflow/react'
+import { useMemo } from 'react'
+import { memoizeCanvasGraphSelector } from './memoizeCanvasGraphSelector'
 import { getNodeAbsPosition, getNodeSize } from '../utils/nodeBounds'
 import {
   computeWorkflowEdgeRoute,
@@ -66,7 +68,7 @@ export function useWorkflowEdgeRoute(input: UseWorkflowEdgeRouteInput): Workflow
   // the application's singleton editable-canvas store.  Reading the singleton
   // made snapshot skip-edges look adjacent and collapsed every detour onto the
   // horizontal main line.
-  const graph = useStore((state): WorkflowRoutingGraph => {
+  const selectGraph = useMemo(() => memoizeCanvasGraphSelector((state): WorkflowRoutingGraph => {
     if (!input.enabled) return EMPTY_ROUTING_GRAPH
     const nodesById = new Map(state.nodes.map((node) => [node.id, node] as const))
     const sourceGroupId = nodeParentId(nodesById.get(input.sourceId) ?? {})
@@ -105,7 +107,8 @@ export function useWorkflowEdgeRoute(input: UseWorkflowEdgeRouteInput): Workflow
       }))
       .sort((left, right) => left.id.localeCompare(right.id))
     return { nodes, edges }
-  }, sameRoutingGraph)
+  }), [input.enabled, input.sourceId])
+  const graph = useStore(selectGraph, sameRoutingGraph)
 
   if (!input.enabled) return null
   return computeWorkflowEdgeRoute({

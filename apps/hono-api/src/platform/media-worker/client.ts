@@ -485,6 +485,25 @@ export async function transcodeProxyViaMediaWorkerStrict(input: {
 	return { key, url, sizeBytes };
 }
 
+/*
+ * 一次 probeMedia 的成本是「把整份资产下载到 worker 本地 + ffprobe」，预算必须覆盖
+ * 一次完整下载，而不是一个与资产体量无关的常数。实测 8.5MB/15s 的 768P 成片片段
+ * 单次探测约 11s；readiness 关卡曾用 10s 预算，于是探测永远以 DEADLINE_EXCEEDED
+ * 结束——"资产是否可解码"变成一条恒假闸门，concat 只能反复轮询到轮次耗尽。
+ * 预算统一在此派生，调用方不再各自写死。
+ */
+export const MEDIA_PROBE_DEFAULT_TIMEOUT_MS = 60_000;
+
+export function resolveMediaProbeTimeoutMs(explicit?: number): number {
+	if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
+		return Math.trunc(explicit);
+	}
+	const configured = Number(process.env.MEDIA_PROBE_TIMEOUT_MS ?? "");
+	return Number.isFinite(configured) && configured > 0
+		? Math.trunc(configured)
+		: MEDIA_PROBE_DEFAULT_TIMEOUT_MS;
+}
+
 /** ffprobe 探测（media-worker 路径）。失败/未启用返回 null。 */
 export async function probeMediaViaMediaWorker(input: {
 	videoR2Key?: string;
@@ -499,7 +518,7 @@ export async function probeMediaViaMediaWorker(input: {
 			? { url: input.url }
 			: null;
 	if (!source) return null;
-	const deadline = new Date(Date.now() + (input.timeoutMs ?? 30_000));
+	const deadline = new Date(Date.now() + resolveMediaProbeTimeoutMs(input.timeoutMs));
 	return new Promise((resolvePromise) => {
 		try {
 			client.probeMedia({ source }, { deadline }, (err, res) => {

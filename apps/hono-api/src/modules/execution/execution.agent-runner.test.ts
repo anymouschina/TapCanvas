@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX } from "@tapcanvas/workflow-kernel-protocol";
+import { validateWorkflowAgentOutput } from "./execution.agent-output-contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "../../middleware/error";
 import type { AppContext, WorkerEnv } from "../../types";
@@ -69,9 +72,11 @@ vi.mock("../memory/execution-trace-events.repo", () => ({ getExecutionTraceLifec
 
 import {
 	isRecoverableWorkflowAgentInterruption,
+	workflowAgentStructuredOutput,
 	runWorkflowAgentNode,
 } from "./execution.agent-runner";
 import { workflowAgentPublicTurnId } from "./execution.agent-identity";
+import { workflowIntentFixture } from "./test-fixtures/workflow-user-intent";
 
 const request = {
 	executionId: "execution-1",
@@ -101,6 +106,81 @@ const request = {
 const recentIso = (ageMs = 1_000): string => new Date(Date.now() - ageMs).toISOString();
 
 describe("workflow Agent runner durable interruption contract", () => {
+	it("keeps the reviewed text envelope intact for the executor output contract", async () => {
+		const text = "  完整正文\n保留末尾空白  ";
+		runPersistedAgentsChatTask.mockResolvedValueOnce({
+			result: { id: "child", assets: [], raw: { text: JSON.stringify({ artifactType: "tapcanvas.text/v1", text }), meta: {
+				expectedDelivery: {}, deliveryEvidence: {}, deliveryVerification: { status: "satisfied" }, requestTerminal: { status: "succeeded" },
+			} } }, response: {},
+		});
+		const result = await runWorkflowAgentNode({} as WorkerEnv, { ...request, outputEncoding: "json_artifact" });
+		expect(result.text).toBe(JSON.stringify({ artifactType: "tapcanvas.text/v1", text }));
+		expect(validateWorkflowAgentOutput({ encoding: "json_artifact", artifactType: "tapcanvas.text/v1", rawText: result.text, jsonArrayContract: null, jsonObjectContract: null })).toEqual({ ok: true, text: text.trim() });
+		const dispatched = runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
+			taskRequest: { extras: { outputContract: unknown; structuredOutputSourceContext: string } };
+		};
+		expect(dispatched.taskRequest.extras.outputContract).toMatchObject({
+			kind: "json", submissionPolicy: "repair_with_correction", requiredStringFields: ["artifactType", "text"],
+		});
+		expect(dispatched.taskRequest.extras.structuredOutputSourceContext).toContain("source");
+	});
+	it("transfers the exact inactive predecessor draft into a new execution session", async () => {
+		const sourceContext = JSON.stringify({ inputs: request.inputs, userIntentContract: null, projectContext: null });
+		const typedRequest = { ...request, outputEncoding: "json_artifact" as const };
+		const contract = workflowAgentStructuredOutput(typedRequest)!.outputContract;
+		const contractHash = `sha256:${createHash("sha256").update(JSON.stringify(contract, (_key, value: unknown) => {
+			if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+			const object = value as Record<string, unknown>;
+			return Object.fromEntries(Object.keys(object).sort().map(key => [key, object[key]]));
+		})).digest("hex")}`;
+		const repair = { version: 1, contractHash, candidate: '{"artifactType":', correction: "truncated",
+			sourceContext, continuation: true };
+		getAgentsChatTurnStatus.mockResolvedValueOnce({ activeTurn: false, turn: { turnId: "old-turn" }, structuredOutputRepair: repair });
+		runPersistedAgentsChatTask.mockResolvedValueOnce({ result: { id: "child", assets: [], raw: {
+			text: '{"artifactType":"tapcanvas.text/v1","text":"done"}', meta: { requestTerminal: { status: "succeeded" } } } }, response: {} });
+		await runWorkflowAgentNode({} as WorkerEnv, { ...typedRequest, previousEvidence: {
+			agentRepairSource: { sessionKey: "old-session", turnId: "old-turn" } } });
+		expect(getAgentsChatTurnStatus).toHaveBeenCalledWith(expect.anything(), request.ownerId, "old-session",
+			expect.objectContaining({ includeStructuredOutputRepair: true }));
+		const call = runPersistedAgentsChatTask.mock.calls.at(-1)![0];
+		expect(call.taskRequest.extras.sessionKey).not.toBe("old-session");
+		expect(call.taskRequest.extras.structuredOutputRepair).toEqual(repair);
+		expect(call.taskRequest.extras.continuationExecutionContract.structuredOutputRepair).toEqual(repair);
+	});
+
+	it("measures repair context without logging source text or changing frozen identity", async () => {
+		const source = "private-chapter-body-".repeat(100);
+		const inputs = { input: [{ source, knowledgeCandidateSearch: { entries: [{ body: "audit-only-".repeat(200) }] } }] };
+		const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+		try {
+			runPersistedAgentsChatTask.mockResolvedValueOnce({ result: { id: "child", assets: [],
+				raw: { text: JSON.stringify({ artifactType: "tapcanvas.text/v1", text: "artifact" }),
+					meta: { requestTerminal: { status: "succeeded" } } } }, response: {} });
+			await runWorkflowAgentNode({} as WorkerEnv, { ...request, inputs, outputEncoding: "json_artifact" });
+			const dispatched = runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
+				taskRequest: { prompt: string; extras: { structuredOutputSourceContext: string } };
+			};
+			const frozen = dispatched.taskRequest.extras.structuredOutputSourceContext;
+			expect(frozen).toBe(JSON.stringify({ inputs, userIntentContract: null, projectContext: null }));
+			const diagnosticText = info.mock.calls.map(([value]) => String(value))
+				.find((value) => value.includes('"message":"workflow_agent_context_volume"'));
+			expect(diagnosticText).toBeDefined();
+			const diagnostic = JSON.parse(diagnosticText!) as Record<string, unknown>;
+			expect(diagnostic).toMatchObject({ promptCharacters: dispatched.taskRequest.prompt.length,
+				frozenSourceCharacters: frozen.length, diagnosticProjectionApplied: false, retainedCandidateCharacters: 0 });
+			expect(diagnostic.diagnosticProjectionCharacters).toBeLessThan(frozen.length);
+			expect(diagnosticText).not.toContain(source);
+			expect(diagnosticText).not.toContain("audit-only");
+		} finally { info.mockRestore(); }
+	});
+	it("retains the logical turn when an existing-turn recovery read is temporarily unavailable", async () => {
+		runPersistedAgentsChatTask.mockRejectedValueOnce(new AppError("already exists", { status: 409, code: "agents_chat_turn_already_exists" }));
+		getAgentsChatTurnStatus.mockRejectedValueOnce(new AppError("runtime unavailable", { status: 503, code: "agents_chat_runtime_request_failed" }));
+		const result = await runWorkflowAgentNode({} as WorkerEnv, request);
+		expect(result.requestTerminal).toMatchObject({ status: "suspended" });
+		expect(result.taskId).toBe(workflowAgentPublicTurnId({ executionId: request.executionId, nodeId: request.nodeId, physicalRetryOrdinal: null }));
+		expect(runPersistedAgentsChatTask).toHaveBeenCalledTimes(1);
+	});
 	beforeEach(() => {
 		vi.clearAllMocks();
 		getExecutionTraceLifecycleSnapshot.mockResolvedValue(null);
@@ -122,6 +202,67 @@ describe("workflow Agent runner durable interruption contract", () => {
 		}]);
 	});
 
+	it("fences the predecessor in the stable session before admitting a physical retry", async () => {
+		getAgentsChatTurnStatus.mockResolvedValueOnce({ sessionId: "workflow:execution-1:agent-1", activeTurn: false,
+			turn: { turnId: "workflow:execution-1:agent-1", state: "failed" } });
+		runPersistedAgentsChatTask.mockResolvedValueOnce({ result: { id: "workflow:execution-1:agent-1:physical-retry:1", assets: [],
+			raw: { text: "artifact", meta: { requestTerminal: { status: "succeeded" } } } }, response: {} });
+		const result = await runWorkflowAgentNode({} as WorkerEnv, { ...request, resumeOnly: true,
+			previousEvidence: { deliveryEvidence: { retryablePhysicalFailure: true, physicalRetryOrdinal: 1 } } });
+		expect(result).toMatchObject({ taskId: "workflow:execution-1:agent-1:physical-retry:1",
+			deliveryEvidence: { sessionKey: "workflow:execution-1:agent-1", physicalRetryOrdinal: 1 } });
+		expect(cancelWorkflowAgentTurns).toHaveBeenCalledWith(expect.objectContaining({ targets: [expect.objectContaining({
+			sessionId: "workflow:execution-1:agent-1", turnId: "workflow:execution-1:agent-1",
+		})] }));
+		expect(runPersistedAgentsChatTask).toHaveBeenCalledTimes(1);
+		expect(buildTaskRequest).toHaveBeenLastCalledWith(expect.objectContaining({ sessionKey: "workflow:execution-1:agent-1" }));
+	});
+
+	it.each([1, 2, 3])("fences an observed older generation when intervening generations never admitted (retry %i)", async (ordinal) => {
+		getAgentsChatTurnStatus.mockResolvedValueOnce({ sessionId: "workflow:execution-1:agent-1", activeTurn: false,
+			turn: { turnId: "workflow:execution-1:agent-1", state: "failed" } });
+		runPersistedAgentsChatTask.mockResolvedValueOnce({ result: { id: `workflow:execution-1:agent-1:physical-retry:${ordinal}`, assets: [],
+			raw: { text: "artifact", meta: { requestTerminal: { status: "succeeded" } } } }, response: {} });
+		const result = await runWorkflowAgentNode({} as WorkerEnv, { ...request, resumeOnly: true,
+			previousEvidence: { deliveryEvidence: { physicalRetryOrdinal: ordinal } } });
+		expect(result).toMatchObject({ taskId: `workflow:execution-1:agent-1:physical-retry:${ordinal}`,
+			deliveryEvidence: { sessionKey: "workflow:execution-1:agent-1", physicalRetryOrdinal: ordinal } });
+		expect(cancelWorkflowAgentTurns).toHaveBeenCalledWith(expect.objectContaining({ targets: [expect.objectContaining({
+			sessionId: "workflow:execution-1:agent-1", turnId: "workflow:execution-1:agent-1",
+		})] }));
+		expect(runPersistedAgentsChatTask).toHaveBeenCalledTimes(1);
+		expect(buildTaskRequest).toHaveBeenLastCalledWith(expect.objectContaining({ sessionKey: "workflow:execution-1:agent-1" }));
+	});
+
+	it.each(["running", "failed"])("does not re-admit an accepted identity hidden by an older projection (%s)", async (status) => {
+		const publicTurnId = "workflow:execution-1:agent-1:physical-retry:2";
+		getAgentsChatTurnStatus.mockResolvedValueOnce({ sessionId: "workflow:execution-1:agent-1", activeTurn: false,
+			turn: { turnId: "workflow:execution-1:agent-1", state: "failed" } });
+		getExecutionTraceLifecycleSnapshot.mockResolvedValueOnce({
+			logicalTaskId: publicTurnId, rootTraceId: publicTurnId, status,
+			startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+		});
+		const result = await runWorkflowAgentNode({} as WorkerEnv, { ...request, resumeOnly: true,
+			previousEvidence: { deliveryEvidence: { physicalRetryOrdinal: 2 } } });
+		expect(result.requestTerminal).toMatchObject({ status: "suspended" });
+		expect(runPersistedAgentsChatTask).not.toHaveBeenCalled();
+		expect(cancelWorkflowAgentTurns).toHaveBeenCalledTimes(1);
+		if (status === "failed") expect(result.deliveryEvidence).toMatchObject({ physicalRetryOrdinal: 3 });
+	});
+
+	it.each(["chat_resume_turn_mismatch", "chat_resume_claim_superseded"])("reconciles a lost resume race without failing the logical task: %s", async (code) => {
+		getAgentsChatTurnStatus.mockResolvedValueOnce({ sessionId: "workflow:execution-1:agent-1", activeTurn: false,
+			turn: { turnId: "workflow:execution-1:agent-1", state: "suspended", phase: "suspended",
+				reasonCode: "structured_output_repair_exhausted", finalResponse: null,
+				recoveryCheckpoint: { progressRevision: 1, physicalRunId: "physical-1", reasonCode: "structured_output_repair_exhausted", durableTaskReferences: [], durableProgressClaims: [] } } });
+		resumePersistedAgentsChatTurn.mockRejectedValueOnce(new AppError("ownership changed", { status: 409, code }));
+		const result = await runWorkflowAgentNode({} as WorkerEnv, { ...request, resumeOnly: true });
+		expect(result.requestTerminal).toMatchObject({ status: "suspended", reason: "workflow_agent_resume_ownership_changed" });
+		expect(result.deliveryEvidence).toMatchObject({ reconciliationFailure: { action: "resume", code } });
+		expect(runPersistedAgentsChatTask).not.toHaveBeenCalled();
+		expect(cancelWorkflowAgentTurns).not.toHaveBeenCalled();
+	});
+
 	it("publishes the one-submission policy as a first-class runtime contract", async () => {
 		const expectedTurnId = workflowAgentPublicTurnId({
 			executionId: request.executionId,
@@ -140,6 +281,17 @@ describe("workflow Agent runner durable interruption contract", () => {
 						deliveryVerification: { status: "satisfied" },
 							requestTerminal: { status: "succeeded" },
 							runtime: {
+								structuredOutputReview: { version: 1, blocking: false, status: "observations_remaining", observations: [{ code: "model_authored_consistency", message: "required=20 available=5" }] },
+								knowledgeCandidateSearch: {
+									version: 1,
+									status: "candidate_found",
+									attempted: true,
+									candidateCount: 2,
+									blocking: false,
+									rationale: "已返回知识卡候选元数据。",
+									domains: ["视听语言演出"],
+									toolCallId: "knowledge-search-1",
+								},
 								promptExampleCandidateSearch: {
 									version: 1,
 									status: "no_match",
@@ -165,6 +317,15 @@ describe("workflow Agent runner durable interruption contract", () => {
 			candidateCount: 0,
 			toolCallId: "prompt-search-1",
 		});
+		expect(result.structuredOutputReview).toMatchObject({ blocking: false, status: "observations_remaining" });
+		expect(result.requestTerminal).toMatchObject({ status: "succeeded" });
+		expect(result.knowledgeCandidateSearch).toMatchObject({
+			status: "candidate_found",
+			attempted: true,
+			candidateCount: 2,
+			domains: ["视听语言演出"],
+			toolCallId: "knowledge-search-1",
+		});
 
 		const call = runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
 			rootRequestId: string;
@@ -175,17 +336,138 @@ describe("workflow Agent runner durable interruption contract", () => {
 		expect(call.taskRequest.extras?.logicalTaskId).toBe(expectedTurnId);
 		expect(call.taskRequest.extras?.sessionKey).toBe(expectedTurnId);
 		expect(call.taskRequest.extras?.structuredOutputSubmissionPolicy)
-			.toBe("single_submission_record_and_fail");
+			.toBe("repair_with_correction");
+		expect(call.taskRequest.extras?.requestedMaxOutputTokens).toBe(4096);
+		expect(call.taskRequest.extras?.maxOutputTokens).toBe(4096);
 		expect(call.taskRequest.extras?.continuationExecutionContract).toMatchObject({
-			structuredOutputSubmissionPolicy: "single_submission_record_and_fail",
+			structuredOutputSubmissionPolicy: "repair_with_correction",
+			requestedMaxOutputTokens: 4096,
+			maxOutputTokens: 4096,
 		});
 		expect((runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
 			taskRequest: { prompt: string };
-		}).taskRequest.prompt).toContain("模型只提交一次完整首稿");
+		}).taskRequest.prompt).toContain("允许一次额外 format 修复");
 	});
 
-	it("propagates a dynamic pre-provider physical attempt deadline to agents-cli", async () => {
-		const nowMs = Date.parse("2026-08-29T05:01:00.000Z");
+	it("reserves hidden reasoning and visible JSON capacity for every typed Workflow Agent", async () => {
+		runPersistedAgentsChatTask.mockResolvedValueOnce({
+			result: {
+				id: "workflow:execution-1:agent-1",
+				assets: [],
+				raw: {
+					text: '{"value":"完整产物"}',
+					meta: {
+						expectedDelivery: { active: true },
+						deliveryEvidence: { items: [{ evidenceId: "e-json" }] },
+						deliveryVerification: { status: "satisfied" },
+						requestTerminal: { status: "succeeded" },
+					},
+				},
+			},
+			response: {},
+		});
+
+		await runWorkflowAgentNode({} as WorkerEnv, {
+			...request,
+			outputArtifactType: "tapcanvas.test-json/v1",
+			outputEncoding: "json_object",
+			jsonObjectContract: {
+				requiredStringFields: ["value"],
+				allowedFields: ["value"],
+			},
+		});
+
+		const call = runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
+			taskRequest: { extras?: Record<string, unknown> };
+		};
+		expect(call.taskRequest.extras).toMatchObject({
+			requestedMaxOutputTokens: 4096,
+			maxOutputTokens: WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX,
+			continuationExecutionContract: {
+				requestedMaxOutputTokens: 4096,
+				maxOutputTokens: WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX,
+			},
+		});
+	});
+
+	it("projects canvas facts once when delivery-contract carries a downstream copy", async () => {
+		runPersistedAgentsChatTask.mockResolvedValueOnce({
+			result: {
+				id: "workflow:execution-1:agent-1",
+				assets: [],
+				raw: {
+					text: "完整产物",
+					meta: {
+						expectedDelivery: { active: true },
+						deliveryEvidence: { items: [{ evidenceId: "e-context" }] },
+						deliveryVerification: { status: "satisfied" },
+						requestTerminal: { status: "succeeded" },
+					},
+				},
+			},
+			response: {},
+		});
+
+		await runWorkflowAgentNode({} as WorkerEnv, {
+			...request,
+			inputs: {
+				"canvas-facts": [{
+					text: "唯一来源正文",
+					userRequest: {
+						kind: "public_chat_turn",
+						content: "当前回合要求从高潮中段进入并保持开放动作出口",
+						requestId: "turn-1",
+					},
+				}],
+				"delivery-contract": [{
+					userIntentContract: { contractHash: "standing-preference-contract", prefer: ["测试用户偏好事实"] },
+					canvasFacts: {
+						authoritativeSources: [{ text: "duplicate-source-body" }],
+						userRequest: {
+							kind: "public_chat_turn",
+							content: "当前回合要求从高潮中段进入并保持开放动作出口",
+							requestId: "turn-1",
+						},
+					},
+					generationContract: { videoModel: "model-1", durationOptions: [5] },
+				}],
+			},
+		});
+
+		const prompt = (runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
+			taskRequest: { prompt: string };
+		}).taskRequest.prompt;
+		expect(prompt).toContain('"canvasFactsSourcePort":"canvas-facts"');
+		expect(prompt).not.toContain("duplicate-source-body");
+		expect(prompt).toContain("唯一来源正文");
+		expect(prompt).toContain("当前回合要求从高潮中段进入并保持开放动作出口");
+		expect(prompt).toContain("优先级高于旧画布文本对呈现方式的隐含要求");
+		expect(prompt).toContain("expandedSourceDraft");
+		expect(prompt).toContain('同一执行链携带的 UserIntentContract');
+		expect(prompt).toContain('"contractHash":"standing-preference-contract"');
+	});
+
+	it("delivers snapshot intent to the model and retrieval without changing the node's output goal", async () => {
+		const contract = workflowIntentFixture();
+		runPersistedAgentsChatTask.mockResolvedValueOnce({
+			result: { id: "child", assets: [], raw: { text: "node artifact", meta: {
+				expectedDelivery: {}, deliveryEvidence: {}, deliveryVerification: { status: "satisfied" }, requestTerminal: { status: "succeeded" },
+			} } }, response: {},
+		});
+		await runWorkflowAgentNode({} as WorkerEnv, { ...request, userIntentContract: contract, inputs: { item: [{ itemId: "2" }] } });
+		const dispatched = runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
+			taskRequest: { prompt: string; extras: { retrievalContext: { facts: { id: string; text: string }[] }; userIntentContract?: unknown } };
+		};
+		expect(dispatched.taskRequest.prompt).toContain(JSON.stringify(contract));
+		const fact = dispatched.taskRequest.extras.retrievalContext.facts.find((item) => item.id === "parent-user-intent");
+		expect(JSON.parse(fact!.text)).toEqual(contract);
+		// The parent async goal is context, not a child command to generate media.
+		expect(dispatched.taskRequest.extras.userIntentContract).toBeUndefined();
+		expect(dispatched.taskRequest.prompt).toContain(request.outputArtifactType);
+	});
+
+	it("retains an overdue production target as diagnostics without aborting the agent", async () => {
+		const nowMs = Date.parse("2026-08-29T05:06:00.000Z");
 		const dateNow = vi.spyOn(Date, "now").mockReturnValue(nowMs);
 		runPersistedAgentsChatTask.mockResolvedValueOnce({
 			result: {
@@ -207,11 +489,12 @@ describe("workflow Agent runner durable interruption contract", () => {
 		try {
 			await runWorkflowAgentNode({} as WorkerEnv, {
 				...request,
+				logicalTaskBudgetRootId: "public-turn-1",
 				productionStartDeadline: {
 					version: 2,
 					kind: "video_provider_receipt",
 					source: "public_chat",
-					anchor: "workflow_execution_created",
+					anchor: "request_accepted",
 					publicTurnId: "public-turn-1",
 					acceptedAt: "2026-08-29T05:00:00.000Z",
 					deadlineAt: "2026-08-29T05:05:00.000Z",
@@ -226,11 +509,10 @@ describe("workflow Agent runner durable interruption contract", () => {
 		const call = runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
 			taskRequest?: { extras?: Record<string, unknown> };
 		} | undefined;
-		expect(call?.taskRequest?.extras?.workflowPhysicalAttemptDeadlineAt)
-			.toBe("2026-08-29T05:05:00.000Z");
-		expect(call?.taskRequest?.extras?.continuationExecutionContract).toMatchObject({
-			workflowPhysicalAttemptDeadlineAt: "2026-08-29T05:05:00.000Z",
-		});
+		expect(call?.taskRequest?.extras?.workflowPhysicalAttemptDeadlineAt).toBeUndefined();
+		expect(call?.taskRequest?.extras?.logicalTaskBudgetRootId).toBe("public-turn-1");
+		expect(call?.taskRequest?.extras?.continuationExecutionContract).toHaveProperty("logicalTaskBudgetRootId", "public-turn-1");
+		expect(call?.taskRequest?.extras?.continuationExecutionContract).not.toHaveProperty("workflowPhysicalAttemptDeadlineAt");
 	});
 
 	it("polls the same active durable turn without starting a second chat", async () => {
@@ -560,10 +842,12 @@ describe("workflow Agent runner durable interruption contract", () => {
 			allowedTools: ["skill_search", "Skill", "knowledge_search", "knowledge_read"],
 		});
 		expect(call?.taskRequest?.prompt).toContain("冻结 Workflow Skill 依赖已经预载");
-		expect(call?.taskRequest?.prompt).toContain("禁止调用 skill_search 重新发现或替换这些依赖");
+		expect(call?.taskRequest?.prompt).toContain("skill_search 仍可用于发现当前请求需要的额外 Skill");
 		expect(call?.taskRequest?.prompt).toContain("shots[].durationSeconds 是最终可执行秒数，不是相对权重");
-		expect(call?.taskRequest?.prompt).toContain("事件在 16 秒结束、镜头从 16 秒开始时，该镜绝不能继续声明该事件");
-		expect(call?.taskRequest?.prompt).toContain("runtime 不缩放镜头时长、不重映射事件索引，也不回灌修订");
+		expect(call?.taskRequest?.prompt).toContain("边界相等不算相交");
+		expect(call?.taskRequest?.prompt).toContain("motionDynamics.direction");
+		expect(call?.taskRequest?.prompt).toContain("left、right、forward、backward、upward、downward 或 diagonal");
+		expect(call?.taskRequest?.prompt).toContain("首轮结构失败会保留精确路径、候选长度与哈希并回灌同一 ReAct 链");
 	});
 
 	it("preserves the recovery window while the scheduled physical continuation is running", async () => {
@@ -933,6 +1217,51 @@ describe("workflow Agent runner durable interruption contract", () => {
 		expect(runPersistedAgentsChatTask).not.toHaveBeenCalled();
 	});
 
+	it.each([2, 3, 7])("continues rejected physical generation %i without returning to the original run", async (ordinal) => {
+		getAgentsChatTurnStatus.mockResolvedValueOnce({
+			sessionId: `workflow:execution-1:agent-1:physical-retry:${ordinal}`,
+			durable: true,
+			activeTurn: false,
+			turn: {
+				turnId: `workflow:execution-1:agent-1:physical-retry:${ordinal}`,
+				internalTurnId: "turn-1",
+				state: "succeeded",
+				phase: "succeeded",
+				startedAt: "2026-08-12T00:00:00.000Z",
+				updatedAt: "2026-08-12T00:00:02.000Z",
+				lastConfirmedAt: "2026-08-12T00:00:02.000Z",
+				requestText: "",
+				reasonCode: null,
+				suspension: null,
+				recoveryCheckpoint: null,
+				lastConfirmedSummary: "当前回合已完成",
+				finalResponse: "完整产物",
+				pendingUserInput: null,
+				pendingQueueCount: 0,
+				recentEvents: [],
+			},
+		});
+
+		await expect(runWorkflowAgentNode({} as WorkerEnv, {
+			...request,
+			resumeOnly: true,
+			previousEvidence: {
+				deliveryEvidence: { physicalRetryOrdinal: ordinal },
+				outputRepair: { version: 1, sourceTurnId: `workflow:execution-1:agent-1:physical-retry:${ordinal}`, candidate: "完整产物", error: "field must be a string" },
+			},
+		})).resolves.toMatchObject({
+			taskId: `workflow:execution-1:agent-1:physical-retry:${ordinal}`,
+
+			deliveryVerification: null,
+			deliveryEvidence: { physicalRetryOrdinal: ordinal + 1, physicalFailureReason: "structured_output_invalid" },
+			requestTerminal: {
+				status: "suspended",
+				reason: "workflow_agent_physical_retry_pending",
+			},
+		});
+		expect(runPersistedAgentsChatTask).not.toHaveBeenCalled();
+	});
+
 	it("schedules the persisted continuation for a physical-budget suspension", async () => {
 		getAgentsChatTurnStatus.mockResolvedValueOnce({
 			sessionId: "workflow:execution-1:agent-1",
@@ -1006,7 +1335,7 @@ describe("workflow Agent runner durable interruption contract", () => {
 		expect(runPersistedAgentsChatTask).not.toHaveBeenCalled();
 	});
 
-	it("keeps waiting when another reconciler resumes a suspended checkpoint first", async () => {
+	it.each(["suspended", "failed"] as const)("resumes a matching physical suspension from a %s checkpoint without duplicating execution", async (state) => {
 		getAgentsChatTurnStatus.mockResolvedValueOnce({
 			sessionId: "workflow:execution-1:agent-1",
 			durable: true,
@@ -1014,8 +1343,8 @@ describe("workflow Agent runner durable interruption contract", () => {
 			turn: {
 				turnId: "workflow:execution-1:agent-1",
 				internalTurnId: "turn-suspended-race",
-				state: "suspended",
-				phase: "suspended",
+				state,
+				phase: state,
 				startedAt: "2026-08-12T00:00:00.000Z",
 				updatedAt: "2026-08-12T00:00:02.000Z",
 				lastConfirmedAt: "2026-08-12T00:00:02.000Z",
@@ -1246,7 +1575,7 @@ describe("workflow Agent runner durable interruption contract", () => {
 		expect(resumePersistedAgentsChatTurn).not.toHaveBeenCalled();
 	});
 
-	it("returns one recorded structured-output candidate without correction or regeneration", async () => {
+	it("reopens a repairable structured-output turn instead of projecting an invalid candidate as success", async () => {
 		getAgentsChatTurnStatus.mockResolvedValueOnce({
 			sessionId: "workflow:execution-1:agent-1",
 			durable: true,
@@ -1285,13 +1614,15 @@ describe("workflow Agent runner durable interruption contract", () => {
 			previousEvidence: null,
 		})).resolves.toMatchObject({
 			taskId: "workflow:execution-1:agent-1",
-			text: '{"invalidCandidate":true}',
+			text: "",
 			deliveryEvidence: {
-				physicalActionTerminal: "structured_output_invalid",
+				retryablePhysicalFailure: true,
+				physicalFailureReason: "structured_output_invalid",
+				physicalRetryOrdinal: 1,
 			},
 			requestTerminal: {
-				status: "succeeded",
-				reason: "agents_cli_single_submission_recorded",
+				status: "suspended",
+				reason: "workflow_agent_physical_retry_pending",
 			},
 		});
 		expect(resumePersistedAgentsChatTurn).not.toHaveBeenCalled();
@@ -1579,7 +1910,7 @@ describe("workflow Agent runner durable interruption contract", () => {
 		);
 	});
 
-	it("gives BeatSheet every ready project image while keeping explicit selections mandatory", async () => {
+	it.each([true, false])("gives BeatSheet every ready project image with explicit selection=%s", async (hasSelection) => {
 		runPersistedAgentsChatTask.mockResolvedValueOnce({
 			result: {
 				id: "workflow:execution-1:agent-1",
@@ -1614,17 +1945,18 @@ describe("workflow Agent runner durable interruption contract", () => {
 				allowedFields: ["protocolVersion", "objectRegistry", "beats"],
 			},
 			projectContext: {
+				mediaUnderstanding: [{ referenceId: "asset-zhangsan", text: "Visible garment; fibre composition unknown.", question: "Read image", provenance: { version: 1, mediaType: "image", source: "persisted_task_result", taskId: "vision-1", modelKey: "vision", referenceId: "asset-zhangsan", promptHash: "question-hash", analysisHash: "analysis-hash", analyzedAt: "2026-08-30T06:00:00.000Z" } }],
 				version: 3,
 				projectId: "project-1",
 				canvasId: "chapter:chapter-1",
 				sourceNodeId: "chapter-seed-1",
-				selectedAssetIds: ["asset-zhangsan"],
+				selectedAssetIds: hasSelection ? ["asset-zhangsan"] : [],
 				projectAssetIds: ["asset-zhangsan", "asset-qin-courtyard"],
 				timeline: { clips: [] },
 				selection: {
-					nodeIds: ["node-zhangsan"],
-					assetIds: ["asset-zhangsan"],
-					activeNodeId: "node-zhangsan",
+					nodeIds: hasSelection ? ["node-zhangsan"] : [],
+					assetIds: hasSelection ? ["asset-zhangsan"] : [],
+					activeNodeId: hasSelection ? "node-zhangsan" : null,
 					groupId: null,
 				},
 				permissions: {
@@ -1654,6 +1986,7 @@ describe("workflow Agent runner durable interruption contract", () => {
 					assetPurpose: null,
 					productionEligible: true,
 					productionExclusionReason: null,
+					styleFingerprint: null,
 					sourceFacts: {
 						referenceType: "character",
 						roleName: "张三",
@@ -1688,6 +2021,7 @@ describe("workflow Agent runner durable interruption contract", () => {
 					assetPurpose: null,
 					productionEligible: true,
 					productionExclusionReason: null,
+					styleFingerprint: null,
 					sourceFacts: {
 						referenceType: "scene",
 						roleName: "秦家院落与柴房",
@@ -1710,17 +2044,25 @@ describe("workflow Agent runner durable interruption contract", () => {
 		const prompt = (runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as {
 			taskRequest: { prompt: string };
 		}).taskRequest.prompt;
-		expect(prompt).toContain("显式所选资产是一等执行事实，不是可选参考");
-		expect(prompt).toContain("根级 objectRegistry[].referenceAssetIds");
-		expect(prompt).toContain("selectedAssetIds 的每个 ID 都在 objectRegistry[].referenceAssetIds 中精确出现一次");
+		const extras = (runPersistedAgentsChatTask.mock.calls.at(-1)?.[0] as { taskRequest: { extras: Record<string, unknown> } }).taskRequest.extras;
+		expect(extras.structuredOutputSourceContext).not.toContain("Visible garment; fibre composition unknown.");
+		expect(extras.structuredOutputSourceContext).toContain("asset-zhangsan");
+		if (hasSelection) expect(prompt).toContain("显式所选资产是一等执行事实，不是可选参考");
+		if (hasSelection) expect(prompt).toContain("根级 objectRegistry[].referenceAssetIds");
+		if (hasSelection) expect(prompt).toContain("selectedAssetIds 的每个 ID 都在 objectRegistry[].referenceAssetIds 中精确出现一次");
 		expect(prompt).toContain('"assetId":"asset-zhangsan"');
 		expect(prompt).toContain('"assetId":"asset-qin-courtyard"');
 		expect(prompt).toContain('"selected":false');
 		expect(prompt).toContain('"physicalIdentityKey":"spirit-zhangsan"');
+		expect(prompt).not.toContain("Visible garment; fibre composition unknown.");
+		expect(prompt).toContain('"tool":"tapcanvas_workflow_execution_inspect"');
 		expect(prompt).toContain('"projectAssetCandidates"');
+		expect(prompt).toContain('"mediaKind":"image"');
+		expect(prompt).toContain('"view":"assets"');
+		expect(extras.structuredOutputSourceContext).toContain('"mediaKind":"image"');
 		expect(prompt).toContain("展示名、canonicalName 或章节内称谓不同不代表新身份");
 		expect(prompt).toContain("runtime 后续只验证精确 ID 的项目归属、图片就绪状态和单对象绑定，不会返回语义纠偏");
-		expect(prompt).toContain("runtime 只验证绑定，不会补绑、猜测或把拒因回灌给模型");
+		if (hasSelection) expect(prompt).toContain("runtime 只解析和验证显式绑定，不按名称猜测");
 		expect(prompt).toContain("一次性路人、匿名围观者、背景人群");
 		expect(prompt).toContain("referenceRole=none 且两个引用 ID 数组为空");
 	});
@@ -1759,7 +2101,7 @@ describe("workflow Agent runner durable interruption contract", () => {
 					extras: expect.objectContaining({
 						outputContract: expect.objectContaining({
 							kind: "json",
-							executionPolicy: "single_inference_no_tools_record_and_fail",
+							submissionPolicy: "repair_with_correction",
 							contractName: "tapcanvas.video-writer-artifact",
 							contractVersion: "14",
 							requiredArrayField: "clips",
@@ -1814,7 +2156,6 @@ describe("workflow Agent runner durable interruption contract", () => {
 					extras: expect.objectContaining({
 					outputContract: expect.objectContaining({
 						kind: "json",
-						executionPolicy: "single_inference_no_tools_record_and_fail",
 						contractName: "tapcanvas.video-writer-artifact",
 						contractVersion: "14",
 						expectedArrayLength: 1,
@@ -1832,6 +2173,14 @@ describe("workflow Agent runner durable interruption contract", () => {
 	});
 
 	it("requires SpeechEvent arrays in the same Agent chain when the frozen clip context contains speech", async () => {
+		const sourceEvidence = {
+			protocolVersion: "tapcanvas.source-evidence/v1",
+			origin: "delivery-contract.canvasFacts.authoritativeSources",
+			status: "matched",
+			sourceId: "source-original",
+			sourceFingerprint: "source-original-fingerprint",
+			sources: [{ sourceId: "source-original", sourceFingerprint: "source-original-fingerprint", content: "  爬升再俯冲。\n卸力翻滚踩稳。  " }],
+		};
 		runPersistedAgentsChatTask.mockResolvedValueOnce({
 			result: {
 				id: "workflow:execution-1:agent-1",
@@ -1856,7 +2205,9 @@ describe("workflow Agent runner durable interruption contract", () => {
 			inputs: {
 				"clip-contexts": [{
 					beat: { durationSeconds: 15 },
-					spokenScript: [{ lineId: "L01", speakerName: "小美" }],
+					sourceEvidence,
+					spokenScript: [{ lineId: "L01", speakerName: "小美", text: "我在这里" }],
+					dialoguePaceRate: 3,
 				}],
 			},
 			jsonObjectContract: {
@@ -1868,14 +2219,18 @@ describe("workflow Agent runner durable interruption contract", () => {
 		});
 
 		const outputContract = runPersistedAgentsChatTask.mock.calls.at(-1)?.[0]?.taskRequest?.extras?.outputContract;
+		const prompt = runPersistedAgentsChatTask.mock.calls.at(-1)?.[0]?.taskRequest?.prompt as string;
+		expect(prompt).toContain(JSON.stringify(sourceEvidence));
+		expect(prompt.split(JSON.stringify(sourceEvidence.sources[0].content).slice(1, -1))).toHaveLength(2);
 		expect(outputContract).toMatchObject({
 			kind: "json",
-			executionPolicy: "single_inference_no_tools_record_and_fail",
 			contractName: "tapcanvas.video-writer-artifact",
 			contractVersion: "14",
 			requiredArrayField: "clips",
 			expectedArrayLength: 1,
 			itemTimelineDurationSeconds: 15,
+			itemSpeechContract: { dialoguePaceRate: 3, lines: [{ lineId: "L01", speakerName: "小美", text: "我在这里" }] },
+			allowedTopLevelFields: ["clips", "creativeReview", "selfQaNote"],
 			requiredNonEmptyArrayPaths: ["shots", "speakerBindings", "speechEvents"],
 		});
 	});

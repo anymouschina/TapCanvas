@@ -1,0 +1,4 @@
+interface:
+  display_name: "TapCanvas 道具卡"
+  short_description: "创建可复用、可交互且状态连续可追溯的道具身份卡"
+  default_prompt: "Use $tapcanvas-prop-card to create a canonical prop identity card for this story asset."

@@ -1,7 +1,7 @@
 import {
-	parseWorkflowKnowledgeCandidateSetV1,
+	parseWorkflowKnowledgeCandidateSetV2,
 	parseWorkflowKnowledgeCardV1,
-	type WorkflowKnowledgeCandidateSetV1,
+	type WorkflowKnowledgeCandidateSetV2,
 	type WorkflowKnowledgeCardV1,
 } from "@tapcanvas/workflow-kernel-protocol";
 import type { WorkerEnv } from "../../types";
@@ -71,8 +71,8 @@ async function requestWorkflowKnowledge(env: WorkerEnv, pathname: string, body: 
 export async function searchWorkflowKnowledge(
 	env: WorkerEnv,
 	request: WorkflowKnowledgeSearchRequest,
-): Promise<WorkflowKnowledgeCandidateSetV1> {
-	return parseWorkflowKnowledgeCandidateSetV1(await requestWorkflowKnowledge(
+): Promise<WorkflowKnowledgeCandidateSetV2> {
+	return parseWorkflowKnowledgeCandidateSetV2(await requestWorkflowKnowledge(
 		env,
 		"/workflow/knowledge/search",
 		request,
@@ -81,7 +81,7 @@ export async function searchWorkflowKnowledge(
 
 export async function readWorkflowKnowledge(
 	env: WorkerEnv,
-	request: Readonly<{ candidateSet: WorkflowKnowledgeCandidateSetV1; cardId: string }>,
+	request: Readonly<{ candidateSet: WorkflowKnowledgeCandidateSetV2; cardId: string }>,
 ): Promise<WorkflowKnowledgeCardV1> {
 	return parseWorkflowKnowledgeCardV1(await requestWorkflowKnowledge(
 		env,

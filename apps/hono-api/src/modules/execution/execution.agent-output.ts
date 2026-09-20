@@ -1,6 +1,7 @@
 import type { PrismaClient } from "../../types";
 import {
 	getExecutionForOwner,
+	readExecutionFrozenGraphForOwner,
 	listSuccessfulWorkflowOutputNodeRunsForExecutionOwner,
 	mapExecutionRow,
 	mapNodeRunRow,
@@ -19,18 +20,53 @@ export type WorkflowExecutionAgentOutput = Readonly<{
 	artifacts: readonly unknown[];
 }>;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Only graph-authored terminal delivery ports are exposed, never intermediate media. */
+export function declaredTerminalDeliveryOutputs(graph: unknown): ReadonlyMap<string, Readonly<{
+	executorRef: string;
+	outputPorts: readonly string[];
+}>> {
+	if (!isRecord(graph) || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+		throw new Error("Invalid frozen workflow graph for delivery projection");
+	}
+	const sources = new Set(graph.edges.flatMap((edge: unknown) =>
+		isRecord(edge) && typeof edge.source === "string" ? [edge.source] : []));
+	const outputs = new Map<string, { executorRef: string; outputPorts: readonly string[] }>();
+	for (const node of graph.nodes as unknown[]) {
+		if (!isRecord(node) || typeof node.id !== "string" || !isRecord(node.data)) continue;
+		const spec = node.data.workflowAtomicSpec;
+		if (!isRecord(spec) || spec.category !== "delivery" || sources.has(node.id)) continue;
+		if (typeof spec.executorRef !== "string" || !Array.isArray(spec.outputPorts)
+			|| !spec.outputPorts.every((port: unknown) => typeof port === "string")) {
+			throw new Error(`Invalid terminal delivery contract: ${node.id}`);
+		}
+		outputs.set(node.id, { executorRef: spec.executorRef, outputPorts: spec.outputPorts });
+	}
+	return outputs;
+}
+
 export function projectWorkflowExecutionAgentOutputs(
 	rows: readonly NodeRunRow[],
+	declaredOutputs: ReturnType<typeof declaredTerminalDeliveryOutputs> = new Map(),
 ): WorkflowExecutionAgentOutput[] {
 	return rows.flatMap((row) => {
-		if (row.status !== "success" || row.node_type !== "workflow.output/v1") return [];
+		if (row.status !== "success") return [];
+		const declared = declaredOutputs.get(row.node_id);
+		if (row.node_type !== "workflow.output/v1" && !declared) return [];
 		const mapped = mapNodeRunRow(row);
 		const output = parseWorkflowNodeOutputV1(mapped.outputRefs);
-		if (!output || output.executorRef !== "workflow.output/v1") return [];
+		if (!output || output.executorRef !== row.node_type) return [];
+		if (declared && (output.executorRef !== declared.executorRef
+			|| declared.outputPorts.some((port) => !(port in output.ports)))) {
+			throw new Error(`Terminal delivery output does not match frozen contract: ${row.node_id}`);
+		}
 		return [{
 			nodeId: mapped.nodeId,
 			nodeRunId: mapped.id,
-			ports: output.ports,
+			ports: declared ? Object.fromEntries(declared.outputPorts.map((port) => [port, output.ports[port]])) : output.ports,
 			artifacts: output.artifacts,
 		}];
 	});
@@ -40,8 +76,11 @@ export async function readWorkflowExecutionAgentOutputs(
 	db: PrismaClient,
 	params: Readonly<{ ownerId: string; executionId: string }>,
 ): Promise<WorkflowExecutionAgentOutput[]> {
-	const rows = await listSuccessfulWorkflowOutputNodeRunsForExecutionOwner(db, params);
-	return projectWorkflowExecutionAgentOutputs(rows);
+	const [rows, graph] = await Promise.all([
+		listSuccessfulWorkflowOutputNodeRunsForExecutionOwner(db, params),
+		readExecutionFrozenGraphForOwner(db, params),
+	]);
+	return projectWorkflowExecutionAgentOutputs(rows, declaredTerminalDeliveryOutputs(graph));
 }
 
 export type WorkflowExecutionImmediateAgentState = Readonly<{

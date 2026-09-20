@@ -1,8 +1,9 @@
 import type { Node } from '@xyflow/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { useRFStore } from './store'
 import {
   applyWorkflowAgentConfigurationProjection,
+  applyWorkflowAgentReferenceProjection,
   buildWorkflowAgentVisibleGraph,
   buildWorkflowAgentReferenceProjection,
   isWorkflowAgentReferenceEdge,
@@ -290,6 +291,50 @@ describe('workflow Agent reference projection', () => {
     })
   })
 
+  it('projects runtime knowledge search receipts separately from body reads', () => {
+    const projection = buildWorkflowAgentReferenceProjection({
+      agentNode: agentNode(),
+      workflowExecutionId: 'workflow-execution-knowledge-search',
+      readOnly: true,
+      outputRefs: {
+        executionProvenance: {
+          ...provenanceBase,
+          executionId: 'physical-knowledge-search',
+          loadedKnowledgeSources: [],
+        },
+        knowledgeCandidateSearch: {
+          version: 1,
+          status: 'candidate_found',
+          attempted: true,
+          candidateCount: 3,
+          blocking: false,
+          rationale: '已返回知识卡候选元数据。',
+          domains: ['叙事结构节奏', '视听语言演出'],
+          toolCallId: 'knowledge-search-1',
+        },
+      },
+    })
+
+    const knowledge = projection.nodes.find((node) => node.data.workflowRuntimeReferenceKind === 'knowledge')
+    expect(knowledge?.data).toMatchObject({
+      label: '知识库 · 已检索',
+      workflowRuntimeReferenceDescription: '1 次知识候选检索 · 3 个候选 · 本轮未读取正文',
+      workflowRuntimeReferenceEvidenceState: 'searched',
+      workflowRuntimeReferenceSearchAttemptCount: 1,
+      workflowRuntimeReferenceSearchSuccessCount: 1,
+      workflowRuntimeReferenceSearchFailureCount: 0,
+      workflowRuntimeReferenceCandidateCount: 3,
+      workflowRuntimeReferenceActualReadCount: 0,
+    })
+    expect(knowledge?.data.workflowRuntimeReferenceSearchObservations).toEqual([
+      expect.objectContaining({
+        status: 'candidate_found',
+        candidateCount: 3,
+        domains: ['叙事结构节奏', '视听语言演出'],
+      }),
+    ])
+  })
+
   it('projects universal catalog access before any execution history exists', () => {
     const firstAgent = agentNode()
     const secondAgent = {
@@ -388,4 +433,21 @@ describe('workflow Agent reference projection', () => {
     expect(projection.edges.every((edge) => edge.data?.referenceState === 'available')).toBe(true)
     expect(JSON.stringify(projection).includes('legacy-fixed')).toBe(false)
   })
+})
+
+it('preserves reference mounts on repeated snapshots and restores missing mounts', () => {
+  const node = agentNode()
+  useRFStore.setState({ nodes: [node], edges: [] })
+  const input = { agentNodeId: node.id, workflowExecutionId: 'execution-stable', outputRefs: {} }
+  applyWorkflowAgentReferenceProjection(input)
+  const nodes = useRFStore.getState().nodes
+  const listener = vi.fn()
+  const unsubscribe = useRFStore.subscribe(listener)
+  applyWorkflowAgentReferenceProjection({ ...input, outputRefs: {} })
+  unsubscribe()
+  expect(listener).not.toHaveBeenCalled()
+  expect(useRFStore.getState().nodes).toBe(nodes)
+  useRFStore.setState({ nodes: [node], edges: [] })
+  applyWorkflowAgentReferenceProjection(input)
+  expect(useRFStore.getState().nodes).toEqual(nodes)
 })

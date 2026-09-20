@@ -1,3 +1,6 @@
+import { createWorkflowRefreshQueue } from './workflowRefreshQueue'
+import { sanitizeBrowserCanvasPatch, mergeCanvasAuthoringData } from '@tapcanvas/video-orchestrator-protocol'
+import { applyRemotePatchToDeletionLedger, filterCanvasMembershipPatch } from "../persistence/canvasMembership"
 import { useEffect, useRef, useState } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import { API_BASE } from '../../api/server'
@@ -26,7 +29,7 @@ import { useChatActivityStore } from '../../ui/chat/chatActivityStore'
 import {
   applyWorkflowNodeRuns,
 } from '../workflowExecutionProjection'
-import { listWorkflowNodeRuns } from '../../api/server'
+import { getWorkflowExecution, listWorkflowNodeRuns } from '../../api/server'
 import { useLiveChatRunStore } from '../../ui/chat/liveChatRunStore'
 import { useToolProgressStore } from '../toolProgressStore'
 import { derivedApplyGuard, remoteApplyGuard } from './remoteApplyGuard'
@@ -44,6 +47,7 @@ import {
   isWorkflowRuntimeReferenceEdgeData,
   isWorkflowRuntimeReferenceNodeData,
   withoutWorkflowExecutionProjectionData,
+  workflowExecutionProjectionGuard,
 } from '../workflowExecutionProjectionData'
 
 type PendingUserInput = NonNullable<NonNullable<SyncPatch['chatMessages']>[number]['pendingUserInput']>
@@ -90,6 +94,7 @@ export type SyncNodeItem = {
   type?: string
   position?: { x: number; y: number }
   data?: unknown
+  dataMode?: 'authoring'
   parentId?: string
   style?: unknown
   width?: number
@@ -115,6 +120,7 @@ type CursorPresenceItem = {
 export type SyncPatch = {
   upsertNodes?: SyncNodeItem[]
   removeNodeIds?: string[]
+  restoredNodeIds?: string[]
   upsertEdges?: SyncEdgeItem[]
   removeEdgeIds?: string[]
   revision?: number
@@ -168,7 +174,7 @@ function nodeToSyncItem(n: Node): SyncNodeItem {
       ? withoutWorkflowExecutionProjectionData(n.data)
       : n.data
   }
-  return item
+  return sanitizeBrowserCanvasPatch({ upsertNodes: [item] }).upsertNodes[0]
 }
 
 function edgeToSyncItem(e: Edge): SyncEdgeItem {
@@ -282,6 +288,7 @@ function applyPatch(
       patch: {
         upsertNodes: patch.upsertNodes,
         removeNodeIds: patch.removeNodeIds,
+        restoredNodeIds: patch.restoredNodeIds,
         upsertEdges: patch.upsertEdges,
         removeEdgeIds: patch.removeEdgeIds,
         revision: patch.revision,
@@ -308,6 +315,8 @@ function applyPresenceAndChat(patch: SyncPatch): void {
 }
 
 function applyCanvasPatch(patch: SyncPatch): void {
+  patch = filterCanvasMembershipPatch(useRFStore.getState(), patch)
+
   // 检测是否有真正的新节点（不在当前 store 里）
   const existingIds = new Set(useRFStore.getState().nodes.map((n) => n.id))
   const hasNewNodes = patch.upsertNodes?.some((u) => !existingIds.has(u.id)) ?? false
@@ -319,10 +328,14 @@ function applyCanvasPatch(patch: SyncPatch): void {
       nodes: s.nodes,
       edges: s.edges,
       patch: {
-        upsertNodes: patch.upsertNodes?.map((node) => ({
-          ...currentNodeById.get(node.id),
-          ...node,
-        } as Node)),
+        upsertNodes: patch.upsertNodes?.map(({ dataMode, ...node }) => {
+          const current = currentNodeById.get(node.id)
+          return {
+            ...current,
+            ...node,
+            ...(dataMode === 'authoring' ? { data: mergeCanvasAuthoringData(current?.data, node.data) } : {}),
+          } as Node
+        }),
         removeNodeIds: patch.removeNodeIds,
         upsertEdges: patch.upsertEdges?.map((edge) => ({
           ...currentEdgeById.get(edge.id),
@@ -331,7 +344,19 @@ function applyCanvasPatch(patch: SyncPatch): void {
         removeEdgeIds: patch.removeEdgeIds,
       },
     })
-    return { ...s, ...graph }
+    // 墓碑只登记「用户本地删除」。远端(SSE)patch 的 removeNodeIds 是服务端已落盘的
+    // 权威结果（运行结束回收、execution 去挂载、清理投影等），把它并进本地墓碑会让下一次
+    // 整图 PUT 把服务端自己的删除当成用户显式删除写进 __tapcanvasCanvasLifecycle，
+    // 于是这些节点在 viewer 投影里被永久隐藏且没有任何恢复入口——
+    // 「章节画布只剩几个视频节点」的棘轮根因。
+    const nextDeletedIds = applyRemotePatchToDeletionLedger(s.locallyDeletedNodeIds, patch.restoredNodeIds ?? [])
+    if (graph.nodes === s.nodes && graph.edges === s.edges && nextDeletedIds.length === s.locallyDeletedNodeIds.length && nextDeletedIds.every((id, index) => id === s.locallyDeletedNodeIds[index])) return s
+    return {
+      ...s, ...graph,
+      locallyDeletedNodeIds: nextDeletedIds,
+      // 同理：去挂载（detach）也只能由用户本地删除推导，不能由服务端回收反向推断。
+      detachedWorkflowExecutionIds: s.detachedWorkflowExecutionIds,
+    }
   })
 
   // 有新节点写入时触发语义分类整理（等价于"一键整理"），消除节点顺序混乱；
@@ -419,6 +444,14 @@ export function useCanvasSync(
     let connId = ''
 
     let destroyed = false
+    const workflowRefresh = createWorkflowRefreshQueue({
+      read: async (executionId) => {
+        const [execution, runs] = await Promise.all([getWorkflowExecution(executionId), listWorkflowNodeRuns(executionId)])
+        return { execution, runs }
+      },
+      apply: (executionId, { execution, runs }) => applyWorkflowNodeRuns(executionId, runs, execution.status, execution.executionFamilyId),
+      onError: (executionId, error) => console.error('[canvas-sync] workflow status read failed', { executionId, error }),
+    })
 
     async function connect() {
       while (!destroyed) {
@@ -522,9 +555,7 @@ export function useCanvasSync(
                     ? payload.executionId.trim()
                     : ''
                   if (executionId) {
-                    void listWorkflowNodeRuns(executionId)
-                      .then((runs) => { applyWorkflowNodeRuns(executionId, runs) })
-                      .catch(() => undefined)
+                    workflowRefresh.request(executionId, typeof payload.seq === 'number' ? payload.seq : undefined)
                   }
                 } catch { /* 忽略坏帧 */ }
                 continue
@@ -625,7 +656,7 @@ export function useCanvasSync(
       ) {
         useLiveChatRunStore.getState().reconcileAsyncArtifacts(state.nodes)
       }
-      if (remoteApplyGuard.active || derivedApplyGuard.active) return
+      if (remoteApplyGuard.active || derivedApplyGuard.active || workflowExecutionProjectionGuard.active) return
       if (state.nodes === prev.nodes && state.edges === prev.edges) return
       // selected 不进 SyncNodeItem，纯选中变化 diff 出来必然是空 patch——但它换掉了节点引用，
       // 于是每次点击都排一轮 diff（大图上是两遍整节点 stringify 的主线程成本）。提前返回。
@@ -662,6 +693,7 @@ export function useCanvasSync(
 
     return () => {
       destroyed = true
+      workflowRefresh.dispose()
       abortRef.current?.abort()
       unsub()
       if (debounceRef.current) clearTimeout(debounceRef.current)

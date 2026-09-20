@@ -584,6 +584,85 @@
   overflow-wrap: anywhere;
 }
 
+.workflow-node-inspector__reference-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--tc-color-border-subtle, rgba(212, 215, 220, 0.08));
+  border-radius: 10px;
+}
+
+.workflow-node-inspector__reference-candidates-title {
+  color: var(--tc-color-text-secondary, #b8bec8);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workflow-node-inspector__reference-candidate-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workflow-node-inspector__reference-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workflow-node-inspector__reference-candidate-tag {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--tc-color-border-subtle, rgba(212, 215, 220, 0.12));
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--tc-color-text-primary, #eef0f4);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.workflow-node-inspector__reference-candidate-tag:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.workflow-node-inspector__reference-candidate-tag--read {
+  border-color: rgba(63, 190, 154, 0.45);
+}
+
+.workflow-node-inspector__reference-candidate-tag--adopted {
+  border-color: rgba(118, 170, 255, 0.65);
+  background: rgba(118, 170, 255, 0.12);
+}
+
+.workflow-node-inspector__reference-candidate-state {
+  color: var(--tc-color-text-tertiary, #7b828e);
+  font-size: 11px;
+}
+
+.workflow-node-inspector__reference-candidate-body {
+  padding: 6px 0;
+}
+
+.workflow-node-inspector__reference-candidate-body summary {
+  color: var(--tc-color-text-secondary, #b8bec8);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.workflow-node-inspector__reference-candidate-body pre {
+  max-height: 280px;
+  margin: 8px 0 0;
+  overflow: auto;
+  color: var(--tc-color-text-primary, #eef0f4);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+}
+
 .workflow-node-inspector__help,
 .workflow-node-inspector__warning,
 .workflow-node-inspector__empty,

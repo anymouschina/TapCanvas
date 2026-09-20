@@ -167,7 +167,7 @@ export function diagnoseClipBinding(input: {
   clipIndex: number;
   binding: ClipAssetBinding;
   onScreenRoleNames: ReadonlyArray<string>;
-  cap: number;
+  cap?: number;
   droppedCount: number;
 }): ClipBindingDiagnostic[] {
   const diags: ClipBindingDiagnostic[] = [];

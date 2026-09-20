@@ -1,5 +1,8 @@
+import { reconcileEditableChapterNarrative } from "./chapter.canvas-narrative";
+import { assertCanvasMembershipPermission } from "../flow/flow.canvas-membership";
 import type { AppContext } from "../../types";
 import { getProjectForUserAccess } from "../project/project.repo";
+import { preserveSubmittedMediaSettings } from "../flow/flow.media-submission-settings";
 import {
 	VIDEO_RUN_TERMINAL_STATES,
 	getAuthoringClipProgressByRunIds,
@@ -29,6 +32,7 @@ import { isAdminRequest } from "../team/team.service";
 import {
 	preserveAdminWorkflowGraphForNonAdmin,
 	projectWorkflowGraphForViewer,
+	reconcileCanvasMembership,
 } from "@tapcanvas/workflow-kernel-protocol";
 import { readBookBibleArtifactType } from "./book-bible-contract";
 
@@ -68,33 +72,6 @@ function readNodeData(node: Record<string, unknown>): Record<string, unknown> {
 		: {};
 }
 
-/**
- * The locked chapter seed is server-owned canonical narrative state, not an
- * editable canvas card. Full-graph browser autosaves may contain an older
- * projection of that node (or omit its hidden contract fields entirely), so
- * always preserve the database copy byte-for-byte. Narrative changes have a
- * separate revision-fenced chapter update API.
- */
-function preserveCanonicalChapterSeedNode(
-	chapterId: string,
-	current: CanvasFlow,
-	incoming: CanvasFlow,
-): CanvasFlow {
-	const seedId = `chapter-seed-${chapterId}`;
-	const currentSeed = (current.nodes ?? []).find((node) =>
-		String((node as { id?: unknown }).id ?? "") === seedId,
-	);
-	if (!currentSeed) return incoming;
-	let replaced = false;
-	const nodes = (incoming.nodes ?? []).map((node) => {
-		if (String((node as { id?: unknown }).id ?? "") !== seedId) return node;
-		replaced = true;
-		return currentSeed;
-	});
-	if (!replaced) nodes.unshift(currentSeed);
-	return { nodes, edges: incoming.edges ?? [] };
-}
-
 /** 已完成的视频/成片节点：生产链写好的终值（success + videoUrl），不可被整图 PUT 降级。 */
 function isCompletedVideoNode(node: Record<string, unknown>): boolean {
 	const data = readNodeData(node);
@@ -102,6 +79,15 @@ function isCompletedVideoNode(node: Record<string, unknown>): boolean {
 	const status = typeof data.status === "string" ? data.status : "";
 	const videoUrl = typeof data.videoUrl === "string" ? data.videoUrl : "";
 	return PROTECTED_VIDEO_KINDS.has(kind) && status === "success" && videoUrl.length > 0;
+}
+
+function isCompletedMediaNode(node: Record<string, unknown>): boolean {
+  const data = readNodeData(node);
+  if (!isGeneratedAssetNode(node) || data.status !== "success") return false;
+  return [data.imageUrl, data.videoUrl].some((url) => typeof url === "string" && url.trim().length > 0)
+    || [data.imageResults, data.videoResults].some((items) => Array.isArray(items)
+      && items.some((item: unknown) => typeof readNodeData({ data: item }).url === "string"
+        && String(readNodeData({ data: item }).url).trim().length > 0));
 }
 
 /**
@@ -139,7 +125,7 @@ async function reconcileActiveRunVideoNodes(
 	} catch {
 		return incoming;
 	}
-	incoming = preserveCanonicalChapterSeedNode(chapterId, current, incoming);
+
 
 	// 「活跃生成中」判定（决定是否对 agent 资产节点整体写保护）：
 	//   ① 存在进行中的 video_run；或 ② 当前画布有 running/queued 的在飞节点（出锚点/分镜板/clip 阶段）。
@@ -171,7 +157,7 @@ async function reconcileActiveRunVideoNodes(
 		const completedById = new Map<string, Record<string, unknown>>();
 		for (const node of current.nodes ?? []) {
 			const id = typeof (node as { id?: unknown }).id === "string" ? (node as { id: string }).id : "";
-			if (!id || tombstone.has(id) || !isCompletedVideoNode(node as Record<string, unknown>)) continue;
+			if (!id || tombstone.has(id) || !isCompletedMediaNode(node as Record<string, unknown>)) continue;
 			completedById.set(id, node as Record<string, unknown>);
 		}
 		const incomingIds = new Set(
@@ -199,13 +185,18 @@ async function reconcileActiveRunVideoNodes(
 			const incomingData = readNodeData(node as Record<string, unknown>);
 			const incomingUrl = typeof incomingData.videoUrl === "string" ? incomingData.videoUrl.trim() : "";
 			const currentUrl = typeof currentData.videoUrl === "string" ? currentData.videoUrl.trim() : "";
-			if (incomingData.status === "success" && incomingUrl === currentUrl) return node;
+			if (incomingData.status === "success" && incomingUrl === currentUrl
+        && incomingData.imageUrl === currentData.imageUrl
+        && JSON.stringify(incomingData.imageResults) === JSON.stringify(currentData.imageResults)) return node;
 			restoredCompletedFields += 1;
 			return {
 				...node,
 				data: {
 					...incomingData,
 					status: currentData.status,
+          imageUrl: currentData.imageUrl,
+          imageResults: currentData.imageResults,
+          imagePrimaryIndex: currentData.imagePrimaryIndex,
 					videoUrl: currentData.videoUrl,
 					videoResults: currentData.videoResults,
 					videoPrimaryIndex: currentData.videoPrimaryIndex,
@@ -265,7 +256,8 @@ async function reconcileActiveRunVideoNodes(
 		const guard = id ? protectedById.get(id) : undefined;
 		if (!guard) return node;
 		const g = readNodeData(guard);
-		const d = readNodeData(node as Record<string, unknown>);
+		const incomingData = readNodeData(node as Record<string, unknown>);
+		const d = { ...incomingData, ...preserveSubmittedMediaSettings(g, incomingData) };
 		// 视频/成片：强制回填 worker 终值 status/videoUrl，防降级（success→running/抹 videoUrl）。
 		if (isCompletedVideoNode(guard)) {
 			return { ...node, data: { ...d, status: g.status, videoUrl: g.videoUrl } };
@@ -276,7 +268,7 @@ async function reconcileActiveRunVideoNodes(
 		if (gImg && !dImg) {
 			return { ...node, data: { ...d, imageUrl: gImg, status: g.status ?? d.status } };
 		}
-		return node;
+		return { ...node, data: d };
 	});
 	// 整图漏带的被保护资产节点（autosave 拿 stale 快照漏了 agent 刚建的锚点/板/clip）→ 按 DB 补回。
 	for (const [id, guard] of protectedById) {
@@ -346,6 +338,7 @@ export async function getChapterCanvasFlow(
 	ctx: AppContext,
 	userId: string,
 	chapterId: string,
+	includeDetachedRuntime = false,
 ): Promise<GetCanvasFlowResponse> {
 	const prisma = ctx.env.DB;
 	const ownerId = await resolveChapterOwnerId(ctx, userId, chapterId);
@@ -366,7 +359,7 @@ export async function getChapterCanvasFlow(
 	}
 	const visibleFlow = flow === null
 		? null
-		: projectWorkflowGraphForViewer(flow, isAdminRequest(ctx));
+		: includeDetachedRuntime ? flow : projectWorkflowGraphForViewer(flow, isAdminRequest(ctx));
 	return {
 		chapterId: row.id,
 		revision: row.canvas_flow_revision,
@@ -417,6 +410,7 @@ export async function putChapterCanvasFlow(
 	userId: string,
 	chapterId: string,
 	input: PutCanvasFlowRequest,
+	includeDetachedRuntime = false,
 ): Promise<PutCanvasFlowResponse> {
 	const prisma = ctx.env.DB;
 	const ownerId = await resolveChapterOwnerId(ctx, userId, chapterId);
@@ -433,6 +427,7 @@ export async function putChapterCanvasFlow(
 			throw new CanvasFlowCorruptedError(currentRow.id, error);
 		}
 	}
+	assertCanvasMembershipPermission(existingFlow, input, isAdminRequest(ctx));
 	const permissionSafeInputFlow = isAdminRequest(ctx)
 		? input.flow
 		: preserveAdminWorkflowGraphForNonAdmin({
@@ -458,13 +453,15 @@ export async function putChapterCanvasFlow(
 	// stale browser/agent graph into an authoritative overwrite. Agent callers
 	// already own structured patches and must re-read + re-apply those patches
 	// after this method reports a conflict.
-	const guardedFlow = await reconcileActiveRunVideoNodes(
+	const protectedFlow = await reconcileActiveRunVideoNodes(
 		ctx,
 		chapterId,
 		ownerId,
 		permissionSafeInputFlow,
 		input.deletedNodeIds,
 	);
+	const narrative = reconcileEditableChapterNarrative(chapterId, existingFlow, protectedFlow, input.expectedRevision + 1);
+	const guardedFlow = reconcileCanvasMembership(existingFlow, narrative.flow, input) as CanvasFlow;
 	const result = await prisma.chapters.updateMany({
 		where: {
 			id: chapterId,
@@ -472,6 +469,7 @@ export async function putChapterCanvasFlow(
 			canvas_flow_revision: input.expectedRevision,
 		},
 		data: {
+			...narrative.metadata,
 			canvas_flow: JSON.stringify(guardedFlow),
 			canvas_flow_revision: { increment: 1 },
 			updated_at: new Date().toISOString(),
@@ -601,6 +599,6 @@ export async function putChapterCanvasFlow(
 	return {
 		chapterId,
 		revision: persistedRevision,
-		...(wasCanonicalized ? { authoritativeFlow: persistedViewerFlow } : {}),
+		...(includeDetachedRuntime ? { authoritativeFlow: persistedFlow } : wasCanonicalized ? { authoritativeFlow: persistedViewerFlow } : {}),
 	};
 }

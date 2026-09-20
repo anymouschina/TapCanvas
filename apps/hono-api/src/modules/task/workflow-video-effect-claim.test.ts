@@ -21,11 +21,11 @@ describe("workflow video paid-effect claim", () => {
 		})).toMatchObject({ action: "reject_uncertain" });
 	});
 
-	it("requires a new explicit execution family after a proven pre-upstream rejection", () => {
+	it("permits same-effect retry after proven pre-upstream rejection without a receipt", () => {
 		expect(resolveWorkflowVideoEffectReplay({
 			status: "failed",
 			workflowSubmissionState: "rejected_pre_upstream",
-		})).toMatchObject({ action: "reject_terminal" });
+		})).toMatchObject({ action: "retry_pre_upstream" });
 	});
 
 	it("requires a new explicit execution family after an exact provider rejection", () => {

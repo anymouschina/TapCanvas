@@ -54,19 +54,20 @@ describe("asset object contracts", () => {
     expect(result.contracts[0]?.referenceImageNodeIds).toEqual([projectedNodeId]);
   });
 
-  it("keeps the shared flow node identity bound deterministic", () => {
+  it("preserves opaque persisted reference identities without applying prose budgets", () => {
+    const nodeId = "n".repeat(FLOW_NODE_ID_MAX_LENGTH + 1);
+    const assetId = `project-node:project:scope:${nodeId}`;
     const result = parseAssetObjectContracts([{
       ...base,
       kind: "character",
       name: "李长安",
       referenceRole: "identity",
-      referenceImageNodeIds: ["n".repeat(FLOW_NODE_ID_MAX_LENGTH + 1)],
+      referenceImageNodeIds: [nodeId],
+      referenceAssetIds: [assetId],
     }]);
 
-    expect(result.contracts).toEqual([]);
-    expect(result.errors).toContain(
-      `assetObjectContracts[0].referenceImageNodeIds 每项最多 ${FLOW_NODE_ID_MAX_LENGTH} 字`,
-    );
+    expect(result.errors).toEqual([]);
+    expect(result.contracts[0]).toMatchObject({ referenceImageNodeIds: [nodeId], referenceAssetIds: [assetId] });
   });
 
   it("allows an explicit empty array only when the caller selects the no-object contract", () => {
@@ -81,14 +82,14 @@ describe("asset object contracts", () => {
 
   it("keeps a descriptive prop without promoting it to a hard image dependency", () => {
     const result = parseAssetObjectContracts([
-      { ...base, kind: "prop", name: "混沌钟", referenceImageNodeIds: [] },
+      { ...base, kind: "prop", name: "混沌钟", referenceRole: "none", referenceImageNodeIds: [] },
     ]);
     expect(result.errors).toEqual([]);
     expect(result.contracts).toEqual([
       expect.objectContaining({
         kind: "prop",
         name: "混沌钟",
-        referenceRole: "prop",
+        referenceRole: "none",
         referenceImageNodeIds: [],
         referenceAssetIds: [],
       }),
@@ -134,20 +135,28 @@ describe("asset object contracts", () => {
     });
   });
 
-  it("rejects multiple canonical project assets for one object identity", () => {
+  it.each(["character", "scene", "prop"])("preserves multiple selected images of one %s in the published schema and runtime", (kind) => {
+    const referenceAssetIds = ["project-node:chapter:ch1:view-a", "project-node:chapter:ch1:view-b", "uploaded-detail"];
     const result = parseAssetObjectContracts([
       {
         ...base,
-        kind: "scene",
+        kind,
         name: "军属宿舍",
         referenceRole: "environment",
         referenceImageNodeIds: [],
-        referenceAssetIds: ["project-node:chapter:ch1:scene-a", "project-node:chapter:ch1:scene-b"],
+        referenceAssetIds,
       },
     ]);
 
+    expect(result.errors).toEqual([]);
+    expect(result.contracts[0]?.referenceAssetIds).toEqual(referenceAssetIds);
+    expect(assetObjectContractSchema.properties?.referenceAssetIds).not.toHaveProperty("maxItems");
+  });
+
+  it.each([null, "asset-a", ["asset-a", 7], ["asset-a", " "]])("does not silently drop malformed selected references: %j", (referenceAssetIds) => {
+    const result = parseAssetObjectContracts([{ ...base, kind: "prop", name: "商品", referenceAssetIds }]);
     expect(result.contracts).toEqual([]);
-    expect(result.errors.join("|")).toContain("最多绑定一个 canonical 项目资产");
+    expect(result.errors).toContain("assetObjectContracts[0].referenceAssetIds 必须是非空字符串 ID 数组");
   });
 
   it("keeps a draft identity contract when the authoring phase has not created its node yet", () => {
@@ -177,7 +186,7 @@ describe("asset object contracts", () => {
       referenceRole: "prop",
       referenceImageNodeIds: [],
       referenceAssetIds: [],
-    })).toBe(false);
+    })).toBe(true);
     expect(requiresAuthoringVisualReference({
       referenceRole: "environment",
       referenceImageNodeIds: [],
@@ -189,6 +198,19 @@ describe("asset object contracts", () => {
       referenceAssetIds: [],
     })).toBe(true);
   });
+
+  it.each(["identity", "wardrobe", "prop", "environment", "palette", "composition", "vfx"])(
+    "retains declared %s references before materialization and requires binding at execution",
+    (referenceRole) => {
+      const input = [{ ...base, kind: "prop", name: "对象", referenceRole, referenceImageNodeIds: [] }];
+      const draft = parseAssetObjectContracts(input, "objects", { allowMissingReferenceImageNodeIds: true });
+      expect(draft.errors).toEqual([]);
+      expect(requiresAuthoringVisualReference(draft.contracts[0]!)).toBe(true);
+      expect(parseAssetObjectContracts(input).errors.join("|")).toContain(
+        "必须通过 referenceImageNodeIds 或 referenceAssetIds 绑定真实图片资产",
+      );
+    },
+  );
 
   it("keeps a pure text-to-video scene without creating an authoring image dependency", () => {
     const result = parseAssetObjectContracts([{
@@ -279,11 +301,7 @@ describe("asset object contracts", () => {
         [assetObjectContractIdentityKey("prop", "混沌钟"), ["@图2", "@图3"]],
       ]),
     );
-    expect(rendered).toContain("@图N 以本次供应商最终 content[] 顺序为唯一真相");
-    expect(rendered).toContain("@图2+@图3（prop:混沌钟）=prop");
-    expect(rendered).toContain("保持：对象身份不变");
-    expect(rendered).toContain("禁迁：不迁移参考图背景、机位与无关对象");
-    expect(rendered).toContain("动作、位移、受力与终态以镜头表为准");
+    expect(rendered).toBe(`参考图绑定：\n混沌钟（${base.referenceRole}）：@图2、@图3；身份不变量：${base.identityInvariant}；禁止从参考图迁移：${base.forbiddenTransfer}`);
     expect(rendered).not.toContain("法力驱动");
     expect(rendered).not.toContain("沿既定轨迹变化");
     expect(rendered).not.toContain("落到明确终态");
@@ -296,6 +314,20 @@ describe("asset object contracts", () => {
     expect(Array.from(compactWithoutFinalIndices).length).toBeLessThan(
       Array.from(formatAssetObjectContracts(result.contracts)).length,
     );
+  });
+
+  it("preserves each bound object's reference scope without inventing absent facts", () => {
+    const contracts = parseAssetObjectContracts([
+      { ...base, kind: "character", referenceRole: "identity", name: "甲", identityInvariant: "蓝衣", forbiddenTransfer: "背景" },
+      { ...base, kind: "character", referenceRole: "identity", name: "乙", identityInvariant: "白衣", forbiddenTransfer: "姿势" },
+      { ...base, kind: "prop", name: "杯", identityInvariant: undefined, forbiddenTransfer: undefined },
+      { ...base, kind: "scene", name: "未绑定空间" },
+    ]).contracts;
+    expect(formatAssetObjectReferenceLocks(contracts, new Map([
+      [assetObjectContractIdentityKey("character", "甲"), ["@图1", "@图2", "@图1"]],
+      [assetObjectContractIdentityKey("character", "乙"), ["@图3"]],
+      [assetObjectContractIdentityKey("prop", "杯"), ["@图4"]],
+    ]))).toBe("参考图绑定：\n甲（identity）：@图1、@图2；身份不变量：蓝衣；禁止从参考图迁移：背景\n乙（identity）：@图3；身份不变量：白衣；禁止从参考图迁移：姿势\n杯（prop）：@图4");
   });
 
   it("rejects undeclared fields instead of silently preserving a parallel contract", () => {

@@ -9,7 +9,7 @@ import {
 
 describe('workflow execution snapshot request', () => {
   it('notifies the mounted snapshot host with the exact durable execution id', () => {
-    const listener = vi.fn<(event: Event) => void>()
+    const listener = vi.fn((_event: Event) => {})
     window.addEventListener(WORKFLOW_EXECUTION_SNAPSHOT_REQUEST_EVENT, listener)
     requestWorkflowExecutionSnapshot(' workflow-execution-1 ')
 

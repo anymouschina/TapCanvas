@@ -21,8 +21,33 @@ const REDIS_KEY_PREFIX = "clipaccum:";
 type AccumEntry = { clips: unknown[]; expiresAt: number };
 const store = new Map<string, AccumEntry>();
 
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+
 function prune(now: number): void {
   for (const [k, v] of store) if (v.expiresAt <= now) store.delete(k);
+  if (store.size === 0 && sweepTimer) {
+    clearInterval(sweepTimer);
+    sweepTimer = null;
+  }
+}
+
+function cacheClips(id: string, clips: unknown[], now: number): void {
+  prune(now);
+  store.delete(id);
+  store.set(id, { clips, expiresAt: now + ACCUM_TTL_MS });
+  while (store.size > MAX_ENTRIES) {
+    const oldest = store.keys().next().value;
+    if (oldest === undefined) break;
+    store.delete(oldest);
+  }
+  if (!sweepTimer) {
+    sweepTimer = setInterval(() => prune(Date.now()), 60_000);
+    sweepTimer.unref?.();
+  }
+}
+
+export function getClipAccumulatorDiagnostics() {
+  return { entryCount: store.size, maxEntries: MAX_ENTRIES, sweepActive: sweepTimer !== null };
 }
 
 export type AppendResult = { total: number; added: number; truncated: boolean };
@@ -47,6 +72,7 @@ async function loadBaseClips(id: string, now: number): Promise<{ clips: unknown[
   } catch {
     /* redis 异常 → 内存降级 */
   }
+  prune(now);
   const e = store.get(id);
   return { clips: e && e.expiresAt > now ? e.clips : [], fromRedis: false };
 }
@@ -86,12 +112,7 @@ export async function appendAccumulatedClips(
       `[clip-accumulator] runId=${id} 累积超上限 ${MAX_CLIPS_PER_RUN}，丢尾 ${merged.length - capped.length} 段（本批部分未纳入）。`,
     );
   }
-  store.set(id, { clips: capped, expiresAt: now + ACCUM_TTL_MS });
-  while (store.size > MAX_ENTRIES) {
-    const oldest = store.keys().next().value;
-    if (oldest === undefined) break;
-    store.delete(oldest);
-  }
+  cacheClips(id, capped, now);
   try {
     const redis = getSharedRedis();
     if (redis) {
@@ -115,7 +136,7 @@ export async function loadAccumulatedClips(
   // 自己回灌过的批，跨进程读到局部视图。现 redis 可用时恒以 redis 为准，内存仅作降级缓存。
   const base = await loadBaseClips(id, now);
   if (base.fromRedis) {
-    store.set(id, { clips: base.clips, expiresAt: now + ACCUM_TTL_MS });
+    cacheClips(id, base.clips, now);
   }
   // OCR#2：返回浅拷贝，隔离内部 store——下游对数组或元素 mutation 不污染累积区。
   return base.clips.slice();
@@ -146,12 +167,7 @@ export async function replaceAccumulatedClips(
   }
 
   prune(now);
-  store.set(id, { clips: normalized, expiresAt: now + ACCUM_TTL_MS });
-  while (store.size > MAX_ENTRIES) {
-    const oldest = store.keys().next().value;
-    if (oldest === undefined) break;
-    store.delete(oldest);
-  }
+  cacheClips(id, normalized, now);
 
   try {
     const redis = getSharedRedis();
@@ -195,7 +211,7 @@ export async function replaceAccumulatedClip(
     };
   }
   clips[index] = clip;
-  store.set(id, { clips, expiresAt: now + ACCUM_TTL_MS });
+  cacheClips(id, clips, now);
   try {
     const redis = getSharedRedis();
     if (redis) {
@@ -236,7 +252,7 @@ export async function placeAccumulatedClipsAt(
     while (clips.length <= clipIndex) clips.push(null);
     clips[clipIndex] = clip;
   }
-  store.set(id, { clips, expiresAt: now + ACCUM_TTL_MS });
+  cacheClips(id, clips, now);
   try {
     const redis = getSharedRedis();
     if (redis) {
@@ -280,7 +296,7 @@ export function hydrateAccumulatedClips(
   const id = String(runId ?? "").trim();
   if (!id || !Array.isArray(clips) || clips.length === 0) return;
   const capped = clips.slice(0, MAX_CLIPS_PER_RUN);
-  store.set(id, { clips: capped, expiresAt: now + ACCUM_TTL_MS });
+  cacheClips(id, capped, now);
   try {
     const redis = getSharedRedis();
     if (redis) {
@@ -308,4 +324,5 @@ export function clearAccumulatedClips(runId: string): void {
 /** 测试辅助：清空全部累积。 */
 export function __clearAllAccumulatedClips(): void {
   store.clear();
+  prune(Date.now());
 }

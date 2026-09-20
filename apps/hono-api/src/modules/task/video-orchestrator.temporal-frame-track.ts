@@ -1,3 +1,5 @@
+import { uniqueTemporalStateAnchors, type TemporalStateAnchor } from "./video-orchestrator.temporal-state-anchors";
+
 export type TemporalFrameWindow = Readonly<{
   /** Zero-based physical order inside one Clip. */
   windowIndex: number;
@@ -5,18 +7,21 @@ export type TemporalFrameWindow = Readonly<{
   startSeconds: number;
   /** Clip-local exclusive time; every window is at most one second. */
   endSeconds: number;
-  /** Frozen machine-relay state at the beginning of this window. */
+  /** Last frozen event checkpoint; not an assertion of the in-flight state. */
   startState: string;
-  /** Executable visual description of the opening frame. */
+  /** Authored shot context, not a host-inferred instantaneous frame. */
   startFrame: string;
   /** Visible driver/path/contact/reaction connecting the two frame states. */
   transition: string;
-  /** Executable visual description of the carried frame. */
+  /** Authored shot context, not a host-inferred instantaneous frame. */
   carryFrame: string;
   /** Frozen machine-relay state carried into the next window. */
   carryState: string;
   /** Frozen story events whose time intervals intersect this window. */
   storyEventIndices: readonly number[];
+  /** Exact frozen state timestamps. Empty inside an event; absent means no
+   * timestamp evidence was recorded, not that the checkpoint held still. */
+  stateAnchors?: readonly TemporalStateAnchor[];
 }>;
 
 export type TemporalFrameCoverage = Readonly<{
@@ -105,7 +110,7 @@ function parseExecutableShotIntervals(
     if (!isRecord(raw)) throw new Error(`${field}.shots[${index}] must be an object`);
     const duration = raw.durationSeconds;
     const visualTask = readString(raw.visualTask);
-    const action = readString(raw.action) || visualTask;
+    const action = readString(raw.action);
     const depictedStoryEventIndices = raw.depictedStoryEventIndices;
     if (
       raw.shotNo !== index + 1
@@ -113,9 +118,10 @@ function parseExecutableShotIntervals(
       || !Number.isFinite(duration)
       || duration <= 0
       || !visualTask
+      || !action
     ) {
       throw new Error(
-        `${field}.shots[${index}] requires sequential shotNo, positive durationSeconds and visualTask`,
+        `${field}.shots[${index}] requires sequential shotNo, positive durationSeconds, visualTask and action`,
       );
     }
     if (!Array.isArray(depictedStoryEventIndices) || depictedStoryEventIndices.length === 0) {
@@ -138,7 +144,8 @@ function parseExecutableShotIntervals(
       const event = events[storyEventIndex];
       if (!event || startSeconds >= event.endSeconds || cursor <= event.startSeconds) {
         throw new Error(
-          `${field}.shots[${index}].depictedStoryEventIndices declares storyEvent ${storyEventIndex} outside the shot clock interval`,
+          `${field}.shots[${index}].depictedStoryEventIndices declares storyEvent ${storyEventIndex} outside the shot clock interval ` +
+          `(shot=[${startSeconds},${cursor}), storyEvent=[${event?.startSeconds ?? "?"},${event?.endSeconds ?? "?"}))`,
         );
       }
     }
@@ -187,8 +194,8 @@ function stateAtBoundary(
  * projection from already-authored shots plus the caller-frozen story-event
  * ledger. The compiler copies visual
  * prose verbatim from visualTask/action and never interprets or invents story
- * semantics. A static shot may omit action; in that case its visualTask is
- * reused verbatim as the visible transition. Integer seconds, story boundaries and shot boundaries form the
+ * semantics. Static shots also carry an explicit action/state description,
+ * copied verbatim into transition. Integer seconds, story boundaries and shot boundaries form the
  * only clock partition, so every window is deterministic and at most one
  * second long.
  */
@@ -210,6 +217,10 @@ export function compileTemporalFrameContract(input: Readonly<{
   const events = parseStoryEventIntervals(input.storyEvents, `${input.field}.storyEvents`);
   if (events.length === 0) throw new Error(`${input.field}.storyEvents must be non-empty`);
   const shots = parseExecutableShotIntervals(input.shots, durationSeconds, events, input.field);
+  const stateAnchors = uniqueTemporalStateAnchors(events.flatMap((event) => [
+    { seconds: exactSecond(event.startSeconds), state: event.entryState },
+    { seconds: exactSecond(event.endSeconds), state: event.exitState },
+  ]));
   const boundaries = new Set<number>([0, durationSeconds]);
   for (let second = 1; second < durationSeconds; second += 1) boundaries.add(exactSecond(second));
   events.forEach((event) => {
@@ -244,6 +255,7 @@ export function compileTemporalFrameContract(input: Readonly<{
       carryFrame: lastShot.visualTask,
       carryState: stateAtBoundary(endSeconds, events, input.field),
       storyEventIndices: expectedEventIndices({ startSeconds, endSeconds }, events),
+      stateAnchors: stateAnchors.filter((anchor) => anchor.seconds >= startSeconds && anchor.seconds <= endSeconds),
     };
   });
   const temporalFrameCoverage = temporalFrameTrack.map((window): TemporalFrameCoverage => ({
@@ -271,8 +283,13 @@ export function compileTemporalFrameContract(input: Readonly<{
     shots: input.shots,
     field: `${input.field}.temporalFrameCoverage`,
   });
-  if (sourceEventCoverage.some((coverage) => coverage.shotNos.length === 0)) {
-    throw new Error(`${input.field}.sourceEventCoverage cannot leave a frozen story event unmapped`);
+  const unmappedEvents = sourceEventCoverage.filter((coverage) => coverage.shotNos.length === 0);
+  if (unmappedEvents.length > 0) {
+    const missing = unmappedEvents.map(({ storyEventIndex }) => {
+      const event = events[storyEventIndex]!;
+      return `storyEvents[${storyEventIndex}] interval=[${event.startSeconds},${event.endSeconds})`;
+    });
+    throw new Error(`${input.field}.sourceEventCoverage cannot leave a frozen story event unmapped: ${missing.join("; ")}. Declare the actually depicted event indices in shots[].depictedStoryEventIndices within their intersecting clock intervals.`);
   }
   return { temporalFrameTrack: validatedTrack, temporalFrameCoverage, sourceEventCoverage };
 }
@@ -359,6 +376,9 @@ export function parseTemporalFrameTrack(input: Readonly<{
       carryFrame,
       carryState,
       storyEventIndices,
+      ...(raw.stateAnchors === undefined ? {} : {
+        stateAnchors: parseTemporalStateAnchors(raw.stateAnchors, events, startSeconds, endSeconds, `${input.field}[${index}].stateAnchors`),
+      }),
     };
     previousEndSeconds = endSeconds;
     return window;
@@ -394,6 +414,28 @@ export function parseTemporalFrameTrack(input: Readonly<{
     }
   }
   return windows;
+}
+
+function parseTemporalStateAnchors(
+  value: unknown,
+  events: readonly StoryEventInterval[],
+  startSeconds: number,
+  endSeconds: number,
+  field: string,
+): TemporalStateAnchor[] {
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
+  return value.map((raw, index) => {
+    if (!isRecord(raw) || typeof raw.seconds !== "number" || !Number.isFinite(raw.seconds) || typeof raw.state !== "string") {
+      throw new Error(`${field}[${index}] requires finite seconds and a frozen state`);
+    }
+    const seconds = exactSecond(raw.seconds);
+    const state = raw.state;
+    if (seconds < startSeconds || seconds > endSeconds || !events.some((event) => (
+      (exactSecond(event.startSeconds) === seconds && event.entryState === state)
+      || (exactSecond(event.endSeconds) === seconds && event.exitState === state)
+    ))) throw new Error(`${field}[${index}] must reference an exact frozen event boundary within the window`);
+    return { seconds, state };
+  });
 }
 
 export function assertExactTemporalFrameTrack(input: Readonly<{

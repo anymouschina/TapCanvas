@@ -1,0 +1,11 @@
+.workflow-node-status-bar { display:inline-flex; min-width:0; align-items:center; gap:5px; color:var(--tc-color-text-secondary,#a9afb9); font-size:10px; line-height:16px; }
+.workflow-node-status-bar__dot { width:7px; height:7px; flex:0 0 7px; border-radius:50%; background:var(--tc-color-text-tertiary,#7b828e); }
+.workflow-node-status-bar strong { color:inherit; font-weight:700; white-space:nowrap; }
+.workflow-node-status-bar__detail,.workflow-node-status-bar__suffix { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workflow-node-status-bar__detail { color:var(--tc-color-text-primary,#eef0f4); }
+.workflow-node-status-bar--running { color:var(--tc-color-info,#60a5fa); }
+.workflow-node-status-bar--running .workflow-node-status-bar__dot { background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb,currentColor 18%,transparent); }
+.workflow-node-status-bar--queued,.workflow-node-status-bar--waiting_external { color:var(--tc-color-warning,#fbbf24); }
+.workflow-node-status-bar--partial { color:var(--tc-color-warning,#f59e0b); }
+.workflow-node-status-bar--succeeded { color:var(--tc-color-success,#34d399); }
+.workflow-node-status-bar--failed,.workflow-node-status-bar--cancelled { color:var(--tc-color-danger,#f87171); }

@@ -14,14 +14,14 @@ describe("workflow Agent durable rate-limit backpressure", () => {
 		expect(isWorkflowAgentRateLimitError({ code: "llm_http_403" })).toBe(false);
 	});
 
-	it("persists exponential quiet windows and a monotonic physical identity", () => {
+	it("persists increasing quiet windows", () => {
 		const first = createWorkflowAgentRateLimitBackpressureEvidence(null, 1_000);
 		expect(first).toMatchObject({
 			physicalFailureReason: "llm_http_429",
 			physicalRetryOrdinal: 1,
 			rateLimitDeferralCount: 1,
-			retryAfterMs: 65_000,
-			retryNotBeforeAt: new Date(66_000).toISOString(),
+			retryAfterMs: 5_000,
+			retryNotBeforeAt: new Date(6_000).toISOString(),
 		});
 
 		const second = createWorkflowAgentRateLimitBackpressureEvidence(
@@ -31,17 +31,17 @@ describe("workflow Agent durable rate-limit backpressure", () => {
 		expect(second).toMatchObject({
 			physicalRetryOrdinal: 2,
 			rateLimitDeferralCount: 2,
-			retryAfterMs: 130_000,
-			retryNotBeforeAt: new Date(230_000).toISOString(),
+			retryAfterMs: 10_000,
+			retryNotBeforeAt: new Date(110_000).toISOString(),
 		});
 		const parsed = parseWorkflowAgentPhysicalFailureEvidence({ deliveryEvidence: second });
 		expect(parsed).not.toBeNull();
 		if (!parsed) throw new Error("Expected physical failure evidence");
-		expect(remainingWorkflowAgentRateLimitDelayMs(parsed, 200_000)).toBe(30_000);
-		expect(remainingWorkflowAgentRateLimitDelayMs(parsed, 230_000)).toBe(0);
+		expect(remainingWorkflowAgentRateLimitDelayMs(parsed, 100_000)).toBe(10_000);
+		expect(remainingWorkflowAgentRateLimitDelayMs(parsed, 110_000)).toBe(0);
 	});
 
-	it("caps repeated quiet windows without exhausting the durable logical task", () => {
+	it("caps repeated 429 backoff", () => {
 		const evidence = createWorkflowAgentRateLimitBackpressureEvidence({
 			deliveryEvidence: {
 				retryablePhysicalFailure: true,
@@ -53,8 +53,8 @@ describe("workflow Agent durable rate-limit backpressure", () => {
 		expect(evidence).toMatchObject({
 			physicalRetryOrdinal: 43,
 			rateLimitDeferralCount: 43,
-			retryBaseDelayMs: 285_000,
-			retryAfterMs: 285_000,
+			retryBaseDelayMs: 180_000,
+			retryAfterMs: 180_000,
 		});
 	});
 
@@ -74,14 +74,14 @@ describe("workflow Agent durable rate-limit backpressure", () => {
 		});
 	});
 
-	it("uses stable item identity to stagger concurrent recovery without restart drift", () => {
+	it("keeps item recovery deterministic with stable jitter", () => {
 		const left = createWorkflowAgentRateLimitBackpressureEvidence(null, 1_000, "family:item-a");
 		const leftReplay = createWorkflowAgentRateLimitBackpressureEvidence(null, 1_000, "family:item-a");
 		const right = createWorkflowAgentRateLimitBackpressureEvidence(null, 1_000, "family:item-b");
 		expect(leftReplay).toEqual(left);
-		expect(left.retryJitterMs).toEqual(expect.any(Number));
+		expect(left.retryJitterMs).toBeGreaterThanOrEqual(0);
 		expect(left.retryAfterMs).not.toBe(right.retryAfterMs);
-		expect(Number(left.retryAfterMs)).toBeLessThanOrEqual(80_000);
-		expect(Number(right.retryAfterMs)).toBeLessThanOrEqual(80_000);
+		expect(left.retryAfterMs).toBeGreaterThanOrEqual(5_000);
+		expect(left.retryAfterMs).toBeLessThanOrEqual(6_000);
 	});
 });

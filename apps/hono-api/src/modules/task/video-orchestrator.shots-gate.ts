@@ -38,7 +38,7 @@ export const SHOTS_REQUIRED_GUIDANCE =
   "speakerBindings:[{name,assetKind:'character'|'voice'}](有对白必填), " +
   "speechEvents:[{speechEventId,lineId,startOffset:0,endOffset,startSeconds,endSeconds,speakerName,delivery,performance}](每条冻结 line 恰好一个完整事件；禁止正文), " +
   "shots:[{shotNo, framing(景别), composition(构图/机位), cameraMove(生成式运镜·禁剪辑语法), " +
-  "action(可选·确有可见动作时写主体动作+跟随动作+细微反应；静态/建立镜头可省略), lighting, speechEventIds(只引用与本镜时间窗相交的完整事件), " +
+  "action(必填非空字符串；供应商可见动作或静态画面正文), lighting, speechEventIds(只引用与本镜时间窗相交的完整事件), " +
   "sound, notes(逐镜光影/连续性/执行例外备注), durationSeconds}] }。shots 禁止携带 speaker/dialogue/文本坐标；Hono 从冻结台账物化 SpeechEvent.spokenText。" +
   "全片不变段（导演基调/影调圣经/硬约束）不要写进每段——首批 add_clips 用 filmBible:{directorTone,visualBible,hardRules} 一次传，" +
   "服务端写入即校验并确定性渲染成最终提示词。";

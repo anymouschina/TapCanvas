@@ -4,11 +4,24 @@ import {
 	reconcileLocallyAbandonedWorkflowExecutions,
 	recoverInterruptedWorkflowExecutions,
 	resumeQueuedWorkflowNodes,
+	resumeQueuedWorkflowExecutions,
 	resumeWaitingWorkflowNodes,
 } from "./execution.queue";
 import { freezeWorkflowExecutionSemanticsSnapshot } from "./execution.semantics-snapshot";
 
 describe("workflow queue restart recovery", () => {
+	it("periodically dispatches queued executions and isolates unavailable starts", async () => {
+		const fetch = vi.fn().mockRejectedValueOnce(new TypeError("fetch failed"))
+			.mockResolvedValue(new Response("accepted", { status: 202 }));
+		const env = {
+			DB: { workflow_executions: { findMany: vi.fn(async () => [{ id: "a" }, { id: "b" }]) } },
+			EXECUTION_DO: { idFromName: (id: string) => id, get: () => ({ fetch }) },
+		} as unknown as WorkerEnv;
+		expect(await resumeQueuedWorkflowExecutions(env)).toBe(1);
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(await resumeQueuedWorkflowExecutions(env)).toBe(2);
+	});
+
 	it("starts persisted queued executions that crashed before Durable Object initialization", async () => {
 		const durableFetch = vi.fn(async () => new Response("ok", { status: 200 }));
 		const env = {
@@ -143,6 +156,57 @@ describe("workflow queue restart recovery", () => {
 				nodeId: "agent",
 				nodeRunId: "node-run-agent",
 				attempt: 2,
+				phase: "await_external",
+			}, { delaySeconds: 60 });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("wakes an older Agent no-progress signal-only receipt from its persisted retry timer", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-08-23T00:00:00.000Z"));
+		try {
+			const queueSend = vi.fn(async () => undefined);
+			const outputRefs = JSON.stringify({
+				protocolVersion: "1",
+				executorRef: "agents.logical-task/v2",
+				nodeId: "agent",
+				executionMode: "once",
+				ports: {},
+				artifacts: [],
+				evidence: {
+					deliveryEvidence: {
+						retryablePhysicalFailure: true,
+						physicalFailureReason: "workflow_agent_no_progress_window_exhausted",
+						noProgressRecoveryMode: "signal_only",
+						retryNotBeforeAt: "2026-08-23T00:01:00.000Z",
+					},
+				},
+				itemRuns: [],
+				externalCheck: { version: 1, mode: "signal_only" },
+			});
+			const env = {
+				DB: {
+					workflow_node_runs: {
+						findMany: vi.fn(async () => [{
+							id: "node-run-agent",
+							execution_id: "execution-1",
+							node_id: "agent",
+							attempt: 1,
+							output_refs: outputRefs,
+						}]),
+					},
+				},
+				WORKFLOW_NODE_QUEUE: { send: queueSend },
+			} as unknown as WorkerEnv;
+
+			await expect(resumeWaitingWorkflowNodes(env)).resolves.toBe(1);
+			expect(queueSend).toHaveBeenCalledWith({
+				executionId: "execution-1",
+				nodeId: "agent",
+				nodeRunId: "node-run-agent",
+				attempt: 1,
 				phase: "await_external",
 			}, { delaySeconds: 60 });
 		} finally {

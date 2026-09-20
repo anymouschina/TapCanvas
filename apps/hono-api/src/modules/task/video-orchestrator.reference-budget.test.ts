@@ -26,11 +26,6 @@ const generationContract = {
   videoModel: "doubao-seedance-2-0-260128",
   durationOptions: [5, 10, 15],
   maxDurationSeconds: 15,
-  referenceImagePolicy: {
-    countUnit: "unique_url" as const,
-    maximumTotalImages: 9,
-    maximumBusinessImages: 9,
-  },
   referenceAudioPolicy: {
     minimumDurationSeconds: 1.8,
     maximumDurationSeconds: 30.2,
@@ -90,11 +85,9 @@ describe("orchestrateVideoReferenceBudget", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      referenceImagePolicy: { maximumBusinessImages: 9 },
       clipBudgets: [{
         clipIndex: 0,
         storyboard: { resolvedUniqueUrlCount: 1, budgetCost: 1 },
-        availableBusinessImagesAfterStoryboard: 8,
         candidates: [{ nodeId: "role-card", resolvedUniqueUrlCount: 3, incrementalBusinessUrlCost: 3, eligible: true }],
       }],
     });

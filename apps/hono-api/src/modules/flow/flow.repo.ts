@@ -1,3 +1,4 @@
+import type { CanvasMembershipChanges } from "@tapcanvas/workflow-kernel-protocol";
 import type { PrismaClient } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
 import type { FlowDto } from "./flow.schemas";
@@ -153,6 +154,7 @@ export async function updateFlow(
 		nowIso: string;
 		expectedRevision?: number | null;
 		source?: "user" | "agent";
+		canvasMembershipChanges?: CanvasMembershipChanges;
 	},
 ): Promise<FlowRow | null> {
 	void db;
@@ -161,12 +163,12 @@ export async function updateFlow(
 	const prisma = getPrismaClient();
 	const current = await prisma.flows.findFirst({
 		where: { id, owner_id: ownerId },
-		select: { data: true },
+		select: { data: true, canvas_revision: true },
 	});
 	if (!current) return null;
-	const mergedData = mergeFlowStorageEnvelope(current.data, data);
+	const mergedData = mergeFlowStorageEnvelope(current.data, data, params.canvasMembershipChanges);
 	const result = await prisma.flows.updateMany({
-		where: useLock ? { id, owner_id: ownerId, canvas_revision: expectedRevision } : { id, owner_id: ownerId },
+		where: useLock ? { id, owner_id: ownerId, canvas_revision: expectedRevision } : { id, owner_id: ownerId, data: current.data },
 		data: {
 			name,
 			data: mergedData,
@@ -176,13 +178,13 @@ export async function updateFlow(
 			canvas_revision: { increment: 1 },
 		},
 	});
-	if (result.count === 0 && useLock) {
+	if (result.count === 0) {
 		const currentRevision = await prisma.flows.findFirst({
 			where: { id, owner_id: ownerId },
 			select: { canvas_revision: true },
 		});
 		if (currentRevision) {
-			throw new FlowRevisionConflictError(id, expectedRevision as number, currentRevision.canvas_revision);
+			throw new FlowRevisionConflictError(id, expectedRevision ?? current.canvas_revision, currentRevision.canvas_revision);
 		}
 	}
 	return getFlowForOwner(db, id, ownerId);
@@ -197,6 +199,7 @@ export async function updateFlowByIdUnsafe(
 		nowIso: string;
 		expectedRevision?: number | null;
 		source?: "user" | "agent";
+		canvasMembershipChanges?: CanvasMembershipChanges;
 	},
 ): Promise<FlowRow | null> {
 	void db;
@@ -205,12 +208,12 @@ export async function updateFlowByIdUnsafe(
 	const prisma = getPrismaClient();
 	const current = await prisma.flows.findFirst({
 		where: { id },
-		select: { data: true },
+		select: { data: true, canvas_revision: true },
 	});
 	if (!current) return null;
-	const mergedData = mergeFlowStorageEnvelope(current.data, data);
+	const mergedData = mergeFlowStorageEnvelope(current.data, data, params.canvasMembershipChanges);
 	const result = await prisma.flows.updateMany({
-		where: useLock ? { id, canvas_revision: expectedRevision } : { id },
+		where: useLock ? { id, canvas_revision: expectedRevision } : { id, data: current.data },
 		data: {
 			name,
 			data: mergedData,
@@ -218,13 +221,13 @@ export async function updateFlowByIdUnsafe(
 			canvas_revision: { increment: 1 },
 		},
 	});
-	if (result.count === 0 && useLock) {
+	if (result.count === 0) {
 		const currentRevision = await prisma.flows.findFirst({
 			where: { id },
 			select: { canvas_revision: true },
 		});
 		if (currentRevision) {
-			throw new FlowRevisionConflictError(id, expectedRevision as number, currentRevision.canvas_revision);
+			throw new FlowRevisionConflictError(id, expectedRevision ?? current.canvas_revision, currentRevision.canvas_revision);
 		}
 	}
 	return getFlowByIdUnsafe(db, id);
@@ -251,7 +254,7 @@ export async function replaceFlowDataIfUnchanged(
 			updated_at: expectedUpdatedAt,
 		},
 		data: {
-			data: nextData,
+			data: mergeFlowStorageEnvelope(expectedData, nextData),
 			updated_at: nowIso,
 		},
 	});
@@ -266,10 +269,30 @@ export async function deleteFlowById(
 ): Promise<void> {
 	void db;
 	const prisma = getPrismaClient();
-	await prisma.$transaction([
-		prisma.flow_versions.deleteMany({ where: { flow_id: id } }),
-		prisma.flows.deleteMany({ where: { id, owner_id: ownerId } }),
-	]);
+	await prisma.$transaction(async (tx) => {
+		const attachments = await tx.agent_capability_attachments.findMany({
+			where: { source_id: id },
+			select: { descriptor_json: true },
+		});
+		const capabilityIds = attachments.flatMap((attachment) => {
+			try {
+				const parsed: unknown = JSON.parse(attachment.descriptor_json);
+				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+				const capabilityId = (parsed as { capabilityId?: unknown }).capabilityId;
+				return typeof capabilityId === "string" && capabilityId.trim() ? [capabilityId.trim()] : [];
+			} catch {
+				return [];
+			}
+		});
+		await tx.agent_capability_attachments.deleteMany({ where: { source_id: id } });
+		if (capabilityIds.length > 0) {
+			await tx.agent_capability_preferences.deleteMany({
+				where: { replaced_by_capability_id: { in: capabilityIds } },
+			});
+		}
+		await tx.flow_versions.deleteMany({ where: { flow_id: id } });
+		await tx.flows.deleteMany({ where: { id, owner_id: ownerId } });
+	});
 }
 
 export async function createFlowVersion(

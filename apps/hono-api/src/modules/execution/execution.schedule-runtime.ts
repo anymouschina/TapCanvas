@@ -34,6 +34,12 @@ export type WorkflowScheduleScanResult = Readonly<{
 	diagnostics: readonly WorkflowScheduleDiagnostic[];
 }>;
 
+export type WorkflowScheduleDiagnosticLogDelta = Readonly<{
+	next: ReadonlyMap<string, string>;
+	added: readonly WorkflowScheduleDiagnostic[];
+	resolved: readonly string[];
+}>;
+
 type ScheduleCandidate = Readonly<{
 	flow: FlowRow;
 	triggerNodeId: string;
@@ -41,6 +47,28 @@ type ScheduleCandidate = Readonly<{
 	workflowDefinitionVersion: number;
 	spec: ScheduleWorkflowTriggerSpecV1;
 }>;
+
+function scheduleDiagnosticIdentity(diagnostic: WorkflowScheduleDiagnostic): string {
+	return [diagnostic.flowId, diagnostic.triggerNodeId ?? "", diagnostic.code].join("\u0000");
+}
+
+export function collectScheduleDiagnosticLogDelta(
+	previous: ReadonlyMap<string, string>,
+	diagnostics: readonly WorkflowScheduleDiagnostic[],
+): WorkflowScheduleDiagnosticLogDelta {
+	const next = new Map<string, string>();
+	const added: WorkflowScheduleDiagnostic[] = [];
+	for (const diagnostic of diagnostics) {
+		const identity = scheduleDiagnosticIdentity(diagnostic);
+		next.set(identity, diagnostic.message);
+		if (previous.get(identity) !== diagnostic.message) added.push(diagnostic);
+	}
+	const resolved: string[] = [];
+	for (const identity of previous.keys()) {
+		if (!next.has(identity)) resolved.push(identity);
+	}
+	return { next, added, resolved };
+}
 
 function isRecord(value: unknown): value is JsonRecord {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -309,6 +337,7 @@ export async function scanDueWorkflowSchedules(
 
 export function startLocalWorkflowScheduleScanner(env: WorkerEnv): () => void {
 	let running = false;
+	let loggedDiagnostics = new Map<string, string>();
 	const scan = async (): Promise<void> => {
 		if (running) return;
 		running = true;
@@ -317,8 +346,13 @@ export function startLocalWorkflowScheduleScanner(env: WorkerEnv): () => void {
 			if (result.created > 0 || result.deduplicated > 0) {
 				console.info("[workflow-schedule] scan completed", result);
 			}
-			for (const diagnostic of result.diagnostics) {
+			const diagnosticDelta = collectScheduleDiagnosticLogDelta(loggedDiagnostics, result.diagnostics);
+			loggedDiagnostics = new Map(diagnosticDelta.next);
+			for (const diagnostic of diagnosticDelta.added) {
 				console.error("[workflow-schedule] schedule diagnostic", diagnostic);
+			}
+			for (const identity of diagnosticDelta.resolved) {
+				console.info("[workflow-schedule] schedule diagnostic resolved", { identity });
 			}
 		} catch (error: unknown) {
 			console.error("[workflow-schedule] scanner failed", error);

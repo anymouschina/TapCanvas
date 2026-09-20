@@ -1,4 +1,5 @@
-import { VIDEO_RUN_STATUS_PROJECTION_OWNER } from "@tapcanvas/video-orchestrator-protocol";
+import { mergeCanvasAuthoringData, VIDEO_RUN_STATUS_PROJECTION_OWNER } from "@tapcanvas/video-orchestrator-protocol";
+import { preserveSubmittedMediaSettings } from "./flow.media-submission-settings";
 import {
 	isWorkflowExecutionProjectionNode,
 	WORKFLOW_EXECUTION_PROJECTION_OWNER,
@@ -87,14 +88,21 @@ function edgeTouchesNodeIds(edge: FlowRecord, nodeIds: ReadonlySet<string>): boo
 	return nodeIds.has(source) || nodeIds.has(target);
 }
 
+/** Editable settings belong to the user, including while a provider task is in flight. */
+function mergeOutputAuthoringData(persistedValue: unknown, incomingValue: unknown): FlowRecord {
+	const persisted = readRecord(persistedValue) ?? {};
+	const authoring = readRecord(incomingValue) ?? {};
+	return { ...mergeCanvasAuthoringData(persisted, authoring), ...preserveSubmittedMediaSettings(persisted, authoring) };
+}
+
 /**
  * User snapshots own layout and ordinary canvas content, while server-managed projection data owns
- * the current runtime facts. A full user save may move a live projection node, but cannot regress its
- * data or delete it with a stale local snapshot.
+ * the current runtime facts. Media output settings remain editable during execution; a stale save
+ * cannot regress runtime facts or delete an active output.
  *
  * 工作流执行产物（workflowExecutionId 输出节点）只在对应执行仍活跃（queued/running，或状态未知）
  * 时受保护；执行已终态（success/failed/canceled）后产物是普通画布资产：用户可经正常画布保存
- * 删除，保存中保留该节点时以用户快照为准。`executionActive` 由保存链路依据 workflow_executions
+ * 删除，保存中保留该节点时，用户可编辑创作字段，但运行事实仍以服务端为准。`executionActive` 由保存链路依据 workflow_executions
  * 真实状态提供，缺省时按「全部保护」兼容旧行为。
  */
 export function preserveManagedFlowProjections(input: {
@@ -106,26 +114,63 @@ export function preserveManagedFlowProjections(input: {
 	const incomingNodes = readNodes(input.incoming);
 	const isExecutionActive = (node: FlowRecord): boolean => {
 		if (managedProjectionOwner(node)) return true;
+		const data = readRecord(node.data);
+		const hasSuccessfulAsset = data?.status === "success" && (
+			["videoUrl", "imageUrl"].some((key) => typeof data[key] === "string" && String(data[key]).trim().length > 0)
+			|| ["videoResults", "imageResults"].some((key) => Array.isArray(data[key]) && data[key].some((item: unknown) => {
+				const result = readRecord(item);
+				return typeof result?.url === "string" && result.url.trim().length > 0;
+			}))
+		);
+		// Media ownership outlives the aggregate workflow: a failed sibling must
+		// not expose an accepted task or an uncertain submission to stale saves.
+		if (data && (
+			["submitting", "queued", "running", "submitted"].includes(String(data.status))
+			|| (!hasSuccessfulAsset && ["submitting", "accepted", "uncertain"].includes(String(data.workflowSubmissionState)))
+		)) return true;
 		const executionId = readWorkflowExecutionId(node);
 		if (!executionId) return true;
 		const known = input.executionActive?.[executionId];
 		// 状态未知（未提供映射或执行不存在）时按保护处理，避免误删活跃执行产物。
 		return known === undefined ? true : known;
 	};
-	const activeManagedNodes = existingManagedNodes.filter(isExecutionActive);
-	const finishedManagedNodes = existingManagedNodes.filter((node) => !isExecutionActive(node));
+	// The execution status card is a disposable canvas projection. Its durable execution
+	// remains queryable after the user removes the card, so an omitted card must not be
+	// resurrected by the stale-save protection below. Runtime output nodes remain protected
+	// while active because deleting those would discard an in-flight delivery surface.
+	const activeManagedNodes = existingManagedNodes.filter((node) =>
+		!isWorkflowExecutionProjectionNode(node) && isExecutionActive(node),
+	);
+	const finishedManagedNodes = existingManagedNodes.filter((node) =>
+		!isWorkflowExecutionProjectionNode(node) && !isExecutionActive(node),
+	);
 	const activeById = new Map(activeManagedNodes.map((node) => [nodeId(node), node]));
 	const finishedById = new Map(finishedManagedNodes.map((node) => [nodeId(node), node]));
+	const disposableExecutionProjectionById = new Map(
+		existingManagedNodes
+			.filter(isWorkflowExecutionProjectionNode)
+			.map((node) => [nodeId(node), node]),
+	);
 	const rejectedClaimIds = new Set<string>();
 	const nodes = incomingNodes.flatMap((node) => {
 		const id = nodeId(node);
 		const existingActive = activeById.get(id);
 		if (existingActive) return [{
 			...node,
-			data: existingActive.data,
+			data: isWorkflowExecutionOutput(existingActive) && !managedProjectionOwner(existingActive)
+				? mergeOutputAuthoringData(existingActive.data, node.data)
+				: existingActive.data,
 		}];
-		// 终态执行的产物已不再是服务端托管投影：保留用户快照中的版本（用户删除后也不恢复）。
-		if (finishedById.has(id)) return [node];
+		// 终态产物允许正常删除与编辑创作字段；已有资产和回执不能被旧快照覆盖。
+		const finished = finishedById.get(id);
+		if (finished) {
+			return [{ ...node, data: mergeOutputAuthoringData(finished.data, node.data) }];
+		}
+		// An existing status projection may be retained or repositioned by the user;
+		// only omission means explicit deletion.
+		if (disposableExecutionProjectionById.has(id) && isWorkflowExecutionProjectionNode(node)) {
+			return [node];
+		}
 		// A public full-flow write cannot mint a server-owned projection merely by claiming
 		// its marker. The projection must first be created by the dedicated server path.
 		if (isServerManagedNode(node)) {

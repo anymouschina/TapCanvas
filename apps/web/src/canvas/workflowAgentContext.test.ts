@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isWorkflowAgentNode,
+  readWorkflowKnowledgeSearchObservations,
   readWorkflowAgentDeclaredContext,
   readWorkflowAgentExecutionProvenance,
   readWorkflowAgentExecutionProvenanceHistory,
@@ -91,3 +92,27 @@ describe('workflow Agent context metadata', () => {
     expect(readWorkflowAgentExecutionProvenance(outputRefs)?.executionId).toBe('physical-2')
   })
 })
+
+
+it('preserves candidate decisions and successful body-read receipts in canvas evidence', () => {
+  const readReceipt = { toolCallId: 'read-1', candidateSetId: 'set-1', tool: 'prompt_example_read', readAt: '2026-09-09T08:00:00.000Z' };
+  const retrievalDecisions = [{ version: 1, blocking: false, toolNames: ['prompt_example_read'], toolCallIds: ['read-1'], rationale: 'Use the continuity example', status: 'tool_actions_requested', at: readReceipt.readAt }];
+  const result = readWorkflowAgentExecutionProvenance({ executionProvenance: {
+    version: 1, executionId: 'run', depth: 1, model: 'model', apiStyle: 'chat', requiredSkills: [], loadedSkills: [], startedAt: readReceipt.readAt,
+    retrievalDecisions,
+    loadedKnowledgeSources: [{ cardId: 'card', title: 'Example', sourceUrls: [], contentHash: `sha256:${'a'.repeat(64)}`, contentChars: 80, readReceipt }],
+  } });
+  expect(result?.retrievalDecisions).toEqual(retrievalDecisions);
+  expect(result?.loadedKnowledgeSources?.[0]?.readReceipt).toEqual(readReceipt);
+});
+
+
+it('never attaches another candidate set to a search missing its receipt identity', () => {
+  const observation = { version: 1, status: 'candidate_found', attempted: true, candidateCount: 1, blocking: false, rationale: 'candidate metadata', domains: ['cinema'], toolCallId: 'search-1' };
+  const retrievalCandidateSets = [{ candidateKind: 'domain', candidateSetId: 'other-search', entries: [{ candidateId: 'other-card', rank: 1, score: 0.9 }] }];
+  const missing = readWorkflowKnowledgeSearchObservations({ knowledgeCandidateSearch: observation, retrievalCandidateSets });
+  expect(missing[0]?.candidateSetId).toBeUndefined();
+  expect(missing[0]?.candidates).toBeUndefined();
+  const matched = readWorkflowKnowledgeSearchObservations({ knowledgeCandidateSearch: { ...observation, candidateSetId: 'other-search' }, retrievalCandidateSets });
+  expect(matched[0]?.candidates?.[0]?.cardId).toBe('other-card');
+});

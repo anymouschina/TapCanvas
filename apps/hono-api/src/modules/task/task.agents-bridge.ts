@@ -1,3 +1,4 @@
+import { parseWorkflowSubmissionHandoff } from "./workflow-submission-handoff";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DIRECTOR_POSE_LABELS, DIRECTOR_PROP_LABELS } from "./director-capture.shared";
@@ -7548,6 +7549,12 @@ function buildAgentsBridgeRemoteToolCatalog(
 						type: "string",
 						description: "可选：评估问题/侧重点。省略用默认 QA 问法(真实感/动态/一致/失真/口播)。",
 					},
+					fps: {
+						type: "number",
+						minimum: 1,
+						maximum: 5,
+						description: "可选：视频理解取样帧率（1–5 FPS，上游硬上限为 5）。快速剪辑/蒙太奇请显式提高；仅影响理解取样，不会把原视频作为生成输入。",
+					},
 					dramaticCoverage: {
 						type: "array",
 						minItems: 1,
@@ -9719,6 +9726,12 @@ export async function runAgentsBridgeChatTask(
 					...(typeof outputContract !== "undefined"
 						? { outputContract }
 						: {}),
+					...(options?.directForcedAgentExecution === true ? {
+						...(typeof extras.structuredOutputSourceContext === "string" ? { structuredOutputSourceContext: extras.structuredOutputSourceContext } : {}),
+						...(extras.resumeStructuredOutput === true ? { resumeStructuredOutput: true } : {}),
+						...(isRecord(extras.structuredOutputRepair) ? { structuredOutputRepair: extras.structuredOutputRepair } : {}),
+						...(typeof extras.structuredOutputSubmissionPolicy === "string" ? { structuredOutputSubmissionPolicy: extras.structuredOutputSubmissionPolicy } : {}),
+					} : {}),
 					...(typeof maxOutputTokens === "number"
 						? { maxOutputTokens }
 						: {}),
@@ -10130,6 +10143,7 @@ export async function runAgentsBridgeChatTask(
 	const llmTermination = summarizeAgentsBridgeLlmTermination(traceTurns);
 	const rawTraceRuntime = isRecord(data?.trace?.runtime) ? data.trace.runtime : null;
 	const traceRuntime = normalizeAgentsRuntimeTraceSummary(rawTraceRuntime);
+	const submissionHandoff = parseWorkflowSubmissionHandoff(rawTraceRuntime?.submissionHandoff);
 	const traceTodoList = normalizeAgentsTodoListTraceSummary(data?.trace?.todoList);
 	const traceTodoEvents = normalizeAgentsTodoEventTraceSummaries(data?.trace?.todoEvents);
 	const tracePlanning =
@@ -10376,6 +10390,7 @@ export async function runAgentsBridgeChatTask(
 							exit: traceRuntime.physicalRunExit,
 							expectedLogicalTaskId: publicTurnId || requestId,
 							deliveryVerified: durableTerminalDelivery !== null,
+							submissionHandoff,
 					  });
 			} catch (error: unknown) {
 				throw new AppError("Agents bridge 的逻辑任务状态无法提交", {
@@ -10471,6 +10486,7 @@ export async function runAgentsBridgeChatTask(
 			...(traceCompletion ? { completionTrace: traceCompletion } : {}),
 			runOutcome: traceRunOutcome,
 			logicalTaskState,
+			...(submissionHandoff ? { submissionHandoff } : {}),
 			...(semanticExecutionIntent.detected ? { semanticExecutionIntent } : {}),
 			...(tracePlanning ? { planningTrace: tracePlanning } : {}),
 			...(traceTodoList ? { todoList: traceTodoList } : {}),

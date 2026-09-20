@@ -655,11 +655,6 @@ describe("durable BeatSheet per-beat draft graph", () => {
         videoModel: "model-a",
         durationOptions: [10, 12],
         maxDurationSeconds: 12,
-        referenceImagePolicy: {
-          countUnit: "unique_url",
-          maximumTotalImages: 30,
-          maximumBusinessImages: 30,
-        },
         referenceAudioPolicy: {
           minimumDurationSeconds: 1.8,
           maximumDurationSeconds: 30,

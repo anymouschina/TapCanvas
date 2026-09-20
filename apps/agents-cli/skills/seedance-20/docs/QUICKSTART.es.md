@@ -1,0 +1,85 @@
+# Seedance 2.0 Skill OS — Guía rápida
+
+> Versión 6.6.0 · De la instalación a tu primer prompt "con dirección" en unos 5 minutos.
+> Documentación completa: [README](../README.md).
+
+## En una frase
+
+Seedance 2.0 Skill OS es un agent skill que dirige Seedance 2.0 como lo haría un cineasta, en lugar de amontonar adjetivos. Una sola regla: **dirige el modelo, no te pelees con cada fotograma.** Cuéntale qué está *haciendo* la escena y la skill convierte esa intención en un prompt listo para producción.
+
+## 1. Instalación (unos 5 minutos)
+
+Instala el repositorio como **una** skill raíz llamada `seedance-20`; sus sub-skills y references se cargan solas por ruta relativa.
+
+**Codex (trae un instalador de un solo comando)**
+
+```bash
+python scripts/install_codex_skill.py --force
+```
+
+Copia el repo a `~/.codex/skills/seedance-20` (o `$CODEX_HOME/skills/seedance-20`). Reinicia Codex y luego llama a `$seedance-20`.
+
+**Instalar desde GitHub (si tu cliente lo permite por URL)**
+
+```text
+https://github.com/Emily2040/seedance-2.0
+```
+
+**Copia manual (otros clientes)**
+
+Copia la carpeta en el directorio de skills de tu cliente, sin cambiarle el nombre `seedance-20`. Los destinos habituales están en la [tabla de instalación del README](../README.md#install) (no es una garantía: compruébalos en tu propio cliente). Por ejemplo: Claude Code `.claude/skills/`, Cursor `.cursor/skills/`, GitHub Copilot `.github/skills/`, Windsurf `.windsurf/skills/`.
+
+> Lo primero, la seguridad: instálalo solo en clientes de agente en los que confíes. Antes de usar esta skill en un agente ajeno o desconocido, léete [SECURITY.md](../SECURITY.md).
+
+## 2. Elige la skill según tu caso
+
+| Lo que tienes… | Carga primero |
+|---|---|
+| una idea todavía difusa | `seedance-interview` |
+| una escena clara | `seedance-prompt` |
+| una historia de varios clips | `seedance-sequence` |
+| un clip ya aprobado que continuar | `seedance-continuation` |
+| un resultado flojo o bloqueado | `seedance-troubleshoot` |
+| un personaje, marca, celebridad o persona real | `seedance-copyright` |
+
+## 3. Dirige antes de escribir — cuatro preguntas
+
+1. **¿Qué está haciendo la escena?** ¿Un giro, una revelación, una emoción, una demostración?
+2. **¿Cómo lo cuenta la cámara?** El plano general para la soledad, el primer plano para el rostro, un acercamiento lento para la revelación.
+3. **¿Para qué trabaja la luz?** La hora del día, dura o suave, cálida o fría — todo al servicio de la intención.
+4. **¿Qué hace el sonido?** Casi silencio, un solo detalle de ambiente, o una línea de diálogo.
+
+## 4. Un contraste
+
+**Recargado (flojo)**
+
+```
+plano épico y cinematográfico de una mujer leyendo una carta, emotivo, iluminación preciosa, 4K
+```
+
+**Con dirección (fuerte)**
+
+```
+Plano medio corto, a la altura de los ojos; baja la carta y sus manos se quedan quietas mientras llega un acercamiento lento; una luz de ventana suave le deja el rostro sobrio; casi silencio, con el roce de una silla.
+```
+
+## 5. Dos reglas que te ahorran tomas
+
+- **Deja las etiquetas de referencia tal cual:** `@Image1`, `@Video1`, `@Audio1`, `@图片1`, `@视频1`. Ni las traduzcas ni las reformatees.
+- **No pidas la historia entera en una sola generación.** Genera el Clip 01, mira cómo terminó *de verdad* y escribe el Clip 02 a partir de ese final real (`seedance-continuation`).
+
+## 6. Seguridad
+
+- **Seguridad del contenido:** si tu idea usa un personaje protegido, una celebridad, una marca, un logo, una canción o el rostro o la voz de una persona real, no lo escondas en otro idioma: reescríbelo con `seedance-copyright` en un equivalente original, con licencia o de posproducción.
+- **Seguridad del agente:** este paquete **no hace ninguna llamada de red ni envía telemetría**; sus scripts son deterministas y funcionan sin conexión. No pegues nunca claves de API, cookies de cuenta ni material privado en un agente en el que no confíes. Consulta [SECURITY.md](../SECURITY.md).
+
+## 7. Para profundizar
+
+- `references/directing-engine.md` — lee la escena y elige una única intención (33 ejemplos por género).
+- `references/capability-map.md` — diseña aprovechando las fortalezas del modelo y esquivando sus límites conocidos.
+- `references/api-workflow.md` — API, proveedores, precios e IDs de modelo (con fecha de la fuente).
+- `references/examples-by-mode.md` — ejemplos de T2V, I2V, V2V, R2V, FLF2V, edición y extensión.
+
+---
+
+Otros idiomas: [English](QUICKSTART.md) · [中文](QUICKSTART.zh.md) · [日本語](QUICKSTART.ja.md) · [한국어](QUICKSTART.ko.md) · [Русский](QUICKSTART.ru.md)

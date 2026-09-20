@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useRFStore } from './store'
+import { WORKFLOW_ICON_NODE_HEIGHT, WORKFLOW_ICON_NODE_WIDTH } from './workflowNodeGeometry'
 
 describe('workflow media canvas display', () => {
   beforeEach(() => useRFStore.getState().reset())
@@ -42,10 +43,10 @@ describe('workflow media canvas display', () => {
       workflowCanvasDisplayMode: 'icon',
     })
     expect(useRFStore.getState().nodes[0]).toMatchObject({
-      initialWidth: 56,
-      initialHeight: 56,
-      measured: { width: 56, height: 56 },
-      style: { width: 56, height: 56 },
+      initialWidth: WORKFLOW_ICON_NODE_WIDTH,
+      initialHeight: WORKFLOW_ICON_NODE_HEIGHT,
+      measured: { width: WORKFLOW_ICON_NODE_WIDTH, height: WORKFLOW_ICON_NODE_HEIGHT },
+      style: { width: WORKFLOW_ICON_NODE_WIDTH, height: WORKFLOW_ICON_NODE_HEIGHT },
       data: { workflowCanvasDisplayMode: 'icon' },
     })
   })

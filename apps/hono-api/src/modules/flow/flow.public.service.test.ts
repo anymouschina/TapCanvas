@@ -1514,3 +1514,18 @@ describe("workflow execution projection node protocol", () => {
 		})).toThrow();
 	});
 });
+
+it("preserves an explicit ordered data replacement through the patch and realtime projection", () => {
+  const current = { nodes: [{ id: "first", type: "taskNode", data: { kind: "video" } }, { id: "second", type: "taskNode", data: { kind: "video" } }, { id: "result", type: "taskNode", position: { x: 0, y: 0 }, data: { kind: "videoCompose", sourceNodeIds: ["second", "first"], videoUrl: "https://media.example/final.mp4" } }], edges: [] };
+  const patch = PublicFlowPatchRequestSchema.parse({ allowOverwrite: true, patchNodeData: [{ id: "result", data: { sourceNodeIds: ["first", "second"] } }] });
+  const applied = applyPublicFlowGraphPatch({ current, patch });
+  expect(applied.data.nodes).toEqual(expect.arrayContaining([expect.objectContaining({ id: "result", data: expect.objectContaining({ sourceNodeIds: ["first", "second"], videoUrl: "https://media.example/final.mp4" }) })]));
+  expect(buildCanvasSyncPatch({ applied, patch })).toMatchObject({ upsertNodes: [{ data: { sourceNodeIds: ["first", "second"] } }] });
+});
+
+it("rejects a fabricated source identity before returning a successful canvas patch", () => {
+  const current = { nodes: [{ id: "result", type: "taskNode", data: { kind: "videoCompose", videoUrl: "https://media.example/final.mp4" } }], edges: [] };
+  const patch = PublicFlowPatchRequestSchema.parse({ allowOverwrite: true, patchNodeData: [{ id: "result", data: { sourceNodeIds: ["corrupted-id"] } }] });
+  expect(() => applyPublicFlowGraphPatch({ current, patch })).toThrow("sourceNodeIds references nodes absent");
+  expect(current.nodes[0]?.data.videoUrl).toBe("https://media.example/final.mp4");
+});

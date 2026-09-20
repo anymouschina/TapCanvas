@@ -92,6 +92,8 @@ vi.mock("../chapter/chapter.canvas-flow.service", () => ({
 import {
   persistFlowPatch,
   readDurableNodeVideoUrl,
+  readFlowNodes,
+  readVisibleFlowNodes,
   type VideoFlowNode,
 } from "./video-orchestrator.flow-io";
 
@@ -112,6 +114,16 @@ function makeRow(input: {
 }
 
 describe("persistFlowPatch revision convergence", () => {
+	it("retains receipts for settlement while excluding tombstoned nodes from creative discovery", () => {
+		const row = makeRow({ revision: 2, nodes: [{ id: "deleted", data: { taskId: "paid-task" } }, { id: "visible", data: {} }] });
+		const graph = JSON.parse(row.data) as Record<string, unknown>;
+		row.data = JSON.stringify({ ...graph, __tapcanvasCanvasLifecycle: {
+			deletedNodeIds: ["deleted"], detachedExecutionIds: [], retainedNodeIds: [],
+		} });
+		expect(readFlowNodes(row).map((node) => node.id)).toEqual(["deleted", "visible"]);
+		expect(readVisibleFlowNodes(row).map((node) => node.id)).toEqual(["visible"]);
+		expect(row.data).toContain("paid-task");
+	});
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createFlowVersion.mockResolvedValue(undefined);

@@ -1,0 +1,70 @@
+{
+  "reviewId": "manju-laoli-skill-review-2026-08-28",
+  "source": {
+    "path": "apps/source/manju-laoli-skill-main",
+    "license": "MIT",
+    "fileCount": 23,
+    "referenceLineCount": 1109,
+    "aggregateSha256": "7e61e3ab92d297f6c7742e888d7e672cc72b4c741b5314e324fb5912a20059da"
+  },
+  "tapcanvasSourceHistory": {
+    "conflictingCombatDefaultsIntroducedByCommit": "ee8bc07e0f9ad1a4aa1de146a1e6195a9cbecb53",
+    "commitDate": "2026-08-03T07:52:48+08:00",
+    "commitSubject": "视频提示词",
+    "declaredBasisInThatRevision": "five user-provided and validated samples under assets/docs/打斗场景, compiled offline into a runtime reference",
+    "finding": "Sample-specific render vocabulary, 15-second density, peak intensity and staging patterns were promoted into defaults instead of remaining conditional mechanisms."
+  },
+  "decision": "extract_verified_mechanisms_do_not_install_wholesale",
+  "runtimeGate": false,
+  "highValueMechanisms": [
+    {
+      "mechanism": "pronounceable_dialogue_timing",
+      "value": "按可发声字符、语速、标点停顿、换人间隔与关键反应共同预算台词时间，比先套固定容器更接近真实成片。",
+      "integration": "已提炼到 tapcanvas-dramatic-adapter/references/dialogue-duration-planning.md，并通过独立评测。"
+    },
+    {
+      "mechanism": "physical_action_chain",
+      "value": "把动作拆成驱动、接触、受力、材料响应与下一状态，能直接提高视频模型的可执行性。",
+      "integration": "与当前 action_causality_physics 合同对齐，作为动作 reference 的离线比较证据，不复制其固定模板。"
+    },
+    {
+      "mechanism": "spatial_ledger_and_axis",
+      "value": "持续记录主体方位、运动方向、距离与轴线，能降低跨镜位置和朝向漂移。",
+      "integration": "由现有 continuityLedger、scene_space_and_blocking 和 intra_clip_state_chain 承担。"
+    },
+    {
+      "mechanism": "camera_transition_and_eye_trace",
+      "value": "切点服从动作、遮挡、视线与运动方向，可减少镜头虽华丽但空间不可读的问题。",
+      "integration": "保留为 writer 的动态镜头方法，不转成固定镜数、固定运镜套餐或服务端规则。"
+    },
+    {
+      "mechanism": "physicalize_abstract_adjectives",
+      "value": "把宏大、压迫、危险等抽象词转换成构图、光线、距离、动作与材质事实，能减少空洞质量词。",
+      "integration": "与当前 authoring contract 的 P1-P3 及主 writer 的商用品质定义一致。"
+    },
+    {
+      "mechanism": "microexpression_progression",
+      "value": "以刺激、感知、选择和身体反应形成递进，而不是只追加情绪形容词。",
+      "integration": "适合作为文戏/对白 reference 的候选机制，需另行按 TapCanvas 字段合同验证后再合入。"
+    }
+  ],
+  "conditionalValue": [
+    "武术招式与兵器动作库只适合明确的动作题材，且必须服从冻结能力、武器、伤势和胜负事实。",
+    "动作 VFX、视觉审美预设与角色/道具多视图建议可用于离线灵感，但不能成为跨项目默认值。",
+    "平台和模型提示词示例可作为历史案例，不是当前供应商能力真源。"
+  ],
+  "rejectedForRuntime": [
+    "固定五级或 P0/P1/P2 质量闸门及其阻塞语义",
+    "固定 15 秒生产单元、180 秒约 14 至 15 段、固定镜数与固定爆点频率",
+    "默认 R2 高燃、默认模型、默认 9:16、默认 Seedance 或默认视觉风格",
+    "静态供应商能力表和失败后自动切换平台或模型",
+    "固定三视图格式、固定锁项数量与其它不来自本轮真实合同的格式配额"
+  ],
+  "rootCauseFindings": [
+    "外部 Skill 的固定 15 秒与质量闸门不能直接引入 TapCanvas，否则会把创作方法误写成供应商事实和用户级终态裁决。",
+    "对照该 Skill 时发现 TapCanvas 自己的 combat-action-expansion-standard 仍残留默认 8K、PBR、16:9、60 帧、院线调色、15 秒、9 至 12 镜、固定爆点频率、最高强度与 signature showcase，和主 writer 合同直接冲突。",
+    "正式 BeatSheet 宿主此前在 Agent 未提交 dialoguePaceRate 时用固定 4 字/秒反推逐行时长；长对白因此可被宿主默认拆成多个供应商时长窗口，而不是由表演情境决定。",
+    "这些内部冲突已在 tapcanvas/video-prompt-authoring@3.3.3 中硬切：领域 reference 只能提供受冻结事实约束的方法，不再拥有媒体规格、时长、密度或消费策略的默认权；任何承载人声的 beat 必须由 Agent 明确提交语速，宿主只验数值、物理上限和可发声容量。"
+  ],
+  "adoptionPrinciple": "只提炼可验证、跨模型、跨任务的因果机制；所有媒体规格、用户偏好、供应商边界与生产终态仍分别由用户事实、真实资产、动态 generation contract 和统一交付合同决定。"
+}

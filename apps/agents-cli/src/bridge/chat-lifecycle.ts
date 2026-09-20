@@ -150,6 +150,8 @@ function terminalSnapshot(
   const now = new Date().toISOString();
   const { runtime, runOutcome } = responseTrace(result);
   const succeeded = runOutcome.status === "succeeded";
+  const pending = runOutcome.terminal === false;
+  const submitted = runtime.completionBoundary === "submission" && runtime.executionOwner === "durable_executor";
   const reasonCode = nonEmptyString(runOutcome.reason)
     ?? (succeeded ? "delivery_verified" : "deepseek_harness_turn_failed");
   const terminalDelivery = isJsonObject(runtime.terminalDelivery)
@@ -163,16 +165,16 @@ function terminalSnapshot(
     activeTurn: false,
     turn: {
       ...priorTurn,
-      state: succeeded ? "succeeded" : "failed",
+      state: pending ? "waiting" : succeeded ? "succeeded" : "failed",
       logicalTaskState: logicalTaskState({
         turnId,
-        status: succeeded ? "succeeded" : "failed",
+        status: pending ? "active" : succeeded ? "succeeded" : "failed",
         reasonCode,
         physicalRunStatus: "completed",
-        deliveryStatus: succeeded ? "satisfied" : "unsatisfied",
+        deliveryStatus: pending || submitted ? "pending" : succeeded ? "satisfied" : "unsatisfied",
         updatedAt: now,
       }),
-      phase: succeeded ? "succeeded" : "failed",
+      phase: pending ? "waiting_external" : succeeded ? "succeeded" : "failed",
       updatedAt: now,
       lastConfirmedAt: now,
       reasonCode: succeeded ? null : reasonCode,
@@ -182,7 +184,10 @@ function terminalSnapshot(
       userIntentContract: isJsonObject(runtime.userIntentContract)
         ? runtime.userIntentContract
         : priorTurn.userIntentContract ?? null,
-      lastConfirmedSummary: succeeded
+      physicalRunExit: runtime.physicalRunExit,
+      submissionHandoff: runtime.submissionHandoff,
+      durableTaskReferences: runtime.durableTaskReferences,
+      lastConfirmedSummary: submitted ? "工作流提交交接完成；持久执行器继续生产，尚未确认成片交付" : pending ? "持久工作流已受理，等待真实交付证据" : succeeded
         ? "DeepSeek Harness 已完成并验证当前回合交付"
         : `DeepSeek Harness 当前回合失败：${reasonCode}`,
       finalResponse: succeeded && result.text.trim() ? result.text.trim() : null,
@@ -190,10 +195,10 @@ function terminalSnapshot(
       recentEvents: [
         ...(Array.isArray(priorTurn.recentEvents) ? priorTurn.recentEvents : []),
         {
-          type: succeeded ? "turn.completed" : "turn.failed",
+          type: pending ? "turn.waiting" : succeeded ? "turn.completed" : "turn.failed",
           at: now,
           toolName: null,
-          toolStatus: succeeded ? "succeeded" : "failed",
+          toolStatus: pending ? "pending" : succeeded ? "succeeded" : "failed",
         },
       ].slice(-20),
     },

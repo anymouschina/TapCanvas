@@ -1,8 +1,8 @@
-import { FLOW_NODE_ID_MAX_LENGTH } from "../flow/flow-node-id.constants";
-
-export const ASSET_OBJECT_KINDS = ["character", "scene", "prop", "vfx", "palette", "composition"] as const;
+import { ASSET_OBJECT_KINDS, ASSET_REFERENCE_ROLES } from "../../../../../packages/schemas/workflow-asset-registry/index.mjs";
+export { ASSET_OBJECT_KINDS, ASSET_REFERENCE_ROLES };
+export const ASSET_ROLE_KINDS = ASSET_OBJECT_KINDS;
 export type AssetObjectKind = (typeof ASSET_OBJECT_KINDS)[number];
-export const ASSET_REFERENCE_ROLES = ["none", "identity", "wardrobe", "prop", "environment", "palette", "composition", "vfx"] as const;
+export type AssetRoleKind = AssetObjectKind;
 export type AssetReferenceRole = (typeof ASSET_REFERENCE_ROLES)[number];
 
 export type AssetObjectContract = {
@@ -55,23 +55,11 @@ export type AssetObjectContractParseOptions = {
   allowMissingReferenceImageNodeIds?: boolean;
 };
 
-const IMPLICIT_IDENTITY_REFERENCE_ROLES: ReadonlySet<AssetReferenceRole> = new Set([
-  "identity",
-  "wardrobe",
-  "environment",
-]);
-
 /**
- * Distinguishes a visual identity dependency from an object that only needs to
- * remain present in the executable shot description.
- *
- * `none` is the explicit text-to-video contract: the object remains available
- * to the writer, but it does not request an authoring image. Character
- * identity, wardrobe and environment contracts need a canonical
- * image even while their draft binding is still empty. Props, VFX, palettes
- * and compositions become hard dependencies only after the agent explicitly
- * binds a stable node/project asset. This is a structural contract decision;
- * names and prompt prose are never inspected.
+ * A non-none referenceRole explicitly requests a visual dependency, including
+ * drafts whose images have not yet been materialized. Only an unbound `none`
+ * contract is text-only. Resolve this from structured declarations, never
+ * from object names or prompt prose.
  */
 export function requiresAuthoringVisualReference(
   contract: Pick<
@@ -82,7 +70,7 @@ export function requiresAuthoringVisualReference(
   return (
     contract.referenceImageNodeIds.length > 0 ||
     (contract.referenceAssetIds?.length ?? 0) > 0 ||
-    IMPLICIT_IDENTITY_REFERENCE_ROLES.has(contract.referenceRole)
+    contract.referenceRole !== "none"
   );
 }
 
@@ -178,6 +166,15 @@ function readTrimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function parseReferenceIds(value: unknown, path: string, errors: string[]): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || !id.trim())) {
+    errors.push(`${path} 必须是非空字符串 ID 数组`);
+    return null;
+  }
+  return [...new Set(value.map((id: string) => id.trim()))];
+}
+
 /** 纯结构解析：不从名称或文案推断对象类型、身份、尺度或动作。 */
 export function parseAssetObjectContracts(
   input: unknown,
@@ -214,12 +211,9 @@ export function parseAssetObjectContracts(
     const kind = readTrimmedString(record.kind) as AssetObjectKind;
     const name = readTrimmedString(record.name);
     const physicalIdentityKey = readTrimmedString(record.physicalIdentityKey);
-    const referenceImageNodeIds = Array.isArray(record.referenceImageNodeIds)
-      ? [...new Set(record.referenceImageNodeIds.map(readTrimmedString).filter(Boolean))]
-      : [];
-    const referenceAssetIds = Array.isArray(record.referenceAssetIds)
-      ? [...new Set(record.referenceAssetIds.map(readTrimmedString).filter(Boolean))]
-      : [];
+    const referenceImageNodeIds = parseReferenceIds(record.referenceImageNodeIds, `${itemPath}.referenceImageNodeIds`, errors);
+    const referenceAssetIds = parseReferenceIds(record.referenceAssetIds, `${itemPath}.referenceAssetIds`, errors);
+    if (referenceImageNodeIds === null || referenceAssetIds === null) return;
     const referenceRole = readTrimmedString(record.referenceRole) as AssetReferenceRole;
     const requiresVisualReference = requiresAuthoringVisualReference({
       referenceRole,
@@ -242,15 +236,9 @@ export function parseAssetObjectContracts(
         `${itemPath} 必须通过 referenceImageNodeIds 或 referenceAssetIds 绑定真实图片资产`,
       );
     }
-    if (referenceImageNodeIds.some((nodeId) => nodeId.length > FLOW_NODE_ID_MAX_LENGTH)) {
-      errors.push(`${itemPath}.referenceImageNodeIds 每项最多 ${FLOW_NODE_ID_MAX_LENGTH} 字`);
-    }
-    if (referenceAssetIds.length > 1) {
-      errors.push(`${itemPath}.referenceAssetIds 最多绑定一个 canonical 项目资产`);
-    }
-    if (referenceAssetIds.some((assetId) => assetId.length > 500)) {
-      errors.push(`${itemPath}.referenceAssetIds 每项最多 500 字`);
-    }
+    // Reference handles are opaque persisted identities, not authored prose.
+    // Scope and real asset resolution validate them at the execution boundary;
+    // a local character budget cannot require an author to rewrite an identity.
     const fields = {
       forbiddenTransfer: readTrimmedString(record.forbiddenTransfer),
       identityInvariant: readTrimmedString(record.identityInvariant),
@@ -285,9 +273,6 @@ export function parseAssetObjectContracts(
         options.allowMissingReferenceImageNodeIds === true ||
         !requiresVisualReference
       ) &&
-      referenceImageNodeIds.every((nodeId) => nodeId.length <= FLOW_NODE_ID_MAX_LENGTH) &&
-      referenceAssetIds.length <= 1 &&
-      referenceAssetIds.every((assetId) => assetId.length <= 500) &&
       name &&
       physicalIdentityKey.length <= MAX_OBJECT_FIELD_CHARS &&
       (kind === "character" || !physicalIdentityKey) &&
@@ -342,19 +327,19 @@ export type AssetReferenceIndicesByContractKey = ReadonlyMap<
 >;
 
 /**
- * 最终视频模型只接收参考资产的身份/职责锁定摘要。
+ * 最终视频模型只接收真实 manifest 里的参考图令牌。
  *
  * 完整 assetObjectContracts 仍逐字段保存在结构化 clip 中，并供 writer 规划、连续性校验、
  * referenceMediaManifest 与真实媒体附件使用。driver/stateChange/endState 等运动事实必须由 writer
  * 编译进 continuity/shots/exitState，不能再把内部合同逐字段抄到最终提示词里挤占逐镜动作预算。
- * referenceImageNodeIds 只属于执行层，不进入模型正文。
+ * identityInvariant/forbiddenTransfer 是 Agent 已声明的参考范围事实，随真实图索引原样投影；
+ * 不推断对象关系、不生成禁止变身文案。referenceImageNodeIds 只属于执行层，不进入模型正文。
  */
 export function formatAssetObjectReferenceLocks(
   contracts: readonly AssetObjectContract[],
   referenceIndicesByContractKey?: AssetReferenceIndicesByContractKey,
 ): string {
   if (contracts.length === 0) return "";
-  let hasResolvedReference = false;
   const rows = contracts.map((contract) => {
     const references = [
       ...new Set(
@@ -363,21 +348,12 @@ export function formatAssetObjectReferenceLocks(
         ) ?? [],
       ),
     ].filter(Boolean);
-    if (references.length > 0) hasResolvedReference = true;
-    const subject = references.length > 0
-      ? `${references.join("+")}（${contract.kind}:${contract.name}）`
-      : `${contract.kind}:${contract.name}`;
-    const notes = [
-      ...(contract.identityInvariant ? [`保持：${contract.identityInvariant}`] : []),
-      ...(contract.forbiddenTransfer ? [`禁迁：${contract.forbiddenTransfer}`] : []),
-    ];
-    return `${subject}=${contract.referenceRole}${notes.length > 0 ? `（${notes.join("；")}）` : ""}`;
-  });
-  return [
-    ...(hasResolvedReference
-      ? ["@图N 以本次供应商最终 content[] 顺序为唯一真相；镜头表中的 canonical 名均指向下方同名绑定，不按预估图序猜测。"]
-      : []),
-    "参考只锁身份/服装/兵器/空间/材质与职责，不继承卡图站姿、背景或构图；动作、位移、受力与终态以镜头表为准。",
-    ...rows,
-  ].join("\n");
+    if (references.length === 0) return "";
+    return [
+      `${contract.name}（${contract.referenceRole}）：${references.join("、")}`,
+      ...(contract.identityInvariant ? [`身份不变量：${contract.identityInvariant}`] : []),
+      ...(contract.forbiddenTransfer ? [`禁止从参考图迁移：${contract.forbiddenTransfer}`] : []),
+    ].join("；");
+  }).filter(Boolean);
+  return rows.length > 0 ? `参考图绑定：\n${rows.join("\n")}` : "";
 }

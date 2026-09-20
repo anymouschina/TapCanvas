@@ -1,3 +1,4 @@
+import { freezeMediaDeliveryPolicy } from "./execution.media-delivery-policy";
 import { Prisma } from "@prisma/client";
 import {
 	WORKFLOW_CONCURRENCY_MAX,
@@ -29,7 +30,6 @@ import {
 } from "./execution.semantics-snapshot";
 import { materializeWorkflowConfigurationInheritance } from "./execution.workflow-configuration";
 import {
-	createVideoWorkflowDefinitionAuthority,
 	inspectVideoWorkflowCanvasDefinition,
 } from "./execution.video-workflow-definition-authority";
 import {
@@ -37,13 +37,13 @@ import {
 	type WorkflowExecutionControlAdmissionV2,
 } from "./execution.production-start-deadline";
 import {
-	resolveWorkflowExecutionRecoveryPolicy,
-	WorkflowExecutionRecoveryPolicyError,
-} from "./execution.recovery-policy";
+	isSelectableNewApiModel,
+	listNewApiModels,
+	matchesNewApiRuntimeModelIdentity,
+} from "../new-api-models/new-api-models.service";
 
 export type WorkflowStartFailureCode =
 	| "workflow_flow_invalid"
-	| "workflow_definition_outdated"
 	| "workflow_output_required"
 	| "workflow_node_prompt_not_ready"
 	| "workflow_node_kind_missing"
@@ -102,7 +102,7 @@ export type StartWorkflowExecutionInput = Readonly<{
 	/** Frozen runtime control facts derived from the public request admission. */
 	executionControl?: WorkflowExecutionControlAdmissionV2;
 	recoveryOfExecutionId?: string;
-	recoveryAdmission?: "failed_source" | "cancellation_revocation";
+	recoveryAdmission?: "failed_source" | "cancellation_revocation" | "provider_balance_recovery";
 	/**
 	 * Optional admission projection. When provided, it must finish after the durable execution row
 	 * exists and before the scheduler is dispatched, so the caller canvas never observes a running
@@ -201,10 +201,12 @@ function applyWorkflowTriggerMediaOverrides(
 	const videoModelKey = readPayloadString(payload, "videoModelKey");
 	const imageModelKey = readPayloadString(payload, "imageModelKey");
 	const videoResolution = readPayloadString(payload, "videoResolution");
+	const videoSize = readPayloadString(payload, "videoSize");
 	const videoAspectRatio = readPayloadString(payload, "videoAspectRatio");
 	const imageAspectRatio = readPayloadString(payload, "imageAspectRatio");
 	const imageSize = readPayloadString(payload, "imageSize");
-	if (!videoModelKey && !imageModelKey && !videoResolution && !videoAspectRatio && !imageAspectRatio && !imageSize) return;
+	const imageQuality = readPayloadString(payload, "imageQuality");
+	if (!videoModelKey && !imageModelKey && !videoResolution && !videoSize && !videoAspectRatio && !imageAspectRatio && !imageSize && !("imageQuality" in payload)) return;
 	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
 	flowData.nodes = nodes.map((rawNode) => {
 		if (!isRecord(rawNode)) return rawNode;
@@ -217,6 +219,9 @@ function applyWorkflowTriggerMediaOverrides(
 			if (imageModelKey) nextData.workflowImageModelKey = imageModelKey;
 			if (imageAspectRatio) nextData.workflowImageAspectRatio = imageAspectRatio;
 			if (imageSize) nextData.workflowImageSize = imageSize;
+			if ("imageQuality" in payload || (imageModelKey && imageModelKey !== nodeData.workflowImageModelKey)) {
+				nextData.workflowImageQuality = imageQuality;
+			}
 			return { ...rawNode, data: nextData };
 		}
 		if (executorRef !== "agents.delivery.contract/v2"
@@ -228,6 +233,7 @@ function applyWorkflowTriggerMediaOverrides(
 		if (videoModelKey) nextData.workflowVideoModelKey = videoModelKey;
 		if (executorRef !== "agents.delivery.contract/v2") {
 			if (videoResolution) nextData.workflowVideoResolution = videoResolution;
+			if (videoSize) nextData.workflowVideoSize = videoSize;
 			if (videoAspectRatio) nextData.workflowVideoAspectRatio = videoAspectRatio;
 		}
 		return { ...rawNode, data: nextData };
@@ -268,6 +274,75 @@ function assertFrozenVideoEstimateConfiguration(flowData: Record<string, unknown
 			"workflow_flow_invalid",
 			400,
 			{ nodeId, missingTriggerPayloadFields: missingFields },
+		);
+	}
+}
+
+/**
+ * Validate authored video model identities against the same live catalog used
+ * by task submission.  A non-empty model field is not enough: an enabled
+ * metadata row without a routable endpoint must never be allowed to start a
+ * paid workflow that can only fail later at video-submit.
+ *
+ * This is a structural admission check. It does not inspect prompts or make a
+ * creative choice, and it intentionally does not substitute another model.
+ */
+async function assertLiveVideoModelConfiguration(
+	env: WorkerEnv,
+	flowData: Record<string, unknown>,
+): Promise<void> {
+	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
+	const authoredModels = nodes.flatMap((rawNode) => {
+		if (!isRecord(rawNode) || !isRecord(rawNode.data)) return [];
+		const spec = isRecord(rawNode.data.workflowAtomicSpec) ? rawNode.data.workflowAtomicSpec : null;
+		// The estimate node is the canonical model declaration for the built-in
+		// workflow.  Custom graphs may also pin a model directly on the video
+		// generator; validate that declaration too so a later submit cannot drift
+		// away from the model that admission just proved routable.
+		const executorRef = typeof spec?.executorRef === "string" ? spec.executorRef : "";
+		if (executorRef !== "video.estimate/v1" && executorRef !== "tapcanvas.video.generate/v1") return [];
+		const modelKey = readPayloadString(rawNode.data, "workflowVideoModelKey");
+		if (!modelKey) return [];
+		const nodeId = typeof rawNode.id === "string" && rawNode.id.trim() ? rawNode.id.trim() : "unknown";
+		return [{ nodeId, modelKey, executorRef }];
+	});
+	if (authoredModels.length === 0) return;
+
+	let liveModels;
+	try {
+		liveModels = await listNewApiModels(env, {
+			enabled: true,
+			kind: "video",
+			fresh: true,
+		});
+	} catch (error: unknown) {
+		throw new WorkflowStartError(
+			"无法读取视频模型实时路由目录，未启动一键成片",
+			"workflow_start_failed",
+			503,
+			{ reason: error instanceof Error ? error.message : String(error) },
+		);
+	}
+	const selectableModels = liveModels.filter(isSelectableNewApiModel);
+	const unavailable = authoredModels.filter(({ modelKey }) => (
+		!selectableModels.some((model) => matchesNewApiRuntimeModelIdentity(model, modelKey))
+	));
+	if (unavailable.length > 0) {
+		throw new WorkflowStartError(
+			"一键成片的视频模型没有可用的上游路由，未创建执行；请在模型/渠道配置中启用对应能力",
+			"workflow_flow_invalid",
+			409,
+			{
+				unavailableVideoModels: unavailable.map(({ nodeId, modelKey, executorRef }) => ({
+					nodeId,
+					modelKey,
+					executorRef,
+				})),
+				availableVideoModels: selectableModels.map((model) => ({
+					modelKey: model.requestModelKey,
+					label: model.displayLabel,
+				})),
+			},
 		);
 	}
 }
@@ -337,7 +412,7 @@ function requireExecutableFlow(raw: unknown, triggerNodeId: string, stopAfterNod
 	return scopedFlowData;
 }
 
-async function startDurableExecution(env: WorkerEnv, executionId: string): Promise<void> {
+export async function startDurableExecution(env: WorkerEnv, executionId: string): Promise<void> {
 	const namespace = env.EXECUTION_DO;
 	if (!namespace) {
 		throw new WorkflowStartError(
@@ -346,25 +421,35 @@ async function startDurableExecution(env: WorkerEnv, executionId: string): Promi
 			503,
 		);
 	}
+	let response: Readonly<{ ok: boolean; status: number; text: () => Promise<string> }>;
 	try {
 		const stub = namespace.get(namespace.idFromName(executionId));
-		const response = await stub.fetch("https://do/start", { method: "POST" });
-		if (!response.ok) {
-			const detail = (await response.text().catch(() => "")).trim();
-			throw new Error(
-				`Workflow scheduler rejected start with HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
-			);
-		}
+		response = await stub.fetch("https://do/start", { method: "POST" });
 	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : "Failed to start execution";
-		await updateExecutionStatus(env.DB, {
-			executionId,
-			status: "failed",
-			errorMessage: message,
-			finishedAt: new Date().toISOString(),
+		// The durable queued row is the dispatch intent. A lost acknowledgement
+		// cannot prove failure, and must never overwrite an already running job.
+		console.error("[workflow-dispatch] start acknowledgement unavailable", {
+			executionId, code: "workflow_dispatch_pending",
+			cause: error instanceof Error ? error.message : String(error),
 		});
-		throw new WorkflowStartError(message, "workflow_start_failed", 500);
+		return;
 	}
+	if (response.ok) return;
+	const detail = (await response.text().catch(() => "")).trim();
+	const message = `Workflow scheduler rejected start with HTTP ${response.status}${detail ? `: ${detail}` : ""}`;
+	if (response.status >= 500 || response.status === 408 || response.status === 429) {
+		console.error("[workflow-dispatch] scheduler temporarily unavailable", {
+			executionId, code: "workflow_dispatch_pending", httpStatus: response.status, cause: message,
+		});
+		return;
+	}
+	// A deterministic protocol/permission rejection is a real action failure.
+	await updateExecutionStatus(env.DB, {
+		executionId, status: "failed", errorMessage: message,
+		errorCode: "workflow_scheduler_rejected", failureStage: "dispatch",
+		finishedAt: new Date().toISOString(),
+	});
+	throw new WorkflowStartError(message, "workflow_start_failed", 500);
 }
 
 async function materializeAcceptedExecution(
@@ -409,37 +494,14 @@ export async function startWorkflowExecution(
 		);
 	}
 	if (videoDefinitionState.applicable && !videoDefinitionState.current) {
-		throw new WorkflowStartError(
-			"One-click production workflow definition is not the current executable contract",
-			"workflow_definition_outdated",
-			409,
-			videoDefinitionState,
-		);
+		console.info(JSON.stringify({
+			type: "workflow_template_provenance_differs",
+			flowId: input.flow.id,
+			triggerNodeId: input.triggerNodeId,
+			...videoDefinitionState,
+		}));
 	}
 	const executableFlowData = requireExecutableFlow(input.flow.data, input.triggerNodeId, input.stopAfterNodeId);
-	let recoveryPolicy: ReturnType<typeof resolveWorkflowExecutionRecoveryPolicy>;
-	try {
-		recoveryPolicy = resolveWorkflowExecutionRecoveryPolicy(executableFlowData, input.triggerNodeId);
-	} catch (error: unknown) {
-		if (!(error instanceof WorkflowExecutionRecoveryPolicyError)) throw error;
-		throw new WorkflowStartError(error.message, "workflow_flow_invalid", 400, error.details);
-	}
-	if (input.recoveryOfExecutionId && recoveryPolicy === "fresh_only") {
-		throw new WorkflowStartError(
-			"This workflow requires a fresh execution and cannot recover or resume an earlier execution",
-			"workflow_start_failed",
-			409,
-			{
-				triggerNodeId: input.triggerNodeId,
-				workflowExecutionRecoveryPolicy: recoveryPolicy,
-				recoveryOfExecutionId: input.recoveryOfExecutionId,
-			},
-		);
-	}
-	const definitionAuthority = createVideoWorkflowDefinitionAuthority(videoDefinitionState);
-	if (definitionAuthority) {
-		executableFlowData.workflowDefinitionAuthority = definitionAuthority;
-	}
 	// Variant branches inherit media configuration from one authored source node.
 	// Resolve that relation before applying any explicit per-run override so the
 	// immutable execution snapshot always contains a complete, auditable config.
@@ -460,6 +522,7 @@ export async function startWorkflowExecution(
 		applyWorkflowTriggerMediaOverrides(executableFlowData, input.triggerPayload);
 	}
 	assertFrozenVideoEstimateConfiguration(executableFlowData);
+	await assertLiveVideoModelConfiguration(env, executableFlowData);
 	if (input.workflowAncestry) {
 		executableFlowData.workflowExecutionAncestry = [...new Set(input.workflowAncestry)];
 	}
@@ -482,6 +545,8 @@ export async function startWorkflowExecution(
 		executableFlowData.workflowInitiatingAgentExecution = {
 			model: input.initiatingAgentExecution.model,
 			apiStyle: input.initiatingAgentExecution.apiStyle,
+			reasoningEffort: input.initiatingAgentExecution.reasoningEffort,
+			serviceTier: input.initiatingAgentExecution.serviceTier,
 		};
 	}
 	if (input.delivery) {
@@ -516,6 +581,13 @@ export async function startWorkflowExecution(
 		const pluginRegistrations = workflowRequiresPluginSemantics(scopedFlowData)
 			? await listAdmittedWorkflowPluginCatalogRegistrations(env.DB)
 			: [];
+		/*
+		 * 媒体交付合同必须在每次受理时冻结，恢复执行同样如此：恢复只回放已成功的检查点，
+		 * 重新执行的正是当初失败的动作（例如被供应商逐条拒绝的图片集合）。此前恢复跳过冻结，
+		 * 使"逐条独立、已产出即交付"在重试路径上不生效——单条被拒就再次判死整节点，
+		 * 已产出的兄弟资产连同恢复一起被丢掉。
+		 */
+		scopedFlowData = freezeMediaDeliveryPolicy(scopedFlowData);
 		scopedFlowData = freezeWorkflowExecutionSemanticsSnapshot(scopedFlowData, pluginRegistrations);
 	} catch (error: unknown) {
 		throw new WorkflowStartError(
@@ -524,17 +596,13 @@ export async function startWorkflowExecution(
 			400,
 		);
 	}
-	// This timestamp is both the durable execution row's created_at and the
-	// provider-start SLA anchor. Materialize the absolute deadline only here,
-	// after all admission/preparation work, so pre-execution chat or context
-	// collection time cannot consume the workflow's five-minute window.
+	// Execution creation is a separate fact; the production target preserves root request acceptance.
 	const nowIso = (input.now ?? new Date()).toISOString();
 	if (input.executionControl) {
 		try {
 			scopedFlowData.workflowExecutionControl = materializeWorkflowExecutionControl(
 				scopedFlowData,
 				input.executionControl,
-				nowIso,
 			);
 		} catch (error: unknown) {
 			throw new WorkflowStartError(

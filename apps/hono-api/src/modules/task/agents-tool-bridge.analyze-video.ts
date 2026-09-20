@@ -1,4 +1,5 @@
 import type { AppContext } from "../../types";
+import { projectCanvasMembership } from "@tapcanvas/workflow-kernel-protocol";
 import { AppError } from "../../middleware/error";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import { readNewApiRelay } from "../agents/agents-llm-proxy";
@@ -8,6 +9,7 @@ import {
   ANALYZE_VIDEO_MAX_SEGMENT_SEC,
   needsSegmentSplit,
   sizeAwareMaxSegSec,
+  VIDEO_UNDERSTAND_MAX_FPS,
   VIDEO_UNDERSTAND_MAX_BYTES,
 } from "./video-segment-plan";
 import {
@@ -17,6 +19,7 @@ import {
   transcodeToUnderstandingProxy,
 } from "./agents-tool-bridge.video-split-io";
 import { VIDEO_UNDERSTANDING_MODEL_KEY } from "./media-understanding-model";
+import { buildVideoAnalysisSegmentPrompt } from "./video-analysis-scope";
 
 function readTrimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -32,7 +35,7 @@ export function resolveVideoUnderstandingModel(): string {
 
 function resolveVideoUrlFromFlowNode(row: FlowRow, nodeId: string): string {
   const dto = mapFlowRowToDto(row);
-  const data = sanitizeFlowDataForStorage(dto.data ?? {});
+  const data = projectCanvasMembership(sanitizeFlowDataForStorage(dto.data ?? {}));
   const nodes = Array.isArray((data as Record<string, unknown>).nodes)
     ? ((data as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
     : [];
@@ -182,7 +185,7 @@ export async function analyzeVideoForAgent(input: {
 
   const model = resolveVideoUnderstandingModel();
   const prompt = readTrimmedString(args.prompt) || readTrimmedString(args.question) || DEFAULT_QA_PROMPT;
-  const fps = typeof args.fps === "number" && args.fps > 0 ? args.fps : 1;
+  const fps = typeof args.fps === "number" && args.fps > 0 ? args.fps : VIDEO_UNDERSTAND_MAX_FPS;
   const dramaticCoverage = readDramaticCoverageContract(args.dramaticCoverage);
   if (args.dramaticCoverage !== undefined && !dramaticCoverage) {
     throw new AppError("dramaticCoverage 必须是非空的逐 clip 结构化承载合同", {
@@ -236,13 +239,21 @@ export async function analyzeVideoForAgent(input: {
       maxSegSec,
     });
     const parts: string[] = [];
+    const segmentPrompts: string[] = [];
     for (const seg of segments) {
+      const segmentPrompt = buildVideoAnalysisSegmentPrompt({
+        question: analysisPrompt,
+        segment: seg,
+        segmentCount: segments.length,
+        sourceDurationSeconds: durationSec,
+      });
+      segmentPrompts.push(segmentPrompt);
       const segText = await analyzeOneVideoUrl({
         c: input.c,
         relay,
         videoUrl: seg.url,
         model,
-        prompt: analysisPrompt,
+        prompt: segmentPrompt,
         fps,
       });
       parts.push(`【${Math.round(seg.startSec)}–${Math.round(seg.endSec)}s】\n${segText}`);
@@ -250,12 +261,12 @@ export async function analyzeVideoForAgent(input: {
     return buildAnalyzeVideoResult({
       text:
         `本片时长约 ${Math.round(durationSec)}s，超过视频理解单段上限 ${ANALYZE_VIDEO_MAX_SEGMENT_SEC}s，` +
-        `已自动切成 ${segments.length} 段分别理解（时间段标在各节标题，按序拼接即全片）：\n\n` +
+        `已自动切成 ${segments.length} 段分别理解。以下为局部观察，未共同观察的跨段边界仍待验证，不是整片综合裁决：\n\n` +
         parts.join("\n\n---\n\n"),
       videoUrl,
       model,
       fps,
-      prompt: analysisPrompt,
+      prompt: JSON.stringify(segmentPrompts),
       segmentCount: segments.length,
       ...(dramaticCoverage ? { dramaticCoverage } : {}),
     });

@@ -1331,15 +1331,10 @@ export async function getAuthoringRun(runId: string): Promise<AuthoringRunRow | 
   return row as AuthoringRunRow | null;
 }
 
-/** writer clip 失败的历史 error_message 前缀；只用于终态展示与审计。 */
-export const WRITER_CLIP_FAILURE_PREFIX = "writer clip 失败:";
-/** 历史终态前缀；首次结构化提交失败的 writer 不再进入 tick 恢复队列。 */
-export const WRITER_CLIP_UNREPAIRABLE_PREFIX = "authoring_writer_unrepairable:";
-
 /**
  * tick 只认领能依靠已有持久事实继续推进的非终态 run。真实资产 coverage 等待态
  * 仅由精确 run 事件唤醒，不进入周期扫描；其它 authoring_failed 仍是显式终态。
- * writer clip 一旦 failed 即按 single_submission_record_and_fail 收口，不再周期认领、重派或拉长预算。
+ * 结构化候选的修复由 agents-cli 在同一 ReAct 执行链内完成；此处只处理持久状态。
  */
 /**
  * 【放弃版本判据·2026-07-28】同章节是否存在更晚创建的 run。
@@ -2485,6 +2480,7 @@ export async function setChapterAdaptationContract(input: {
 // ── 章级交付范围 ────────────────────────────────────────────────────────
 
 export type ChapterFilmSpec = {
+  onlyVideoNodes?: boolean;
   deliveryScope?: "full_chapter" | "opening_duration";
   targetDurationSeconds?: number;
   adaptationMode?: "faithful" | "creative";
@@ -2548,6 +2544,7 @@ export async function getChapterFilmSpec(chapterId: string): Promise<ChapterFilm
       ...(record.deliveryScope === "opening_duration" && Number.isInteger(record.targetDurationSeconds) && Number(record.targetDurationSeconds) > 0
         ? { targetDurationSeconds: Number(record.targetDurationSeconds) }
         : {}),
+      onlyVideoNodes: record.onlyVideoNodes === true,
       ...(typeof record.notes === "string" ? { notes: record.notes } : {}),
       ...(typeof record.filmGenre === "string" ? { filmGenre: record.filmGenre } : {}),
       ...(typeof record.updatedAt === "string" ? { updatedAt: record.updatedAt } : {}),

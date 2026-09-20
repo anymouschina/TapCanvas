@@ -1,3 +1,5 @@
+import { readMediaDeliveryPolicy } from "./execution.media-delivery-policy";
+import { readItemContinuation, previousItemContinuation } from "./execution.item-continuation";
 import {
 	createWorkflowCollection,
 	isWorkflowCollection,
@@ -15,13 +17,15 @@ import {
 	resolveWorkflowNodeItemConcurrency,
 	workflowNodeWaiting,
 } from "./execution.node-runtime";
-import { mergeWorkflowExternalCheckSchedules } from "./execution.external-check";
+import { isTransientDatabaseReadError, readDatabaseErrorCodes } from "../../platform/node/database-read-retry";
+import { mergeWorkflowExternalCheckSchedules, workflowExternalPollAfter } from "./execution.external-check";
 import type {
 	WorkflowNodeExecutionContext,
 	WorkflowNodeExecutorDependencies,
 } from "./execution.node-executors";
 import { isRetryableTerminalMediaItemRun } from "./execution.terminal-media-retry";
 import { readWorkflowDurableRetryDirective } from "./execution.durable-retry";
+import { readWorkflowAgentOutputRepair } from "./execution.agent-output-repair";
 import { resolveCoreWorkflowExecutorSemantics } from "./execution.core-semantics";
 import {
 	canonicalWorkflowOutputPortIds,
@@ -45,7 +49,23 @@ function hasDurableResultLookupReceipt(
 	return value !== undefined && value !== null;
 }
 
+function canRefreshPersistedItemReceipt(
+	recoveryOfExecutionId: string | null | undefined,
+	semantics: ReturnType<typeof resolveCoreWorkflowExecutorSemantics>,
+	run: WorkflowNodeItemRunV1,
+): boolean {
+	return Boolean(
+		recoveryOfExecutionId
+		&& run.status === "failed"
+		&& typeof run.evidence.canvasNodeId === "string"
+		&& run.evidence.canvasNodeId.trim().length > 0
+		&& semantics?.retrySafety === "idempotency_key_required"
+		&& hasDurableResultLookupReceipt(semantics, run)
+	);
+}
+
 function isStructuredOutputTerminalFailure(run: WorkflowNodeItemRunV1): boolean {
+	if (readWorkflowAgentOutputRepair(run.evidence)) return false;
 	const outputContractFailure = run.evidence.outputContractFailure;
 	if (
 		outputContractFailure
@@ -64,6 +84,62 @@ type CollectionInput = Readonly<{
 	inputIndex: number;
 	collection: WorkflowCollectionV1;
 }>;
+
+type CollectionAlignment = Readonly<{
+	primary: WorkflowCollectionV1 | null;
+	/** One selected collection per input for each primary item index. */
+	perPrimaryItem: readonly ReadonlyMap<string, WorkflowCollectionV1>[];
+}>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readAtomicSpecRecord(
+	context: WorkflowNodeExecutionContext,
+): Record<string, unknown> | null {
+	const raw = context.node.data.workflowAtomicSpec;
+	return isRecord(raw) ? raw : null;
+}
+
+function readPathLeaves(value: unknown, path: string): readonly unknown[] {
+	const segments = path.split(".").map((segment) => segment.trim()).filter(Boolean);
+	if (segments.length === 0) return [];
+	let current: unknown[] = [value];
+	for (const segment of segments) {
+		current = current.flatMap((entry) => {
+			const candidates = Array.isArray(entry) ? entry : [entry];
+			return candidates.flatMap((candidate) => {
+				return [isRecord(candidate) ? candidate[segment] : undefined];
+			});
+		});
+	}
+	return current;
+}
+
+function readPathValues(value: unknown, path: string): readonly string[] {
+	const flattenStrings = (entry: unknown): readonly string[] => {
+		if (Array.isArray(entry)) return entry.flatMap(flattenStrings);
+		return typeof entry === "string" && entry.trim() ? [entry.trim()] : [];
+	};
+	return readPathLeaves(value, path).flatMap(flattenStrings);
+}
+
+function isJoinKeyValue(value: unknown): boolean {
+	return Array.isArray(value) ? value.every(isJoinKeyValue) : typeof value === "string" && value.trim().length > 0;
+}
+
+function joinedCollection(
+	collection: WorkflowCollectionV1,
+	primaryItem: WorkflowCollectionItemV1,
+	items: readonly WorkflowCollectionItemV1[],
+): WorkflowCollectionV1 {
+	return {
+		protocolVersion: collection.protocolVersion,
+		collectionId: `${collection.collectionId}:join:${primaryItem.itemId}`,
+		items: items.map((item, index) => ({ ...item, index })),
+	};
+}
 
 function collectionInputs(
 	inputs: WorkflowNodeExecutionContext["inputs"],
@@ -96,26 +172,121 @@ function alignedCollections(
 	return primary;
 }
 
+function keyedJoinCollections(
+	collections: readonly CollectionInput[],
+	context: WorkflowNodeExecutionContext,
+): CollectionAlignment | null {
+	const specValue = readAtomicSpecRecord(context)?.inputAlignment;
+	if (!isRecord(specValue)) return null;
+	const spec = specValue;
+	if (spec.strategy !== "keyed_join") {
+		throw new Error(`Workflow node ${context.node.id} has unsupported inputAlignment.strategy`);
+	}
+	const primaryPort = typeof spec.primaryPort === "string" ? spec.primaryPort.trim() : "";
+	const primaryKeyPath = typeof spec.primaryKeyPath === "string" ? spec.primaryKeyPath.trim() : "";
+	const candidateKeyPath = typeof spec.candidateKeyPath === "string" ? spec.candidateKeyPath.trim() : "";
+	if (!primaryPort || !primaryKeyPath || !candidateKeyPath) {
+		throw new Error(`Workflow node ${context.node.id} keyed_join requires primaryPort, primaryKeyPath and candidateKeyPath`);
+	}
+	const primaryInput = collections.find((input) => input.portId === primaryPort);
+	if (!primaryInput) throw new Error(`Workflow node ${context.node.id} keyed_join primaryPort ${primaryPort} is not a collection input`);
+	const candidatePortSet = Array.isArray(spec.candidatePorts)
+		? new Set(spec.candidatePorts.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean))
+		: null;
+	const candidateInputs = collections.filter((input) => (
+		input.portId !== primaryPort && (!candidatePortSet || candidatePortSet.has(input.portId))
+	));
+	if (candidatePortSet) {
+		const unconfigured = collections.filter((input) => (
+			input.portId !== primaryPort && !candidatePortSet.has(input.portId)
+		));
+		if (unconfigured.length > 0) {
+			throw new Error(`Workflow node ${context.node.id} keyed_join has unconfigured collection input ${unconfigured[0]!.portId}`);
+		}
+	}
+	const primaryKeys = new Map<string, WorkflowCollectionItemV1>();
+	for (const item of primaryInput.collection.items) {
+		const keys = readPathValues(item.value, primaryKeyPath);
+		if (keys.length !== 1) throw new Error(`Workflow node ${context.node.id} keyed_join primary item ${item.itemId} must resolve exactly one key at ${primaryKeyPath}`);
+		const key = keys[0]!;
+		if (primaryKeys.has(key)) throw new Error(`Workflow node ${context.node.id} keyed_join primary key ${key} is duplicated`);
+		primaryKeys.set(key, item);
+	}
+	const groupedCandidates = candidateInputs.map((input) => {
+		const groups = new Map<string, WorkflowCollectionItemV1[]>();
+		for (const item of input.collection.items) {
+			const leaves = readPathLeaves(item.value, candidateKeyPath);
+			if (leaves.length === 0 || !leaves.every(isJoinKeyValue)) {
+				throw new Error(`Workflow node ${context.node.id} keyed_join candidate item ${item.itemId} has a missing or invalid key at ${candidateKeyPath}`);
+			}
+			const keys = readPathValues(item.value, candidateKeyPath);
+			// An explicitly empty relationship list has zero consumers. Keep its
+			// materialized receipt upstream; it participates in no joined item.
+			for (const key of new Set(keys)) {
+				if (!primaryKeys.has(key)) throw new Error(`Workflow node ${context.node.id} keyed_join candidate key ${key} has no matching primary item`);
+				const group = groups.get(key) ?? [];
+				group.push(item);
+				groups.set(key, group);
+			}
+		}
+		return { input, groups };
+	});
+	const perPrimaryItem = primaryInput.collection.items.map((primaryItem) => {
+		const key = readPathValues(primaryItem.value, primaryKeyPath)[0]!;
+		const selected = new Map<string, WorkflowCollectionV1>();
+		for (const { input, groups } of groupedCandidates) {
+			selected.set(`${input.portId}:${input.inputIndex}`, joinedCollection(
+				input.collection,
+				primaryItem,
+				groups.get(key) ?? [],
+			));
+		}
+		selected.set(`${primaryInput.portId}:${primaryInput.inputIndex}`, joinedCollection(
+			primaryInput.collection,
+			primaryItem,
+			[primaryItem],
+		));
+		return selected;
+	});
+	return { primary: primaryInput.collection, perPrimaryItem };
+}
+
 function itemInputs(
 	inputs: WorkflowNodeExecutionContext["inputs"],
 	collections: readonly CollectionInput[],
 	itemIndex: number,
+	selectedCollections?: ReadonlyMap<string, WorkflowCollectionV1>,
+	primaryInputKey?: string,
 ): WorkflowNodeExecutionContext["inputs"] {
-	const collectionByPosition = new Map(
+	const collectionByPosition = selectedCollections ?? new Map(
 		collections.map((input) => [`${input.portId}:${input.inputIndex}`, input.collection] as const),
 	);
 	return Object.fromEntries(Object.entries(inputs).map(([portId, values]) => [
 		portId,
 		values.map((value, inputIndex) => {
-			const collection = collectionByPosition.get(`${portId}:${inputIndex}`);
-			return collection ? collection.items[itemIndex]?.value : value;
+			const inputKey = `${portId}:${inputIndex}`;
+			const collection = collectionByPosition.get(inputKey);
+			if (!collection) return value;
+			if (selectedCollections && inputKey !== primaryInputKey) return collection;
+			return collection.items[collection.items.length === 1 ? 0 : itemIndex]?.value;
 		}),
 	]));
 }
 
-function itemLineage(collections: readonly CollectionInput[], itemIndex: number): readonly WorkflowItemLineageV1[] {
+function itemLineage(
+	collections: readonly CollectionInput[],
+	itemIndex: number,
+	selectedCollections?: ReadonlyMap<string, WorkflowCollectionV1>,
+	primaryInputKey?: string,
+): readonly WorkflowItemLineageV1[] {
 	const seen = new Set<string>();
-	return collections.flatMap(({ collection }) => collection.items[itemIndex]?.lineage ?? []).filter((entry) => {
+	return collections.flatMap((input) => {
+		const collection = selectedCollections?.get(`${input.portId}:${input.inputIndex}`) ?? input.collection;
+		if (selectedCollections && `${input.portId}:${input.inputIndex}` !== primaryInputKey) {
+			return collection.items.flatMap((item) => item.lineage);
+		}
+		return collection.items[collection.items.length === 1 ? 0 : itemIndex]?.lineage ?? [];
+	}).filter((entry) => {
 		const identity = `${entry.nodeId}\u0000${entry.portId}\u0000${entry.itemId}\u0000${entry.index}`;
 		if (seen.has(identity)) return false;
 		seen.add(identity);
@@ -198,7 +369,10 @@ function aggregateOutput(input: Readonly<{
 		ports,
 		artifacts: successfulRuns.flatMap((run) => run.artifacts),
 		evidence: {
-			executorCompleted: input.finalized && input.itemRuns.every((run) => run.status === "success"),
+			executorCompleted: input.finalized && (input.itemRuns.every((run) => run.status === "success")
+                || (readMediaDeliveryPolicy(input.context.node.data) !== null && successfulRuns.length > 0
+                    && input.itemRuns.every(run => run.status === "success" || run.status === "failed"))),
+            partial: input.itemRuns.some(run => run.status === "failed"),
 			collectionId: input.primary.collectionId,
 			itemConcurrency: input.itemConcurrency,
 			configuredItemConcurrency: input.itemConcurrency,
@@ -281,20 +455,26 @@ function mergeItemRunCheckpoints(
 	return [...merged.values()].sort((left, right) => left.index - right.index);
 }
 
-async function mapItemsWithConcurrency<T, R>(
+class CollectionCheckpointFailure extends Error {
+	constructor(readonly failure: unknown, readonly settledRuns: readonly WorkflowNodeItemRunV1[]) {
+		super(failure instanceof Error ? failure.message : String(failure), { cause: failure });
+	}
+}
+
+async function mapItemsWithConcurrency<T>(
 	items: readonly T[],
 	concurrency: number,
-	mapItem: (item: T, index: number) => Promise<R>,
+	mapItem: (item: T, index: number) => Promise<WorkflowNodeItemRunV1>,
 	tracker: WorkflowCollectionConcurrencyTracker,
 	itemIdentity: (item: T, index: number) => string,
 	onSettled?: (
-		settledResults: readonly R[],
+		settledResults: readonly WorkflowNodeItemRunV1[],
 		concurrencyState: WorkflowCollectionConcurrencySnapshot,
 	) => Promise<void>,
-	shouldPauseScheduling?: (result: R) => boolean,
-): Promise<readonly R[]> {
+	shouldPauseScheduling?: (result: WorkflowNodeItemRunV1) => boolean,
+): Promise<readonly WorkflowNodeItemRunV1[]> {
 	if (items.length === 0) return [];
-	const results: Array<R | undefined> = new Array(items.length);
+	const results: Array<WorkflowNodeItemRunV1 | undefined> = new Array(items.length);
 	let cursor = 0;
 	let schedulingPaused = false;
 	let checkpointChain = Promise.resolve();
@@ -313,7 +493,7 @@ async function mapItemsWithConcurrency<T, R>(
 			tracker.activeItemIds.add(itemId);
 			tracker.startedItemIds.add(itemId);
 			tracker.peakActiveItems = Math.max(tracker.peakActiveItems, tracker.activeItemIds.size);
-			let result: R;
+			let result: WorkflowNodeItemRunV1;
 			try {
 				result = await mapItem(item, index);
 			} finally {
@@ -322,7 +502,7 @@ async function mapItemsWithConcurrency<T, R>(
 			results[index] = result;
 			if (shouldPauseScheduling?.(result) === true) schedulingPaused = true;
 			if (onSettled) {
-				const settledSnapshot = results.filter((result): result is R => result !== undefined);
+				const settledSnapshot = results.filter((result): result is WorkflowNodeItemRunV1 => result !== undefined);
 				const concurrencyState = snapshotCollectionConcurrency(tracker);
 				checkpointChain = checkpointChain.then(() => onSettled(settledSnapshot, concurrencyState));
 				try {
@@ -337,9 +517,12 @@ async function mapItemsWithConcurrency<T, R>(
 		{ length: Math.min(concurrency, items.length) },
 		() => worker(),
 	));
-	if (checkpointError !== null) throw checkpointError;
+	if (checkpointError !== null) throw new CollectionCheckpointFailure(
+		checkpointError instanceof CollectionCheckpointFailure ? checkpointError.failure : checkpointError,
+		results.filter((result): result is WorkflowNodeItemRunV1 => result !== undefined),
+	);
 	if (schedulingPaused) {
-		return results.filter((result): result is R => result !== undefined);
+		return results.filter((result): result is WorkflowNodeItemRunV1 => result !== undefined);
 	}
 	return results.map((result, index) => {
 		if (result === undefined) throw new Error(`Workflow collection item ${index} did not produce a run result`);
@@ -369,8 +552,13 @@ export async function executeWorkflowNodeByMode(
 		};
 	}
 	let itemConcurrency: number;
+	let itemContinuation: ReturnType<typeof readItemContinuation>;
 	try {
 		itemConcurrency = resolveWorkflowNodeItemConcurrency(context.node);
+		itemContinuation = readItemContinuation(context.node, itemConcurrency);
+		if (itemContinuation && (context.inputs[itemContinuation.inputPort]?.length ?? 0) > 0) {
+			throw new Error(`Item continuation input ${itemContinuation.inputPort} is owned by the collection, not an external binding`);
+		}
 	} catch (error: unknown) {
 		return {
 			ok: false,
@@ -380,9 +568,13 @@ export async function executeWorkflowNodeByMode(
 	}
 
 	const collections = collectionInputs(context.inputs);
-	let primary: WorkflowCollectionV1 | null;
+	let alignment: CollectionAlignment;
 	try {
-		primary = alignedCollections(collections);
+		const keyed = keyedJoinCollections(collections, context);
+		alignment = keyed ?? {
+			primary: alignedCollections(collections),
+			perPrimaryItem: [],
+		};
 	} catch (error: unknown) {
 		return {
 			ok: false,
@@ -390,7 +582,7 @@ export async function executeWorkflowNodeByMode(
 			errorMessage: error instanceof Error ? error.message : String(error),
 		};
 	}
-	if (!primary) {
+	if (!alignment.primary) {
 		const result = await executeOnce(context, dependencies);
 		if (!result.ok) return result;
 		return {
@@ -398,13 +590,16 @@ export async function executeWorkflowNodeByMode(
 			outputRefs: { ...result.outputRefs, executionMode: "each" },
 		};
 	}
+	const primary = alignment.primary;
 
 	const previousItemRuns = matchingPreviousItemRuns(context, primary);
 	const collectionExecutorRef = executorRef(context);
 	const collectionExecutorSemantics = collectionExecutorRef
 		? resolveCoreWorkflowExecutorSemantics(collectionExecutorRef)
 		: null;
-	const pauseAfterExternalWait = collectionExecutorSemantics?.retrySafety !== "idempotency_key_required"
+	const pauseAfterExternalWait = itemContinuation
+		? (run: WorkflowNodeItemRunV1) => run.status !== "success"
+		: collectionExecutorSemantics?.retrySafety !== "idempotency_key_required"
 		? (run: WorkflowNodeItemRunV1) => run.status === "waiting_external"
 		: undefined;
 	const concurrencyTracker: WorkflowCollectionConcurrencyTracker = {
@@ -413,13 +608,35 @@ export async function executeWorkflowNodeByMode(
 		peakActiveItems: 0,
 	};
 	const itemIdentity = (item: WorkflowCollectionItemV1): string => item.itemId;
+	let checkpointItems = previousItemRuns;
+	let checkpointWrites = Promise.resolve();
+	const checkpointItemsOutput = async (
+		updates: readonly WorkflowNodeItemRunV1[],
+		concurrencyState: WorkflowCollectionConcurrencySnapshot,
+	): Promise<void> => {
+		checkpointItems = mergeItemRunCheckpoints(checkpointItems, updates);
+		const output = aggregateOutput({
+			context, primary, itemRuns: checkpointItems, itemConcurrency,
+			concurrencyState, finalized: false,
+		});
+		checkpointWrites = checkpointWrites.then(() => context.checkpointOutputRefs?.(output));
+		try {
+			await checkpointWrites;
+		} catch (error: unknown) {
+			throw new CollectionCheckpointFailure(
+				error instanceof CollectionCheckpointFailure ? error.failure : error,
+				checkpointItems,
+			);
+		}
+	};
 	// Reconciliation fairness: every already-accepted external wait must receive
 	// a poll even when an earlier sibling remains waiting. Put persisted waits at
 	// the front and force that prefix to be scheduled; a newly discovered wait
 	// still pauses untouched/new work, so no additional business side effects are
 	// admitted while the accepted frontier is unsettled.
 	const waitingRuntimeNodeIds = new Set(previousItemRuns
-		.filter((run) => run.status === "waiting_external")
+		.filter((run) => run.status === "waiting_external"
+			|| canRefreshPersistedItemReceipt(context.recoveryOfExecutionId, collectionExecutorSemantics, run))
 		.map((run) => run.runtimeNodeId));
 	const waitingItems = primary.items.filter((item) => (
 		waitingRuntimeNodeIds.has(runtimeItemNodeId(context.node.id, item))
@@ -428,7 +645,14 @@ export async function executeWorkflowNodeByMode(
 		!waitingRuntimeNodeIds.has(runtimeItemNodeId(context.node.id, item))
 	));
 	const executeItem = async (item: WorkflowCollectionItemV1): Promise<WorkflowNodeItemRunV1> => {
-		const lineage = itemLineage(collections, item.index);
+		const selectedCollections = alignment.perPrimaryItem[item.index];
+		const primaryInputKey = (() => {
+			const spec = readAtomicSpecRecord(context)?.inputAlignment;
+			if (!isRecord(spec) || typeof spec.primaryPort !== "string") return undefined;
+			const primaryInput = collections.find((input) => input.portId === spec.primaryPort);
+			return primaryInput ? `${primaryInput.portId}:${primaryInput.inputIndex}` : undefined;
+		})();
+		const lineage = itemLineage(collections, item.index, selectedCollections, primaryInputKey);
 		const runtimeNodeId = runtimeItemNodeId(context.node.id, item);
 		const previousRun = context.resumeOutputRefs?.itemRuns.find(
 			(run) => run.itemId === item.itemId && run.runtimeNodeId === runtimeNodeId,
@@ -463,6 +687,10 @@ export async function executeWorkflowNodeByMode(
 					&& !hasDurableResultLookupReceipt(executorSemantics, previousRun)
 				)
 			);
+		// Explicit family recovery may refresh an existing receipt, never authorize a new paid effect.
+		const reconcileFailedItem = previousRun
+			? canRefreshPersistedItemReceipt(context.recoveryOfExecutionId, executorSemantics, previousRun)
+			: false;
 		if (
 			context.resumeOnly === true
 			&& previousRun
@@ -472,6 +700,7 @@ export async function executeWorkflowNodeByMode(
 					previousRun.status === "failed"
 					&& !retryableTerminalFailure
 					&& !replayFailedItem
+					&& !reconcileFailedItem
 				)
 			)
 		) {
@@ -484,24 +713,58 @@ export async function executeWorkflowNodeByMode(
 				&& (
 					previousRun?.status === "waiting_external"
 					|| retryableTerminalFailure
+					|| reconcileFailedItem
 				);
+			const inputs = itemInputs(context.inputs, collections, item.index, selectedCollections, primaryInputKey);
+			const previousItem = primary.items[item.index - 1];
+			const continuationInputs = itemContinuation ? {
+				[itemContinuation.inputPort]: [previousItemContinuation({
+					spec: itemContinuation, index: item.index,
+					previousItemId: previousItem?.itemId ?? null,
+					previousRuntimeNodeId: previousItem ? runtimeItemNodeId(context.node.id, previousItem) : null,
+					runs: checkpointItems,
+				})],
+			} : {};
 			result = await executeOnce({
 				...context,
 				node: { ...context.node, id: runtimeNodeId },
-				inputs: itemInputs(context.inputs, collections, item.index),
+				checkpointOutputRefs: context.checkpointOutputRefs ? async (output) => {
+					if (output.nodeId !== runtimeNodeId || !output.externalCheck) {
+						throw new Error(`Workflow item checkpoint requires its exact identity and external check: ${runtimeNodeId}`);
+					}
+					await checkpointItemsOutput([{
+						itemId: item.itemId, index: item.index, runtimeNodeId, lineage,
+						status: "waiting_external", ports: output.ports,
+						artifacts: output.artifacts, evidence: output.evidence,
+						externalCheck: output.externalCheck,
+					}], snapshotCollectionConcurrency(concurrencyTracker));
+				} : undefined,
+				inputs: { ...inputs, ...continuationInputs },
 				runtimeItemIndex: item.index,
 				resumeOnly: resumeCurrentItem,
 			}, dependencies);
 		} catch (error: unknown) {
+			const lastCheckpoint = checkpointItems.find((run) => run.runtimeNodeId === runtimeNodeId) ?? previousRun;
+			if (error instanceof CollectionCheckpointFailure && lastCheckpoint) {
+				// Persistence failed, not the executor. Keep its accepted candidate/receipt
+				// waiting so collection recovery can reconcile it without replaying work.
+				// The rejected checkpoint queue still reaches the collection boundary,
+				// where the database failure is diagnosed and recovery is scheduled.
+				return lastCheckpoint;
+			}
 			return {
 				itemId: item.itemId,
 				index: item.index,
 				status: "failed",
 				runtimeNodeId,
 				lineage,
-				ports: {},
-				artifacts: [],
-				evidence: {},
+				// A failed observation cannot erase an already accepted effect or its outputs.
+				ports: lastCheckpoint?.ports ?? {},
+				artifacts: lastCheckpoint?.artifacts ?? [],
+				evidence: { ...lastCheckpoint?.evidence, observationFailure: {
+					observedAt: new Date().toISOString(),
+					message: error instanceof Error ? error.message : String(error),
+				} },
 				errorCode: "workflow_node_runtime_failed",
 				errorMessage: error instanceof Error ? error.message : String(error),
 			};
@@ -545,41 +808,47 @@ export async function executeWorkflowNodeByMode(
 		}
 	};
 	let settledPriorPhases: readonly WorkflowNodeItemRunV1[] = [];
-	const checkpointSettledRuns = context.checkpointOutputRefs
+	const checkpointSettledRuns = context.checkpointOutputRefs || itemContinuation
 		? async (
 			settledRuns: readonly WorkflowNodeItemRunV1[],
 			concurrencyState: WorkflowCollectionConcurrencySnapshot,
-		) => context.checkpointOutputRefs?.(aggregateOutput({
-			context,
-			primary,
-			itemRuns: mergeItemRunCheckpoints(previousItemRuns, [
+		) => checkpointItemsOutput([
 				...settledPriorPhases,
 				...settledRuns,
-			]),
-			itemConcurrency,
-			concurrencyState,
-			finalized: false,
-		}))
+			], concurrencyState)
 		: undefined;
 	let itemRuns: readonly WorkflowNodeItemRunV1[];
-	if (waitingItems.length > 0) {
-		// Reconcile the complete accepted frontier as a barrier. A concurrent
-		// worker cannot claim untouched work until every older external wait has
-		// settled and none remains waiting.
-		const reconciledWaitingRuns = await mapItemsWithConcurrency(
-			waitingItems,
-			itemConcurrency,
-			executeItem,
-			concurrencyTracker,
-			itemIdentity,
-			checkpointSettledRuns,
-		);
-		settledPriorPhases = reconciledWaitingRuns;
-		if (reconciledWaitingRuns.some((run) => run.status === "waiting_external")) {
-			itemRuns = reconciledWaitingRuns;
+	try {
+		if (waitingItems.length > 0) {
+			// Reconcile the complete accepted frontier as a barrier. A concurrent
+			// worker cannot claim untouched work until every older external wait has
+			// settled and none remains waiting.
+			const reconciledWaitingRuns = await mapItemsWithConcurrency(
+				waitingItems,
+				itemConcurrency,
+				executeItem,
+				concurrencyTracker,
+				itemIdentity,
+				checkpointSettledRuns,
+			);
+			settledPriorPhases = reconciledWaitingRuns;
+			if (reconciledWaitingRuns.some((run) => run.status === "waiting_external")) {
+				itemRuns = reconciledWaitingRuns;
+			} else {
+				const newlyScheduledRuns = await mapItemsWithConcurrency(
+					untouchedItems,
+					itemConcurrency,
+					executeItem,
+					concurrencyTracker,
+					itemIdentity,
+					checkpointSettledRuns,
+					pauseAfterExternalWait,
+				);
+				itemRuns = [...reconciledWaitingRuns, ...newlyScheduledRuns];
+			}
 		} else {
-			const newlyScheduledRuns = await mapItemsWithConcurrency(
-				untouchedItems,
+			itemRuns = await mapItemsWithConcurrency(
+				primary.items,
 				itemConcurrency,
 				executeItem,
 				concurrencyTracker,
@@ -587,19 +856,34 @@ export async function executeWorkflowNodeByMode(
 				checkpointSettledRuns,
 				pauseAfterExternalWait,
 			);
-			itemRuns = [...reconciledWaitingRuns, ...newlyScheduledRuns];
 		}
-	} else {
-		itemRuns = await mapItemsWithConcurrency(
-			primary.items,
-			itemConcurrency,
-			executeItem,
-			concurrencyTracker,
-			itemIdentity,
-			checkpointSettledRuns,
-			pauseAfterExternalWait,
-		);
+	} catch (error: unknown) {
+		if (!(error instanceof CollectionCheckpointFailure)) throw error;
+		// All already-started workers have settled. Preserve their exact receipts,
+		// including results whose queued checkpoint never ran after an earlier error.
+		const preservedRuns = mergeItemRunCheckpoints(checkpointItems, error.settledRuns);
+		const failure = {
+			observedAt: new Date().toISOString(),
+			message: error.message,
+			errorCodes: readDatabaseErrorCodes(error.failure),
+		};
+		console.error(JSON.stringify({ ...failure, message: "workflow_collection_checkpoint_failed",
+			executionId: context.executionId, nodeId: context.node.id,
+			settledItems: preservedRuns.length,
+			stack: error.failure instanceof Error ? error.failure.stack : null,
+		}));
+		const preservedOutput = aggregateOutput({ context, primary, itemRuns: preservedRuns,
+			itemConcurrency, concurrencyState: snapshotCollectionConcurrency(concurrencyTracker), finalized: false });
+		const outputRefs = { ...preservedOutput,
+			evidence: { ...preservedOutput.evidence, checkpointPersistenceFailure: failure } };
+		// This schedules reconciliation of receipts, never replay of a provider action.
+		// P2028 is admitted only at this database checkpoint boundary.
+		if (isTransientDatabaseReadError(error.failure) || failure.errorCodes.includes("P2028")) {
+			return workflowNodeWaiting(outputRefs, workflowExternalPollAfter(5_000));
+		}
+		return { ok: false, errorCode: "workflow_node_runtime_failed", errorMessage: error.message, outputRefs };
 	}
+
 	const mergedItemRuns = mergeItemRunCheckpoints(previousItemRuns, itemRuns);
 	const outputRefs = aggregateOutput({
 		context,
@@ -611,12 +895,16 @@ export async function executeWorkflowNodeByMode(
 	});
 	const failedRuns = mergedItemRuns.filter((run) => run.status === "failed");
 	const waitingRuns = mergedItemRuns.filter((run) => run.status === "waiting_external");
-	// A deterministic terminal item failure is the collection's user-visible
-	// terminal fact even when sibling provider tasks are still in flight. Their
-	// durable task receipts remain in outputRefs and the media orphan reconciler
-	// continues materializing them independently; keeping the parent in
-	// waiting_external only hides a known failure and consumes execution budget.
-	if (failedRuns.length > 0) {
+	// Accepted sibling work remains owned by this collection until it settles.
+	// Failures stay explicit in itemRuns/evidence; waiting never claims success.
+	if (waitingRuns.length > 0) {
+		if (!outputRefs.externalCheck) {
+			throw new Error(`Workflow collection node ${context.node.id} is missing its external check receipt`);
+		}
+		return workflowNodeWaiting(outputRefs, outputRefs.externalCheck);
+	}
+	if (failedRuns.length > 0 && !(readMediaDeliveryPolicy(context.node.data)
+        && mergedItemRuns.some(run => run.status === "success"))) {
 		const firstFailure = failedRuns[0];
 		const exactFailure = firstFailure?.errorMessage?.trim();
 		return {
@@ -625,12 +913,6 @@ export async function executeWorkflowNodeByMode(
 			errorMessage: `Workflow node ${context.node.id} failed ${failedRuns.length}/${mergedItemRuns.length} item executions${exactFailure ? `: ${exactFailure}` : ""}`,
 			outputRefs,
 		};
-	}
-	if (waitingRuns.length > 0) {
-		if (!outputRefs.externalCheck) {
-			throw new Error(`Workflow collection node ${context.node.id} is missing its external check receipt`);
-		}
-		return workflowNodeWaiting(outputRefs, outputRefs.externalCheck);
 	}
 	return { ok: true, outputRefs };
 }

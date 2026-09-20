@@ -1,3 +1,5 @@
+import { sanitizeFlowDataForStorage } from "./flow.storage-sanitizer";
+import { assertCanvasMembershipPermission } from "./flow.canvas-membership";
 import type { AppContext } from "../../types";
 import { AppError } from "../../middleware/error";
 import { appendTraceEvent, setTraceStage } from "../../trace";
@@ -21,6 +23,8 @@ import { FlowStorageEnvelopeError, parseFlowStorageRecord } from "./flow.storage
 import { preserveManagedFlowProjections, readWorkflowExecutionOutputIds } from "./flow.managed-projections";
 import {
 	hasAdminWorkflowGraphNodes,
+	reconcileCanvasMembership,
+	CANVAS_LIFECYCLE_KEY,
 	preserveAdminWorkflowGraphForNonAdmin,
 	projectWorkflowGraphForViewer,
 } from "@tapcanvas/workflow-kernel-protocol";
@@ -96,42 +100,7 @@ function summarizeGraphShape(value: unknown): {
 	};
 }
 
-export function sanitizeFlowDataForStorage(value: unknown): unknown {
-	const seen = new WeakSet<object>();
-	const looksLikeBase64DataUrl = (raw: string) =>
-		/^data:[^;]+;base64,/i.test((raw || "").trim());
-	const looksLikeBlobUrl = (raw: string) =>
-		(raw || "").trim().toLowerCase().startsWith("blob:");
-
-	const walk = (v: any): any => {
-		if (v === null || v === undefined) return v;
-		if (typeof v === "string") {
-			if (looksLikeBase64DataUrl(v) || looksLikeBlobUrl(v)) return undefined;
-			return v;
-		}
-		if (typeof v !== "object") return v;
-		if (seen.has(v)) return undefined;
-		seen.add(v);
-
-		if (Array.isArray(v)) {
-			const out: any[] = [];
-			for (const item of v) {
-				const next = walk(item);
-				if (next !== undefined) out.push(next);
-			}
-			return out;
-		}
-
-		const out: Record<string, any> = {};
-		for (const [key, val] of Object.entries(v)) {
-			const next = walk(val);
-			if (next !== undefined) out[key] = next;
-		}
-		return out;
-	};
-
-	return walk(value);
-}
+export { sanitizeFlowDataForStorage } from "./flow.storage-sanitizer";
 
 function attachFlowOwnerMeta(
 	value: unknown,
@@ -241,6 +210,8 @@ export async function upsertUserFlow(
 		// 透传给 repo 层做乐观锁校验；source 只作调用来源记录，不构成权限边界。
 		expectedRevision?: number;
 		source?: "user" | "agent";
+		deletedNodeIds?: string[];
+		restoredNodeIds?: string[];
 	},
 ) {
 	const nowIso = new Date().toISOString();
@@ -313,6 +284,15 @@ export async function upsertUserFlow(
 			sanitizeFlowDataForStorage(mapFlowRowToDto(existing).data ?? {}),
 		) ?? {};
 		const incomingRecord = asRecord(sanitizedData) ?? {};
+		const explicitDeletedIds = new Set(input.deletedNodeIds ?? []);
+		if (asArray(incomingRecord.nodes).some((node) => explicitDeletedIds.has(String(asRecord(node)?.id)))) {
+			throw new AppError('Deleted canvas nodes must be absent from the submitted graph', { status: 400, code: 'canvas_membership_conflict' });
+		}
+		if ((input.deletedNodeIds?.length || input.restoredNodeIds?.length) && typeof input.expectedRevision !== 'number') {
+			throw new AppError('Canvas membership changes require a revision', { status: 400, code: 'canvas_membership_revision_required' });
+		}
+		assertCanvasMembershipPermission(existingRecord, input, isAdminRequest(c));
+
 		const permissionSafeIncoming = isAdminRequest(c)
 			? incomingRecord
 			: asRecord(preserveAdminWorkflowGraphForNonAdmin({
@@ -348,6 +328,12 @@ export async function upsertUserFlow(
 			incoming: permissionSafeIncoming,
 			...(executionActive ? { executionActive } : {}),
 		});
+		sanitizedData = reconcileCanvasMembership(existingRecord, sanitizedData, input);
+		if (input.deletedNodeIds?.length || input.restoredNodeIds?.length) {
+			appendTraceEvent(c, 'flow:canvas_membership_changed', {
+				flowId: input.id, deletedNodeIds: input.deletedNodeIds ?? [], restoredNodeIds: input.restoredNodeIds ?? [],
+			});
+		}
 		const incomingNodes = asArray(asRecord(sanitizedData)?.nodes);
 		if (hasUnregisteredCanvasCard(incomingNodes)) {
 			try {
@@ -401,6 +387,7 @@ export async function upsertUserFlow(
 				nowIso,
 				expectedRevision: input.expectedRevision,
 				source: input.source,
+				canvasMembershipChanges: input,
 			})
 			: await updateFlow(c.env.DB, {
 			id: input.id,
@@ -411,6 +398,7 @@ export async function upsertUserFlow(
 			nowIso,
 			expectedRevision: input.expectedRevision,
 			source: input.source,
+				canvasMembershipChanges: input,
 		});
 		if (!updated) {
 			appendTraceEvent(c, "flow:upsert:update_missing", {
@@ -436,6 +424,7 @@ export async function upsertUserFlow(
 		};
 	}
 
+	if (asRecord(sanitizedData)) delete (sanitizedData as Record<string, unknown>)[CANVAS_LIFECYCLE_KEY];
 	// A newly created public flow has no server-owned projections yet. Strip any claimed
 	// managed projection instead of trusting the caller-provided source label.
 	const permissionSafeCreatedData = isAdminRequest(c)
@@ -448,6 +437,7 @@ export async function upsertUserFlow(
 		existing: { nodes: [] },
 		incoming: permissionSafeCreatedData,
 	});
+	sanitizedData = reconcileCanvasMembership({}, sanitizedData);
 	dataJson = JSON.stringify(sanitizedData);
 	nextShape = summarizeGraphShape(sanitizedData);
 	const id = crypto.randomUUID();
@@ -642,6 +632,14 @@ export async function rollbackUserFlow(
 			existing: currentData,
 			incoming: versionData,
 		});
+	const visibleNodeIds = (graph: unknown): string[] => asArray(asRecord(projectWorkflowGraphForViewer(graph, isAdminRequest(c)))?.nodes)
+		.map((node) => String(asRecord(node)?.id ?? '')).filter(Boolean);
+	const currentVisibleIds = new Set(visibleNodeIds(currentData));
+	const versionVisibleIds = new Set(visibleNodeIds(permissionSafeVersionData));
+	const canvasMembershipChanges = {
+		deletedNodeIds: [...currentVisibleIds].filter((id) => !versionVisibleIds.has(id)),
+		restoredNodeIds: [...versionVisibleIds].filter((id) => !currentVisibleIds.has(id)),
+	};
 	const sanitizedVersionData = JSON.stringify(permissionSafeVersionData);
 	const updated = flow.project_id
 		? await updateFlowByIdUnsafe(c.env.DB, {
@@ -649,6 +647,8 @@ export async function rollbackUserFlow(
 			name: version.name,
 			data: sanitizedVersionData,
 			nowIso,
+			expectedRevision: flow.canvas_revision,
+			canvasMembershipChanges,
 		})
 		: await updateFlow(c.env.DB, {
 			id: flowId,
@@ -657,6 +657,8 @@ export async function rollbackUserFlow(
 			ownerId: userId,
 			projectId: flow.project_id,
 			nowIso,
+			expectedRevision: flow.canvas_revision,
+			canvasMembershipChanges,
 		});
 	if (!updated) {
 		throw new AppError("Flow not found", {

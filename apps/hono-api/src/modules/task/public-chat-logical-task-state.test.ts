@@ -142,3 +142,20 @@ describe("workflow action logical task state", () => {
 		});
 	});
 });
+
+
+describe("durable workflow submission boundary", () => {
+  const handoff = { version: 1, completionBoundary: "submission", executionOwner: "durable_executor", receipts: [{
+    protocolVersion: "tapcanvas.workflow-execution-receipt/v1", executionId: "execution-1", status: "queued",
+    acceptedAsync: true, completionBoundary: "submission", executionOwner: "durable_executor",
+  }] };
+  const exit: AgentPhysicalRunExitV1 = { ...baseExit, kind: "logical_terminal", taskStatus: "satisfied", continuationTicket: null };
+  it("closes accepted submission while leaving media pending under its durable owner", () => {
+    expect(projectPublicChatLogicalTaskState({ exit, expectedLogicalTaskId: "turn-1", deliveryVerified: false, submissionHandoff: handoff }))
+      .toMatchObject({ status: "succeeded", physicalRunStatus: "completed", deliveryStatus: "pending", continuationTicket: null });
+  });
+  it("rejects a handoff without a durable accepted identity", () => {
+    expect(() => projectPublicChatLogicalTaskState({ exit, expectedLogicalTaskId: "turn-1", deliveryVerified: false,
+      submissionHandoff: { ...handoff, receipts: [{ ...handoff.receipts[0], executionId: "" }] } })).toThrow("accepted durable execution receipt");
+  });
+});

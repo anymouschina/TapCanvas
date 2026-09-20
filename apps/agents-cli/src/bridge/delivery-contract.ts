@@ -1,3 +1,5 @@
+import { latestWorkflowReceipts, verifiedToolDelivery } from "./tool-delivery-evidence.js";
+import type { StructuredSubmission } from "./structured-output.js";
 import { createHash } from "node:crypto";
 
 import type { JsonObject } from "./contracts.js";
@@ -113,11 +115,12 @@ function readFrozenWorkflowResponseContract(
   executions: readonly RemoteToolExecution[],
   finalText: string,
 ): FrozenResponseContract | null {
+  const latestReceipts = new Set(latestWorkflowReceipts(executions));
   for (let index = executions.length - 1; index >= 0; index -= 1) {
     const execution = executions[index];
     if (!execution || execution.status !== "succeeded" || !execution.structuredOutput) continue;
     const receipt = findWorkflowExecutionReceipt(execution.structuredOutput);
-    if (!receipt) continue;
+    if (!receipt || !latestReceipts.has(receipt)) continue;
     const workflowText = readSingleWorkflowResponseText(receipt);
     const executionId = nonEmptyString(receipt.executionId);
     if (!workflowText || !executionId || finalText !== workflowText) continue;
@@ -252,6 +255,8 @@ export function buildHarnessDeliveryClosure(input: {
   deliveryReport?: HarnessDeliveryReport | null;
   remoteExecutions?: readonly RemoteToolExecution[];
   exitedAt?: string;
+  structuredSubmission?: StructuredSubmission | null;
+  artifactDelivery?: JsonObject | null;
 }): HarnessDeliveryClosure {
   const exitedAt = input.exitedAt ?? new Date().toISOString();
   const authority = input.turnContext.executeForcedAgentDirectly === true
@@ -267,6 +272,10 @@ export function buildHarnessDeliveryClosure(input: {
     });
   }
 
+  if (authority === "workflow_action" && isJsonObject(input.turnContext.outputContract) && !input.structuredSubmission) {
+    return failedClosure({ turnContext: input.turnContext, reasonCode: 'structured_output_submission_missing',
+      rationale: 'The workflow requires a structurally valid submit_structured_output receipt; completing a Harness turn is insufficient.', exitedAt });
+  }
   if (authority === "workflow_action") {
     const reasonCode = "workflow_action_completed";
     return {
@@ -287,6 +296,50 @@ export function buildHarnessDeliveryClosure(input: {
       }),
       runOutcome: runOutcome(true, reasonCode),
       succeeded: true,
+    };
+  }
+
+  const verified = input.artifactDelivery ?? verifiedToolDelivery(input.remoteExecutions ?? [], input.turnContext.userIntentContract);
+  if (verified) {
+    const reasonCode = 'tool_delivery_verified';
+    return {
+      runtime: { terminalAuthority: authority, userIntentContract: verified.expectedDelivery,
+        terminalDelivery: { version: 1, requestTerminal: { version: 1, terminal: true, status: 'succeeded', reason: reasonCode }, ...verified },
+        physicalRunExit: physicalExit({ turnContext: input.turnContext, succeeded: true, reasonCode, exitedAt }) },
+      completion: completion({ source: 'terminal_delivery_verifier', succeeded: true, reason: reasonCode, successCriteria: [] }),
+      runOutcome: runOutcome(true, reasonCode), succeeded: true,
+    };
+  }
+  const pendingReceipts = latestWorkflowReceipts(input.remoteExecutions ?? []).filter(receipt => receipt.acceptedAsync === true
+    && receipt.terminal !== true && (receipt.status === 'queued' || receipt.status === 'running'));
+  if (pendingReceipts.length > 0 && pendingReceipts.every(receipt => receipt.completionBoundary === 'submission'
+    && receipt.executionOwner === 'durable_executor')) {
+    const reasonCode = 'workflow_submission_handoff_completed';
+    return {
+      runtime: { terminalAuthority: authority, completionBoundary: 'submission', executionOwner: 'durable_executor',
+        submissionHandoff: { version: 1, completionBoundary: 'submission', executionOwner: 'durable_executor', receipts: pendingReceipts, expectedDelivery: input.turnContext.userIntentContract },
+        userIntentContract: input.turnContext.userIntentContract,
+        physicalRunExit: physicalExit({ turnContext: input.turnContext, succeeded: true, reasonCode, exitedAt }) },
+      completion: completion({ source: 'runtime', succeeded: true,
+        reason: 'Submission handoff completed. The durable executor exclusively owns production and final media verification; no conversation continuation is registered.', successCriteria: ['durable submission receipt'] }),
+      runOutcome: { ...runOutcome(true, reasonCode), completionBoundary: 'submission', mediaDeliveryStatus: 'pending' },
+      succeeded: true,
+    };
+  }
+  if (pendingReceipts.length > 0) {
+    const taskId = logicalTaskId(input.turnContext);
+    const nodeId = nonEmptyString(input.turnContext.taskNodeId) ?? 'root';
+    const revision = taskRevision(input.turnContext);
+    const reasonCode = 'workflow_execution_pending';
+    return {
+      runtime: { terminalAuthority: authority, durableTaskReferences: pendingReceipts.map(receipt => ({ executionId: receipt.executionId, executionFamilyId: receipt.executionFamilyId })),
+        physicalRunExit: { version: 1, kind: 'waiting_external', logicalTaskId: taskId, taskNodeId: nodeId, taskRevision: revision,
+          taskStatus: 'waiting_for_evidence', reasonCode, exitedAt,
+          continuationTicket: { version: 1, ticketId: `${taskId}:${nodeId}:${revision}`, logicalTaskId: taskId,
+            taskNodeId: nodeId, taskRevision: revision, resumeFromStatus: 'waiting_for_evidence', nextTrigger: 'external_evidence', reasonCode, issuedAt: exitedAt } } },
+      completion: { version: 1, source: 'runtime', terminal: 'pending', allowFinish: false, failureReason: null,
+        rationale: 'The durable workflow accepted execution; final delivery evidence is still pending.', successCriteria: [], missingCriteria: ['terminal delivery evidence'], requiredActions: ['inspect the same workflow execution'] },
+      runOutcome: { version: 1, terminal: false, status: 'running', reason: reasonCode }, succeeded: false,
     };
   }
 

@@ -1,0 +1,429 @@
+{
+  "contractId": "tapcanvas/video-prompt-authoring",
+  "version": "4.0.0",
+  "purpose": "Shared semantic authoring structure for chapter-causal TapCanvas video prompt writing and review, with independent visual-shot and speech-event timelines.",
+  "runtimePolicy": {
+    "semanticAuthoringOwner": "tapcanvas-video-prompt-writer",
+    "hostInstructionScope": "immutable_facts_and_machine_protocol_only",
+    "hostSemanticMethodOverride": false,
+    "semanticQualityGate": false,
+    "reviewMode": "embedded_authoring",
+    "reviewBudget": {
+      "strategy": "evidence_driven_repair_in_same_author_context",
+      "repairScope": "all affected provider-visible fields adjacent shot handoffs and review evidence",
+      "replayAfterRevision": true,
+      "stopConditions": [
+        "final projected prompt has no identified author-introduced fact phase or visibility contradiction",
+        "remaining issue needs unavailable frozen source provider or asset evidence and is disclosed without fabricated resolution",
+        "only optional aesthetic alternatives remain without a concrete defect"
+      ],
+      "noProgressPolicy": "do not repeat unchanged review or chase a score; use the actual unresolved evidence for a different repair or report its boundary",
+      "externalReviewLoop": false,
+      "extraMediaSubmission": false
+    },
+    "postGenerationGate": false,
+    "providerFactsSource": "dynamic_generation_contract",
+    "promptExampleAssociation": "policy_driven_non_blocking",
+    "promptExampleCandidatePolicy": "required_or_discretionary_bounded_search_then_selective_exact_read",
+    "knowledgeEnrichmentCompletionGate": false,
+    "promptExampleSourceMutation": false,
+    "promptExampleNoMatchPolicy": "record_diagnostic_then_continue_without_false_attribution"
+  },
+  "authorityOrder": [
+    "user_intent_and_source_facts",
+    "current_project_state_and_real_assets",
+    "dynamic_generation_contract",
+    "video_prompt_authoring_contract",
+    "selected_market_validated_prompt_example",
+    "writer_task_specific_composition",
+    "domain_extensions",
+    "non_blocking_heuristics"
+  ],
+  "prioritySystem": {
+    "resolutionMode": "lexicographic",
+    "weightMeaning": "Weights resolve conflicts and attention allocation; they are not repetition counts, token quotas, scores, or runtime quality gates.",
+    "tiers": [
+      {
+        "id": "P0_EXECUTABLE_FACTS",
+        "weight": 100,
+        "includes": ["user intent", "source facts", "project state", "real asset roles", "permissions", "dynamic generation contract"],
+        "rule": "Never invent, omit, reorder, or stylistically override these facts."
+      },
+      {
+        "id": "P1_STORY_LEGIBILITY",
+        "weight": 90,
+        "includes": ["who", "where and when", "goal", "cause", "choice or contact", "visible result", "next consequence"],
+        "rule": "A first-time viewer must understand the current story change from the delivered sound and image."
+      },
+      {
+        "id": "P2_STATE_CONTINUITY",
+        "weight": 80,
+        "includes": ["identity", "position", "direction", "velocity", "posture", "contact", "held objects", "force result", "environment residue", "sound phase"],
+        "rule": "Every one-second-or-shorter frame window and every adjacent shot must continue a reconstructable state or declare a visible editorial transition into a frozen new state scope."
+      },
+      {
+        "id": "P3_SHOT_EXECUTION",
+        "weight": 60,
+        "includes": ["single information task", "action phase", "performance", "camera motivation", "light", "material response", "sound perspective", "edit trigger"],
+        "rule": "Choose only the execution details that make the current story change visible and feasible."
+      },
+      {
+        "id": "P4_DOMAIN_EXPRESSION",
+        "weight": 35,
+        "includes": ["genre grammar", "combat choreography", "dialogue staging", "product demonstration", "VFX treatment", "montage method"],
+        "rule": "Apply dynamically from the frozen scene structure; domain methods may intensify expression but cannot weaken P0-P3."
+      },
+      {
+        "id": "P5_POLISH",
+        "weight": 15,
+        "includes": ["style adjectives", "named equipment when already frozen", "decorative texture", "optional negative constraints", "non-blocking heuristics"],
+        "rule": "Compress or delete this tier first when the prompt is crowded."
+      }
+    ]
+  },
+  "sceneAdaptation": {
+    "decisionOwner": "writer_from_frozen_context",
+    "allowedStructures": [
+      "continuous_scene_or_action_chain",
+      "explicit_temporal_or_spatial_montage",
+      "designed_transition_then_primary_scene",
+      "dialogue_or_performance_scene",
+      "product_or_subject_demonstration"
+    ],
+    "selectionEvidence": ["temporalContext", "sceneState", "continuityLedger", "sourceSpanText", "startKeyframe", "endKeyframe", "durationBudget", "UserIntentContract"],
+    "forbiddenDefaults": ["fixed genre template", "fixed shot quota", "fixed duration range", "fixed camera brand", "fixed negative prompt pile", "keyword or regex routing"]
+  },
+  "dimensions": [
+    {
+      "id": "market_validated_example_analogy",
+      "owner": "writer_for_semantic_selection_and_derivation",
+      "writerInputs": ["promptExampleRetrievalScope@3", "prompt_example_search candidate receipt", "selectively read immutable bodies"],
+      "writerOutputs": ["new derived clips[].shots", "creativeReview"],
+      "reviewerChecks": [
+        "the source case remains byte-for-byte immutable and is never rewritten or persisted as the new output",
+        "the typed scope constrains retrieval to the matching media source and declares candidate searchPolicy without prescribing candidate or body-read counts",
+        "required_non_blocking causes exactly one candidate search attempt before the first creative inference while agent_discretion permits the writer to omit search",
+        "search returns candidate metadata only and every selected body read carries the authenticated candidate receipt",
+        "the writer may read zero one or multiple useful candidates based on relevance information gain context cost and existing evidence",
+        "required-search unavailability candidate rejection zero match and every retrieval failure are recorded truthfully as non-blocking observations",
+        "only successfully read bodies may inform the derived prompt while absent unread or invalid bodies are never attributed as used knowledge",
+        "the derived prompt preserves current user source project asset and provider facts rather than copying conflicting case facts",
+        "when no candidate is suitable or retrieval fails the writer authors a new prompt itself without inventing a case source",
+        "case association coverage or absence never becomes a runtime production completion or failure gate"
+      ],
+      "extensionPolicy": "market cases may contribute reusable composition logic and execution patterns but never source facts identity assets or immutable output text"
+    },
+    {
+      "id": "originality_and_rights_safe_projection",
+      "owner": "parent_for_rights_facts_writer_for_original_projection",
+      "writerInputs": ["source and rights facts", "frozen speechEvents", "canonical assets", "style intent"],
+      "writerOutputs": ["provider-facing clip fields", "creativeReview"],
+      "reviewerChecks": [
+        "mentions memories comparisons and style references are never treated as authorization",
+        "story function causality emotion state and verbatim speech remain intact while unlicensed provider-facing expression becomes original",
+        "exact-scene analogues differ across at least two of setting or blocking costume or silhouette effects or materials and camera or editing",
+        "frozen third-party names stay in speech without unnecessary visual reconstruction; canonical or explicitly authorized assets stay unchanged",
+        "originality is authored before the single submission and never becomes a host keyword gate score retry or asset rollback"
+      ],
+      "extensionPolicy": "improve originality without runtime gates retries or rights assumptions"
+    },
+    {
+      "id": "immutable_clip_fact_projection",
+      "owner": "parent_agent_for_facts_writer_for_projection",
+      "writerInputs": ["sourceReceipt", "beat", "sequenceContext.chapterArc", "sequenceContext.previous", "sequenceContext.current", "sequenceContext.next", "assetObjectContracts"],
+      "writerOutputs": ["clips[].continuity", "clips[].shots", "clips[].speakerBindings"],
+      "reviewerChecks": [
+        "machine identities such as assetId nodeId flowId and projectId are opaque and never become story semantics",
+        "canonical participants exactly equal the frozen current beat participants in parent order",
+        "entry facts ordered events and exit facts are preserved without renaming role substitution state erasure or invented causality",
+        "neutral staging adds only reversible execution detail and never adds relationships injuries healing held-object ownership powers VFX light sources environment damage outcomes or hooks",
+        "when frozen facts omit a scene anchor prop body placement lighting source or reaction interpretation the writer keeps that fact generic or unspecified instead of inventing a named anchor such as a window table doorway room or gaze target; this does not waive authoring non-conflicting luminance hierarchy highlight rolloff shadow detail color relationships and material response",
+        "optional audit prose never substitutes for correcting the executable shots",
+        "adjacent frozen storyEvents spokenScript keyframes and object contracts are compared against the current shots; prior speech and completed actions are not replayed and later results are not performed early"
+      ],
+      "extensionPolicy": "domain choreography may expand reversible intermediate mechanics only inside the immutable entry event-order and exit boundaries"
+    },
+    {
+      "id": "delivery_scope_and_duration",
+      "owner": "parent_agent_for_frozen_duration_writer_for_final_shot_clock_host_for_verification",
+      "writerInputs": ["deliveryContract", "durationBudget", "generationContract"],
+      "writerOutputs": ["shots[].durationSeconds"],
+      "hostOutputs": ["verified final shot clock"],
+      "reviewerChecks": ["requested scope is not expanded or reduced", "writer shot durations are positive final executable seconds", "writer shot durations sum exactly to the frozen clip duration", "the host never normalizes rescales or absorbs a remainder before compiling dependent maps", "no domain reference may introduce a fixed clip duration shot quota beat frequency or longest-duration consumption policy", "duration is treated as executable motion bandwidth: required story results and their minimum physical bridges receive time before camera or decorative description", "camera clauses never consume time by themselves and cannot hide an unassigned action bridge"],
+      "extensionPolicy": "provider limits stay dynamic"
+    },
+    {
+      "id": "source_coverage_and_causality",
+      "owner": "parent_agent_and_writer",
+      "writerInputs": ["sourceEvidence", "sourceSpanText", "sourceStartMarker", "sourceEndMarker", "beat.storyEvents", "sequenceContext.chapterArc", "sequenceContext.previous", "sequenceContext.current", "sequenceContext.next", "dramaticCoverage"],
+      "writerOutputs": ["logline", "shots[].visualTask", "shots[].action", "shots[].depictedStoryEventIndices", "continuity"],
+      "hostOutputs": ["sourceEventCoverage"],
+      "reviewerChecks": [
+        "every frozen storyEvent is visibly performed by one or more real shots in source order",
+        "every shot declares a non-empty ascending unique depictedStoryEventIndices list and its provider-visible audiovisual fields actually perform each declared frozen event; visualTask only states the internal purpose",
+        "for every declared event index the cumulative half-open shot interval satisfies shotStart < event.endSeconds and shotEnd > event.startSeconds; equal boundaries do not overlap",
+        "the first shot carries current causalEntry and the final shot realizes current irreversibleResult while preserving current handoffToNext for the adjacent clip",
+        "the host derives sourceEventCoverage only from writer-declared depictedStoryEventIndices and never from clock overlap or prose matching",
+        "all frozen story facts have sound or visual carriers",
+        "cause precedes effect without invented irreversible events", "compare actual shot actors contact targets and consequences against source events; indices and projected exits never prove a missing causal action occurred"
+        , "original sourceEvidence content remains independent from parent-authored summaries; absent or unmatched evidence is disclosed rather than claimed as verified source fidelity", "source summaries do not backfill invented staging as source facts; compare the original actor motion mechanism ordered body phases path changes and outcome against the actual current shot actions"],
+      "extensionPolicy": "domain methods may enrich reversible staging only"
+    },
+    {
+      "id": "audience_narrative_legibility",
+      "owner": "parent_agent_and_writer",
+      "writerInputs": ["sourceSpanText", "dramaticPlan", "pacingDecision", "narrativeAudioPlan", "temporalContext", "durationBudget"],
+      "writerOutputs": ["logline", "shots[].visualTask", "shots[].action", "speechEvents[].delivery", "shots[].sound", "continuity", "creativeReview"],
+      "reviewerChecks": [
+        "a first-time viewer can identify the active subject, immediate goal or pressure, causal trigger, visible choice or contact, and resulting state change",
+        "identity time location motive or result is not delegated to style vocabulary, unexplained montage, title metadata, or an unowned voice-over",
+        "names dialogue and visual stereotypes do not create unfrozen gender age kinship profession or relationship facts",
+        "visual spectacle and camera movement do not obscure who caused the irreversible result",
+        "when the frozen window cannot carry all required story obligations legibly, the conflict is reported to the parent instead of being hidden by summary prose"
+      ],
+      "extensionPolicy": "dialogue montage action and sound methods may choose carriers but may not trade away story comprehension"
+    },
+    {
+      "id": "temporal_context",
+      "owner": "parent_agent",
+      "writerInputs": ["temporalContext", "returnAnchor", "timeJumpNote"],
+      "writerOutputs": ["continuity", "shots[].visualTask", "shots[].notes"],
+      "reviewerChecks": [
+        "timeline and state scope do not leak",
+        "memory or forecast return anchor visibly restores every frozen state dimension needed by the next scene including location lighting age wardrobe body state posture contact and held objects"
+      ],
+      "extensionPolicy": "presentation cues may vary; temporal facts may not"
+    },
+    {
+      "id": "scene_space_and_blocking",
+      "owner": "parent_agent_and_writer",
+      "writerInputs": ["sceneState", "continuityLedger", "beat.storyEvents", "assetObjectContracts object states", "blocking facts"],
+      "writerOutputs": ["continuity", "framing", "composition", "action"],
+      "reviewerChecks": [
+        "interior exterior subscene and anchors stay valid",
+        "the writer-authored temporary interaction axis camera side and axis strategy are materially realized rather than replaced by generic continuity wording",
+        "every visible character keeps its world position facing target and movement direction across adjacent shots until a visible reestablish action creates the declared new axis",
+        "a reestablish strategy contains a readable neutral-axis move crossing action or new establishing composition before reversed screen directions are used",
+        "position direction distance and contact remain physically legible",
+        "during each exclusive shared-object contact phase only the assigned controller is within readable reach of the active contact target while every other visible subject has a positive non-competing position occlusion distance hand or support state",
+        "an opaque spatial boundary never exposes mutually hidden sides in one ordinary camera view; the writer uses a physically valid reveal opening transparent sightline reframe or adjacent shot instead of collapsing both spaces"
+      ],
+      "extensionPolicy": "camera methods cannot relocate story events"
+    },
+    {
+      "id": "ensemble_performance_continuity",
+      "owner": "parent_agent_and_writer",
+      "writerInputs": ["beat.characters", "beat.storyEvents", "assetObjectContracts object states", "spokenScript"],
+      "writerOutputs": ["continuity", "shots[].visualTask", "shots[].action", "shots[].notes", "shots[].composition", "editRhythm", "creativeReview"],
+      "reviewerChecks": [
+        "every on-screen character has one authored stimulus visible response and state consequence carried by executable shots",
+        "the writer-authored temporary per-character causal ledger remains consistent across continuity shots action performance notes editRhythm and creativeReview; no downstream field substitutes another stimulus swaps reactions between characters or reverses their declared causal order",
+        "an editorial editTrigger is kept distinct from the story-world characterStimulus; a cut may consume another character action sound gaze or information reveal without redefining what caused the reacting character response",
+        "secondary and context characters may use low-amplitude reactions but never remain frozen while a perceptible shared stimulus changes the scene",
+        "reaction timing follows the stimulus and changes gaze breath balance posture distance contact or choice without stealing the primary action",
+        "idle motion is not substituted for reaction causality and repeated blinking breathing swaying or random hand movement is removed when it has no current stimulus",
+        "group framing preserves narrativeWeight hierarchy while keeping all performance chains visually legible",
+        "each shared-object interaction gives every visible participant a distinct primary secondary or context role and no secondary subject mirrors or steals the primary controller action",
+        "a passive participant is authored with a positive visible non-competing state and a stimulus-linked reaction rather than only a negative prohibition"
+      ],
+      "extensionPolicy": "performance methods may vary amplitude timing and body channel but cannot invent relationships intentions or irreversible actions"
+    },
+    {
+      "id": "character_visible_state",
+      "owner": "parent_agent",
+      "writerInputs": ["characterStateVersions", "visualStateRefs", "continuityLedger"],
+      "writerOutputs": ["continuity", "action", "materialResponse"],
+      "reviewerChecks": [
+        "pregnancy injury age wardrobe contamination and held objects match the active state scope",
+        "state changes have an owned visible transition",
+        "every frozen state transition is mapped to one or more actual shots rather than left only in metadata"
+      ],
+      "extensionPolicy": "wardrobe and performance skills extend visibility, not identity facts"
+    },
+    {
+      "id": "asset_roles_and_identity",
+      "owner": "parent_agent_and_renderer",
+      "writerInputs": ["assetObjectContracts", "validated visual asset plans"],
+      "writerOutputs": ["canonical names in authoring visual fields"],
+      "reviewerChecks": ["every plot-bearing visible object has a canonical contract or frozen placeholder", "every visible subject uses its complete frozen canonical name in authoring visual fields rather than an unbound alias", "every object whose referenceRole requires a visual reference has exactly one validated asset plan and every clip where that object is visible is listed as a real consumer", "referenceRole none objects remain in the state ledger without creating a visual asset plan", "writer does not invent URLs node IDs or @image indices", "references establish identity appearance space material and style baselines only and never substitute for authored motion performance or state transitions"],
+      "extensionPolicy": "renderer binds each canonical object to real manifest @图N indices in a separate reference header; canonical subjects remain unchanged in visual prose and speech"
+    },
+    {
+      "id": "shot_information_task",
+      "owner": "writer",
+      "writerInputs": ["beat facts", "durationBudget"],
+      "writerOutputs": ["shots[].visualTask", "shots[].durationSeconds", "editRhythm"],
+      "reviewerChecks": ["each shot has one distinct visible information change", "cuts and holds have a narrative or physical reason", "a high-density shot distinguishes story payload, kinetic bridge and camera service instead of counting all three as separate events", "multiple actions may share a shot only when they are one force/choice chain with a reconstructable handoff; independent controllers or results have an explicit cut or adjacent shot", "removing camera and decorative language still leaves a readable causal action sequence", "action is non-empty for every shot including a static establishing view; visualTask records its internal purpose without duplicating executable prose, and optional fields contribute only distinct necessary information"],
+      "extensionPolicy": "pacing skills extend decisions without fixed shot quotas"
+    },
+    {
+      "id": "action_causality_physics",
+      "owner": "writer",
+      "writerInputs": ["frozen actions", "state transitions", "domain extension"],
+      "writerOutputs": ["shots[].action", "shots[].motionDynamics", "shots[].materialResponse"],
+      "reviewerChecks": ["driver state change and end state are visible", "contact reaction and environmental consequence share one force event", "each changed limb held object contact or support state has a visible release transfer regrip impact or relocation bridge", "one limb or held object never occupies mutually exclusive states at the same time", "one shared object state change has exactly one assigned driver active limb and contact target during each exclusive contact phase while all other visible subjects have explicit non-competing limb held-object and support states", "two independently readable action starts are split into adjacent shots unless they are the same contact event's synchronized reaction", "in a continuous high-dynamic chain only an action that truly begins from rest receives a new preparation phase; later actions consume unresolved velocity force recovery exposure or displacement instead of replaying anticipation reset and setup", "the transition between consecutive actions is executable content that identifies the inherited motion debt the interception or exploitation and the new opening it creates", "when several visible actions occupy a short window, each required result has an explicit minimum physical bridge and is not compressed into a summary verb", "camera movement, VFX and atmosphere remain subordinate to the action node that motivates them and never substitute for path, contact, reaction or spatial relocation", "motionDynamics is optional internal evidence, not provider text; any relevant force direction contact and consequence is expressed concretely in action and materialResponse instead of relying on enum labels", "explicit source locomotion mechanisms and body phases remain visible; identical endpoints or more sparks never justify substituting a different motion mechanism", "propulsion contact resistance and recovery follow the established medium and abilities; camera movement and surface effects do not substitute for subject motion, and explicitly authorized sliding floating or flight is not converted into generic footwork"],
+      "extensionPolicy": "combat and motion skills may increase reversible choreography density but may not turn each exchange into an isolated full setup action recovery cycle"
+    },
+    {
+      "id": "intra_clip_state_chain",
+      "owner": "parent_agent_and_writer",
+      "writerInputs": ["temporalContext", "sceneState", "continuityLedger", "startKeyframe", "endKeyframe", "durationBudget", "beat.storyEvents"],
+      "writerOutputs": ["continuity", "shots[].visualTask", "shots[].action", "shots[].notes", "editRhythm", "creativeReview"],
+      "hostOutputs": ["temporalFrameTrack", "temporalFrameCoverage"],
+      "reviewerChecks": [
+        "the host compiles one-second-or-shorter indexing windows from the final shot clock and frozen event clock; only exact event boundary timestamps establish state anchors, and interior samples never prove an unchanged pose or a repeated complete action",
+        "each later window startState exactly equals the previous window carryState while the first and final states equal the frozen clip entry and exit",
+        "every adjacent shot either starts from a reconstructable projection of the prior shot end state or declares an explicit editorial time or scene transition",
+        "continuous action preserves position direction velocity contact held objects force result and sound phase across cuts; the next action explicitly consumes at least one unresolved prior vector instead of resetting posture or replaying setup",
+        "the track indexes authored motion rather than inventing physical frames; each required state change is performed by the actual shots and the renderer never substitutes sampled checkpoints for in-flight state",
+        "intentional montage keeps ordered temporal subscopes and visible transition cues without mixing an unrelated high-complexity action sequence into the same execution window",
+        "no multi-second shot delegates an unbounded exchange montage or irreversible result to the video model through summary wording",
+        "a duration-density review can remove camera and style clauses and still reconstruct entry state, causal change, contact/avoidance, reaction and exit state in order", "replay only the provider-visible shot fields without continuity editRhythm notes or state ledgers; all wardrobe held-object spatial and exit transitions must still be reconstructable, including explicit editorial time omissions where authorized"
+      ],
+      "extensionPolicy": "montage transition and combat methods may shape handoffs but cannot hide missing state transitions or outcomes; continuous combat transitions are authored as action rather than replaced by a stable endpoint"
+    },
+    {
+      "id": "camera_composition_and_lens",
+      "owner": "writer",
+      "writerInputs": ["visualTask", "blocking facts", "domain extension"],
+      "writerOutputs": ["framing", "lensIntent", "composition", "cameraMove"],
+      "reviewerChecks": ["camera choices serve the current information task", "camera motion does not replace subject motion", "inapplicable optional lens lighting material and sound fields use null on strict tool surfaces; required framing composition and camera decisions remain authored rather than punctuation filler", "camera and material clauses describe observable execution without equipment catalogues, abstract purpose explanations, repeated action, or invented sensory feedback"],
+      "extensionPolicy": "camera skills provide methods, not mandatory vocabulary"
+    },
+    {
+      "id": "lighting_material_and_atmosphere",
+      "owner": "writer",
+      "writerInputs": ["filmBible", "beat.visualIntent", "sceneState", "material facts", "current project look", "cinematic-feel-director shared visual authoring method"],
+      "writerOutputs": ["lighting", "materialResponse", "composition", "framing", "creativeReview"],
+      "reviewerChecks": [
+        "absent user look or reference images does not remove the writer responsibility to author an intentional content-specific visual treatment within current facts",
+        "the provider-visible fields carry an actual luminance hierarchy highlight and shadow treatment color relationship material response and attention priority appropriate to this medium rather than only prestige adjectives or audit notes",
+        "explicit flat high-key monochrome animation documentary and product requirements remain intact; cinema craft never forces photorealism dark exposure teal-orange grain haze handheld or a named camera",
+        "light is motivated by scene facts; unknown sources stay unnamed and rendering treatment never invents a window lamp weather prop VFX or plot event",
+        "the shot preserves parent-authored visualIntent project direction identity and product colors while adapting the treatment to current asset role and narrative information",
+        "adjacent shots retain world-space light direction palette and material logic; independent clips include their necessary shared look in actual executable fields",
+        "material and air responses are relevant to current action and established medium rather than decorative noise or ungrounded atmosphere",
+        "missing or conflicting visual decisions are repaired in the same authoring context without a score gate extra paid generation asset rollback or unverified claim of cinema-quality footage", "shared look invariants are projected only onto objects visible during the current shot interval; appearance contact and optical changes are conditional on their actual event rather than copied across shots", "review all rendered fields together including action lighting material composition camera lens and sound; an action disclaimer or correct material field does not cancel a conflicting illumination or framing instruction"
+      ],
+      "extensionPolicy": "the shared visual skill provides craft methods; user and project facts remain authoritative and no fixed look or new production gate is introduced"
+    },
+    {
+      "id": "dialogue_and_voice_performance",
+      "owner": "parent_agent_for_text_writer_for_timing",
+      "writerInputs": ["dialogueScript", "narrativeAudioPlan", "speaker bindings", "dialoguePaceRate"],
+      "writerOutputs": ["speakerBindings", "speechEvents[].startOffset", "speechEvents[].endOffset", "speechEvents[].startSeconds", "speechEvents[].endSeconds", "speechEvents[].speakerName", "speechEvents[].delivery", "speechEvents[].performance"],
+      "hostOutputs": ["speechEvents[].speechEventId", "speechEvents[].lineId", "shots[].speechEventIds"],
+      "sharedSemantics": {
+        "identityBinding": "writer events retain frozen spokenScript order; host binds each event to its ledger line and assigns stable speechEventId and lineId",
+        "offsetUnit": "unicode_code_point_index",
+        "interval": "half_open_start_inclusive_end_exclusive",
+        "coverageRule": "each frozen line is carried exactly once by one whole-line speech event from code point 0 to codePointLength; visual cuts never split spoken text",
+        "capacityRule": "nonPunctuationCodePointCount <= speechEvent durationSeconds * dialoguePaceRate",
+        "timelineRule": "speechEvents own independent clip-relative seconds and may overlap any number of editorial shot windows",
+        "forbiddenComparison": "text offsets are Unicode coordinates and must never be compared directly with seconds"
+      },
+      "reviewerChecks": ["frozen speech is complete ordered and unique", "each beat carrying any source or authored speech has an explicit positive dialoguePaceRate selected by the parent agent from the actual performance context while a silent beat omits it", "the host never substitutes a default dialogue pace or infers pace from prose labels", "each line is a whole speech event and is never split at a camera cut", "speech-event capacity uses non-punctuation code point count <= event duration * dialoguePaceRate", "the host compiles exact intersecting shot speech event IDs only after verifying the final writer-authored shot clock without normalization or rescaling", "lip readable windows are plausible", "control fields contain no additional speech"],
+      "extensionPolicy": "audio skills may extend performance method but cannot rewrite spoken text"
+    },
+    {
+      "id": "sound_and_narrative_legibility",
+      "owner": "parent_agent_for_narrative_audio_writer_for_sfx",
+      "writerInputs": ["narrativeAudioPlan", "scene sound facts"],
+      "writerOutputs": ["sound", "soundPerspective", "dialogueDelivery"],
+      "reviewerChecks": ["a stranger can understand required identity time cause and result", "voice over is neither mechanically added nor mechanically forbidden", "SFX does not become extra speech"],
+      "extensionPolicy": "sound methods may enrich perspective and physical feedback"
+    },
+    {
+      "id": "continuity_and_exit_state",
+      "owner": "parent_agent_for_target_writer_for_execution",
+      "writerInputs": ["startKeyframe", "endKeyframe", "continuityLedger", "assetObjectContracts[].startState", "assetObjectContracts[].endState", "closureMode"],
+      "writerOutputs": ["continuity", "shots[].visualTask", "shots[].action", "shots[].notes"],
+      "reviewerChecks": ["the first shot starts at every frozen object startState", "each object driver stateChange and endState is visibly implemented by real shots", "the final shot reaches the frozen target without replaying owned actions", "at the same canonical object's next declared appearance its later startState exactly inherits the prior declared endState unless the parent declares a visible frozen state-scope transition"],
+      "extensionPolicy": "transition skills may choose a legible handoff inside frozen endpoints"
+    },
+    {
+      "id": "sequence_control_execution",
+      "owner": "parent_sequence_agent_and_clip_writer",
+      "writerInputs": ["sequenceContext.sequenceControlPlan", "sequenceContext.sequenceTimeline", "sequenceContext.previous/current/next storyEvents spokenScript keyframes and assetObjectContracts", "current Beat and current segment"],
+      "writerOutputs": ["continuity", "editRhythm", "shots[].durationSeconds", "shots[].action", "shots[].cameraMove", "creativeReview"],
+      "reviewerChecks": ["the parent sequence control plan is the sole owner of cross-clip timing directives and handoffs", "the writer executes only the current segment and does not invent a separate clip arc or temporal treatment", "the first shot consumes the previous exit and transitionFromPrevious while the final shot preserves transitionToNext", "temporal directives may use any task-authored kind and the host never performs semantic routing on kind", "selected standing preferences apply before style and timing are authored, explicit current instructions override them, and semantic pacing words never become invented numeric shot or frame quotas", "every physical clip advances the same whole-film causal or informational line rather than repeating a self-contained introduction demonstration and ending", "a parent-authored temporal or spatial transition preserves story identity and causality without forcing one continuous location or camera", "shared object facts including material appearance and setting remain consistent across speech continuity action and materialResponse; case knowledge never supplies missing product performance identity or commercial facts"],
+      "extensionPolicy": "new video task types may add task-authored temporal directive kinds without changing runtime routing or the root schema"
+    },
+    {
+      "id": "deterministic_render_projection",
+      "owner": "renderer",
+      "writerInputs": ["structured clip JSON", "real manifest"],
+      "writerOutputs": ["structured clip JSON only"],
+      "reviewerChecks": ["canonical names independent speech events writer-declared depictedStoryEventIndices and the temporal frame track are sufficient for deterministic rendering", "sourceEventCoverage is projected from declared event references while temporal windows remain clock-derived", "the provider prompt contains only a compact real-reference header and timed shot audiovisual fields with speech; visualTask continuity editRhythm exitState motionDynamics notes and temporal stateAnchors remain structured evidence and are never appended as duplicate instructions", "node persistence preserves the complete planning and temporal evidence unchanged; every required entry state transition edit cue and exit is authored into executable shot fields before projection, with verified subsecond timing intact", "the provider prompt retains canonical subjects and binds them to the actual ordered @图N reference images in a compact header; multiple views of one object never become multiple acting subjects; node IDs and machine protocol instructions remain audit evidence only", "media resolution aspect ratio frame rate audio subtitle and watermark constraints come only from frozen facts real assets or the dynamic generation contract; rendering style and color treatment preserve explicit facts and parent-authored visualIntent while genuinely open artistic decisions may be authored without pretending they are user requirements or domain-reference defaults"],
+      "extensionPolicy": "tables labels and @图N are projections, not authoring fields"
+    },
+    {
+      "id": "embedded_review_evidence",
+      "owner": "writer_and_reviewer",
+      "writerInputs": ["complete first draft", "all prior dimensions"],
+      "writerOutputs": ["creativeReview", "selfQaNote", "revised final clip"],
+      "reviewerChecks": ["identified issues are revised in the same writer context", "review evidence names actual discovered and repaired issues instead of asserting an unverified all-pass summary", "derived arithmetic is recomputed by the deterministic compiler rather than asserted by the reviewer", "review evidence does not become a runtime pass fail gate", "compare independent source evidence parent events and final executable actions; repair authored mechanism substitutions in the same context and name genuine frozen-fact conflicts without certifying them as satisfied", "after each concrete repair replay the affected final provider-visible shot rows and adjacent handoffs without hidden planning or selfQa; revise any contradiction introduced or left by that edit in the same author context", "review summaries are regenerated from the final repaired draft and never retain superseded actions or certify unverified physical execution", "a fixed draft or review count never excuses a known repairable author-introduced contradiction; stop on evidence-based completion or a truthful external-fact boundary rather than aesthetic perfection"],
+      "extensionPolicy": "new review methods must map to existing dimensions or propose a versioned upgrade"
+    }
+  ],
+  "consumers": {
+    "skills": [
+      {
+        "name": "tapcanvas-video-workflow",
+        "path": "apps/agents-cli/skills/tapcanvas-video-workflow/SKILL.md",
+        "responsibility": "freeze parent facts and dispatch formal clip authoring"
+      },
+      {
+        "name": "tapcanvas-video-prompt-writer",
+        "path": "apps/agents-cli/skills/tapcanvas-video-prompt-writer/SKILL.md",
+        "responsibility": "author and revise one executable clip contract"
+      },
+      {
+        "name": "tapcanvas-video-reviewer",
+        "path": "apps/agents-cli/skills/tapcanvas-video-reviewer/SKILL.md",
+        "responsibility": "review the same dimensions in embedded or standalone mode"
+      },
+      {
+        "name": "tapcanvas-api",
+        "path": "apps/agents-cli/skills/tapcanvas-api/SKILL.md",
+        "responsibility": "route executable prompt work through the formal workflow"
+      },
+      {
+        "name": "tapcanvas-video-prompt-governance",
+        "path": "apps/agents-cli/skills/tapcanvas-video-prompt-governance/SKILL.md",
+        "responsibility": "classify new knowledge and govern versioned contract changes"
+      }
+    ],
+    "roles": [
+      {
+        "name": "video-prompt-writer",
+        "path": "apps/agents-cli/agent-definitions/defaults.json",
+        "requiredSkillBundle": ["tapcanvas-video-prompt-writer", "tapcanvas-video-reviewer"]
+      }
+    ],
+    "forbiddenRoleBindings": [
+      {
+        "skill": "tapcanvas-video-reviewer",
+        "roleNames": ["film-editor", "post-producer"]
+      }
+    ],
+    "documentation": [
+      "apps/hono-api/README.md"
+    ]
+  },
+  "evaluationPolicy": {
+    "deterministic": {
+      "scope": ["json_shape", "contract_version", "declared_consumers", "role_skill_bundle", "retired_invocation_state"],
+      "forbiddenScope": ["creative_quality", "semantic_fidelity", "narrative_legibility", "aesthetic_judgment"]
+    },
+    "semantic": {
+      "source": "agents_judge",
+      "suitePath": "apps/agents-cli/skills/tapcanvas-video-prompt-writer/evals/evals.json",
+      "rubricSource": "dimensions[].reviewerChecks",
+      "resultContract": "AgentEvaluationResultV1",
+      "requiredBefore": ["minor_version_release", "major_version_release", "reviewer_semantic_change", "writer_semantic_change"],
+      "comparison": "blind_current_vs_candidate",
+      "runtimeGate": false
+    }
+  }
+}

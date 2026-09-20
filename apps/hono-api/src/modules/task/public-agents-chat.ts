@@ -1,3 +1,4 @@
+import { parseWorkflowSubmissionHandoff } from "./workflow-submission-handoff";
 import { createHash, randomUUID } from "node:crypto";
 import { streamSSE } from "hono/streaming";
 import { AppError } from "../../middleware/error";
@@ -1956,6 +1957,7 @@ async function registerPendingAsyncContinuation(input: {
 }): Promise<PendingAsyncContinuationRegistration> {
 	const raw = readRecord(input.result.raw);
 	const meta = readRecord(raw?.meta);
+	if (parseWorkflowSubmissionHandoff(meta?.submissionHandoff)) return { status: "not_required" };
 	const expected = readRecord(meta?.expectedDelivery);
 	const hostExecutionHandoff = readPublicChatHostExecutionHandoffOwnership(meta);
 	if (
@@ -2045,6 +2047,7 @@ async function registerPendingAsyncContinuation(input: {
 		readContinuationDurableTaskReferences(meta?.durableTaskReferences),
 	);
 	const ownedRepairRuns = collectOwnedAsyncRepairRuns(durableTaskReferences);
+	if (!expected) return { status: "invalid", reason: "async dependency is missing expectedDelivery" };
 	const progressFingerprint = buildContinuationProgressFingerprint(expected, artifacts);
 	const continuationId = buildAsyncAgentContinuationId({
 		requestId,

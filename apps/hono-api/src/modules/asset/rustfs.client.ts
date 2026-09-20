@@ -1,3 +1,4 @@
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { S3Client } from "@aws-sdk/client-s3";
 import type { WorkerEnv } from "../../types";
 
@@ -278,4 +279,17 @@ export function extractObjectStorageObjectKey(
 	} catch {
 		return null;
 	}
+}
+
+export function createObjectStorageSignedUrl(
+	client: S3Client,
+	command: object,
+	expiresIn: number,
+): Promise<string> {
+	const presign = getSignedUrl as unknown as (
+		presignClient: S3Client,
+		presignCommand: object,
+		options: { expiresIn: number },
+	) => Promise<string>;
+	return presign(client, command, { expiresIn });
 }

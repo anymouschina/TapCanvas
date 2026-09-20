@@ -17,6 +17,8 @@ export type SpokenScriptLine = {
 };
 
 export type NarrativeAudioLine = SpokenScriptLine & {
+  /** Explicit reference to an existing utterance; never an additional performance. */
+  sourceLineId?: string;
   /**
    * `null` places the line before the first source line. Otherwise this must
    * name the source dialogue line after which the authored line is spoken.
@@ -101,6 +103,9 @@ export function parseNarrativeAudioPlan(
       return [];
     }
     const line = item as Record<string, unknown>;
+    if (line.sourceLineId !== undefined && line.sourceLineId !== null && (typeof line.sourceLineId !== "string" || !line.sourceLineId.trim())) {
+      errors.push(`${path}.lines[${index}].sourceLineId 必须是非空来源 ID`);
+    }
     const lineId = readNonEmptyString(line.lineId);
     const speakerName = readNonEmptyString(line.speakerName);
     const text = readNonEmptyString(line.text);
@@ -153,6 +158,7 @@ export function parseNarrativeAudioPlan(
       ...(delivery === undefined ? {} : { delivery }),
       afterSourceLineId,
       sourceEvidence,
+      ...(typeof line.sourceLineId === "string" ? { sourceLineId: line.sourceLineId } : {}),
       ...(narrativeFunction ? { narrativeFunction } : {}),
     }];
   });
@@ -174,10 +180,19 @@ export function validateNarrativeAudioPlacement(
   errors: string[],
 ): void {
   const sourceLineIds = new Set(sourceDialogue.map((line) => line.lineId));
+  const sourceSpeechOnly = narrativeAudioPlan?.strategy === "source_speech_only";
   for (const [index, line] of (narrativeAudioPlan?.lines ?? []).entries()) {
+    if (line.sourceLineId !== undefined && !sourceLineIds.has(line.sourceLineId)) {
+      errors.push(`${path}.lines[${index}].sourceLineId must reference an existing dialogueScript lineId`);
+    }
+    if (!sourceSpeechOnly && !line.sourceLineId && sourceLineIds.has(line.lineId)) {
+      errors.push(
+        `${path}.lines[${index}].lineId=${line.lineId} must be unique across dialogueScript and narrativeAudioPlan; narrative lines require a distinct id`,
+      );
+    }
     if (line.afterSourceLineId !== null && !sourceLineIds.has(line.afterSourceLineId)) {
       errors.push(
-        `${path}.lines[${index}].afterSourceLineId=${line.afterSourceLineId} 必须引用当前 dialogueScript 的 lineId`,
+        `${path}.lines[${index}].afterSourceLineId=${line.afterSourceLineId} 必须引用当前 dialogueScript 的 lineId；允许值为 null 或 ${JSON.stringify([...sourceLineIds])}。null 锚点的新增人声按 lines 数组顺序执行，不能引用新增人声或其它 beat 的 lineId。`,
       );
     }
   }
@@ -187,13 +202,22 @@ export function combineSpokenScript(
   sourceDialogue: readonly SpokenScriptLine[],
   narrativeAudioPlan?: NarrativeAudioPlan,
 ): SpokenScriptLine[] {
-  const narrativeLines = narrativeAudioPlan?.lines ?? [];
+  const narrativeLines = (narrativeAudioPlan?.lines ?? []).filter(line => line.sourceLineId === undefined);
   const projectNarrativeLine = (line: NarrativeAudioLine): SpokenScriptLine => ({
     lineId: line.lineId,
     speakerName: line.speakerName,
     text: line.text,
     delivery: line.delivery,
   });
+  // `source_speech_only` is an explicit second projection of the frozen source
+  // ledger. It may carry the same line identities for audio placement, but it
+  // must never be appended as new speech. The dialogueScript remains the
+  // executable source of truth; if it is absent, preserve the plan lines.
+  if (narrativeAudioPlan?.strategy === "source_speech_only") {
+    return sourceDialogue.length > 0
+      ? sourceDialogue.map((line) => ({ ...line }))
+      : narrativeLines.map(projectNarrativeLine);
+  }
   const beforeSource = narrativeLines
     .filter((line) => line.afterSourceLineId === null)
     .map(projectNarrativeLine);

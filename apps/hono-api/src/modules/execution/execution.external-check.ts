@@ -65,6 +65,44 @@ export function workflowExternalSignalOnly(): WorkflowExternalCheckScheduleV1 {
 }
 
 /**
+ * Migrates an already-persisted Agent no-progress receipt to its durable timer.
+ *
+ * A no-progress Agent recovery has no provider task or external callback to
+ * wake it. Older receipts incorrectly marked this state as signal-only, which
+ * made the reconciler skip them forever. This helper is deliberately limited
+ * to the versioned executor and failure evidence that owns that protocol; real
+ * external-signal waits remain dormant.
+ */
+export function workflowAgentNoProgressRecoveryPollSchedule(
+	outputRefs: unknown,
+): WorkflowExternalCheckScheduleV1 | null {
+	if (!isRecord(outputRefs) || outputRefs.executorRef !== "agents.logical-task/v2") return null;
+	let evidence: Record<string, unknown> | null = isRecord(outputRefs.evidence)
+		? outputRefs.evidence
+		: null;
+	for (let depth = 0; evidence && depth < 8; depth += 1) {
+		if (
+			evidence.retryablePhysicalFailure === true
+			&& evidence.physicalFailureReason === "workflow_agent_no_progress_window_exhausted"
+			&& evidence.noProgressRecoveryMode === "signal_only"
+		) {
+			const retryNotBeforeAt = evidence.retryNotBeforeAt;
+			if (
+				typeof retryNotBeforeAt === "string"
+				&& Number.isFinite(Date.parse(retryNotBeforeAt))
+			) {
+				return workflowExternalPollAt(retryNotBeforeAt);
+			}
+			return null;
+		}
+		const nested = evidence.deliveryEvidence;
+		if (!isRecord(nested) || nested === evidence) break;
+		evidence = nested;
+	}
+	return null;
+}
+
+/**
  * Returns null when the node must be woken only by an explicit external signal.
  * Queue delay is rounded up so a persisted not-before boundary is never crossed
  * early by a sub-second scheduler truncation.

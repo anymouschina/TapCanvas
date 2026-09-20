@@ -368,11 +368,30 @@
 }
 
 .workflow-stage-content__port {
+  display: flex;
   min-width: 0;
+  align-items: baseline;
+  gap: 5px;
   overflow: hidden;
   color: var(--mantine-color-gray-4);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 	font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-stage-content__port b {
+  flex: 0 0 auto;
+  color: var(--tc-color-text-tertiary, #7b8492);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.workflow-stage-content__port > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

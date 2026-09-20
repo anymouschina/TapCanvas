@@ -277,7 +277,7 @@ describe("workflow node queue handler", () => {
 		);
 	});
 
-	it("aborts the active execution job set after durable terminal failure is recorded", async () => {
+	it("does not abort sibling execution work after reporting a local failure", async () => {
 		let observedSignal: AbortSignal | undefined;
 		runWorkflowAgentNode.mockImplementationOnce(async (_env, request) => {
 			observedSignal = request.abortSignal;
@@ -316,10 +316,7 @@ describe("workflow node queue handler", () => {
 			ok: false,
 			errorCode: "workflow_node_runtime_failed",
 		});
-		expect(observedSignal?.aborted).toBe(true);
-		expect((observedSignal?.reason as Error | undefined)?.message).toBe(
-			"workflow_execution_failed_at_node:agent-failure",
-		);
+		expect(observedSignal?.aborted).toBe(false);
 	});
 
 	it("stops before DB work when the scheduler rejects nodeStarted", async () => {
@@ -565,7 +562,8 @@ describe("workflow node queue handler", () => {
 		);
 	});
 
-	it("persists a recoverable Agent transport interruption and requeues the same node", async () => {
+	it.each([0, 21 * 60_000])(
+		"preserves a recoverable Agent receipt and requeues the same node after %i ms", async (ageMs) => {
 		runWorkflowAgentNode.mockResolvedValueOnce({
 			taskId: "workflow:execution-1:agent-waiting",
 			text: "",
@@ -574,6 +572,8 @@ describe("workflow node queue handler", () => {
 			deliveryEvidence: {
 				transportInterrupted: true,
 				errorCode: "agents_bridge_stream_interrupted",
+				lastConfirmedAt: new Date(Date.now() - ageMs).toISOString(),
+				recoveryCheckpoint: { reasonCode: "provider_stream_interrupted" },
 			},
 			deliveryVerification: null,
 			requestTerminal: {

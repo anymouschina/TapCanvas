@@ -4,6 +4,7 @@ export const CanvasFlowSchema = z
 	.object({
 		nodes: z.array(z.record(z.string(), z.unknown())),
 		edges: z.array(z.record(z.string(), z.unknown())),
+		canvasMembership: z.object({ deletedNodeIds: z.array(z.string()), detachedExecutionIds: z.array(z.string()) }).optional(),
 	})
 	.strict();
 
@@ -23,6 +24,7 @@ export const PutCanvasFlowRequestSchema = z
 		// (reconcileActiveRunVideoNodes) 据此区分「用户显式删除」与「stale autosave 漏带」——
 		// 墓碑里的资产节点不再被护栏复活，否则母板/分镜板等永远删不掉（根因）。
 		deletedNodeIds: z.array(z.string()).optional(),
+		restoredNodeIds: z.array(z.string()).optional(),
 		// 写入来源只用于记录调用方事实。无论 user/agent，整图快照的
 		// expectedRevision 落后都必须 409；agent 调用方应重读后重新应用结构化 patch。
 		source: z.enum(["user", "agent"]).optional(),

@@ -27,6 +27,8 @@ import { WorkflowTextInputConfiguration } from './WorkflowTextInputConfiguration
 import { WorkflowExternalTriggerConfiguration } from './WorkflowExternalTriggerConfiguration'
 import { WorkflowAgentContextOverview } from './WorkflowAgentContextOverview'
 import { WorkflowCodeEditorField } from './WorkflowCodeEditorField'
+import { WorkflowRetryConfiguration } from './WorkflowRetryConfiguration'
+import { getAdminKnowledgeCard } from '../../api/server'
 
 const AGENT_OUTPUT_ARTIFACT_OPTIONS = [
   { value: 'tapcanvas.text/v1', label: '文本' },
@@ -97,6 +99,7 @@ function ExecutionModeField(props: Readonly<{
           })
         }}
       />
+      {spec.executorRef === 'tapcanvas.video.generate/v1' ? <WorkflowRetryConfiguration {...props} /> : null}
       {executionMode === 'each' ? (
         <Select
           className="workflow-node-inspector__field"
@@ -450,6 +453,16 @@ type RuntimeReferencePanelItem = Readonly<{
   evidence: readonly Record<string, unknown>[]
 }>
 
+type RuntimeReferenceCandidate = Readonly<{
+  cardId: string
+  candidateSetId: string
+  title?: string
+  rank: number
+  score: number
+  sourceRoot?: string
+  state: 'candidate' | 'read' | 'adopted'
+}>
+
 function runtimeReferenceItems(value: unknown): readonly RuntimeReferencePanelItem[] {
   return readRecordArray(value).flatMap((item) => {
     const identity = readString(item, 'identity')
@@ -463,6 +476,28 @@ function runtimeReferenceItems(value: unknown): readonly RuntimeReferencePanelIt
       evidenceState: 'actual_read',
       physicalExecutionIds: readStringArray(item.physicalExecutionIds),
       evidence: readRecordArray(item.evidence),
+    }]
+  })
+}
+
+function runtimeReferenceCandidates(value: unknown): readonly RuntimeReferenceCandidate[] {
+  return readRecordArray(value).flatMap((item) => {
+    const cardId = readString(item, 'cardId')
+    const candidateSetId = readString(item, 'candidateSetId')
+    const rank = item.rank
+    const score = item.score
+    const state = item.state
+    if (!cardId || !candidateSetId || typeof rank !== 'number' || !Number.isInteger(rank) || rank < 1
+      || typeof score !== 'number' || !Number.isFinite(score)
+      || (state !== 'candidate' && state !== 'read' && state !== 'adopted')) return []
+    return [{
+      cardId,
+      candidateSetId,
+      ...(typeof item.title === 'string' && item.title.trim() ? { title: item.title.trim() } : {}),
+      rank,
+      score,
+      ...(typeof item.sourceRoot === 'string' && item.sourceRoot.trim() ? { sourceRoot: item.sourceRoot.trim() } : {}),
+      state,
     }]
   })
 }
@@ -486,6 +521,34 @@ function WorkflowRuntimeReferenceConfiguration(props: Readonly<{
     () => runtimeReferenceItems(props.data.workflowRuntimeReferenceItems),
     [props.data.workflowRuntimeReferenceItems],
   )
+  const candidates = React.useMemo(
+    () => runtimeReferenceCandidates(props.data.workflowRuntimeReferenceCandidates),
+    [props.data.workflowRuntimeReferenceCandidates],
+  )
+  const [cardStates, setCardStates] = React.useState<Record<string, Readonly<{
+    status: 'loading' | 'loaded' | 'error'
+    title?: string
+    body?: string
+    error?: string
+  }>>>({})
+  const loadCard = React.useCallback(async (cardId: string): Promise<void> => {
+    setCardStates((current) => ({ ...current, [cardId]: { status: 'loading' } }))
+    try {
+      const card = await getAdminKnowledgeCard(cardId)
+      setCardStates((current) => ({
+        ...current,
+        [cardId]: { status: 'loaded', title: card.title, body: card.body },
+      }))
+    } catch (error: unknown) {
+      setCardStates((current) => ({
+        ...current,
+        [cardId]: {
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        },
+      }))
+    }
+  }, [])
   const kindLabel = kind === 'skill' ? 'Skills' : '知识库'
   return (
     <div className="workflow-node-inspector__tab-content">
@@ -501,6 +564,44 @@ function WorkflowRuntimeReferenceConfiguration(props: Readonly<{
           {readString(props.data, 'workflowRuntimeReferenceOwnerNodeId') || '归属证据缺失'}
         </strong>
       </div>
+      {kind === 'knowledge' && candidates.length > 0 ? (
+        <section className="workflow-node-inspector__reference-candidates" aria-label="知识候选文档">
+          <div className="workflow-node-inspector__reference-candidates-title">本轮候选文档</div>
+          <div className="workflow-node-inspector__reference-candidate-tags">
+            {candidates.map((candidate) => {
+              const card = cardStates[candidate.cardId]
+              const stateLabel = candidate.state === 'adopted'
+                ? 'Agent 已采纳'
+                : candidate.state === 'read'
+                  ? 'Agent 已读取'
+                  : '候选未消费'
+              return (
+                <div className="workflow-node-inspector__reference-candidate" key={`${candidate.candidateSetId}:${candidate.cardId}`}>
+                  <button
+                    className={`workflow-node-inspector__reference-candidate-tag workflow-node-inspector__reference-candidate-tag--${candidate.state}`}
+                    type="button"
+                    onClick={() => void loadCard(candidate.cardId)}
+                    disabled={card?.status === 'loading'}
+                    title={`第 ${candidate.rank} 位 · ${candidate.cardId}`}
+                  >
+                    {card?.title || candidate.title || candidate.cardId}
+                  </button>
+                  <span className="workflow-node-inspector__reference-candidate-state">{stateLabel}</span>
+                  {card?.status === 'loaded' ? (
+                    <details className="workflow-node-inspector__reference-candidate-body" open>
+                      <summary className="workflow-node-configuration-tab__summary">查看正文</summary>
+                      <pre className="workflow-node-configuration-tab__pre">{card.body}</pre>
+                    </details>
+                  ) : card?.status === 'error' ? (
+                    <p className="workflow-node-inspector__help">正文读取失败：{card.error}</p>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+          <p className="workflow-node-inspector__help">点击 tag 只打开只读正文，不会把“用户查看”记成 Agent 消费。只有运行期间真实 knowledge_read 回执才会显示“Agent 已读取”；有结构化 adoptedCandidateIds 回执时才会显示“Agent 已采纳”。</p>
+        </section>
+      ) : null}
       {items.length === 0 ? (
         <p className="workflow-node-inspector__help">当前 Agent 可检索全部{kindLabel}，但本轮还没有真实正文读取回执。目录可见和候选召回不会冒充已读取。</p>
       ) : items.map((item) => {

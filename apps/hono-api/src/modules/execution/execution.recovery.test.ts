@@ -22,9 +22,9 @@ const flowData = freezeWorkflowExecutionSemanticsSnapshot({
 });
 
 describe("workflow execution recovery", () => {
-	it("fails unchanged deterministic input once while leaving high-cost nodes checkpoint-only", () => {
+	it("retries video submission twice through reconciliation while deterministic inputs run once", () => {
 		expect(resolveWorkflowNodeRetryPolicy(flowData, "source")).toEqual({ maxAttempts: 1, failureStage: "input" });
-		expect(resolveWorkflowNodeRetryPolicy(flowData, "video")).toEqual({ maxAttempts: 1, failureStage: "media_generation" });
+		expect(resolveWorkflowNodeRetryPolicy(flowData, "video")).toEqual({ maxAttempts: 3, failureStage: "media_generation" });
 	});
 	it("rejects dangling edges instead of silently dropping them", () => {
 		expect(() => compileWorkflowGraph({
@@ -255,4 +255,23 @@ describe("workflow execution recovery", () => {
 		});
 		expect(yesResolution.readyNodeIds).toEqual(["join"]);
 	});
+});
+
+it("does not activate an unselected required port when an independent data port is ready", () => {
+ const spec = (inputPorts: string[], outputPorts: string[], selectiveOutputPorts: string[] = []) => ({ workflowAtomicSpec: { inputPorts, outputPorts, selectiveOutputPorts } });
+ const flowData = { nodes: [
+  { id: "choice", data: spec([], ["yes", "no"], ["yes", "no"]) },
+  { id: "plan", data: spec([], ["data"]) },
+  { id: "prepare", data: spec(["authorization", "plan"], []) },
+  { id: "submit", data: spec(["authorization", "plan"], []) },
+ ], edges: [
+  { id: "a", source: "choice", target: "prepare", sourceHandle: "out-workflow:yes", targetHandle: "in-workflow:authorization" },
+  { id: "b", source: "choice", target: "submit", sourceHandle: "out-workflow:no", targetHandle: "in-workflow:authorization" },
+  ...["prepare", "submit"].map(target => ({ id: target, source: "plan", target, sourceHandle: "out-workflow:data", targetHandle: "in-workflow:plan" })),
+ ] };
+ const graph = rebuildWorkflowExecutionGraph({ flowData, executionStatus: "running", concurrency: 2, latestEventSeq: 0, nodeRuns: flowData.nodes.map(n => ({ nodeId: n.id, status: "pending" })) });
+ resolveWorkflowGraphNode(graph, { nodeId: "choice", status: "success", outputRefs: { ports: { yes: true } } });
+ const resolved = resolveWorkflowGraphNode(graph, { nodeId: "plan", status: "success", outputRefs: { ports: { data: {} } } });
+ expect(resolved.readyNodeIds).toEqual(["prepare"]);
+ expect(resolved.notSelectedNodeIds).toEqual(["submit"]);
 });

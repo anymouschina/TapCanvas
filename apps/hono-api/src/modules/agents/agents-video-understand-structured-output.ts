@@ -400,13 +400,13 @@ const buildTrace = (input: {
 	})),
 });
 
-const throwRepairFailure = (input: {
+function throwRepairFailure(input: {
 	proxyTaskId: string;
 	model: string;
 	repairKind: VideoAnalysisRepairKind;
 	attempts: readonly VideoAnalysisExecutionAttempt[];
 	cause?: unknown;
-}): never => {
+}): never {
 	const causeMessage = input.cause instanceof Error
 		? input.cause.message
 		: input.cause === undefined
@@ -432,7 +432,7 @@ const throwRepairFailure = (input: {
 			},
 		},
 	);
-};
+}
 
 export async function recoverShotTableAnalysisOutput(input: {
 	proxyTaskId: string;

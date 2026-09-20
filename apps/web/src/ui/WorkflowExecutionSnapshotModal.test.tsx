@@ -2,7 +2,7 @@
 import React from 'react'
 import '@testing-library/jest-dom/vitest'
 import { MantineProvider } from '@mantine/core'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as apiServer from '../api/server'
 import { WorkflowExecutionSnapshotModal } from './WorkflowExecutionSnapshotModal'
@@ -33,6 +33,7 @@ type MockReactFlowProps = Readonly<{
 vi.mock('@xyflow/react', () => ({
   Background: () => null,
   Controls: () => null,
+  MiniMap: () => null,
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
   ReactFlowProvider: (props: Readonly<{ children?: React.ReactNode }>) => props.children ?? null,
   ReactFlow: (props: MockReactFlowProps) => (
@@ -102,6 +103,8 @@ describe('WorkflowExecutionSnapshotModal', () => {
       },
     })
     vi.spyOn(apiServer, 'listWorkflowNodeRuns').mockResolvedValue([])
+    vi.spyOn(apiServer, 'getWorkflowExecutionFamily').mockRejectedValue(new Error('执行族读取失败'))
+    vi.spyOn(apiServer, 'getWorkflowEventHistory').mockResolvedValue({ items: [], nextCursor: 0 })
   })
 
   afterEach(() => {
@@ -141,7 +144,40 @@ describe('WorkflowExecutionSnapshotModal', () => {
     })
   })
 
-  it('opens the frozen caller project canvas by default and keeps the workflow DAG in a separate tab', async () => {
+  it.each(['项目画布', '执行族', '耗时瀑布', '原始快照'])('preserves %s across polling, and resets for another execution', async (tabName) => {
+    const snapshot = await apiServer.getWorkflowExecutionSnapshot('execution-1')
+    vi.mocked(apiServer.getWorkflowExecutionSnapshot).mockResolvedValue({ ...snapshot, canvasData: snapshot.data })
+    vi.mocked(apiServer.listWorkflowNodeRuns).mockResolvedValue([{
+      id: 'run-1', executionId: 'execution-1', nodeId: 'asset-fan-out',
+      status: 'running', attempt: 1, createdAt: '2026-09-08T03:00:00.000Z',
+    }])
+    vi.spyOn(apiServer, 'streamWorkflowExecutionEvents').mockImplementation(async (_executionId, options) => {
+      await new Promise<void>((resolve) => options.signal?.addEventListener('abort', () => resolve(), { once: true }))
+    })
+    const interval = vi.spyOn(window, 'setInterval')
+    const { rerender } = render(
+      <MantineProvider>
+        <WorkflowExecutionSnapshotModal opened executionId="execution-1" onClose={vi.fn()} />
+      </MantineProvider>,
+    )
+    fireEvent.click(await screen.findByRole('tab', { name: tabName }))
+    await waitFor(() => expect(interval).toHaveBeenCalledWith(expect.any(Function), 5_000))
+    const poll = interval.mock.calls.find((call) => call[1] === 5_000)?.[0]
+    if (typeof poll !== 'function') throw new Error('Missing snapshot refresh interval')
+    for (let refresh = 0; refresh < 2; refresh += 1) {
+      await act(async () => { poll() })
+      expect(screen.getByRole('tab', { name: tabName })).toHaveAttribute('aria-selected', 'true')
+    }
+
+    rerender(
+      <MantineProvider>
+        <WorkflowExecutionSnapshotModal opened executionId="execution-2" onClose={vi.fn()} />
+      </MantineProvider>,
+    )
+    await waitFor(() => expect(screen.getByRole('tab', { name: '执行图' })).toHaveAttribute('aria-selected', 'true'))
+  })
+
+  it('opens the workflow DAG by default and keeps the frozen caller project canvas in a separate tab', async () => {
     vi.mocked(apiServer.getWorkflowExecutionSnapshot).mockResolvedValueOnce({
       executionId: 'execution-1',
       flowId: 'flow-1',
@@ -164,10 +200,10 @@ describe('WorkflowExecutionSnapshotModal', () => {
       </MantineProvider>,
     )
 
-    expect(await screen.findByRole('button', { name: '打开节点 project-image' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '打开节点 internal-stage' })).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('tab', { name: '执行图' }))
     expect(await screen.findByRole('button', { name: '打开节点 internal-stage' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开节点 project-image' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '项目画布' }))
+    expect(await screen.findByRole('button', { name: '打开节点 project-image' })).toBeInTheDocument()
   })
 })

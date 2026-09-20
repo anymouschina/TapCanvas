@@ -139,6 +139,46 @@ describe("workflow node attempt ledger", () => {
 		}));
 	});
 
+	it("persists large aggregate output and retains every declared receipt beyond the old traversal cutoff", async () => {
+		const output = { itemRuns: Array.from({ length: 25_000 }, (_, index) => ({
+			evidence: { taskId: `provider-${index}`, payload: { values: [index, "retained"] } },
+		})) };
+		const serialized = JSON.stringify(output);
+		transaction.workflow_node_runs.update.mockResolvedValue(nodeRun({ status: "success", output_refs: serialized }));
+		transaction.workflow_node_attempts.findUnique.mockResolvedValue({
+			semantics_snapshot: JSON.stringify(paidSemantics), provider_receipts: JSON.stringify(["provider-old"]),
+		});
+		await updateNodeRun({} as never, { executionId: "execution-1", nodeId: "node-1", status: "success", outputRefs: output });
+		expect(transaction.workflow_node_attempts.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+			status: "success", output_refs: serialized,
+			provider_receipts: JSON.stringify(["provider-old", ...output.itemRuns.map((item) => item.evidence.taskId)]),
+		}) }));
+	});
+
+	it("reports the failed persistence phase without exposing output and rethrows the original error", async () => {
+		const failure = Object.assign(new Error("transaction expired"), { code: "P2028" });
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		transaction.workflow_node_runs.update.mockResolvedValue(nodeRun());
+		transaction.workflow_node_attempts.findUnique.mockResolvedValue({
+			semantics_snapshot: JSON.stringify(replaySemantics), provider_receipts: null,
+		});
+		transaction.workflow_node_attempts.update.mockRejectedValueOnce(failure);
+		try {
+			await expect(updateNodeRun({} as never, {
+				executionId: "execution-1", nodeId: "node-1", outputRefs: { privateText: "不得记录" },
+			})).rejects.toBe(failure);
+			const diagnostic = JSON.parse(warn.mock.calls[0]![0] as string) as Record<string, unknown>;
+			expect(diagnostic).toMatchObject({
+				message: "workflow_node_persistence_timing", outcome: "failed",
+				lastPhase: "update_attempt", errorCodes: ["P2028"],
+			});
+			expect(JSON.stringify(diagnostic)).not.toContain("不得记录");
+			expect(transaction.workflow_node_attempts.update).toHaveBeenCalledWith(expect.objectContaining({ select: { id: true } }));
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
 	it("settles the previous attempt before creating a distinct retry row", async () => {
 		transaction.workflow_node_runs.findUnique.mockResolvedValue(nodeRun({ status: "running" }));
 		transaction.workflow_node_attempts.findUnique.mockResolvedValue({
@@ -214,4 +254,14 @@ describe("workflow node attempt ledger", () => {
 		}));
 		expect(transaction.workflow_executions.update).not.toHaveBeenCalled();
 	});
+});
+
+it("status-only checkpoints preserve stored payloads and receipts without round-tripping them", async () => {
+  transaction.workflow_node_runs.update.mockResolvedValue({ id: 'node-run-1', attempt: 1 });
+  transaction.workflow_node_attempts.findUnique.mockResolvedValue({ semantics_snapshot: JSON.stringify(paidSemantics), provider_receipts: '["accepted"]' });
+  await updateNodeRun({} as never, { executionId: 'execution-1', nodeId: 'node-1', status: 'running', retryCount: 1 });
+  expect(transaction.workflow_node_runs.update).toHaveBeenCalledWith(expect.objectContaining({ select: { id: true, attempt: true } }));
+  expect(transaction.workflow_node_attempts.update).toHaveBeenCalledWith({
+    where: { node_run_id_attempt: { node_run_id: 'node-run-1', attempt: 1 } }, data: { status: 'running' }, select: { id: true },
+  });
 });

@@ -1,3 +1,4 @@
+import { prepareVideoReferenceTransport } from "./video-reference-transport";
 import { AppError } from "../../middleware/error";
 import {
 	imageOperationMaskUrl,
@@ -7,7 +8,6 @@ import {
 import type { AppContext } from "../../types";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import { removeImageBackground } from "./background-removal";
-import { resolveVideoModelMaximumReferenceImages } from "./video-orchestrator.generation-contract";
 import {
 	verifyVideoPromptDeliveryContract,
 } from "./video-prompt-delivery-contract";
@@ -1072,38 +1072,6 @@ function parseComflyProgress(value: unknown): number | undefined {
 			const deduped = Array.from(new Set(urls));
 			return deduped.length ? deduped : undefined;
 		})();
-		if (images?.length) {
-			let maximumReferenceImages: number;
-			try {
-				maximumReferenceImages = await resolveVideoModelMaximumReferenceImages({
-					c,
-					videoModel: model,
-				});
-			} catch (error) {
-				throw new AppError(`当前视频模型缺少引用图片预算合同：${model}`, {
-					status: 422,
-					code: "video_model_reference_image_policy_missing",
-					details: {
-						modelKey: model,
-						cause: error instanceof Error ? error.message : String(error),
-					},
-				});
-			}
-			if (images.length > maximumReferenceImages) {
-				throw new AppError(
-					`视频模型多模态参考图数量超过上限：${images.length} > ${maximumReferenceImages}`,
-					{
-						status: 400,
-						code: "video_model_reference_image_limit_exceeded",
-						details: {
-							modelKey: model,
-							actual: images.length,
-							maximum: maximumReferenceImages,
-						},
-					},
-				);
-			}
-		}
 		const hd =
 			isProModel && typeof extras.hd === "boolean" ? extras.hd : null;
 		const notifyHook =
@@ -3456,6 +3424,10 @@ async function runTaskViaNewApi(
 	const imageReferenceTransport = isImageTask
 		? await prepareImageReferenceTransport({ c, userId, urls: imageReferenceSources })
 		: [];
+	if (req.kind === "text_to_video" || req.kind === "image_to_video" || req.kind === "video_edit") {
+		const urls = [...collectTaskReferenceImageUrls(requestExtras), ...collectTaskAssetInputImageUrls(requestExtras)];
+		req = { ...req, extras: await prepareVideoReferenceTransport({ c, urls, extras: requestExtras }) };
+	}
 	const required = await resolveTeamCreditsCostForTask(c, {
 		taskKind: req.kind,
 		modelKey: model,
@@ -4501,9 +4473,8 @@ export async function fetchNewApiTaskResult(
 				Accept: "application/json",
 			},
 		},
-		typeof input?.timeoutMs === "number"
-			? { provider: vendorRaw, timeoutMs: input.timeoutMs }
-			: { provider: vendorRaw },
+		{ provider: vendorRaw },
+		typeof input?.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : undefined,
 	);
 	const assets = extractNewApiVideoAssets(data);
 	const parsedResult = attachGenerationAssetContextToTaskResult(

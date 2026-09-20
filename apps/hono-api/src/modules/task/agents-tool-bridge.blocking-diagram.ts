@@ -1,10 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { createCanvas, GlobalFonts, loadImage, type Image } from "@napi-rs/canvas";
 
 import type { AppContext } from "../../types";
 import { AppError } from "../../middleware/error";
+import {
+  RetryableRemoteMediaError,
+  fetchRemoteMediaResponse,
+  isRetryableRemoteMediaStatus,
+  runRemoteMediaFetch,
+} from "../../platform/remote-media-fetch";
+import { parseBlockingBackground } from "./blocking-background-contract";
 import { resolveObjectStorageConfig, createObjectStorageClientFromConfig } from "../asset/rustfs.client";
 import {
   parseKeyframeCompositionContract,
@@ -154,6 +161,7 @@ export type BlockingDiagram = {
   /** agents 声明的本镜视觉职责；服务端只做结构校验与证据贯穿，不推断剧情主角。 */
   compositionContract?: KeyframeCompositionContract;
   compositionContractHash?: string;
+  compositionDiagnostics?: readonly string[];
   /** 180° 轴线（虚线）；缺省时若恰有 2 个角色则自动取两者连线。 */
   axisLine?: { from: [number, number]; to: [number, number] };
 };
@@ -251,15 +259,15 @@ export function parseBlockingDiagram(raw: unknown): BlockingDiagram {
   if (af && at) axisLine = { from: af, to: at };
   else if (characters.length === 2) axisLine = { from: characters[0]!.at, to: characters[1]!.at };
 
-  const bgUrlRaw = readText(r.backgroundImageUrl, 2048);
-  if (r.backgroundImageUrl !== undefined && !/^https?:\/\//i.test(bgUrlRaw)) {
-    throw new AppError("backgroundImageUrl 必须是可下载的 http(s) URL", {
+  const background = parseBlockingBackground(r.backgroundImageUrl);
+  if (!background.ok) {
+    throw new AppError(background.errorMessage, {
       status: 400,
       code: "agents_tool_blocking_background_url_invalid",
       terminal: false,
     });
   }
-  const backgroundImageUrl = bgUrlRaw;
+  const backgroundImageUrl = background.url;
   const parsedComposition =
     r.compositionContract === undefined
       ? null
@@ -272,20 +280,12 @@ export function parseBlockingDiagram(raw: unknown): BlockingDiagram {
       terminal: false,
     });
   }
-  if (parsedComposition?.ok) {
-    const coverageIssues = validateCompositionSubjectCoverage({
+  const compositionDiagnostics = parsedComposition?.ok
+    ? validateCompositionSubjectCoverage({
       contract: parsedComposition.contract,
       characterNames: characters.map((character) => character.name),
-    });
-    if (coverageIssues.length > 0) {
-      throw new AppError("关键帧构图合同未逐项覆盖站位角色", {
-        status: 400,
-        code: "agents_tool_blocking_composition_subject_coverage_invalid",
-        details: { issues: coverageIssues },
-        terminal: false,
-      });
-    }
-  }
+    })
+    : [];
   return {
     title,
     ...(durationSeconds ? { durationSeconds } : {}),
@@ -301,6 +301,7 @@ export function parseBlockingDiagram(raw: unknown): BlockingDiagram {
       ? {
           compositionContract: parsedComposition.contract,
           compositionContractHash: parsedComposition.hash,
+          compositionDiagnostics,
         }
       : {}),
   };
@@ -653,7 +654,16 @@ export type BlockingDiagramResult = {
   bytes: number;
   compositionContract: KeyframeCompositionContract;
   compositionContractHash: string;
+  compositionDiagnostics?: readonly string[];
 };
+
+/** 显式底图抓取的单次超时；瞬时失败由统一远端媒体重试策略覆盖。 */
+const BLOCKING_BACKGROUND_FETCH_TIMEOUT_MS = 8_000;
+
+/** 只取媒体类型本身，忽略 charset 等参数。 */
+function imageContentType(response: Response): string {
+  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+}
 
 /**
  * 渲染俯视站位图 → 上传 TOS → 返回新图 URL（与 annotate_shot / video_concat 一致：只产 URL，不直接写节点，
@@ -665,10 +675,18 @@ export async function renderBlockingDiagramToCanvas(input: {
   bodyArgs: unknown;
 }): Promise<BlockingDiagramResult> {
   const plan = parseBlockingDiagram(input.bodyArgs);
-  if (plan.characters.length === 0) {
-    throw new AppError("characters 至少需要 1 个合法角色（含 name + at[x,y]）", {
+  if (plan.compositionDiagnostics?.length) {
+    console.info(JSON.stringify({
+      event: "blocking_diagram_composition_diagnostics",
+      userId: input.requestUserId,
+      compositionContractHash: plan.compositionContractHash,
+      issues: plan.compositionDiagnostics,
+    }));
+  }
+  if (plan.characters.length === 0 && plan.landmarks.length === 0 && !plan.camera) {
+    throw new AppError("站位图至少需要 1 个合法角色、场景地标或机位标记", {
       status: 400,
-      code: "agents_tool_blocking_missing_characters",
+      code: "agents_tool_blocking_spatial_markers_missing",
     });
   }
   if (!plan.compositionContract || !plan.compositionContractHash) {
@@ -685,26 +703,72 @@ export async function renderBlockingDiagramToCanvas(input: {
   }
 
   // 显式底图属于场景几何事实。获取失败时必须在绘制前终止，不能退回抽象纸底。
+  // 但「一次瞬时传输失败」不能等价于「底图不存在」：同一 URL 的抓取是幂等的，按统一
+  // 远端媒体重试策略重试后仍然失败，才如实终止并保留逐次证据。
   let bgImage: Image | undefined;
   if (plan.backgroundImageUrl) {
-    try {
-      const resp = await fetch(plan.backgroundImageUrl, { signal: AbortSignal.timeout(8000) });
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
-      }
-      const contentType = resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-      if (!contentType.startsWith("image/")) {
-        throw new Error(`Content-Type ${contentType || "missing"}`);
-      }
-      bgImage = await loadImage(Buffer.from(await resp.arrayBuffer()));
-    } catch (error) {
-      throw new AppError("俯视站位图的场景底图不可用，禁止退回抽象纸底", {
+    const backgroundImageUrl = plan.backgroundImageUrl;
+    const resourceHash = createHash("sha256").update(backgroundImageUrl).digest("hex");
+    const fetched = await runRemoteMediaFetch({
+      c: input.c,
+      url: backgroundImageUrl,
+      tag: "blocking-diagram:background",
+      event: "canvas_image_resource_retry",
+      isRetryable: (error: unknown) =>
+        error instanceof RetryableRemoteMediaError
+          ? error.httpStatus === null || isRetryableRemoteMediaStatus(error.httpStatus)
+          : true,
+      attempt: async () => {
+        const response = await fetchRemoteMediaResponse(input.c, {
+          url: backgroundImageUrl,
+          tag: "blocking-diagram:background",
+          timeoutMs: BLOCKING_BACKGROUND_FETCH_TIMEOUT_MS,
+          accept: (candidate) => imageContentType(candidate).startsWith("image/"),
+          rejectMessage: (candidate) => `Content-Type ${imageContentType(candidate) || "missing"}`,
+        });
+        const contentType = imageContentType(response);
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.byteLength === 0) throw new RetryableRemoteMediaError("Empty response body", response.status);
+        return { bytes, contentType, httpStatus: response.status };
+      },
+    });
+    if (!fetched.ok) {
+      const details = {
+        stage: "download",
+        resourceHash,
+        httpStatus: fetched.httpStatus,
+        attempts: fetched.attempts,
+        reason: fetched.reason,
+        elapsedMs: fetched.elapsedMs,
+      };
+      console.error(JSON.stringify({ event: "canvas_image_resource_failed", userId: input.requestUserId, ...details }));
+      throw new AppError(`俯视站位图底图读取失败：${fetched.reason}`, {
         status: 409,
         code: "agents_tool_blocking_background_unavailable",
-        details: {
-          backgroundImageUrl: plan.backgroundImageUrl,
-          reason: error instanceof Error ? error.message : String(error),
-        },
+        details,
+        terminal: false,
+      });
+    }
+    // 字节已经是确定事实；解码失败不重试，但仍然保留完整证据。
+    try {
+      bgImage = await loadImage(fetched.value.bytes);
+    } catch (error) {
+      const reason = (error instanceof Error ? error.message : String(error)).replace(/https?:\/\/[^\s"']+/g, "[URL]");
+      const details = {
+        stage: "decode",
+        resourceHash,
+        httpStatus: fetched.value.httpStatus,
+        contentType: fetched.value.contentType,
+        byteLength: fetched.value.bytes.byteLength,
+        attempts: fetched.attempts,
+        reason,
+        elapsedMs: fetched.elapsedMs,
+      };
+      console.error(JSON.stringify({ event: "canvas_image_resource_failed", userId: input.requestUserId, ...details }));
+      throw new AppError(`俯视站位图底图解码失败：${reason}`, {
+        status: 409,
+        code: "agents_tool_blocking_background_unavailable",
+        details,
         terminal: false,
       });
     }
@@ -734,6 +798,7 @@ export async function renderBlockingDiagramToCanvas(input: {
       bytes: out.byteLength,
       compositionContract: plan.compositionContract,
       compositionContractHash: plan.compositionContractHash,
+      compositionDiagnostics: plan.compositionDiagnostics,
     };
   } catch (err) {
     if (err instanceof AppError) throw err;

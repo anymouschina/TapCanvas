@@ -1,3 +1,6 @@
+import { VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION } from "@tapcanvas/video-orchestrator-protocol";
+import { MEDIA_ASSET_PURPOSES } from "../../../../../packages/schemas/media-asset-purpose/index.mjs";
+
 /**
  * AI tool contracts + canvas node capability specs.
  *
@@ -230,6 +233,12 @@ export type CanvasCapabilityManifest = {
 	remoteTools: CanvasCapabilityToolSchema[];
 	nodeSpecs: Record<string, CanvasCapabilityNodeSpec>;
 	protocols: {
+		workflow: {
+			canvasDefinitionVersion: number;
+			mediaAssetPurposes: readonly string[];
+			prerequisiteAssetUrlFields: readonly string[];
+			deliveryContract: readonly string[];
+		};
 		flowPatch: {
 			supportedMutationOperations: readonly string[];
 			supportedCreateNodeTypes: readonly string[];
@@ -242,7 +251,7 @@ export type CanvasCapabilityManifest = {
 				videoLikeTargets: readonly string[];
 				videoLikeSources: readonly string[];
 			};
-			storyboard: {
+			storyboard?: {
 				editorCellFactField: string;
 				editorCellPromptField: string;
 				runtimeTelemetryFields: readonly string[];
@@ -966,6 +975,16 @@ export function buildCanvasCapabilityManifest(input?: {
 		})),
 		nodeSpecs: nodeSpecs as Record<string, CanvasCapabilityNodeSpec>,
 		protocols: {
+			workflow: {
+				canvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
+				mediaAssetPurposes: MEDIA_ASSET_PURPOSES,
+				prerequisiteAssetUrlFields: ["imageUrl", "imageResults[].url", "videoUrl", "videoResults[].url", "storyboardEditorCells[].imageUrl", "firstFrameUrl", "lastFrameUrl"],
+				deliveryContract: [
+					"Workflow ports carry typed chapter plans, shared assets, per-clip designs and persisted execution evidence. A connection or placeholder does not prove an upstream asset exists.",
+					"onlyVideoNodes=true delivers saved video nodes, prompts and exact references; it does not submit video generation or concatenation.",
+					"Accepted executions are not completed media. Preserve every produced asset and report missing delivery evidence explicitly.",
+				],
+			},
 			flowPatch: {
 				supportedMutationOperations: [
 					"deleteNodeIds",

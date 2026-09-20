@@ -1,4 +1,8 @@
+import { reconcileWorkflowMediaReceipt } from "./execution.media-receipt";
+import { isDeepStrictEqual } from "node:util";
+import { retryCanvasVideo, buildStoredVideoRetryNode } from "../task/canvas-video-retry";
 import type { AppContext, WorkerEnv } from "../../types";
+import { AppError } from "../../middleware/error";
 import { resolveProjectBillingTeamId } from "../task/agents-tool-bridge.billing-scope";
 import {
 	generateVideoToCanvas,
@@ -29,7 +33,13 @@ import {
 	readVideoSubmitRejectedReferenceIds,
 	readVideoSubmitRejectedUrls,
 } from "../task/video-orchestrator.submit-error";
-import { workflowVideoSubmissionFailureData } from "../task/workflow-video-effect-claim";
+import { resolveWorkflowVideoEffectReplay, workflowVideoSubmissionFailureData } from "../task/workflow-video-effect-claim";
+import { probeMediaViaMediaWorker } from "../../platform/media-worker/client";
+import { evaluateWorkflowMediaProbe, parseWorkflowMediaProbeEvidence } from "./execution.media-probe";
+import { resolveExecutionImageReferences } from "../task/agents-tool-bridge.image-reference-ids";
+import { renderClipPromptFromShots, type StructuredClip } from "../task/video-orchestrator.clip-shots";
+import { buildPreparedVideoReferences } from "./execution.prepared-video-references";
+import { buildClipInputEdges } from "../task/video-orchestrator.input-edges";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -91,7 +101,13 @@ const STRUCTURED_CLIP_NODE_FIELDS = [
 	"referenceAudioUrls",
 	"referenceAudioRequired",
 	"assetObjectContracts",
+	"blockingFrameNodeId",
+	"spatialBlocking",
+	"blockingPlan",
 	"dramaticCoverage",
+	"sourceEventCoverage",
+	"temporalFrameTrack",
+	"temporalFrameCoverage",
 	"shots",
 ] as const;
 
@@ -187,6 +203,31 @@ function flowNodes(rowData: string): Record<string, unknown>[] {
 	}
 	if (!isRecord(parsed) || !Array.isArray(parsed.nodes)) throw new Error("Canvas flow has no nodes array");
 	return parsed.nodes.filter(isRecord);
+}
+
+function flowGraph(rowData: string): Record<string, unknown> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(rowData) as unknown;
+	} catch (error: unknown) {
+		throw new Error(`Canvas flow is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (!isRecord(parsed) || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+		throw new Error("Canvas flow requires nodes and edges arrays");
+	}
+	return parsed;
+}
+
+function workflowVideoTopologySourceNodeIds(request: WorkflowVideoRunRequest): string[] {
+	const clip = request.structuredClip;
+	const scalarFields = ["blockingFrameNodeId", "storyboardImageNodeId", "lastFrameImageNodeId"] as const;
+	const direct = clip
+		? scalarFields.flatMap((field) => readString(clip[field]) ? [readString(clip[field])] : [])
+		: [];
+	const arrays = clip && Array.isArray(clip.videoReferenceNodeIds)
+		? clip.videoReferenceNodeIds.flatMap((value) => readString(value) ? [readString(value)] : [])
+		: [];
+	return [...new Set([...request.referenceImageNodeIds, ...direct, ...arrays])];
 }
 
 /**
@@ -466,11 +507,14 @@ export function inspectPersistedWorkflowVideoNode(
 	const data = node.data;
 	const status = readString(data.status).toLowerCase();
 	const persistedTaskId = readString(data.taskId) || readString(data.videoTaskId) || taskId || "";
+	const acceptedAt = readString(data.workflowSubmissionAcceptedAt);
+	const receipt = persistedTaskId && Number.isFinite(Date.parse(acceptedAt))
+		? { providerAcceptedAt: acceptedAt } : {};
 	if (isProviderTaskPendingStatus(status)) {
 		if (!persistedTaskId) {
 			return { status: "failed", nodeId, taskId: null, errorMessage: `Persisted video node ${nodeId} is waiting without a provider task identity` };
 		}
-		return { status: "waiting_external", nodeId, taskId: persistedTaskId, reused: true };
+		return { status: "waiting_external", nodeId, taskId: persistedTaskId, reused: true, ...receipt };
 	}
 	if (status === "failed" || status === "error") {
 		const errorMessage = readString(data.errorMessage)
@@ -485,6 +529,7 @@ export function inspectPersistedWorkflowVideoNode(
 			status: "failed",
 			nodeId,
 			taskId: persistedTaskId,
+			...receipt,
 			errorMessage,
 			errorCode: readString(data.errorCode) || null,
 			...(providerRejectedReferenceIds.length > 0 ? { providerRejectedReferenceIds } : {}),
@@ -496,14 +541,39 @@ export function inspectPersistedWorkflowVideoNode(
 	if (status !== "success" || !videoUrl) {
 		return { status: "failed", nodeId, taskId: persistedTaskId, errorMessage: `Video node ${nodeId} reached an invalid terminal state (${status || "missing"}) without a persistent HTTP(S) URL` };
 	}
+	const mediaProbeEvidence = parseWorkflowMediaProbeEvidence({
+		probe: data.mediaProbe,
+		diagnostics: data.mediaSpecDiagnostics,
+	});
 	return {
 		status: "success",
 		nodeId,
 		taskId: persistedTaskId || null,
+		...receipt,
 		videoUrl,
 		thumbnailUrl: readString(data.videoThumbnailUrl) || readString(firstResult?.thumbnailUrl) || null,
 		reused: true,
+		...(mediaProbeEvidence ? { mediaProbeEvidence } : {}),
 	};
+}
+
+/** Observe explicit stored retries of the same immutable source; never create a retry here. */
+export function inspectPersistedWorkflowVideoAttempt(rowData: string, nodeId: string, taskId: string | null, flowId: string): WorkflowVideoRunResult {
+	const requested = flowNode(rowData, nodeId);
+	const sourceId = requested && isRecord(requested.data) ? readString(requested.data.videoRetrySourceNodeId) || nodeId : nodeId;
+	const source = flowNode(rowData, sourceId);
+	if (!source || !isRecord(source.data)) return inspectPersistedWorkflowVideoNode(rowData, nodeId, taskId);
+	let observation = inspectPersistedWorkflowVideoNode(rowData, sourceId, sourceId === nodeId ? taskId : null);
+	if (observation.status === "success") return observation;
+	for (const retryIndex of [1, 2]) {
+		const expected = buildStoredVideoRetryNode({ ...source, id: sourceId, data: source.data }, flowId, retryIndex);
+		const attempt = flowNode(rowData, expected.id);
+		if (!attempt || !isRecord(attempt.data)) break;
+		if (attempt.data.videoRetrySourceNodeId !== sourceId || attempt.data.videoRetryIndex !== retryIndex) break;
+		observation = inspectPersistedWorkflowVideoNode(rowData, expected.id, null);
+		if (observation.status === "success") return observation;
+	}
+	return observation;
 }
 
 export function workflowVideoEffectIdentity(
@@ -531,12 +601,58 @@ export async function runWorkflowVideoNode(
 		...(request.chapterId ? { chapterId: request.chapterId } : {}),
 	});
 	let row = await readRow();
+  const applyRetryPolicy = async (observation: WorkflowVideoRunResult): Promise<WorkflowVideoRunResult> => {
+    if (observation.status !== "failed" || !request.mediaDeliveryPolicy) return observation;
+    row = await readRow();
+    const failed = flowNode(row.data, observation.nodeId);
+    if (!failed || !isRecord(failed.data) || failed.data.videoRetrySourceNodeId) return observation;
+    // Only the immutable source/index identity can authorize this additional paid attempt.
+    if (request.projectId) context.set("activeTeamId", await resolveProjectBillingTeamId(env.DB, {
+      projectId: request.projectId, userId: request.ownerId,
+    }));
+    const retryArgs = { c: context, row, requestUserId: request.ownerId,
+      devBypass: false, flowId: request.flowId,
+      ...(request.chapterId ? { chapterId: request.chapterId } : {}),
+      bodyArgs: { nodeId: observation.nodeId, retryIndex: 1,
+        idempotencyKey: `${request.executionFamilyId}:${request.runtimeNodeId}:retry:1` },
+    };
+    let receipt: Awaited<ReturnType<typeof retryCanvasVideo>>;
+    try {
+      receipt = await retryCanvasVideo(retryArgs);
+    } catch (retryError: unknown) {
+      // The duplicate-submission guard refusing a retry must never replace WHY the first
+      // submission failed: the refusal is a consequence, not the cause. Keep the guard's
+      // code/detail contract and carry the original provider failure alongside it.
+      if (retryError instanceof AppError) {
+        const original = observation.errorMessage.trim() || "unknown provider failure";
+        throw new AppError(`${retryError.message}（原始提交失败：${original}）`, {
+          status: retryError.status,
+          code: retryError.code,
+          details: {
+            ...(retryError.details ?? {}),
+            priorFailure: { nodeId: observation.nodeId, errorCode: observation.errorCode ?? null, errorMessage: original },
+          },
+          terminal: retryError.terminal,
+        });
+      }
+      throw retryError;
+    }
+    row = await readRow();
+    if (receipt.status === "awaiting_receipt_confirmation" && "taskId" in receipt && typeof receipt.taskId === "string") {
+      return { status: "waiting_external", nodeId: receipt.nodeId, taskId: receipt.taskId, reused: true,
+        observationFailure: { observedAt: new Date().toISOString(), message: "Prior provider receipt is not confirmed failed; retry was not submitted" } };
+    }
+    return inspectPersistedWorkflowVideoAttempt(row.data, receipt.nodeId, null, request.flowId);
+  };
 	const previousNodeId = request.previousEvidence ? readString(request.previousEvidence.canvasNodeId) : "";
 	const previousTaskId = request.previousEvidence ? readString(request.previousEvidence.taskId) : "";
 	if (previousNodeId) {
-		let persisted = inspectPersistedWorkflowVideoNode(row.data, previousNodeId, previousTaskId || null);
+		if (previousTaskId && !flowNode(row.data, previousNodeId)) {
+			return reconcileWorkflowMediaReceipt(context, request.ownerId, previousNodeId, previousTaskId, "video");
+		}
+		let persisted = inspectPersistedWorkflowVideoAttempt(row.data, previousNodeId, previousTaskId || null, request.flowId);
 
-		if (persisted.status === "waiting_external") {
+		if (persisted.status === "waiting_external" && persisted.taskId) {
 			// Workflow execution is the durable owner of the accepted provider task.
 			// Reconcile on every external check so refreshes, closed browsers and active
 			// autosaves cannot strand a completed task behind a stale running canvas node.
@@ -546,13 +662,21 @@ export async function runWorkflowVideoNode(
 				devBypass: false,
 				flowId: request.flowId,
 				row,
-				...(previousTaskId ? { target: { nodeId: previousNodeId, taskId: previousTaskId } } : {}),
+				target: { nodeId: persisted.nodeId, taskId: persisted.taskId },
 				...(request.chapterId ? { chapterId: request.chapterId } : {}),
 			});
 			row = await readRow();
-			persisted = inspectPersistedWorkflowVideoNode(row.data, previousNodeId, previousTaskId || null);
+			persisted = inspectPersistedWorkflowVideoAttempt(row.data, previousNodeId, previousTaskId || null, request.flowId);
 		}
-		return persisted;
+		const previousNode = flowNode(row.data, previousNodeId);
+		const mayRetry = !request.resumeOnly && previousNode && isRecord(previousNode.data)
+			&& resolveWorkflowVideoEffectReplay(previousNode.data).action === "retry_pre_upstream";
+		if (!mayRetry) {
+			if (persisted.status === "waiting_external" && persisted.taskId && !flowNode(row.data, persisted.nodeId)) {
+				return reconcileWorkflowMediaReceipt(context, request.ownerId, persisted.nodeId, persisted.taskId, "video");
+			}
+			return applyRetryPolicy(persisted);
+		}
 	}
 	if (previousTaskId) throw new Error("Persisted video receipt is incomplete; canvasNodeId is required");
 	if (request.resumeOnly) throw new Error("External video resume has no persisted canvas receipt; refusing a new provider submission");
@@ -563,7 +687,7 @@ export async function runWorkflowVideoNode(
 		if (!isRecord(existingNode.data) || readString(existingNode.data.workflowEffectId) !== identity.effectId) {
 			throw new Error(`Workflow video output ${identity.canvasNodeId} already exists with a different paid-effect identity`);
 		}
-		let persisted = inspectPersistedWorkflowVideoNode(row.data, identity.canvasNodeId, null);
+		let persisted = inspectPersistedWorkflowVideoAttempt(row.data, identity.canvasNodeId, null, request.flowId);
 		if (persisted.status === "waiting_external" && persisted.taskId) {
 			await reconcileVideoNodesForFlow({
 				c: context,
@@ -571,13 +695,20 @@ export async function runWorkflowVideoNode(
 				devBypass: false,
 				flowId: request.flowId,
 				row,
-				target: { nodeId: identity.canvasNodeId, taskId: persisted.taskId },
+				target: { nodeId: persisted.nodeId, taskId: persisted.taskId },
 				...(request.chapterId ? { chapterId: request.chapterId } : {}),
 			});
 			row = await readRow();
-			persisted = inspectPersistedWorkflowVideoNode(row.data, identity.canvasNodeId, persisted.taskId);
+			persisted = inspectPersistedWorkflowVideoAttempt(row.data, identity.canvasNodeId, persisted.taskId, request.flowId);
 		}
-		return persisted;
+		const mayRetry = !request.resumeOnly && isRecord(existingNode.data)
+			&& resolveWorkflowVideoEffectReplay(existingNode.data).action === "retry_pre_upstream";
+		if (!mayRetry) {
+			if (persisted.status === "waiting_external" && persisted.taskId && !flowNode(row.data, persisted.nodeId)) {
+				return reconcileWorkflowMediaReceipt(context, request.ownerId, persisted.nodeId, persisted.taskId, "video");
+			}
+			return applyRetryPolicy(persisted);
+		}
 	}
 
 	if (request.projectId) {
@@ -596,32 +727,7 @@ export async function runWorkflowVideoNode(
 			row,
 			...(request.chapterId ? { chapterId: request.chapterId } : {}),
 			bodyArgs: {
-				node: {
-				id: identity.canvasNodeId,
-				type: "taskNode",
-				position: { x: 160, y: 120 + request.itemIndex * 360 },
-				data: {
-					...(request.structuredClip ? workflowStructuredClipNodeData(request.structuredClip) : {}),
-					kind: "video",
-					label: workflowVideoSemanticLabel({
-						structuredClip: request.structuredClip,
-						itemIndex: request.itemIndex,
-					}),
-					prompt: request.prompt,
-					modelKey: request.modelKey,
-					videoModel: request.modelKey,
-					videoDurationSeconds: request.durationSeconds,
-					videoResolution: request.resolution,
-					aspectRatio: request.aspectRatio,
-					referenceImageNodeIds: [...request.referenceImageNodeIds],
-					referenceAssetIds: [...request.referenceAssetIds],
-					workflowEffectId: identity.effectId,
-					...(request.estimateIdentity ? { workflowEstimateIdentity: request.estimateIdentity } : {}),
-					...(request.generationContract ? { generationContract: request.generationContract } : {}),
-					workflowExecutionId: request.executionId,
-					workflowRuntimeNodeId: request.runtimeNodeId,
-				},
-				},
+				node: buildWorkflowVideoCanvasNode(request),
 			},
 		});
 	} catch (error: unknown) {
@@ -641,7 +747,7 @@ export async function runWorkflowVideoNode(
 				null,
 				);
 				if (persisted.status === "success" || persisted.status === "waiting_external") {
-					return persisted;
+					return applyRetryPolicy(persisted);
 				}
 				await persistFlowPatch({
 					c: context,
@@ -675,27 +781,145 @@ export async function runWorkflowVideoNode(
 				error: persistenceError instanceof Error ? persistenceError.message : String(persistenceError),
 			});
 		}
-		return {
+		return applyRetryPolicy({
 			status: "failed",
 			nodeId: identity.canvasNodeId,
 			taskId: null,
 			errorMessage,
 			errorCode,
 			...(providerRejectedReferenceIds.length > 0 ? { providerRejectedReferenceIds } : {}),
-		};
+		});
 	}
 	if (result.status === "running") {
 		if (!result.taskId) throw new Error(`Video provider accepted node ${result.nodeId} without a stable task identity`);
-		return { status: "waiting_external", nodeId: result.nodeId, taskId: result.taskId, reused: result.reused === true };
+		return { status: "waiting_external", nodeId: result.nodeId, taskId: result.taskId, reused: result.reused === true, ...(result.providerAcceptedAt ? { providerAcceptedAt: result.providerAcceptedAt } : {}) };
 	}
 	const videoUrl = persistentHttpUrl(result.videoUrl);
 	if (!videoUrl) throw new Error(`Video node ${result.nodeId} completed without a persistent HTTP(S) URL`);
+	const mediaProbeEvidence = evaluateWorkflowMediaProbe(
+		await probeMediaViaMediaWorker({ url: videoUrl }),
+		{
+			size: request.size || null,
+			aspectRatio: request.aspectRatio || null,
+			durationSeconds: request.durationSeconds,
+		},
+	);
+	try {
+		const evidenceRow = await readRow();
+		const existing = flowNode(evidenceRow.data, identity.canvasNodeId);
+		if (existing && isRecord(existing.data)) {
+			await persistFlowPatch({
+				c: context,
+				row: evidenceRow,
+				flowId: request.flowId,
+				requestUserId: request.ownerId,
+				devBypass: false,
+				...(request.chapterId ? { chapterId: request.chapterId } : {}),
+				patch: {
+					allowOverwrite: true,
+					patchNodeData: [{
+						id: identity.canvasNodeId,
+						data: {
+							mediaProbe: mediaProbeEvidence.probe,
+							mediaSpecDiagnostics: mediaProbeEvidence.diagnostics,
+						},
+					}],
+				},
+				affectedNodeIds: [identity.canvasNodeId],
+			});
+		}
+	} catch (persistenceError: unknown) {
+		console.error("[workflow-video-runner] failed to persist media probe evidence", {
+			executionId: request.executionId,
+			nodeId: identity.canvasNodeId,
+			error: persistenceError instanceof Error ? persistenceError.message : String(persistenceError),
+		});
+	}
 	return {
 		status: "success",
 		nodeId: result.nodeId,
 		taskId: result.taskId,
+		...(result.providerAcceptedAt ? { providerAcceptedAt: result.providerAcceptedAt } : {}),
 		videoUrl,
 		thumbnailUrl: result.thumbnailUrl,
 		reused: result.reused === true,
+		mediaProbeEvidence,
 	};
+}
+
+function buildWorkflowVideoCanvasNode(request: WorkflowVideoRunRequest) {
+  const identity = workflowVideoEffectIdentity(request);
+  return {
+				id: identity.canvasNodeId,
+				type: "taskNode",
+				position: { x: 160, y: 120 + request.itemIndex * 360 },
+				data: {
+					...(request.structuredClip ? workflowStructuredClipNodeData(request.structuredClip) : {}),
+					kind: "video",
+					label: workflowVideoSemanticLabel({
+						structuredClip: request.structuredClip,
+						itemIndex: request.itemIndex,
+					}),
+					prompt: request.stylePrompt
+						? `${request.prompt}\n\n[项目统一视觉风格]\n${request.stylePrompt}`.trim()
+						: request.prompt,
+					modelKey: request.modelKey,
+					videoModel: request.modelKey,
+					videoDurationSeconds: request.durationSeconds,
+					videoResolution: request.resolution,
+					...(request.size ? { videoSize: request.size } : {}),
+					aspectRatio: request.aspectRatio,
+					referenceImageNodeIds: [...request.referenceImageNodeIds],
+					referenceAssetIds: [...request.referenceAssetIds],
+					...(request.stylePrompt ? { stylePrompt: request.stylePrompt, stylePromptApplied: true } : {}),
+					...(request.styleFingerprint ? { styleFingerprint: request.styleFingerprint } : {}),
+					workflowEffectId: identity.effectId,
+					...(request.estimateIdentity ? { workflowEstimateIdentity: request.estimateIdentity } : {}),
+					...(request.generationContract ? { generationContract: request.generationContract } : {}),
+					workflowExecutionId: request.executionId,
+					workflowExecutionFamilyId: request.executionFamilyId,
+					workflowRuntimeNodeId: request.runtimeNodeId,
+					clipIndex: request.itemIndex,
+				},
+				};
+}
+
+export async function prepareWorkflowVideoNode(env: WorkerEnv, request: WorkflowVideoRunRequest): Promise<{ nodeId: string }> {
+  const context = createWorkflowInternalContext(env, request);
+  const row = await freshReadFlowRow({ c: context, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}) });
+  const node = buildWorkflowVideoCanvasNode(request);
+  const references = await resolveExecutionImageReferences({
+    c: context, ownerId: request.ownerId, row,
+    nodeIds: request.referenceImageNodeIds, assetIds: request.referenceAssetIds,
+  });
+  const prepared = buildPreparedVideoReferences(request.structuredClip?.assetObjectContracts, references);
+  if (request.structuredClip) {
+    const prompt = renderClipPromptFromShots(request.structuredClip as unknown as StructuredClip, undefined, {
+      assetReferenceIndicesByContractKey: prepared.referenceTokens,
+    });
+    node.data.prompt = request.stylePrompt ? `${prompt}\n\n[项目统一视觉风格]\n${request.stylePrompt}`.trim() : prompt;
+  }
+  const preparedNode = { ...node, data: { ...node.data, assetInputs: prepared.assetInputs } };
+  const inputEdges = buildClipInputEdges({
+    current: flowGraph(row.data),
+    clipNodeId: node.id,
+    sourceNodeIds: workflowVideoTopologySourceNodeIds(request),
+    sourceAssetIds: request.referenceAssetIds,
+    targetWillBeCreated: true,
+  });
+  const existing = flowNode(row.data, node.id);
+  if (existing) {
+    if (!isRecord(existing.data) || existing.data.prompt !== node.data.prompt) throw new Error("Prepared video node conflicts with persisted node");
+    if (!isDeepStrictEqual(existing.data.assetInputs, prepared.assetInputs)) throw new Error("Prepared video reference snapshot conflicts with persisted node");
+    if (inputEdges.length > 0) {
+      await persistFlowPatch({ c: context, row, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}), patch: { createEdges: inputEdges }, affectedNodeIds: [node.id, ...inputEdges.map((edge) => edge.source)] });
+    }
+    return { nodeId: node.id };
+  }
+  await persistFlowPatch({ c: context, row, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}), patch: { createNodes: [{ ...preparedNode, data: { ...preparedNode.data, status: "idle", workflowPreparedOnly: true } }], createEdges: inputEdges }, affectedNodeIds: [node.id, ...inputEdges.map((edge) => edge.source)] });
+  const saved = await freshReadFlowRow({ c: context, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}) });
+  const persisted = flowNode(saved.data, node.id);
+  if (!persisted || !isRecord(persisted.data) || persisted.data.prompt !== node.data.prompt) throw new Error("Prepared video node read-back failed");
+  if (!isDeepStrictEqual(persisted.data.assetInputs, prepared.assetInputs)) throw new Error("Prepared video reference snapshot read-back failed");
+  return { nodeId: node.id };
 }

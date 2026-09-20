@@ -387,16 +387,15 @@ export const assetObjectContractSchema: ToolJsonSchema = {
     },
     referenceAssetIds: {
       type: "array",
-      maxItems: 1,
       items: nonEmptyString("tapcanvas_material_assets_list 返回的完整稳定 referenceAssetId。"),
       description:
-        "agents 明确选择的同项目跨画布 canonical 图片资产；语义复用由 agents 决定，服务端只做项目归属、类别、真实图片与拒绝状态校验，再物化到当前章节。当前章节节点继续使用 referenceImageNodeIds。",
+        "agents 为该对象明确选择的有序真实图片资产 ID，可绑定同一对象的多张参考图。必须原样使用当前冻结资产快照或素材工具返回的完整 ID，不得从 nodeId 自行拼造。对象归属与参考职责由 agents 决定；服务端验证项目归属、真实图片、就绪状态与供应商执行边界，逐图保留，不截断或替换。当前画布节点也可通过 referenceImageNodeIds 精确引用。",
     },
     referenceRole: {
       type: "string",
       enum: ["none", "identity", "wardrobe", "prop", "environment", "palette", "composition", "vfx"],
       description:
-        "该对象在本 clip 的视觉参考职责。纯文生视频、无需生成或绑定参考图时必须显式填写 none；none 仍保留 canonical 对象与运动事实，但不会进入 authoring 生图 DAG。其余值声明真实参考职责，其中 identity/wardrobe/environment 即使引用数组暂为空也要求 authoring 在视频提交前补齐真实图片。",
+        "该对象在本 clip 的视觉参考职责。纯文生视频、无需生成或绑定参考图时必须显式填写 none；none 仍保留 canonical 对象与运动事实，但不会进入 authoring 生图 DAG。其余值声明真实参考职责，所有非 none 职责即使引用数组暂为空，也要求 authoring 在视频提交前复用或物化对应真实图片，不能因未绑定而忽略道具、特效、色板或构图引用。",
     },
   },
   required: [
@@ -454,7 +453,7 @@ export const beatSheetDraftBeatSchema: ToolJsonSchema = {
       type: "array",
       items: nonEmptyString("按本镜真实需要精选的视频资产节点 id。"),
       description:
-        "核心人物可保留独立角色卡；次要人物优先合成群像图；只选决定性关键帧/场景/武器/道具/VFX 锚。入口 schema 不声明固定数量；与可选 storyboardImageNodeId、对象合同真实图片合并去重后，仅由当前实时 generationContract.referenceImagePolicy.maximumBusinessImages 校验供应商硬上限。站位图、整章母板和资产生成血缘禁止进入。",
+        "核心人物可保留独立角色卡；次要人物优先合成群像图；只选决定性关键帧/场景/武器/道具/VFX 锚。入口 schema 不声明固定数量；与可选 storyboardImageNodeId、对象合同真实图片合并去重后完整提交，不因目录参考图上限裁剪或阻止流程。站位图、整章母板和资产生成血缘禁止进入。",
     },
     continuityMode: {
       type: "string",
@@ -544,13 +543,14 @@ export const beatSheetDraftBeatSchema: ToolJsonSchema = {
                 type: "string",
                 enum: ["on_screen", "off_screen", "voice_over"],
               },
+              sourceLineId: { type: "string", description: "引用当前 beat 已有原文发声的稳定 lineId；引用只保留原文一次，不产生新发声。真正新增人声省略此字段。" },
               afterSourceLineId: {
                 oneOf: [
                   nonEmptyString("本行紧跟其后的 dialogueScript lineId。"),
                   { type: "null" },
                 ],
                 description:
-                  "本行在完整人声时间轴中的位置；null 表示位于第一条原文人声之前，否则必须引用当前 beat 的 dialogueScript lineId。同一锚点按 lines 数组顺序执行。",
+                  "本行在完整人声时间轴中的位置；null 表示位于第一条原文人声之前，否则必须引用当前 beat 的 dialogueScript lineId。没有原文对白时全部使用 null，按 lines 数组顺序执行；不得引用新增人声或其它 beat 的 lineId。",
               },
               sourceEvidence: {
                 type: "array",

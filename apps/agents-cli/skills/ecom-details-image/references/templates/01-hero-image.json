@@ -1,0 +1,62 @@
+{
+  "id": "hero-image",
+  "name": "白底/纯色底产品主图",
+  "scenario": "产品需要在无干扰背景上被单独看清，作为主图首图、白底规格图或平台图片位填充时。",
+  "prompt_template": {
+    "type": "product photography",
+    "subject": "{product_description}",
+    "background": "clean white background",
+    "lighting": "soft diffused studio lighting, even illumination",
+    "composition": "centered, front view",
+    "quality": "high detail, commercial e-commerce photography"
+  },
+  "defaults": {
+    "background": "clean white background",
+    "lighting": "soft diffused studio lighting",
+    "composition": "centered, front view"
+  },
+  "variants": {
+    "luxury": {
+      "description": "高端奢侈品风格",
+      "overrides": {
+        "lighting": "Rembrandt lighting, subtle rim light",
+        "background": "gradient from dark to light, premium feel"
+      }
+    },
+    "fresh": {
+      "description": "清新自然风格",
+      "overrides": {
+        "lighting": "bright natural light",
+        "background": "light pastel tones"
+      }
+    },
+    "tech": {
+      "description": "科技感风格",
+      "overrides": {
+        "lighting": "dramatic side lighting",
+        "background": "dark minimalist"
+      }
+    },
+    "color": {
+      "description": "彩色背景风格",
+      "overrides": {
+        "background": "{color} gradient background"
+      }
+    }
+  },
+  "category_tips": {
+    "beauty": "emphasize texture and glow, show formula details",
+    "electronics": "highlight metallic finish, screen details, port precision",
+    "food": "vibrant colors, fresh appearance, show texture",
+    "fashion": "show fabric texture, drape quality, stitching details",
+    "home": "show material quality, craftsmanship, lifestyle appeal",
+    "jewelry": "macro detail, sparkle and cut quality, luxurious lighting"
+  },
+  "examples": [
+    "{product}, professional product photography on clean white background, soft diffused studio lighting, centered, high detail, commercial e-commerce photography, no shadows, no props",
+    "{product} on pure white seamless background, bright commercial studio lighting, centered, 3/4 profile, high resolution, marketplace ready, {material_description}",
+    "{product} floating slightly above white surface, softbox overhead, sharp rim light on edges, professional packshot, high detail, ultra-detailed textures"
+  ],
+  "anti_ai_tips": "",
+  "supports_image_reference": true
+}

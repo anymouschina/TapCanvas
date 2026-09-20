@@ -32,6 +32,28 @@ export type WorkflowPromptExampleSearchObservation = Readonly<{
   toolCallId?: string
 }>
 
+export type WorkflowKnowledgeSearchObservation = Readonly<{
+  version: 1
+  status: WorkflowPromptExampleSearchObservation['status']
+  attempted: boolean
+  candidateCount: number
+  blocking: false
+  rationale: string
+  domains: readonly string[]
+  candidateSetId?: string
+  candidates?: readonly WorkflowKnowledgeCandidate[]
+  toolCallId?: string
+}>
+
+export type WorkflowKnowledgeCandidate = Readonly<{
+  cardId: string
+  candidateSetId: string
+  title?: string
+  rank: number
+  score: number
+  sourceRoot?: string
+}>
+
 export const WORKFLOW_AGENT_UNIVERSAL_KNOWLEDGE_TOOLS = [
   'skill_search',
   'Skill',
@@ -79,7 +101,7 @@ function parsePromptExampleSearchObservation(value: unknown): WorkflowPromptExam
   const toolCallId = typeof value.toolCallId === 'string' && value.toolCallId.trim()
     ? value.toolCallId.trim()
     : null
-  return {
+	return {
     version: 1,
     status,
     mediaType: value.mediaType,
@@ -88,6 +110,42 @@ function parsePromptExampleSearchObservation(value: unknown): WorkflowPromptExam
     candidateCount: value.candidateCount,
     blocking: false,
     rationale: value.rationale.trim(),
+    ...(toolCallId ? { toolCallId } : {}),
+  }
+}
+
+function parseKnowledgeSearchObservation(value: unknown): WorkflowKnowledgeSearchObservation | null {
+  if (!isRecord(value) || value.version !== 1) return null
+  const status = typeof value.status === 'string'
+    ? value.status as WorkflowKnowledgeSearchObservation['status']
+    : null
+  if (!status || !PROMPT_EXAMPLE_SEARCH_STATUSES.has(status)) return null
+  if (
+    typeof value.attempted !== 'boolean'
+    || typeof value.candidateCount !== 'number'
+    || !Number.isInteger(value.candidateCount)
+    || value.candidateCount < 0
+    || value.blocking !== false
+    || typeof value.rationale !== 'string'
+    || !value.rationale.trim()
+    || !Array.isArray(value.domains)
+    || value.domains.some((domain) => typeof domain !== 'string')
+  ) return null
+	const toolCallId = typeof value.toolCallId === 'string' && value.toolCallId.trim()
+	  ? value.toolCallId.trim()
+	  : null
+	const candidateSetId = typeof value.candidateSetId === 'string' && value.candidateSetId.trim()
+	  ? value.candidateSetId.trim()
+	  : null
+	return {
+    version: 1,
+    status,
+    attempted: value.attempted,
+    candidateCount: value.candidateCount,
+    blocking: false,
+	  rationale: value.rationale.trim(),
+	  domains: value.domains.map((domain) => domain.trim()).filter(Boolean),
+    ...(candidateSetId ? { candidateSetId } : {}),
     ...(toolCallId ? { toolCallId } : {}),
   }
 }
@@ -183,7 +241,9 @@ function parseKnowledgeSources(value: unknown): AgentExecutionProvenanceDto['loa
     const contentHash = typeof item.contentHash === 'string' ? item.contentHash.trim() : ''
     const contentChars = typeof item.contentChars === 'number' ? item.contentChars : null
     if (!cardId || !title || !contentHash || contentChars === null) continue
+    const receipt = isRecord(item.readReceipt) ? item.readReceipt : null
     sources.push({
+      ...(receipt && typeof receipt.toolCallId === 'string' && typeof receipt.candidateSetId === 'string' && typeof receipt.readAt === 'string' && (receipt.tool === 'knowledge_read' || receipt.tool === 'prompt_example_read') ? { readReceipt: { toolCallId: receipt.toolCallId, candidateSetId: receipt.candidateSetId, tool: receipt.tool, readAt: receipt.readAt } } : {}),
       cardId,
       title,
       ...(typeof item.description === 'string' && item.description.trim() ? { description: item.description.trim() } : {}),
@@ -210,6 +270,12 @@ function parseExecutionProvenance(value: unknown): AgentExecutionProvenanceDto |
   const loadedSkillResources = parseSkillResources(value.loadedSkillResources)
   const loadedSkillSources = parseSkillSources(value.loadedSkillSources)
   const loadedKnowledgeSources = parseKnowledgeSources(value.loadedKnowledgeSources)
+  const retrievalDecisions: NonNullable<AgentExecutionProvenanceDto['retrievalDecisions']> = []
+  for (const decision of Array.isArray(value.retrievalDecisions) ? value.retrievalDecisions : []) {
+    if (isRecord(decision) && decision.version === 1 && decision.blocking === false && typeof decision.rationale === 'string' && typeof decision.at === 'string' && (decision.status === 'tool_actions_requested' || decision.status === 'no_body_read_requested')) {
+      retrievalDecisions.push({ version: 1, blocking: false, toolNames: [...readStringArray(decision.toolNames)], toolCallIds: [...readStringArray(decision.toolCallIds)], rationale: decision.rationale, status: decision.status, at: decision.at })
+    }
+  }
   return {
     version: 1,
     executionId,
@@ -224,6 +290,7 @@ function parseExecutionProvenance(value: unknown): AgentExecutionProvenanceDto |
     ...(loadedSkillResources ? { loadedSkillResources } : {}),
     ...(loadedSkillSources ? { loadedSkillSources } : {}),
     ...(loadedKnowledgeSources ? { loadedKnowledgeSources } : {}),
+    ...(retrievalDecisions.length ? { retrievalDecisions } : {}),
     startedAt,
   }
 }
@@ -285,6 +352,63 @@ export function readWorkflowPromptExampleSearchObservations(
     const identity = observation.toolCallId
       ?? `${observation.mediaType}:${observation.status}:${observation.candidateCount}:${index}`
     observations.set(identity, observation)
+  }
+  return [...observations.values()]
+}
+
+export function readWorkflowKnowledgeSearchObservations(
+  evidence: unknown,
+): WorkflowKnowledgeSearchObservation[] {
+  const evidenceRecord = isRecord(evidence) ? evidence : null
+  const records = [
+    evidenceRecord,
+    isRecord(evidenceRecord?.evidence) ? evidenceRecord.evidence : null,
+    ...(Array.isArray(evidenceRecord?.itemRuns)
+      ? evidenceRecord.itemRuns.flatMap((item) => {
+          if (!isRecord(item)) return []
+          return [item, isRecord(item.evidence) ? item.evidence : null]
+        })
+      : []),
+  ].filter((record): record is Record<string, unknown> => record !== null)
+  const observations = new Map<string, WorkflowKnowledgeSearchObservation>()
+  const candidateSets = records.flatMap((record) => (
+    Array.isArray(record.retrievalCandidateSets)
+      ? record.retrievalCandidateSets.filter(isRecord)
+      : []
+  )).flatMap((set) => {
+    if (set.candidateKind !== 'domain' || typeof set.candidateSetId !== 'string' || !set.candidateSetId.trim()) return []
+    if (!Array.isArray(set.entries)) return []
+    const candidateSetId = set.candidateSetId.trim()
+    const candidates = set.entries.flatMap((entry, index) => {
+      if (!isRecord(entry) || typeof entry.candidateId !== 'string' || !entry.candidateId.trim()) return []
+      const rank = typeof entry.rank === 'number' && Number.isInteger(entry.rank) && entry.rank > 0 ? entry.rank : index + 1
+      const score = typeof entry.score === 'number' && Number.isFinite(entry.score) ? entry.score : 0
+      return [{
+        cardId: entry.candidateId.trim(),
+        candidateSetId,
+        ...(typeof entry.title === 'string' && entry.title.trim() ? { title: entry.title.trim() } : {}),
+        rank,
+        score,
+        ...(typeof entry.sourceRoot === 'string' && entry.sourceRoot.trim() ? { sourceRoot: entry.sourceRoot.trim() } : {}),
+      }]
+    })
+    return [{ candidateSetId, candidates }]
+  })
+  const candidateSetsById = new Map(candidateSets.map((set) => [set.candidateSetId, set] as const))
+  for (const [index, record] of records.entries()) {
+    const observation = parseKnowledgeSearchObservation(record.knowledgeCandidateSearch)
+    if (!observation) continue
+    const identity = observation.toolCallId
+      ?? `${observation.status}:${observation.candidateCount}:${index}`
+    const candidateSet = observation.candidateSetId
+      ? candidateSetsById.get(observation.candidateSetId)
+      : undefined
+    observations.set(identity, {
+      ...observation,
+      ...(candidateSet
+        ? { candidateSetId: candidateSet.candidateSetId, candidates: candidateSet.candidates }
+        : {}),
+    })
   }
   return [...observations.values()]
 }

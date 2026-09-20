@@ -65,7 +65,7 @@ describe("enforceStructuredShotsAndRender — 结构化 shots 唯一路径", () 
     const rejection = enforceStructuredShotsAndRender({ clips: [clip], bible });
     expect(rejection).toBeNull();
     const prompt = String((clip as Record<string, unknown>).clipPrompt);
-    expect(prompt).toContain("【SHOTS】");
+    expect(prompt).toContain("镜头1（0-7s）");
     expect(prompt).not.toContain("密室惊悚");
   });
 
@@ -149,7 +149,7 @@ describe("gateAndRenderStructuredClips — 最终稿只读校验", () => {
     const detail = gateAndRenderStructuredClips({ clips: [clip], bible });
     expect(detail.rejected).toHaveLength(0);
     expect(detail.warnings.join()).toContain("continuity");
-    expect(String((clip as Record<string, unknown>).clipPrompt)).toContain("【SHOTS】");
+    expect(String((clip as Record<string, unknown>).clipPrompt)).toContain("镜头1（0-7s）");
   });
 
   it("按段退回：批内只有硬伤那段被退，其余照常渲染入库", () => {
@@ -164,7 +164,7 @@ describe("gateAndRenderStructuredClips — 最终稿只读校验", () => {
     expect(detail.rejected[0]!.batchIndex).toBe(1);
     expect(detail.rejected[0]!.globalNo).toBe(5); // slot 4 → 全局第5段
     expect(detail.rejected[0]!.problems.join()).toContain("durationSeconds");
-    expect(String((good as Record<string, unknown>).clipPrompt)).toContain("【SHOTS】");
+    expect(String((good as Record<string, unknown>).clipPrompt)).toContain("镜头1（0-7s）");
     expect((bad as Record<string, unknown>).clipPrompt).toBeUndefined();
   });
 
@@ -193,7 +193,7 @@ describe("gateAndRenderStructuredClips — 最终稿只读校验", () => {
     const detail = gateAndRenderStructuredClips({ clips: [combat], bible });
     expect(detail.rejected).toEqual([]);
     expect(detail.warnings.join()).not.toContain("俯视站位图");
-    expect(String((combat as Record<string, unknown>).clipPrompt)).toContain("【SHOTS】");
+    expect(String((combat as Record<string, unknown>).clipPrompt)).toContain("镜头1（0-7s）");
     const bound = okClip({
       characterRoleNames: ["孟川", "羅鋒"],
       blockingFrameNodeId: "blocking-1",

@@ -8,6 +8,7 @@ import {
 } from "../flow/flow.public.schemas";
 import { applyPublicFlowGraphPatch } from "../flow/flow.public.service";
 import { sanitizeFlowDataForStorage } from "../flow/flow.service";
+import { readSubmittedMediaSettings } from "../flow/flow.media-submission-settings";
 import {
   getFlowByIdUnsafe,
   getFlowForOwner,
@@ -15,6 +16,7 @@ import {
   updateFlow,
   updateFlowByIdUnsafe,
   type FlowRow,
+  FlowRevisionConflictError,
 } from "../flow/flow.repo";
 import { runPublicTask } from "../apiKey/apiKey.routes";
 import {
@@ -24,7 +26,7 @@ import {
 import { registerGeneratedMediaAsset } from "../asset/asset.hosting";
 import { fetchTaskResultForPolling, isPermanentUpstreamTaskError } from "./task.polling";
 import { isProviderTaskPendingStatus } from "./provider-task-status";
-import { buildProviderTaskFailureMessage } from "./provider-task-failure";
+import { buildProviderTaskFailureMessage, readProviderTaskFailureCode } from "./provider-task-failure";
 import { pollUntilSettled } from "./task.polling-core";
 import type { TaskRequestDto, TaskResultDto } from "./task.schemas";
 import { resolveWorldInfo } from "../worldinfo/world-info.service";
@@ -57,6 +59,8 @@ import {
 } from "../team/team.service";
 import { resolveTeamCreditsCostForTask } from "../billing/billing.service";
 import { resolveModelDurationOptions } from "./video-orchestrator.model-duration";
+import { probeMediaViaMediaWorker } from "../../platform/media-worker/client";
+import { evaluateWorkflowMediaProbe } from "../execution/execution.media-probe";
 // 视频编排（阶段 A/B/C）：稳定 clipId/slot 派生 + fresh-read 写回工具层。
 import { buildClipId, deriveClipNodeId } from "./video-orchestrator.clip-plan";
 import {
@@ -78,7 +82,7 @@ import {
   findFlowNode,
   freshReadFlowRow,
   persistFlowPatch,
-  readFlowNodes,
+  readVisibleFlowNodes,
 } from "./video-orchestrator.flow-io";
 import { buildClipInputEdges } from "./video-orchestrator.input-edges";
 import {
@@ -111,10 +115,16 @@ import {
   workflowVideoSubmissionFailureData,
   workflowVideoSubmittingData,
 } from "./workflow-video-effect-claim";
+import { readCanvasIndexStyleImages, readCanvasIndexStyleLock } from "../material/material.repo";
+import { getActiveProjectLookBible } from "../material/project-look-bible";
+import { getProjectBookStyleFacts } from "../agents/project-context.service";
+import {
+  buildProjectStyleProvenance,
+  resolveProjectStyleAnchorSources,
+} from "./authoring-style-provenance";
 import {
   parseVideoGenerationContract,
   resolveVideoModelAudioOnlyReferenceSupport,
-  resolveVideoModelMaximumReferenceImages,
 } from "./video-orchestrator.generation-contract";
 import { resolveExecutionImageReferences } from "./agents-tool-bridge.image-reference-ids";
 import {
@@ -123,9 +133,7 @@ import {
   readAssetObjectIdentityContracts,
 } from "./video-reference-contract-binding";
 import {
-  bindVerifiedVoiceReferences,
   renderClipPromptFromShots,
-  VOICE_REFERENCE_BINDING_PLACEHOLDER,
   type StructuredClip,
 } from "./video-orchestrator.clip-shots";
 import {
@@ -344,7 +352,7 @@ export function resolveChapterDesignBoardNodes(
   row: FlowRow,
 ): Array<{ id: string; imageUrl: string; seedancePrompt: string }> {
   const out: Array<{ id: string; imageUrl: string; seedancePrompt: string }> = [];
-  for (const n of readFlowNodes(row)) {
+  for (const n of readVisibleFlowNodes(row)) {
     const d = (n.data ?? {}) as Record<string, unknown>;
     if (readTrimmedString(d.productionLayer) !== "design_board") continue;
     const imageUrl = readTrimmedString(d.imageUrl) || readTrimmedString(d.url);
@@ -771,6 +779,7 @@ export type PublicAgentsVideoGenerateToCanvasResult = {
   taskId: string | null;
   // 所有带 taskId 的异步提交都会返回 status:"running"；编排幂等命中额外返回 reused:true。
   status?: "success" | "running";
+  providerAcceptedAt?: string;
   reused?: boolean;
   clipId?: string;
   clipRunId?: string;
@@ -933,7 +942,7 @@ export async function persistVideoNodePatch(opts: {
       const conflictTimeoutMs = DEFAULT_CANVAS_REVISION_CONFLICT_TIMEOUT_MS;
       const conflictDeadlineMs = Date.now() + conflictTimeoutMs;
       for (let attempt = 0; ; attempt += 1) {
-      const { revision, flow } = await getChapterCanvasFlow(c, requestUserId, chapterId);
+      const { revision, flow } = await getChapterCanvasFlow(c, requestUserId, chapterId, true);
       const current = sanitizeFlowDataForStorage(flow ?? { nodes: [], edges: [] });
       const patch = buildPatch(current);
       if (!patch) return null;
@@ -964,7 +973,7 @@ export async function persistVideoNodePatch(opts: {
           flow: { nodes: nextNodes as never, edges: nextEdges as never },
           // agent 回灌：撞版本走 CAS 取并集重试（reconcile 并回最新节点），不硬挡 409。
           source: "agent",
-        });
+        }, true);
         savedRevision = saveResult.revision;
         savedFlow = saveResult.authoritativeFlow ?? savedFlow;
       } catch (err) {
@@ -1016,6 +1025,8 @@ export async function persistVideoNodePatch(opts: {
       }
     });
   }
+  const conflictDeadline = Date.now() + DEFAULT_CANVAS_REVISION_CONFLICT_TIMEOUT_MS;
+  for (let attempt = 0; ; attempt += 1) {
   const freshRow =
     (devBypass
       ? await getFlowByIdUnsafe(c.env.DB, flowId)
@@ -1035,12 +1046,15 @@ export async function persistVideoNodePatch(opts: {
     });
   }
   const nextJson = JSON.stringify(sanitizedNext ?? {});
-  const updated = devBypass
+  let updated: FlowRow | null;
+  try {
+  updated = devBypass
     ? await updateFlowByIdUnsafe(c.env.DB, {
         id: flowId,
         name: freshRow.name,
         data: nextJson,
         nowIso,
+        expectedRevision: freshRow.canvas_revision ?? 0,
       })
     : await updateFlow(c.env.DB, {
         id: flowId,
@@ -1049,18 +1063,26 @@ export async function persistVideoNodePatch(opts: {
         ownerId: requestUserId,
         projectId: freshRow.project_id,
         nowIso,
+        expectedRevision: freshRow.canvas_revision ?? 0,
       });
+  } catch (error) {
+    if (!(error instanceof FlowRevisionConflictError)) throw error;
+    const decision = await waitForCanvasRevisionRetry({ attempt, deadlineMs: conflictDeadline });
+    if (!decision.retry) throw error;
+    continue;
+  }
   if (!updated) {
     throw new AppError("Flow not found", { status: 404, code: "flow_not_found" });
   }
   if (freshRow.project_id) {
+    const persistedGraph = PublicFlowGraphSchema.parse(sanitizeFlowDataForStorage(mapFlowRowToDto(updated).data));
     const nodeMap = new Map(
-      (nextParsed.data.nodes ?? []).map((n: unknown) => [(n as { id?: string }).id, n]),
+      (persistedGraph.nodes ?? []).map((n: unknown) => [(n as { id?: string }).id, n]),
     );
     const upsertedNode = nodeMap.get(broadcastNodeId);
     // 【治「split 丢边」同款根因】新建边一起广播，防浏览器 autosave 整图 PUT 清掉输入连线。
     const edgeMap = new Map(
-      (nextParsed.data.edges ?? []).map((e: unknown) => [
+      (persistedGraph.edges ?? []).map((e: unknown) => [
         String((e as { id?: unknown }).id ?? ""),
         e,
       ]),
@@ -1078,6 +1100,7 @@ export async function persistVideoNodePatch(opts: {
     }
   }
   return { stats: applied.stats, updatedAt: updated.updated_at, data: nextParsed.data };
+  }
 }
 
 function readNonNegativeInteger(value: unknown): number | null {
@@ -1159,6 +1182,7 @@ function buildReusedResult(args: {
     stats: { createdNodes: 0, createdEdges: 0, patchedNodes: 0, appendedArrays: 0 },
     nodeId: args.node.id,
     status: args.status,
+    ...(readTrimmedString(d.workflowSubmissionAcceptedAt) ? { providerAcceptedAt: readTrimmedString(d.workflowSubmissionAcceptedAt) } : {}),
     videoUrl: args.status === "success" ? readTrimmedString(d.videoUrl) : "",
     thumbnailUrl: readTrimmedString(d.videoThumbnailUrl) || null,
     vendor: readTrimmedString(d.vendor) || readTrimmedString(d.videoModelVendor),
@@ -1184,6 +1208,7 @@ function buildDirectWorkflowReusedResult(args: {
     stats: { createdNodes: 0, createdEdges: 0, patchedNodes: 0, appendedArrays: 0 },
     nodeId: args.node.id,
     status: args.status,
+    ...(readTrimmedString(data.workflowSubmissionAcceptedAt) ? { providerAcceptedAt: readTrimmedString(data.workflowSubmissionAcceptedAt) } : {}),
     videoUrl: args.status === "success" ? readTrimmedString(data.videoUrl) : "",
     thumbnailUrl: readTrimmedString(data.videoThumbnailUrl) || null,
     vendor: readTrimmedString(data.vendor) || readTrimmedString(data.videoModelVendor),
@@ -1328,6 +1353,49 @@ export async function generateVideoToCanvas(input: {
     input.bodyArgs && typeof input.bodyArgs === "object" && !Array.isArray(input.bodyArgs)
       ? (input.bodyArgs as Record<string, unknown>)
       : {};
+
+  // Direct video generation is also a production entry point (for example
+  // the admin/tool bridge). It must consume the same project visual anchor as
+  // Workflow IR execution for textual direction. Project style images are
+  // image-generation inputs only and must not enter video references.
+  const directStyleProjectId = readTrimmedString(input.row.project_id);
+  const directStyleOwnerId = readTrimmedString(input.row.owner_id) || input.requestUserId;
+  if (directStyleProjectId && directStyleOwnerId) {
+    try {
+      const [canvasStyleReferenceImages, canvasStyleLock, activeLookBible, bookStyleFacts] = await Promise.all([
+        readCanvasIndexStyleImages(directStyleProjectId, directStyleOwnerId),
+        readCanvasIndexStyleLock(directStyleProjectId, directStyleOwnerId),
+        getActiveProjectLookBible({ ownerId: directStyleOwnerId, projectId: directStyleProjectId }),
+        getProjectBookStyleFacts({ ownerId: directStyleOwnerId, projectId: directStyleProjectId }),
+      ]);
+      const styleSources = resolveProjectStyleAnchorSources({
+        canvasStyleReferenceImages,
+        canvasStyleLock,
+        activeLookBible,
+        triggerStyleFacts: rawBodyArgs.styleFacts,
+        bookStyleFacts,
+      });
+      const projectStyleProvenance = buildProjectStyleProvenance(styleSources);
+      const existingStyleFingerprint = readTrimmedString(nodeData.styleFingerprint);
+      const existingStylePrompt = readTrimmedString(nodeData.stylePrompt);
+      if (projectStyleProvenance.stylePrompt && existingStyleFingerprint !== projectStyleProvenance.styleFingerprint) {
+        nodeData.stylePrompt = [existingStylePrompt, projectStyleProvenance.stylePrompt]
+          .filter(Boolean)
+          .join("\n")
+          .trim();
+        nodeData.stylePromptApplied = false;
+      }
+      if (projectStyleProvenance.styleFingerprint) {
+        nodeData.styleFingerprint = projectStyleProvenance.styleFingerprint;
+      }
+    } catch (error: unknown) {
+      console.warn("[style-provenance] direct video project anchor unavailable", {
+        projectId: directStyleProjectId,
+        ownerId: directStyleOwnerId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   // 结构化对白的最后一道投影必须在真正提交供应商前闭合。编排器通常会提前把
   // voiceBinding 放进 videoData，但恢复、进程重启或旧 production-plan 回放时，
@@ -1547,6 +1615,10 @@ export async function generateVideoToCanvas(input: {
   // 注：clip 提示词「去污染」（剥冗余英文一致性套话 + 空泛 hype 词）在发往 new-api 的唯一上游
   // runTaskViaNewApi 静默执行（与 video-prompt-hygiene 同处，覆盖编排/手动所有路径），此处不重复处理。
   let negativePrompt = readTrimmedString(nodeData.negativePrompt);
+  const stylePrompt = readTrimmedString(nodeData.stylePrompt);
+  if (stylePrompt && nodeData.stylePromptApplied !== true) {
+    prompt = `${prompt}\n\n[项目统一视觉风格]\n${stylePrompt}`.trim();
+  }
   const modelAlias = readTrimmedString(nodeData.modelAlias);
   // Group-pinned model (deterministic) wins over the per-node LLM-set value so every shot in
   // one orchestration shares the same model — same precedence as groupVideoAspect below.
@@ -1988,13 +2060,14 @@ export async function generateVideoToCanvas(input: {
       undefined,
       {
         assetReferenceIndicesByContractKey,
-        voiceReferenceMode: referenceAudioExplicitlyOptional ? "provider_native" : "manifest",
       },
     );
-    let voiceBindingInstruction = "";
     if (!referenceAudioExplicitlyOptional) {
       try {
-        voiceBindingInstruction = buildVerifiedVoiceBindingInstructionFromManifest({
+        // VoiceManifest is transport metadata. It is validated here and sent
+        // through the reference-audio manifest, never appended to the visual
+        // prompt where it would compete with the model's audiovisual language.
+        buildVerifiedVoiceBindingInstructionFromManifest({
           voiceBindings: nodeData.voiceBinding,
           manifestAudios: referenceMediaManifest.audios,
         });
@@ -2009,24 +2082,7 @@ export async function generateVideoToCanvas(input: {
         });
       }
     }
-    const hasVoicePlaceholder = renderedPrompt.includes(VOICE_REFERENCE_BINDING_PLACEHOLDER);
-    if (hasVoicePlaceholder && !voiceBindingInstruction) {
-      throw new AppError("结构化人声轨存在对白，但最终参考音频 manifest 缺少音色绑定", {
-        status: 422,
-        code: "speaker_voice_manifest_mismatch",
-        details: { upstreamRequestAttempted: false },
-      });
-    }
-    if (!hasVoicePlaceholder && voiceBindingInstruction) {
-      throw new AppError("结构化人声轨为空，但最终请求携带了说话人音色参考", {
-        status: 422,
-        code: "speaker_voice_manifest_without_dialogue",
-        details: { upstreamRequestAttempted: false },
-      });
-    }
-    prompt = hasVoicePlaceholder
-      ? bindVerifiedVoiceReferences(renderedPrompt, voiceBindingInstruction)
-      : renderedPrompt;
+    prompt = renderedPrompt;
   }
   const frozenGenerationContract = parseVideoGenerationContract(nodeData.generationContract);
   if (nodeData.generationContract !== undefined && !frozenGenerationContract) {
@@ -2035,7 +2091,6 @@ export async function generateVideoToCanvas(input: {
 	  code: "video_generation_contract_invalid",
 	});
   }
-  const usesFrozenReferenceBudget = usesStructuredClipPrompt && frozenGenerationContract !== null;
   if (isOrchestratedClip) {
     const referenceDelivery = verifyVideoReferenceDelivery({
       contract: nodeData.referenceDeliveryContract,
@@ -2062,41 +2117,6 @@ export async function generateVideoToCanvas(input: {
     }
     nodeData.referenceDeliveryEvidence = referenceDelivery.evidence;
 
-  }
-  let seedanceMaximumReferenceImages = referenceModeSelection?.mode === "multimodal_reference" && usesFrozenReferenceBudget
-	? frozenGenerationContract.referenceImagePolicy.maximumTotalImages
-	: null;
-  if (referenceModeSelection?.mode === "multimodal_reference" && !usesFrozenReferenceBudget) {
-    try {
-      seedanceMaximumReferenceImages = await resolveVideoModelMaximumReferenceImages({
-        c: input.c,
-        videoModel: modelKey,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new AppError(`当前视频模型缺少引用图片预算合同：${modelKey}`, {
-        status: 422,
-        code: "video_model_reference_image_policy_missing",
-        details: { modelKey, cause: message },
-      });
-    }
-  }
-  if (
-    seedanceMaximumReferenceImages != null &&
-    referenceMediaManifest.images.length > seedanceMaximumReferenceImages
-  ) {
-    throw new AppError(
-      `视频模型多模态参考图数量超过上限：${referenceMediaManifest.images.length} > ${seedanceMaximumReferenceImages}`,
-      {
-        status: 400,
-        code: "video_model_reference_image_limit_exceeded",
-        details: {
-          modelKey,
-          actual: referenceMediaManifest.images.length,
-          maximum: seedanceMaximumReferenceImages,
-        },
-      },
-    );
   }
   if (
     referenceModeSelection?.mode === "multimodal_reference" &&
@@ -2139,9 +2159,8 @@ export async function generateVideoToCanvas(input: {
       }),
     );
   }
-  // 结构化 clip 的图片编号已在上方依据最终 manifest 编译进参考资产锁定；自由文本节点
-  // 保持原提示词。提交边界只保留上一镜参考视频的连续性事实，绝不再追加第二套
-  // `[参考图绑定] @图N=...` 映射尾块。
+  // 结构化 clip 的图片编号已在上方依据最终 manifest 投影进视听正文；自由文本节点
+  // 保持原提示词。提交边界只保留上一镜参考视频的连续性事实，绝不追加机器映射尾块。
   const referenceContinuationNote = renderVideoReferenceContinuationNote(
     readTrimmedString(nodeData.referenceVideoBindingNote),
   );
@@ -2220,6 +2239,14 @@ export async function generateVideoToCanvas(input: {
       ...(generationContext ? { generationContext } : {}),
       persistAssets: true,
     },
+  };
+
+  // Persist the exact prompt and ordered transport manifest together. Canvas
+  // edges are editable topology and cannot reconstruct a historical request.
+  nodeData.workflowVideoSubmissionInput = {
+    prompt: taskRequest.prompt,
+    referenceMediaManifest,
+    preparedAt: new Date().toISOString(),
   };
 
   // 编排 clip 的计费边界先落 durable intent，再触发供应商请求。进程若在两步之间崩溃，
@@ -2429,6 +2456,32 @@ export async function generateVideoToCanvas(input: {
     }
   }
 
+  const clipInputEdgeArgs = {
+    referenceImageUrls: [
+      ...referenceImages,
+      firstFrameUrl,
+      lastFrameUrl,
+      sourceVideoUrl,
+    ].filter(Boolean),
+    // Keep the canvas DAG identical to the provider request. Frame assets and
+    // structured assetInputs are real model inputs too; omitting them makes a
+    // generated clip look disconnected even though the provider consumed them.
+    sourceAssetIds: [
+      ...normalizeStringList(nodeData.referenceAssetIds),
+      firstFrameAssetId,
+      lastFrameAssetId,
+      ...assetInputs.flatMap((asset) => [asset.assetId ?? "", asset.assetRefId ?? ""]),
+    ].filter(Boolean),
+    sourceNodeIds: [
+      readTrimmedString(nodeData.storyboardImageNodeId),
+      readTrimmedString(nodeData.blockingFrameNodeId),
+      ...normalizeStringList(
+        orch ? nodeData.videoReferenceNodeIds : nodeData.referenceImageNodeIds,
+      ),
+    ].filter(Boolean),
+  };
+  const voiceReferenceNodeIds = readVoiceReferenceNodeIds(nodeData.voiceBinding);
+
   // Direct workflow executions do not have a video_run-owned production_effect row. Persist a
   // stable claim into the real canvas before the paid POST. A crash after this write and before a
   // provider receipt is deliberately fail-closed: the same effect must never be submitted twice.
@@ -2458,7 +2511,7 @@ export async function generateVideoToCanvas(input: {
         });
       }
       const replay = resolveWorkflowVideoEffectReplay(existing.data);
-      throw new AppError("工作流视频副作用已被认领，已阻止重复供应商请求", {
+      if (replay.action !== "retry_pre_upstream") throw new AppError("工作流视频副作用已被认领，已阻止重复供应商请求", {
         status: 409,
         code: "workflow_video_effect_already_claimed",
         details: {
@@ -2469,28 +2522,69 @@ export async function generateVideoToCanvas(input: {
         },
       });
     }
-    const claimed = await persistFlowPatch({
+    const claimed = await persistVideoNodePatch({
       c: input.c,
-      row: input.row,
+      fallbackRow: input.row,
       requestUserId: input.requestUserId,
       devBypass: input.devBypass,
       flowId: input.flowId,
+      broadcastNodeId: directWorkflowNodeId,
       ...(input.chapterId ? { chapterId: input.chapterId } : {}),
-      patch: existing
-        ? {
-            allowOverwrite: true,
-            patchNodeData: [{ id: directWorkflowNodeId, data: submittingData }],
+      buildPatch: (current) => {
+        const graphNodes = (current as { nodes?: unknown }).nodes;
+        const currentNode = Array.isArray(graphNodes) ? graphNodes.find((value: unknown) =>
+          value !== null && typeof value === "object" && (value as { id?: unknown }).id === directWorkflowNodeId) as { data?: Record<string, unknown> } | undefined : undefined;
+        if (currentNode) {
+          const currentData = currentNode.data ?? {};
+          if (readTrimmedString(currentData.workflowEffectId) !== workflowEffectId
+            || resolveWorkflowVideoEffectReplay(currentData).action !== "retry_pre_upstream") {
+            throw new AppError("Workflow video effect was claimed concurrently; no provider request submitted", {
+              status: 409, code: "workflow_video_effect_already_claimed",
+              details: { nodeId: directWorkflowNodeId, workflowEffectId, upstreamRequestAttempted: false },
+            });
           }
-        : {
-            createNodes: [{
-              ...taskNode,
-              id: directWorkflowNodeId,
-              data: submittingData,
-            } as Record<string, unknown>],
-          },
-      affectedNodeIds: [directWorkflowNodeId],
+        }
+        const exists = Boolean(currentNode);
+        const inputEdges = buildClipInputEdges({
+          current,
+          clipNodeId: directWorkflowNodeId,
+          ...clipInputEdgeArgs,
+          targetWillBeCreated: !exists,
+        });
+        const voiceReferenceSync = buildVoiceReferenceEdgeSyncPlan({
+          current,
+          clipNodeId: directWorkflowNodeId,
+          voiceReferenceNodeIds,
+          targetWillBeCreated: !exists,
+        });
+        const createEdges = [...inputEdges, ...voiceReferenceSync.createEdges];
+        return {
+          ...(exists
+            ? {
+                allowOverwrite: true,
+                patchNodeData: [{ id: directWorkflowNodeId, data: submittingData }],
+              }
+            : {
+                createNodes: [{
+                  ...taskNode,
+                  id: directWorkflowNodeId,
+                  data: submittingData,
+                } as Record<string, unknown>],
+              }),
+          ...(createEdges.length ? { createEdges } : {}),
+          ...(voiceReferenceSync.deleteEdgeIds.length
+            ? { deleteEdgeIds: voiceReferenceSync.deleteEdgeIds }
+            : {}),
+        };
+      },
     });
-    input.row = claimed.row;
+    if (!claimed) {
+      throw new AppError("Workflow video submission claim was not persisted", {
+        status: 503,
+        code: "workflow_video_claim_persist_failed",
+      });
+    }
+    input.row = { ...input.row, data: JSON.stringify(claimed.data), updated_at: claimed.updatedAt };
   }
 
   // 【提交边界标记·2026-07-14 ch25 复盘】本函数在此之前抛出的一切错误都发生在上游 POST 之前
@@ -2707,28 +2801,12 @@ export async function generateVideoToCanvas(input: {
   const writePlaceholder = Boolean(billingTaskId);
   // 【上游输入连线·用户规则 2026-07-04】画布对话驱动出片时，视频节点的真实输入（参考图/首尾帧/
   // 分镜板/站位图/续写链上一镜）要在画布上有所体现——建「输入节点 → 视频节点」边。
-  // 只连实际提交给模型的输入（referenceImages 是护栏/封顶后的最终列表）；音频不连（画布硬规则：
+  // 只连实际提交给模型的输入（referenceImages 保留完整所需引用）；音频不连（画布硬规则：
   // 音频只连视频合成节点混音）。URL 经 ARK presign 改写也能按对象 key 尾部反查回原节点。
-  const clipInputEdgeArgs = {
-    referenceImageUrls: [
-      ...referenceImages,
-      firstFrameUrl,
-      lastFrameUrl,
-      sourceVideoUrl,
-    ].filter(Boolean),
-    sourceNodeIds: [
-      readTrimmedString(nodeData.storyboardImageNodeId),
-      readTrimmedString(nodeData.blockingFrameNodeId),
-      ...normalizeStringList(
-        orch ? nodeData.videoReferenceNodeIds : nodeData.referenceImageNodeIds,
-      ),
-    ].filter(Boolean),
-  };
   const videoInputPosterUrl = readVideoInputPosterUrl({
     firstFrameUrl,
     referenceImages,
   });
-  const voiceReferenceNodeIds = readVoiceReferenceNodeIds(nodeData.voiceBinding);
   // 【clip 持久副作用身份·2026-08-10】上游 taskId 已在 Effect Ledger 的 accepted 转换中持久化；
   // 画布占位只是展示投影。节点被 stale 快照冲掉时，驱动器从 PostgreSQL 账本重挂原任务，
   // 不再依赖可静默失败的内存/Redis 映射，也不允许因画布缺节点盲目重复提交。
@@ -2856,6 +2934,7 @@ export async function generateVideoToCanvas(input: {
       thumbnailUrl: null,
       vendor: createdVendor,
       taskId: billingTaskId,
+      providerAcceptedAt,
       // 统一标记 running，让小T 知道是「已提交在后台跑」而非失败——收到后应 reconcile 而非重生成。
       status: "running" as const,
       ...(orch
@@ -2901,7 +2980,7 @@ export async function generateVideoToCanvas(input: {
       videoErr && typeof videoErr === "object" && "code" in videoErr
         ? String((videoErr as { code?: unknown }).code || "")
         : "";
-    if (billingTaskId && errCode === "agents_tool_video_generate_failed") {
+    if (billingTaskId && (errCode === "agents_tool_video_generate_failed" || errCode === "agents_tool_video_invalid_media")) {
       try {
         await releaseTeamCreditsOnFailure(input.c, input.requestUserId, {
           taskId: billingTaskId,
@@ -2920,6 +2999,14 @@ export async function generateVideoToCanvas(input: {
     }
     throw videoErr;
   }
+  const mediaProbeEvidence = evaluateWorkflowMediaProbe(
+    await probeMediaViaMediaWorker({ url: completed.videoUrl, timeoutMs: 30_000 }),
+    {
+      size: readTrimmedString(nodeData.videoSize) || readTrimmedString(nodeData.size) || null,
+      aspectRatio: readTrimmedString(nodeData.aspectRatio) || readTrimmedString(nodeData.aspect) || null,
+      durationSeconds,
+    },
+  );
   let completedAssetRegistrationError: string | null = null;
   if (!completed.assetId) {
     if (!generationContext) {
@@ -2989,6 +3076,7 @@ export async function generateVideoToCanvas(input: {
       ...(workflowEffectId
         ? {
             workflowSubmissionState: "materialized",
+            workflowSubmissionAcceptedAt: providerAcceptedAt,
             workflowSubmissionMaterializedAt: new Date().toISOString(),
           }
         : {}),
@@ -3016,6 +3104,8 @@ export async function generateVideoToCanvas(input: {
         ? { vendor: completed.vendor, videoModelVendor: completed.vendor }
         : {}),
       ...(resolvedVideoModel ? { videoModel: resolvedVideoModel } : {}),
+      mediaProbe: mediaProbeEvidence.probe,
+      mediaSpecDiagnostics: mediaProbeEvidence.diagnostics,
     },
   };
 
@@ -3119,6 +3209,7 @@ export async function generateVideoToCanvas(input: {
     thumbnailUrl: completed.thumbnailUrl,
     vendor: completed.vendor,
     taskId: completed.taskId,
+    providerAcceptedAt,
   };
 }
 
@@ -3146,7 +3237,7 @@ export async function reconcileVideoNodesForFlow(input: {
   stillRunning: number;
   postersBackfilled: number;
   posterBackfillFailed: number;
-  details: Array<{ nodeId: string; taskId: string; status: string }>;
+  details: Array<{ nodeId: string; taskId: string; status: string; providerConfirmedFailure?: boolean }>;
 }> {
   const settleTerminalEffect = async (inputValue: {
     data: Record<string, unknown>;
@@ -3190,6 +3281,7 @@ export async function reconcileVideoNodesForFlow(input: {
   const pending: Array<{ nodeId: string; node: Record<string, unknown>; d: Record<string, unknown>; taskId: string }> = [];
   const posterRepairs: Array<{ nodeId: string; d: Record<string, unknown> }> = [];
   const excludedNodeIds = new Set(input.excludeNodeIds ?? []);
+  let targetObservation: Record<string, unknown> | null = null;
   for (const n of nodes) {
     const d =
       n.data && typeof n.data === "object" && !Array.isArray(n.data)
@@ -3203,6 +3295,13 @@ export async function reconcileVideoNodesForFlow(input: {
       ? readTrimmedString(input.target.taskId)
       : "";
     if (input.target && nodeId !== input.target.nodeId) continue;
+    if (input.target) targetObservation = {
+      nodeId, status: d.status ?? null,
+      workflowSubmissionState: d.workflowSubmissionState ?? null,
+      persistedTaskId: persistedTaskId || null,
+      requestedTaskId: targetTaskId,
+      hasVideoUrl: Boolean(readTrimmedString(d.videoUrl)),
+    };
     if (input.target && persistedTaskId && persistedTaskId !== targetTaskId) continue;
     const taskId = persistedTaskId || targetTaskId;
     const st = readTrimmedString(d.status).toLowerCase();
@@ -3215,33 +3314,52 @@ export async function reconcileVideoNodesForFlow(input: {
       posterRepairs.push({ nodeId, d });
       continue;
     }
-    if (!isProviderTaskPendingStatus(st)) continue;
+    const explicitReceiptRecovery = input.target?.nodeId === nodeId
+      && !readTrimmedString(d.videoUrl)
+      && !(Array.isArray(d.videoResults) && d.videoResults.some((result: unknown) =>
+        result !== null && typeof result === "object"
+        && readTrimmedString((result as Record<string, unknown>).url)));
+    // An explicitly supplied receipt can repair an empty target even if an
+    // old authoring snapshot lost its transient submission-state projection.
+    // Existing receipt identity was checked above; existing assets are never replaced.
+    if (!isProviderTaskPendingStatus(st) && !explicitReceiptRecovery) continue;
     if (!taskId) continue;
     pending.push({ nodeId, node: n, d, taskId });
+  }
+  if (input.target && pending.length === 0 && posterRepairs.length === 0
+    && targetObservation?.hasVideoUrl !== true) {
+    throw new AppError("Requested video reconciliation target was not eligible; no provider lookup performed", {
+      status: 409,
+      code: "video_reconcile_target_not_eligible",
+      details: { target: input.target, observation: targetObservation },
+    });
   }
   let reconciled = 0;
   let failed = 0;
   let stillRunning = 0;
   let postersBackfilled = 0;
   let posterBackfillFailed = 0;
-  const details: Array<{ nodeId: string; taskId: string; status: string }> = [];
+  const details: Array<{ nodeId: string; taskId: string; status: string; providerConfirmedFailure?: boolean }> = [];
   // 单次串行处理(每节点一次状态查询,不长等)；上限保护避免一次扫太多。
   for (const item of pending.slice(0, 24)) {
     const taskId = item.taskId;
-    const vendor = readTrimmedString(item.d.vendor) || "newapi";
-    const declaredTaskKind = readTrimmedString(item.d.videoTaskKind);
+    const submittedSettings = readSubmittedMediaSettings(item.d);
+    const vendor = readTrimmedString(submittedSettings.vendor) || "newapi";
+    const declaredTaskKind = readTrimmedString(submittedSettings.videoTaskKind);
     const taskKind: "text_to_video" | "image_to_video" | "video_enhance" =
       declaredTaskKind === "text_to_video" || declaredTaskKind === "video_enhance"
         ? declaredTaskKind
         : "image_to_video";
     let outcomeStatus = "running";
+    let providerConfirmedFailure = false;
     try {
       const outcome = await fetchTaskResultForPolling(input.c, input.requestUserId, {
         taskId,
         vendor,
         taskKind,
-        prompt: readTrimmedString(item.d.prompt),
+        prompt: readTrimmedString(submittedSettings.prompt),
         mode: "public",
+        refreshFailedResult: Boolean(input.target),
         // 后台 reconcile：单节点上游查询最多等 20s，超时视为仍在跑，下次 tick 再试。
         timeoutMs: 20_000,
       });
@@ -3254,14 +3372,22 @@ export async function reconcileVideoNodesForFlow(input: {
       const status = readTrimmedString(outcome.result.status).toLowerCase();
       const extracted = extractVideoAssetFromTaskResult(outcome.result);
       const billingModelKey =
-        (readTrimmedString(item.d.videoModel) || "").replace(/-apimart$/, "") || undefined;
+        (readTrimmedString(submittedSettings.videoModel) || "").replace(/-apimart$/, "") || undefined;
       const specKey = taskKind === "video_enhance"
-        ? readTrimmedString(item.d.billingSpecKey)
+        ? readTrimmedString(submittedSettings.billingSpecKey)
         : buildVideoBillingSpecKey(
-            normalizeVideoResolution(item.d.videoResolution ?? item.d.resolution),
-            normalizePositiveInteger(item.d.videoDurationSeconds ?? item.d.durationSeconds) ?? null,
+            normalizeVideoResolution(submittedSettings.videoResolution ?? submittedSettings.resolution),
+            normalizePositiveInteger(submittedSettings.videoDurationSeconds ?? submittedSettings.durationSeconds) ?? null,
       );
       if (status === "succeeded" && extracted.videoUrl) {
+        const mediaProbeEvidence = evaluateWorkflowMediaProbe(
+          await probeMediaViaMediaWorker({ url: extracted.videoUrl, timeoutMs: 30_000 }),
+          {
+            size: readTrimmedString(submittedSettings.videoSize) || readTrimmedString(submittedSettings.size) || null,
+            aspectRatio: readTrimmedString(submittedSettings.aspectRatio) || readTrimmedString(submittedSettings.aspect) || null,
+            durationSeconds: normalizePositiveInteger(submittedSettings.videoDurationSeconds ?? submittedSettings.durationSeconds),
+          },
+        );
         let resolvedAssetId = extracted.assetId;
         let assetRegistrationError: string | null = null;
         if (!resolvedAssetId) {
@@ -3280,8 +3406,8 @@ export async function reconcileVideoNodesForFlow(input: {
                   thumbnailUrl: extracted.thumbnailUrl,
                   vendor: resultVendor,
                   taskKind,
-                  prompt: readTrimmedString(item.d.prompt),
-                  modelKey: readTrimmedString(item.d.videoModel) || null,
+                  prompt: readTrimmedString(submittedSettings.prompt),
+                  modelKey: readTrimmedString(submittedSettings.videoModel) || null,
                   taskId,
                   generationContext: {
                     projectId,
@@ -3303,11 +3429,14 @@ export async function reconcileVideoNodesForFlow(input: {
           posterInline: extracted.posterInline,
         });
         const durationSeconds = normalizePositiveInteger(
-          item.d.videoDurationSeconds ?? item.d.durationSeconds,
+          submittedSettings.videoDurationSeconds ?? submittedSettings.durationSeconds,
         );
         const completedData: Record<string, unknown> = {
-          ...item.d,
           status: "success",
+          ...(readTrimmedString(item.d.workflowEffectId) ? {
+            workflowSubmissionState: "materialized",
+            workflowSubmissionReconciledAt: new Date().toISOString(),
+          } : {}),
           videoUrl: extracted.videoUrl,
           ...(extracted.thumbnailUrl ? { videoThumbnailUrl: extracted.thumbnailUrl } : {}),
           videoResults: [
@@ -3327,7 +3456,8 @@ export async function reconcileVideoNodesForFlow(input: {
           taskId,
           videoTaskId: taskId,
           vendor: resultVendor,
-          videoModelVendor: resultVendor,
+          mediaProbe: mediaProbeEvidence.probe,
+          mediaSpecDiagnostics: mediaProbeEvidence.diagnostics,
         };
         const finalData = posterResolution.thumbnailUrl || posterResolution.posterInline
           ? applyGeneratedVideoPoster(completedData, posterResolution)
@@ -3371,6 +3501,23 @@ export async function reconcileVideoNodesForFlow(input: {
             return {
               allowOverwrite: true,
               patchNodeData: [{ id: item.nodeId, data: finalData }],
+              createEdges: buildClipInputEdges({
+                current: cur,
+                clipNodeId: item.nodeId,
+                referenceImageUrls: [
+                  ...normalizeStringList(item.d.referenceImages),
+                  readTrimmedString(item.d.firstFrameUrl),
+                  readTrimmedString(item.d.lastFrameUrl),
+                  readTrimmedString(item.d.sourceVideoUrl),
+                ].filter(Boolean),
+                sourceNodeIds: [
+                  ...normalizeStringList(item.d.referenceImageNodeIds),
+                  ...normalizeStringList(item.d.videoReferenceNodeIds),
+                  readTrimmedString(item.d.storyboardImageNodeId),
+                  readTrimmedString(item.d.blockingFrameNodeId),
+                ].filter(Boolean),
+                sourceAssetIds: normalizeStringList(item.d.referenceAssetIds),
+              }),
               ...(archive ? { createNodes: [archive.node] } : {}),
             };
           },
@@ -3380,13 +3527,13 @@ export async function reconcileVideoNodesForFlow(input: {
             taskKind,
             modelKey: billingModelKey,
             specKey: specKey || undefined,
-            ...(taskKind === "image_to_video" && normalizePositiveInteger(item.d.referenceVideoDurationSeconds) != null
+            ...(taskKind === "image_to_video" && normalizePositiveInteger(submittedSettings.referenceVideoDurationSeconds) != null
               ? {
                   outputDurationSeconds: normalizePositiveInteger(
-                    item.d.videoDurationSeconds ?? item.d.durationSeconds,
+                    submittedSettings.videoDurationSeconds ?? submittedSettings.durationSeconds,
                   ),
                   referenceVideoDurationSeconds: normalizePositiveInteger(
-                    item.d.referenceVideoDurationSeconds,
+                    submittedSettings.referenceVideoDurationSeconds,
                   ),
                 }
               : {}),
@@ -3439,7 +3586,6 @@ export async function reconcileVideoNodesForFlow(input: {
                     {
                       id: item.nodeId,
                       data: {
-                        ...item.d,
                         status: "failed",
                         errorMessage: "生成结果资产已失效（上游任务已过期），请重新生成",
                       },
@@ -3456,7 +3602,9 @@ export async function reconcileVideoNodesForFlow(input: {
         });
         outcomeStatus = effectError ? "failed_effect_ledger_failed" : "failed";
       } else if (status === "failed") {
+        providerConfirmedFailure = true;
         const providerFailure = buildProviderTaskFailureMessage(outcome.result);
+        const providerFailureCode = readProviderTaskFailureCode(outcome.result);
         await persistVideoNodePatch({
           c: input.c,
           requestUserId: input.requestUserId,
@@ -3473,8 +3621,12 @@ export async function reconcileVideoNodesForFlow(input: {
                     {
                       id: item.nodeId,
                       data: {
-                        ...item.d,
                         status: "failed",
+                        errorCode: providerFailureCode,
+                        taskId,
+                        videoTaskId: taskId,
+                        vendor: resultVendor,
+                        workflowSubmissionState: "failed",
                         ...(providerFailure
                           ? {
                               errorMessage: providerFailure,
@@ -3564,7 +3716,7 @@ export async function reconcileVideoNodesForFlow(input: {
         stillRunning += 1;
       }
     }
-    details.push({ nodeId: item.nodeId, taskId, status: outcomeStatus });
+    details.push({ nodeId: item.nodeId, taskId, status: outcomeStatus, ...(providerConfirmedFailure ? { providerConfirmedFailure: true } : {}) });
   }
 
   for (const item of posterRepairs.slice(0, 24)) {

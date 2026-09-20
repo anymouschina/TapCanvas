@@ -8,11 +8,6 @@ const TEST_GENERATION_CONTRACT = {
 	videoModel: "doubao-seedance-2-0-260128",
 	durationOptions: [5, 10, 15],
 	maxDurationSeconds: 15,
-	referenceImagePolicy: {
-		countUnit: "unique_url" as const,
-		maximumTotalImages: 9,
-		maximumBusinessImages: 9,
-	},
 	referenceAudioPolicy: {
 		minimumDurationSeconds: 1.8,
 		maximumDurationSeconds: 30.2,
@@ -154,11 +149,6 @@ describe("buildClipPlaceholderNodes", () => {
 			videoModel: "m",
 			durationOptions: [5],
 			maxDurationSeconds: 5,
-			referenceImagePolicy: {
-				countUnit: "unique_url" as const,
-				maximumTotalImages: 9,
-				maximumBusinessImages: 9,
-			},
 			referenceAudioPolicy: {
 				minimumDurationSeconds: 1.8,
 				maximumDurationSeconds: 30.2,

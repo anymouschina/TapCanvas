@@ -570,6 +570,8 @@ export type WorkflowExecutionDto = {
     nodeLabel: string
     status: WorkflowNodeRunDto['status']
     errorMessage: string | null
+    waitingReasonCode?: 'structured_output_repair_required' | 'provider_balance_required' | 'workflow_agent_no_progress_recovery_deferred' | 'external_dependency_unavailable' | null
+    waitingReasonLabel?: string | null
   } | null
 }
 
@@ -1116,6 +1118,7 @@ export type AgentExecutionProvenanceDto = {
     decisionBasisRole?: 'professional_method' | 'evidence_only'
   }>
   loadedKnowledgeSources?: Array<{
+    readReceipt?: { toolCallId: string; candidateSetId: string; tool: 'knowledge_read' | 'prompt_example_read'; readAt: string }
     cardId: string
     title: string
     description?: string
@@ -1125,6 +1128,7 @@ export type AgentExecutionProvenanceDto = {
     contentHash: string
     contentChars: number
   }>
+  retrievalDecisions?: Array<{ version: 1; blocking: false; toolNames: string[]; toolCallIds: string[]; rationale: string; status: 'tool_actions_requested' | 'no_body_read_requested'; at: string }>
   startedAt: string
 }
 
@@ -5219,14 +5223,14 @@ export async function listShotFlows(projectId: string, shotId: string): Promise<
   return r.json()
 }
 
-export async function saveProjectFlow(payload: { id?: string; projectId: string; name: string; nodes: Node[]; edges: Edge[]; viewport?: { x: number; y: number; zoom: number } | null; sceneCreationProgress?: unknown; expectedRevision?: number }): Promise<FlowSaveReceipt> {
+export async function saveProjectFlow(payload: { id?: string; projectId: string; name: string; nodes: Node[]; edges: Edge[]; viewport?: { x: number; y: number; zoom: number } | null; sceneCreationProgress?: unknown; deletedNodeIds?: string[]; restoredNodeIds?: string[]; expectedRevision?: number }): Promise<FlowSaveReceipt> {
   const data = sanitizeFlowDataForPersistence({
     nodes: payload.nodes,
     edges: payload.edges,
     viewport: payload.viewport ?? null,
     ...(typeof payload.sceneCreationProgress === 'undefined' ? null : { sceneCreationProgress: payload.sceneCreationProgress }),
   })
-  const r = await apiFetch(`${API_BASE}/flows`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: payload.id, projectId: payload.projectId, name: payload.name, data, ownerType: 'project', ownerId: payload.projectId, expectedRevision: payload.expectedRevision, source: 'user' }) }))
+  const r = await apiFetch(`${API_BASE}/flows`, withAuth({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: payload.id, projectId: payload.projectId, name: payload.name, data, ownerType: 'project', ownerId: payload.projectId, expectedRevision: payload.expectedRevision, deletedNodeIds: payload.deletedNodeIds, restoredNodeIds: payload.restoredNodeIds, source: 'user' }) }))
   if (!r.ok) await throwApiError(r, `save flow failed: ${r.status}`)
   return r.json()
 }
@@ -5282,6 +5286,8 @@ export async function saveChapterFlow(payload: {
   edges: Edge[]
   viewport?: { x: number; y: number; zoom: number } | null
   sceneCreationProgress?: unknown
+  deletedNodeIds?: string[]
+  restoredNodeIds?: string[]
   expectedRevision?: number
 }): Promise<FlowSaveReceipt> {
   const data = sanitizeFlowDataForPersistence({
@@ -5304,6 +5310,8 @@ export async function saveShotFlow(payload: {
   edges: Edge[]
   viewport?: { x: number; y: number; zoom: number } | null
   sceneCreationProgress?: unknown
+  deletedNodeIds?: string[]
+  restoredNodeIds?: string[]
   expectedRevision?: number
 }): Promise<FlowSaveReceipt> {
   const data = sanitizeFlowDataForPersistence({
@@ -5431,7 +5439,7 @@ export async function getWorkflowExecutionMetrics(flowId?: string): Promise<Work
 
 export async function resumeWorkflowExecution(
   executionId: string,
-  request: Readonly<{ providerBalanceRestored?: true }> = {},
+  request: Readonly<{ providerBalanceRestored?: true; nodeId?: string }> = {},
 ): Promise<WorkflowExecutionDto> {
   const r = await apiFetch(`${API_BASE}/executions/${encodeURIComponent(executionId)}/resume`, withAuth({
     method: 'POST',
@@ -5440,6 +5448,53 @@ export async function resumeWorkflowExecution(
   }))
   if (!r.ok) await throwApiError(r, `resume workflow execution failed: ${r.status}`)
   return r.json()
+}
+
+export type WorkflowExecutionEventMessage = Readonly<{
+  id: string
+  event: string
+  data: unknown
+}>
+
+/** Subscribe to the resumable execution event stream. The caller owns the AbortController. */
+export async function getWorkflowEventHistory(executionId: string): Promise<Readonly<{
+  items: WorkflowExecutionEventDto[]
+  nextCursor: number | null
+}>> {
+  const response = await apiFetch(`${API_BASE}/executions/${encodeURIComponent(executionId)}/event-history`, withAuth())
+  if (!response.ok) await throwApiError(response, `get workflow event history failed: ${response.status}`)
+  return response.json()
+}
+
+export async function streamWorkflowExecutionEvents(
+  executionId: string,
+  options: Readonly<{ after?: number; signal: AbortSignal; onEvent: (event: WorkflowExecutionEventMessage) => void }>,
+): Promise<void> {
+  const after = typeof options.after === 'number' && Number.isFinite(options.after) ? Math.max(0, Math.floor(options.after)) : 0
+  const response = await apiFetch(`${API_BASE}/executions/${encodeURIComponent(executionId)}/events?after=${after}`, withAuth({ signal: options.signal, headers: { Accept: 'text/event-stream' } }))
+  if (!response.ok) await throwApiError(response, `stream workflow execution events failed: ${response.status}`)
+  if (!response.body) throw new Error('workflow_execution_event_stream_body_missing')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const parser = createSseEventParser()
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      for (const message of parser.push(decoder.decode(chunk.value, { stream: true }))) {
+        let data: unknown = message.data
+        try { data = JSON.parse(message.data) as unknown } catch { /* preserve plain-text event payload */ }
+        options.onEvent({ id: message.id, event: message.event, data })
+      }
+    }
+    for (const message of parser.finish()) {
+      let data: unknown = message.data
+      try { data = JSON.parse(message.data) as unknown } catch { /* preserve plain-text event payload */ }
+      options.onEvent({ id: message.id, event: message.event, data })
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 export async function getWorkflowExecutionSnapshot(executionId: string): Promise<WorkflowExecutionSnapshotDto> {

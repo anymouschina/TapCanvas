@@ -1,3 +1,4 @@
+export * from "./canvas-output-ownership";
 export const VIDEO_ORCHESTRATOR_PROTOCOL_VERSION = "1" as const;
 export const VIDEO_AUTHORING_GRAPH_PROTOCOL_VERSION = "2" as const;
 export const VIDEO_RUN_STATUS_PROTOCOL_VERSION = "2" as const;
@@ -10,7 +11,7 @@ export const VIDEO_ATOMIC_WORKFLOW_PROTOCOL_VERSION = "2" as const;
  * canvas. The editor, capability equipment boundary, and durable executor must
  * compare the same structural fact.
  */
-export const VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION = 71 as const;
+export const VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION = 90 as const;
 
 /**
  * SHA-256 of the canonical executable canvas template with instance-specific
@@ -20,7 +21,7 @@ export const VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION = 71 as const;
  * structurally different definitions can never both masquerade as the same version.
  */
 export const VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT =
-	"sha256:88a3dc15edf80a7268723be2b93e6a04f4e2366a8d7df1004ee4bd316d880f29" as const;
+	"sha256:c2bfa1aa9ec6d701d5ba77a9ed330569e7b409b0a955bdd74c028b644e4fd8bd" as const;
 
 /**
  * Editable one-click-production operations. These IDs are the stable bridge
@@ -30,10 +31,20 @@ export const VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT =
  */
 export const VIDEO_ATOMIC_WORKFLOW_NODE_IDS = [
 	"canvas-source",
+	"text-expansion-agent",
 	"delivery-contract",
 	"beat-sheet-agent",
+	"chapter-assets-agent",
+	"clip-design-fan-out",
+	"clip-design-agent",
+	"beat-sheet-assemble",
 	"beat-sheet-format",
+	"background-fan-out",
+	"background-image-generate",
+	"blocking-diagrams",
 	"asset-coverage",
+	"chapter-asset-prepare",
+	"asset-consumer-bind",
 	"asset-fan-out",
 	"asset-image-generate",
 	"clip-fan-out",
@@ -613,7 +624,7 @@ export function parseVideoAtomicWorkflowSnapshot(value: unknown): ParseResult<Vi
 		nodes.push(parsed.data);
 	}
 	if (nodes.map((node) => node.atomicNodeId).join(",") !== VIDEO_ATOMIC_WORKFLOW_NODE_IDS.join(",")) {
-		return failure("atomic workflow snapshot must contain the canonical fifteen nodes in order");
+		return failure("atomic workflow snapshot must contain every canonical node in order");
 	}
 	return {
 		success: true,

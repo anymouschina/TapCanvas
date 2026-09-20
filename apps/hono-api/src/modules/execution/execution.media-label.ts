@@ -13,6 +13,11 @@ const IMAGE_KIND_LABELS = Object.freeze({
 	palette: "色彩参考",
 	composition: "构图参考",
 } satisfies Readonly<Record<string, string>>);
+type ImageReferenceType = keyof typeof IMAGE_KIND_LABELS;
+
+function isImageReferenceType(value: string): value is ImageReferenceType {
+	return Object.prototype.hasOwnProperty.call(IMAGE_KIND_LABELS, value);
+}
 
 /**
  * Canvas labels are projections of persisted structured identity facts. They
@@ -27,7 +32,10 @@ export function workflowImageSemanticLabel(input: Readonly<{
 		|| readString(metadata, "canonicalName")
 		|| readString(metadata, "roleName");
 	const referenceType = readString(metadata, "referenceType");
-	const kindLabel = IMAGE_KIND_LABELS[referenceType];
+	const kindLabel = isImageReferenceType(referenceType)
+		? IMAGE_KIND_LABELS[referenceType]
+		: undefined;
+	if (displayName && metadata?.assetPurpose === "blocking_background") return `${displayName}场景底图`;
 	if (displayName && kindLabel) return `${displayName}${kindLabel}`;
 	return `图片生成结果 ${input.itemIndex + 1}`;
 }

@@ -9,18 +9,33 @@ import {
   type AgentVisibleImageReference,
 } from "./agents-tool-bridge.image-reference-ids";
 import { IMAGE_UNDERSTANDING_MODEL_KEY } from "./media-understanding-model";
+import { createHash } from "node:crypto";
+import { loadImageUnderstandingEvidence } from "./image-understanding-evidence";
+import { readImageUnderstandingContent } from "./image-understanding-content";
+import { imageAnalysisCacheKey, shareImageAnalysis } from "./image-understanding-cache";
+import { imageAnalysisCacheStore } from "./image-understanding-cache.repo";
 
 function readTrimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
 const DEFAULT_VISION_PROMPT =
-  "请客观描述这张图：主体/产品是什么、颜色与材质、关键卖点、人物外形(年龄/体型/发型/服装)、构图与镜头特征、可推断的拍摄年代/质感。用于后续视频编排锚定同一主体。";
+  "客观读取图片中可见的对象、外观、结构、文字、空间关系和动作。分别说明直接观察、图中文字声称、推断和无法确认的信息，并指出各项依据。不能把文件名、生成提示词或外观推测当作已验证事实。返回文字分析，不返回媒体 URL。";
 
 export type AnalyzeImageResult = {
   ok: true;
   text: string;
   reference: AgentVisibleImageReference | null;
+  provenance: {
+    version: 1;
+    mediaType: "image";
+    modelKey: string;
+    taskId: string;
+    referenceId: string | null;
+    promptHash: string;
+    analysisHash: string;
+    analyzedAt: string;
+  };
 };
 
 /**
@@ -75,25 +90,84 @@ export async function analyzeImageForAgent(input: {
   }
 
   const prompt = readTrimmedString(args.prompt) || readTrimmedString(args.question) || DEFAULT_VISION_PROMPT;
-  const request = buildPublicVisionTaskRequest(
-    {} as Parameters<typeof buildPublicVisionTaskRequest>[0],
-    { imageUrl, imageData: null, prompt },
-  );
-  const { result } = await runPublicTask(input.c, input.requestUserId, { request });
-  const raw = result?.raw as { text?: unknown } | null | undefined;
-  const text = typeof raw?.text === "string" ? raw.text.trim() : "";
-  if (!text) {
-    throw new AppError(`${IMAGE_UNDERSTANDING_MODEL_KEY} 图片理解未返回文本`, {
-      status: 502,
-      code: "agents_tool_analyze_image_empty",
-      details: { modelKey: IMAGE_UNDERSTANDING_MODEL_KEY },
-    });
-  }
+  const { contentHash, imageData } = await readImageUnderstandingContent(imageUrl);
+  const promptHash = createHash("sha256").update(prompt).digest("hex");
+  const analysisContext = {
+    event: "media_understanding",
+    projectId: input.row?.project_id ?? null,
+    flowId: input.row?.id ?? null,
+    userId: input.requestUserId,
+    mediaType: "image",
+    modelKey: IMAGE_UNDERSTANDING_MODEL_KEY,
+    referenceId: resolvedReference?.referenceId ?? null,
+    promptHash,
+  };
+  const key = imageAnalysisCacheKey({
+    ownerId: input.requestUserId,
+    billingScope: readTrimmedString(input.c.get("apiKeyBillingTeamId")) || readTrimmedString(input.c.get("activeTeamId")) || input.requestUserId,
+    contentHash, promptHash, modelKey: IMAGE_UNDERSTANDING_MODEL_KEY,
+  });
+  const analysis = await shareImageAnalysis({
+    key, store: imageAnalysisCacheStore(input.c.env.DB, input.requestUserId, key),
+    recover: async () => {
+      const evidence = await loadImageUnderstandingEvidence({
+        db: input.c.env.DB, ownerId: input.requestUserId, contentKey: key,
+        requestedAnalysis: { promptHash, modelKey: IMAGE_UNDERSTANDING_MODEL_KEY },
+        references: [{ referenceId: resolvedReference?.referenceId ?? `image-sha256:${contentHash}`, url: imageUrl }],
+      });
+      const receipt = evidence[0];
+      return receipt ? { text: receipt.text, provenance: receipt.provenance } : null;
+    },
+    execute: async () => {
+      const visionRequest = buildPublicVisionTaskRequest(
+        {} as Parameters<typeof buildPublicVisionTaskRequest>[0],
+        { imageUrl, imageData, prompt },
+      );
+      const request = { ...visionRequest, extras: { ...visionRequest.extras, imageUnderstandingKey: key, imageContentHash: contentHash } };
+      const { result } = await runPublicTask(input.c, input.requestUserId, { request }).catch((error: unknown) => {
+        console.error(JSON.stringify({
+          ...analysisContext,
+          status: "failed",
+          errorCode: error instanceof AppError ? error.code : "media_understanding_request_failed",
+        }));
+        throw error;
+      });
+      if (result?.status !== "succeeded" || !result.id) {
+        console.error(JSON.stringify({ ...analysisContext, status: "failed", taskId: result?.id ?? null, taskStatus: result?.status ?? null }));
+        throw new AppError("图片理解任务没有成功回执，不能作为视觉事实使用", {
+          status: 502,
+          code: "agents_tool_analyze_image_unsatisfied",
+          details: { taskId: result?.id ?? null, taskStatus: result?.status ?? null, modelKey: IMAGE_UNDERSTANDING_MODEL_KEY },
+        });
+      }
+      const raw = result?.raw as { text?: unknown } | null | undefined;
+      const text = typeof raw?.text === "string" ? raw.text.trim() : "";
+      if (!text) {
+        console.error(JSON.stringify({ ...analysisContext, status: "failed", taskId: result.id, errorCode: "agents_tool_analyze_image_empty" }));
+        throw new AppError(`${IMAGE_UNDERSTANDING_MODEL_KEY} 图片理解未返回文本`, {
+          status: 502,
+          code: "agents_tool_analyze_image_empty",
+          details: { modelKey: IMAGE_UNDERSTANDING_MODEL_KEY },
+        });
+      }
+      const provenance = {
+        version: 1 as const,
+        mediaType: "image" as const,
+        modelKey: IMAGE_UNDERSTANDING_MODEL_KEY,
+        taskId: result.id,
+        referenceId: resolvedReference?.referenceId ?? null,
+        promptHash,
+        analysisHash: createHash("sha256").update(text).digest("hex"),
+        analyzedAt: new Date().toISOString(),
+      };
+      console.info(JSON.stringify({ ...analysisContext, status: "succeeded", ...provenance }));
+      return { text, provenance };
+    },
+  });
   return {
     ok: true,
-    text,
-    reference: resolvedReference
-      ? describeExecutionImageReference(resolvedReference)
-      : null,
+    text: analysis.text,
+    provenance: { ...analysis.provenance, referenceId: resolvedReference?.referenceId ?? null },
+    reference: resolvedReference ? describeExecutionImageReference(resolvedReference) : null,
   };
 }

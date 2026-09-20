@@ -103,6 +103,15 @@ export function readVideoSubmitRejectedReferenceIds(error: unknown): string[] {
 }
 
 /**
+ * 任务网关返回明确的 4xx（模型/渠道/参数/额度被拒等）时，提交在付费边界之前就被拒绝：
+ * 没有任务标识、没有供应商受理，因此属于既成事实的 pre-upstream 拒绝。
+ * 只按 HTTP 语义判定，不匹配任何错误文案；5xx 与传输失败仍是未知，必须由调用方 fail-closed。
+ */
+export function isPreUpstreamTaskHttpRejection(status: number): boolean {
+  return status >= 400 && status < 500;
+}
+
+/**
  * 新错误用显式 upstreamRequestAttempted=false 证明发生在付费 POST 前；code 集合只用于恢复修复前
  * 已错误标成 upstream_uncertain 的持久化节点，不能作为新增错误的隐式默认分类。
  */

@@ -18,6 +18,12 @@ describe("database read transient retry", () => {
 		expect(isTransientDatabaseReadError(error)).toBe(true);
 	});
 
+	it("recognizes PostgreSQL readiness loss when the adapter omits SQLSTATE", () => {
+		const error = new Error("ConnectorError: the database system is not yet accepting connections");
+		expect(readDatabaseErrorCodes(error)).toEqual(["57P03"]);
+		expect(isTransientDatabaseReadError(error)).toBe(true);
+	});
+
 	it("retries only the failed read and returns its eventual value", async () => {
 		const read = vi.fn()
 			.mockRejectedValueOnce({ code: "40P01" })

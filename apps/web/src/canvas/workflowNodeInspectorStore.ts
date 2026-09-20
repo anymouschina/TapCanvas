@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type WorkflowNodeInspectorTab = 'configuration' | 'input' | 'output' | 'history' | 'run'
+export type WorkflowNodeInspectorTab = 'configuration' | 'input' | 'output' | 'history' | 'run' | 'diagnostics'
 
 type WorkflowNodeInspectorState = Readonly<{
   nodeId: string | null

@@ -6,19 +6,6 @@ vi.mock("./video-orchestrator.model-duration", () => ({
   ),
 }));
 
-vi.mock("../model-catalog/model-catalog.service", () => ({
-  listModelCatalogModels: vi.fn(async () => [{
-    modelKey: "doubao-seedance-2-0-260128",
-    modelAlias: "doubao-seedance-2-0-260128",
-    meta: {
-      videoOptions: {
-        supportsReferenceImages: true,
-        maxReferenceImages: 99,
-      },
-    },
-  }]),
-}));
-
 vi.mock("../new-api-models/new-api-models.service", () => ({
   isSelectableNewApiModel: vi.fn(() => true),
   matchesNewApiRuntimeModelIdentity: vi.fn((
@@ -38,6 +25,7 @@ vi.mock("../new-api-models/new-api-models.service", () => ({
     pricing: { cost: 1, enabled: true, specCosts: [] },
     meta: {
       videoOptions: {
+        durationOptions: [{ value: 5 }, { value: 10 }, { value: 15 }],
         maxReferenceImages: 30,
         maxReferenceAudioDurationSeconds: 30.2,
         resolutionOptions: [
@@ -63,25 +51,26 @@ import {
   resolveBeatSheetVideoGenerationContract,
   resolveVideoModelAspectOptions,
   resolveVideoModelAudioOnlyReferenceSupport,
-  resolveVideoModelMaximumReferenceImages,
+  resolveVideoGenerationContract,
   resolveVideoModelNativeAudioSupport,
   resolveVideoModelReferenceAudioPolicy,
-  resolveVideoModelReferenceImagePolicy,
   resolveVideoModelResolutionOptions,
   resolveStoryPlanGenerationContract,
   videoGenerationContractsEqual,
 } from "./video-orchestrator.generation-contract";
 
 describe("video generation contract", () => {
+  it("freezes duration, image and audio policies from exactly one fresh directory observation", async () => {
+    vi.mocked(listNewApiModels).mockClear();
+    const result = await resolveVideoGenerationContract({ c: {} as never, videoModel: "doubao-seedance-2-0-260128" });
+    expect(result).toMatchObject({ durationOptions: [5, 10, 15], referenceAudioPolicy: { maximumDurationSeconds: 30.2 } });
+    expect(listNewApiModels).toHaveBeenCalledTimes(1);
+    expect(listNewApiModels).toHaveBeenCalledWith(undefined, { kind: "video", enabled: true, fresh: true });
+  });
   const contract = {
     videoModel: "doubao-seedance-2-0-260128",
     durationOptions: [5, 10, 15],
     maxDurationSeconds: 15,
-    referenceImagePolicy: {
-      countUnit: "unique_url" as const,
-      maximumTotalImages: 30,
-      maximumBusinessImages: 30,
-    },
     referenceAudioPolicy: {
       minimumDurationSeconds: 1.8,
       maximumDurationSeconds: 30.2,
@@ -116,7 +105,7 @@ describe("video generation contract", () => {
     );
   });
 
-  it("首次 plan 只按显式 videoModel 从动态目录建立合同", async () => {
+  it("首次 plan 只按实时可执行目录建立合同，不依赖本地模型表", async () => {
     await expect(
       resolveStoryPlanGenerationContract({
         c: {} as never,
@@ -124,6 +113,16 @@ describe("video generation contract", () => {
         allowCatalogResolution: true,
       }),
     ).resolves.toEqual(contract);
+  });
+
+  it("does not require reference-image capacity to freeze a video contract", async () => {
+    vi.mocked(listNewApiModels).mockResolvedValueOnce([{
+      modelName: "video-without-capacity", requestModelKey: "video-without-capacity", enabled: true,
+      meta: { videoOptions: { supportsReferenceImages: true, durationOptions: [{ value: 15 }] } },
+    } as never]);
+    const result = await resolveVideoGenerationContract({ c: {} as never, videoModel: "video-without-capacity" });
+    expect(result.durationOptions).toEqual([15]);
+    expect(result).not.toHaveProperty("referenceImagePolicy");
   });
 
   it("单独读取仅音频参考拓扑能力，不从通用参考音频能力推断", async () => {
@@ -358,30 +357,6 @@ describe("video generation contract", () => {
         },
       },
     } as never]);
-    await expect(resolveVideoModelReferenceImagePolicy({
-      c: {} as never,
-      videoModel: contract.videoModel,
-    })).resolves.toEqual({
-      countUnit: "unique_url",
-      maximumTotalImages: 0,
-      maximumBusinessImages: 0,
-    });
-
-    vi.mocked(listNewApiModels).mockResolvedValueOnce([{
-      modelName: "doubao-seedance-2.0",
-      requestModelKey: "doubao-seedance-2.0",
-      routingAliases: [contract.videoModel],
-      enabled: true,
-      runtimeEndpoints: ["openai-video"],
-      pricing: { cost: 1, enabled: true, specCosts: [] },
-      meta: {
-        videoOptions: {
-          resolutionOptions: [{ value: "480p", label: "480p" }],
-          sizeOptions: [{ value: "16:9", label: "16:9", aspectRatio: "16:9" }],
-          supportsNativeAudio: false,
-        },
-      },
-    } as never]);
     await expect(resolveVideoModelReferenceAudioPolicy({
       c: {} as never,
       videoModel: contract.videoModel,
@@ -410,31 +385,12 @@ describe("video generation contract", () => {
     });
   });
 
-  it("底层视频适配器复用同一模型目录总图片预算，不派生固定供应商上限", async () => {
-    await expect(resolveVideoModelMaximumReferenceImages({
-      c: {} as never,
-      videoModel: contract.videoModel,
-    })).resolves.toBe(30);
-    expect(vi.mocked(listNewApiModels).mock.calls.at(-1)?.[1]).toEqual({
-      kind: "video",
-      enabled: true,
-      fresh: true,
-    });
-  });
-
-  it("以运行时合同的上限为准而不使用产品目录中的静态数字", async () => {
-    await expect(resolveVideoModelMaximumReferenceImages({
-      c: {} as never,
-      videoModel: contract.videoModel,
-    })).resolves.toBe(30);
-  });
-
-  it("运行时模型合同缺失时不使用产品目录中的静态能力兜底", async () => {
+  it("实时目录没有模型时明确报告模型未启用", async () => {
     vi.mocked(listNewApiModels).mockResolvedValueOnce([]);
-    await expect(resolveVideoModelMaximumReferenceImages({
+    await expect(resolveVideoGenerationContract({
       c: {} as never,
       videoModel: contract.videoModel,
-    })).rejects.toThrow(`video_model_runtime_contract_missing:${contract.videoModel}`);
+    })).rejects.toThrow(`video_model_not_enabled:${contract.videoModel}`);
   });
 
   it("生产阶段缺冻结合同或 plan 显式携带畸形合同时原地失败", async () => {

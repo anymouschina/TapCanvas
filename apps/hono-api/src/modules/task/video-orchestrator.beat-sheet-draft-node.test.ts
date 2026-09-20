@@ -167,11 +167,6 @@ describe("minimal BeatSheet authoring node", () => {
         videoModel: "model-a",
         durationOptions: [10, 30],
         maxDurationSeconds: 30,
-        referenceImagePolicy: {
-          countUnit: "unique_url",
-          maximumTotalImages: 30,
-          maximumBusinessImages: 30,
-        },
         referenceAudioPolicy: {
           minimumDurationSeconds: 1.8,
           maximumDurationSeconds: 30,

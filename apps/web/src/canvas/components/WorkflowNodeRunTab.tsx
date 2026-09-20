@@ -9,9 +9,7 @@ import { compileAgentWorkflow, runAgentWorkflow } from '../agentWorkflowExecutio
 import { restoreAgentWorkflowDefaultConnections } from '../agentWorkflowCanvasTemplate'
 import { useRFStore } from '../store'
 import {
-  needsVideoWorkflowCanvasDefinitionUpgrade,
   restoreVideoWorkflowDefaultConnections,
-  upgradeVideoWorkflowCanvasDefinition,
 } from '../videoWorkflowCanvasTemplate'
 import { compileVideoWorkflow, runVideoWorkflow } from '../videoWorkflowExecution'
 import { executeWorkflowNodeLocalTest, supportsWorkflowNodeLocalTest } from '../workflowNodeLocalTest'
@@ -235,29 +233,6 @@ export function RunTab(props: Readonly<{
             重建默认连接
           </Button>
         ) : null}
-        {trigger
-          && workflowKey === VIDEO_PRODUCTION_WORKFLOW_KEY
-          && needsVideoWorkflowCanvasDefinitionUpgrade(props.data) ? (
-            <Button
-              className="workflow-node-inspector__button"
-              variant="default"
-              leftSection={<IconRefresh className="workflow-node-inspector__button-icon" size={15} />}
-              disabled={props.readOnly}
-              onClick={() => {
-                try {
-                  const result = upgradeVideoWorkflowCanvasDefinition(workflowInstanceId)
-                  toast(
-                    `已升级 ${result.upgradedNodeCount} 个节点合同，新增 ${result.createdEdgeCount} 条连接，移除 ${result.deletedEdgeCount} 条旧连接`,
-                    'success',
-                  )
-                } catch (error: unknown) {
-                  toast(error instanceof Error ? error.message : '升级工作流定义失败', 'error')
-                }
-              }}
-            >
-              升级到当前模板
-            </Button>
-          ) : null}
         {trigger ? (
           <Button
             className="workflow-node-inspector__button workflow-node-inspector__button--primary"

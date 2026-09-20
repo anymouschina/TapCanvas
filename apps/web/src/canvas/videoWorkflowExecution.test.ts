@@ -4,6 +4,7 @@ import { useRFStore } from './store'
 import {
   VIDEO_ATOMIC_WORKFLOW_EDGES,
   VIDEO_ATOMIC_WORKFLOW_NODES,
+  VIDEO_PROMPT_ONLY_WORKFLOW_EDGES,
   createVideoWorkflowCanvasTemplate,
 } from './videoWorkflowCanvasTemplate'
 import { compileVideoWorkflow, runVideoWorkflow } from './videoWorkflowExecution'
@@ -56,7 +57,7 @@ function configureAgentModels(nodeIds: readonly string[]): void {
       workflowVideoAspectRatio: '16:9',
     })
   }
-  for (const assetImageNodeId of nodeIds.filter((id) => id.endsWith('asset-image-generate'))) {
+  for (const assetImageNodeId of nodeIds.filter((id) => id.endsWith('image-generate'))) {
     useRFStore.getState().updateNodeData(assetImageNodeId, {
       workflowImageModelKey: 'gpt-image-2',
       workflowImageAspectRatio: '16:9',
@@ -116,7 +117,7 @@ describe('one-click film atomic workflow execution', () => {
     expect(compiled.nodes).toHaveLength(VIDEO_ATOMIC_WORKFLOW_NODES.length)
     expect(compiled.nodes.find((node) => node.workflowNodeId === 'beat-sheet-format')).toMatchObject({
       operation: 'max_clip',
-      maxClipCount: 24,
+      maxClipCount: 80,
       executorRef: 'video.beat-sheet.take/v1',
     })
     expect(compiled.edges).toHaveLength(VIDEO_ATOMIC_WORKFLOW_EDGES.length)
@@ -133,7 +134,7 @@ describe('one-click film atomic workflow execution', () => {
       target: expect.stringContaining(':video-submit'),
     }))
     expect(compiled.edges.some((edge) => (
-      edge.source.includes(':asset-image-generate')
+      edge.source.includes(':asset-consumer-bind')
       && edge.target.includes(':production-handoff')
     ))).toBe(true)
   })
@@ -174,7 +175,7 @@ describe('one-click film atomic workflow execution', () => {
     configureAgentModels(result.nodeIds)
     useRFStore.setState((state) => ({
       edges: state.edges.filter((edge) => !(
-        edge.source.endsWith(':beat-sheet-format') && edge.target.endsWith(':clip-fan-out')
+        edge.source.endsWith(':blocking-diagrams') && edge.target.endsWith(':clip-fan-out')
       )),
     }))
 
@@ -190,7 +191,7 @@ describe('one-click film atomic workflow execution', () => {
     useRFStore.setState((state) => ({
       edges: state.edges.map((edge) => {
         if (!edge.target.endsWith(':clip-fan-out')) return edge
-        if (edge.source.endsWith(':beat-sheet-format')) {
+        if (edge.source.endsWith(':blocking-diagrams')) {
           return { ...edge, targetHandle: 'in-workflow:asset-items' }
         }
         return edge
@@ -278,7 +279,7 @@ describe('one-click film atomic workflow execution', () => {
     expect(compiled.nodes.some((node) => node.workflowNodeId === 'video-submit')).toBe(true)
   })
 
-  it('builds a prompt-only canvas whose ordinary run action cannot include media nodes', () => {
+  it('builds a prompt-only canvas with design images but no video submission', () => {
     useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
     const result = createVideoWorkflowCanvasTemplate({ executionScope: 'prompt_only' })
     configureAgentModels(result.nodeIds)
@@ -290,12 +291,20 @@ describe('one-click film atomic workflow execution', () => {
       'canvas-source',
       'delivery-contract',
       'beat-sheet-agent',
+      'chapter-assets-agent',
+      'clip-design-fan-out',
+      'background-fan-out',
+      'clip-design-agent',
+      'background-image-generate',
+      'beat-sheet-assemble',
       'beat-sheet-format',
+      'blocking-diagrams',
       'clip-fan-out',
       'clip-writer-agent',
       'prompt-package',
     ])
-    expect(compiled.edges).toHaveLength(10)
+    expect(compiled.nodes.find((node) => node.workflowNodeId === 'delivery-contract')?.inputPorts).toEqual(['canvas-facts'])
+    expect(compiled.edges).toHaveLength(VIDEO_PROMPT_ONLY_WORKFLOW_EDGES.length)
     expect(compiled.nodes.some((node) => node.workflowNodeId === 'asset-coverage')).toBe(false)
     expect(compiled.nodes.some((node) => node.workflowNodeId === 'video-submit')).toBe(false)
     expect(compiled.nodes.find((node) => node.workflowNodeId === 'clip-fan-out')?.inputPorts).toEqual(['delivery-contract', 'beat-sheet'])

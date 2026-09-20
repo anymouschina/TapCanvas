@@ -14,6 +14,16 @@ const dialogueScript = [{
 }];
 
 describe("materializeWriterSpeechEvents", () => {
+  it("reports exact frozen event cardinality and coordinates without inventing missing events", () => {
+    const clip = { speechEvents: [], shots: [] };
+    const result = materializeWriterSpeechEvents({ clip, dialogueScript, clipDurationSeconds: 5 });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected missing events");
+    expect(result.issues).toContainEqual({ path: "speechEvents", problem: expect.stringContaining("恰好 1 项，当前 0 项") });
+    expect(result.issues[0]?.problem).toContain('"lineId":"L01"');
+    expect(result.issues[0]?.problem).toContain('"codePointLength":8');
+    expect(clip.speechEvents).toEqual([]);
+  });
   it("projects exact frozen ledger coordinates without changing writer-owned timing", () => {
     const projected = projectWriterSpeechStructure({
       clip: {

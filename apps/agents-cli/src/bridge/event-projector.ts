@@ -351,6 +351,10 @@ export class HarnessEventProjector {
   }
 
   finish(response: JsonObject, text: string): void {
+    const trace = isJsonObject(response.trace) ? response.trace : {};
+    const outcome = isJsonObject(trace.runOutcome) ? trace.runOutcome : {};
+    const pending = outcome.terminal === false;
+    const succeeded = outcome.status === 'succeeded';
     this.ensureAssistantStarted();
     this.emit({
       event: "item.completed",
@@ -370,13 +374,13 @@ export class HarnessEventProjector {
       data: {
         threadId: this.threadId,
         turnId: this.turnId,
-        status: this.isCompleted() ? "completed" : "failed",
+        status: pending ? "waiting" : succeeded ? "completed" : "failed",
         termination: this.termination(),
       },
     });
     this.emit({
       event: "done",
-      data: { reason: this.isCompleted() ? "logical_succeeded" : "logical_failed" },
+      data: { reason: pending ? "waiting_external" : succeeded ? "logical_succeeded" : "logical_failed" },
     });
   }
 }

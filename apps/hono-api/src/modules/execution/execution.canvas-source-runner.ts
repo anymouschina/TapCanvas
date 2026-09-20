@@ -1,8 +1,11 @@
-import type { WorkflowProjectContext } from "./execution.project-context";
+import { projectCanvasMembership } from "@tapcanvas/workflow-kernel-protocol";
+import { parseWorkflowCallerCanvasSnapshot, type WorkflowProjectContext } from "./execution.project-context";
 import type {
 	WorkflowCanvasGroupFacts,
 	WorkflowCanvasProjectContextFacts,
 } from "./execution.video-workflow-contract";
+import type { WorkflowAcceptedTurnSource } from "./execution.workflow-source-authority";
+import { freezeWorkflowAuthoritativeSource } from "./execution.source-lineage";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -20,7 +23,7 @@ function parseFlowData(raw: unknown): JsonRecord {
 		}
 	}
 	if (!isRecord(parsed) || !Array.isArray(parsed.nodes)) throw new Error("Canvas flow has no nodes array");
-	return parsed;
+	return projectCanvasMembership(parsed) as JsonRecord;
 }
 
 export async function readWorkflowCanvasGroup(
@@ -79,28 +82,55 @@ export function readWorkflowCanvasGroupFromFlowData(
  * group. Explicitly selected nodes win. For chapter scope, the frozen
  * ProjectContext carries the canonical locked chapter seed as sourceNodeId;
  * derived script/look-bible text nodes remain visible assets but are not
- * mistaken for the narrative source. A free-form canvas still requires one
- * ready text source when no selection is provided.
+ * mistaken for the narrative source. A completed text-expansion workflow can
+ * mark one ready node as `expanded_story_source`; when no selection or
+ * canonical chapter source is provided, that structural role wins over older
+ * drafts. A free-form canvas still requires one ready text source otherwise.
  */
 export function readWorkflowCanvasProjectContextFromFlowData(
 	input: Readonly<{
 		flowId: string;
 		rowData: string;
 		projectContext: WorkflowProjectContext;
+		/** Standalone public chat may use a selected video as the only source. */
+		allowNoTextSource?: boolean;
+		/** A server-owned public turn can be the sole creative source when the caller canvas has no text node. */
+		acceptedTurnSource?: WorkflowAcceptedTurnSource | null;
 	}>,
 ): WorkflowCanvasProjectContextFacts {
 	const flow = parseFlowData(input.rowData);
 	const nodes = Array.isArray(flow.nodes) ? flow.nodes.filter(isRecord) : [];
 	const nodesById = new Map(nodes.map((node) => [readNodeId(node), node] as const));
-	const readyTextNodeIds = [...new Set(input.projectContext.assetSnapshot.flatMap((asset) => (
-		asset.flowId === input.projectContext.canvasId
-		&& asset.mediaKind === "text"
-		&& asset.state === "ready"
-		&& asset.nodeId
-			? [asset.nodeId]
-			: []
-	)))];
+	// Project-node projections (for example the durable workflow status card) can
+	// be indexed as `mediaKind=text` even though their canvas node has no source
+	// facts.  A source is executable only when the current flow node itself
+	// exposes a kind and non-empty content/chapterText/prompt.  Keep the asset
+	// snapshot as the readiness signal, but require the node facts here so a
+	// status projection can never become the narrative source by accident.
+	const readyTextNodeIds = [...new Set(input.projectContext.assetSnapshot.flatMap((asset) => {
+		if (
+			asset.flowId !== input.projectContext.canvasId
+			|| asset.mediaKind !== "text"
+			|| asset.state !== "ready"
+			|| !asset.nodeId
+		) return [];
+		const node = nodesById.get(asset.nodeId);
+		// Keep an absent node in the candidate set so the later, explicit
+		// "does not exist" error remains observable; only an existing node with
+		// invalid facts is excluded as a non-source projection.
+		if (!node) return [asset.nodeId];
+		const data = isRecord(node.data) ? node.data : null;
+		const kind = typeof data?.kind === "string" ? data.kind.trim() : "";
+		const content = [data?.content, data?.chapterText, data?.prompt]
+			.some((value) => typeof value === "string" && value.trim().length > 0);
+		return kind && content ? [asset.nodeId] : [];
+	}))];
 	const readyTextNodeIdSet = new Set(readyTextNodeIds);
+	const expandedStorySourceNodeIds = readyTextNodeIds.filter((nodeId) => {
+		const node = nodesById.get(nodeId);
+		const data = node && isRecord(node.data) ? node.data : null;
+		return data?.workflowSourceRole === "expanded_story_source";
+	});
 	const selectedNodeIds = [...new Set([
 		...input.projectContext.selection.nodeIds,
 		...(input.projectContext.selection.activeNodeId
@@ -109,6 +139,19 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 	].map((value) => value.trim()).filter(Boolean))];
 	const explicitlySelectedIds = [...new Set(
 		selectedNodeIds.filter((value) => readyTextNodeIdSet.has(value)),
+	)];
+	const referenceVideoNodeIds = [...new Set(
+		selectedNodeIds.filter((value) => {
+			const node = nodesById.get(value);
+			if (!node) return false;
+			const data = isRecord(node.data) ? node.data : {};
+			const hasVideoUrl = typeof data.videoUrl === "string" && data.videoUrl.trim().length > 0;
+			const hasVideoResults = Array.isArray(data.videoResults) && data.videoResults.some((result) =>
+				isRecord(result) && typeof result.url === "string" && result.url.trim().length > 0);
+			// A video prompt node is an authoring artifact until media is materialized.
+			// Its kind alone cannot authorize a media-analysis invocation.
+			return hasVideoUrl || hasVideoResults;
+		}),
 	)];
 
 	let sourceNodeIds: string[] = [];
@@ -120,13 +163,23 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 	}
 	if (sourceNodeIds.length === 0) {
 		sourceNodeIds = explicitlySelectedIds;
-		if (selectedNodeIds.length > 0 && sourceNodeIds.length === 0) {
+		if (selectedNodeIds.length > 0 && sourceNodeIds.length === 0 && !input.allowNoTextSource) {
 			throw new Error("Project context selection does not include a ready text source node");
 		}
 	}
 	if (sourceNodeIds.length === 0) {
-		sourceNodeIds = readyTextNodeIds;
-		if (sourceNodeIds.length !== 1) {
+		if (input.allowNoTextSource && selectedNodeIds.length > 0) {
+			sourceNodeIds = [];
+		} else if (selectedNodeIds.length === 0 && expandedStorySourceNodeIds.length > 0) {
+			// A completed text-expansion workflow is an explicit structural source
+			// role. Prefer it over older draft text nodes so one-click production
+			// consumes the newly authored story without requiring manual deletion or
+			// semantic keyword routing.
+			sourceNodeIds = expandedStorySourceNodeIds;
+		} else {
+			sourceNodeIds = readyTextNodeIds;
+		}
+		if (sourceNodeIds.length !== 1 && !input.allowNoTextSource) {
 			throw new Error(
 				`Project context source requires exactly one ready text node when there is no explicit canvas selection or canonical source; found ${String(sourceNodeIds.length)}`,
 			);
@@ -160,21 +213,76 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 		};
 	});
 
-	return {
-		sourceMode: "project_context",
-		flowId: input.flowId,
-		sourceNodeIds,
-		nodes: sourceNodes,
-		authoritativeSources: sourceNodes.map((node) => ({
+	const acceptedSource = input.acceptedTurnSource;
+	const authoritativeSources = sourceNodes.length > 0
+		? sourceNodes.map((node) => freezeWorkflowAuthoritativeSource({
 			nodeId: node.nodeId,
 			content: node.content,
 			...(node.label ? { label: node.label } : {}),
 			...(node.sourceRevision !== undefined ? { sourceRevision: node.sourceRevision } : {}),
 			...(node.sourceHash ? { sourceHash: node.sourceHash } : {}),
-		})),
+		}))
+		: acceptedSource
+			? [{ sourceId: acceptedSource.sourceId, content: acceptedSource.text, sourceFingerprint: acceptedSource.fingerprint, kind: acceptedSource.kind }]
+			: [];
+
+	return {
+		sourceMode: "project_context",
+		flowId: input.flowId,
+		sourceNodeIds,
+		selectedNodeFacts: selectedNodeIds.flatMap((nodeId) => {
+			const node = nodesById.get(nodeId);
+			if (!node) return [];
+			const data = isRecord(node.data) ? node.data : {};
+			if (data.adminWorkflow === true) return [];
+			return [{
+				nodeId,
+				assetIds: input.projectContext.assetSnapshot.filter((asset) => (
+					asset.flowId === input.projectContext.canvasId && asset.nodeId === nodeId
+				)).map((asset) => asset.assetId),
+				// Preserve persisted descriptions as source metadata, not observed
+				// visual facts or authoritative narrative. Media remains ID-bound.
+				metadata: Object.fromEntries([
+					"kind", "label", "content", "chapterText", "prompt", "description",
+					"referenceType", "roleName", "physicalIdentityKey",
+				].filter((field) => !sourceNodeIds.includes(nodeId)
+					|| !["content", "chapterText", "prompt"].includes(field))
+				.flatMap((field) => typeof data[field] === "string" && data[field].trim()
+					? [[field, data[field]]] : [])),
+			}];
+		}),
+		missingSelectedNodeIds: selectedNodeIds.filter((nodeId) => !nodesById.has(nodeId)),
+		...(referenceVideoNodeIds.length > 0 ? { referenceVideoNodeIds } : {}),
+		referenceVideoDiagnostics: selectedNodeIds.flatMap((nodeId) => {
+			const node = nodesById.get(nodeId);
+			const data = node && isRecord(node.data) ? node.data : {};
+			return (data.kind === "video" || data.kind === "composeVideo") && !referenceVideoNodeIds.includes(nodeId)
+				? [{ nodeId, code: "video_media_not_materialized", analysisRequested: false }] : [];
+		}),
+		nodes: sourceNodes,
+		authoritativeSources,
 	};
 }
 
 function readNodeId(value: unknown): string {
 	return isRecord(value) && typeof value.id === "string" ? value.id.trim() : "";
+}
+
+/** Narrative identity and content must come from the same acceptance snapshot. */
+export function readWorkflowCanvasProjectContextFromSnapshot(
+	input: Readonly<{
+		flowId: string;
+		flowVersionData: unknown;
+		projectContext: WorkflowProjectContext;
+		allowNoTextSource?: boolean;
+		acceptedTurnSource?: WorkflowAcceptedTurnSource | null;
+	}>,
+): WorkflowCanvasProjectContextFacts {
+	const root = isRecord(input.flowVersionData) ? input.flowVersionData : {};
+	const snapshot = parseWorkflowCallerCanvasSnapshot(root.workflowCallerCanvasSnapshot);
+	if (!snapshot) throw new Error("Project-context workflow source requires the frozen caller canvas snapshot");
+	return readWorkflowCanvasProjectContextFromFlowData({
+		...input,
+		rowData: JSON.stringify(snapshot),
+	});
 }

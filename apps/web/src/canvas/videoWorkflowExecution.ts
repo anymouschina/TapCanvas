@@ -9,6 +9,7 @@ import {
 import { useRFStore } from './store'
 import {
   VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
+  VIDEO_PROMPT_ONLY_WORKFLOW_NODE_IDS,
   VIDEO_WORKFLOW_MAX_CLIPS_MAX,
   VIDEO_WORKFLOW_MAX_CLIPS_MIN,
 } from './videoWorkflowCanvasTemplate'
@@ -81,15 +82,7 @@ export type CompiledVideoWorkflow = Readonly<{
   edges: readonly CompiledWorkflowEdge[]
 }>
 
-const PROMPT_ONLY_NODE_IDS = new Set([
-  'canvas-source',
-  'delivery-contract',
-  'beat-sheet-agent',
-  'beat-sheet-format',
-  'clip-fan-out',
-  'clip-writer-agent',
-  'prompt-package',
-])
+const PROMPT_ONLY_NODE_IDS = new Set<string>(VIDEO_PROMPT_ONLY_WORKFLOW_NODE_IDS)
 
 function nodeData(node: Node): Record<string, unknown> {
   return node.data && typeof node.data === 'object' ? node.data as Record<string, unknown> : {}
@@ -234,10 +227,6 @@ export function compileVideoWorkflow(
     throw new Error('当前工作流实例没有原子节点，请重新创建一键成片原子模板')
   }
   const compiledEdges = compileWorkflowPortEdges(graph.nodes, graph.edges)
-  const incompatibleEdge = compiledEdges.find((edge) => edge.sourcePort !== edge.targetPort)
-  if (incompatibleEdge) {
-    throw new Error(`一键成片端口类型不兼容：${incompatibleEdge.sourcePort} → ${incompatibleEdge.targetPort}`)
-  }
   const sourceNode = graph.nodes.find((node) => {
     const compiled = compileNode(node)
     return compiled?.category === 'source'

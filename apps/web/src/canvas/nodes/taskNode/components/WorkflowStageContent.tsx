@@ -1,8 +1,9 @@
 import React from 'react'
 import './WorkflowStageContent.css'
-import { ActionIcon, Tooltip } from '@mantine/core'
+import { ActionIcon, Menu, Tooltip } from '@mantine/core'
 import {
   IconBinaryTree,
+  IconDots,
   IconHistory,
   IconPlayerPlay,
   IconRefresh,
@@ -28,6 +29,8 @@ import { resolveWorkflowNodePresentation } from '../../../workflowNodePresentati
 import { WorkflowRuntimeProjection } from './WorkflowRuntimeProjection'
 import { WorkflowNodeGlyph } from './WorkflowNodeGlyph'
 import { useWorkflowNodeElapsedTime } from './useWorkflowNodeElapsedTime'
+import { WorkflowNodeStatusBar, type WorkflowNodeStatus } from './WorkflowNodeStatusBar'
+import { WorkflowNodePorts } from './WorkflowNodePorts'
 
 type WorkflowStageContentProps = {
   nodeId: string
@@ -165,6 +168,7 @@ export function WorkflowStageContent(props: WorkflowStageContentProps): React.JS
   const itemRuns = readWorkflowItemRuns(props.data.workflowItemRuns)
   const runtimeExpanded = props.data.workflowRuntimeExpanded === true
   const isRuntimeReference = props.data.workflowRuntimeReference === true
+  const runtimeReferenceDisabled = props.data.runtimeReferenceDisabled === true
   const runtimeReferenceCount = readCount(props.data, 'workflowRuntimeReferenceCount')
   const inspectedNodeId = useWorkflowNodeInspectorStore((state) => state.nodeId)
   const isVideoCoordinator = workflowKey === VIDEO_PRODUCTION_WORKFLOW_KEY && workflowNodeId === 'delivery-contract'
@@ -185,6 +189,13 @@ export function WorkflowStageContent(props: WorkflowStageContentProps): React.JS
     errorCount,
     waitingReasonLabel,
   })
+  const primaryActionLabel = workflowStatus === 'waiting_external'
+    ? '查看等待中的外部结果'
+    : workflowStatus === 'partial'
+      ? '修复未完成项'
+      : workflowStatus === 'succeeded'
+        ? '查看本次结果'
+        : '运行到此节点'
 
   const refreshProjection = React.useCallback(async (): Promise<void> => {
     if (!isAdmin || workflowKey !== VIDEO_PRODUCTION_WORKFLOW_KEY || !projectId || !sourceGroupId || !requestedAt || !workflowInstanceId) return
@@ -232,8 +243,6 @@ export function WorkflowStageContent(props: WorkflowStageContentProps): React.JS
     inspector.setTab(tab)
   }
 
-  if (!isAdmin) return null
-
   return (
     <section
       className={'workflow-stage-content workflow-stage-content--category-' + presentation.variant + ' workflow-stage-content--' + workflowStatus + (inspectedNodeId === props.nodeId ? ' workflow-stage-content--inspected' : '') + (isRuntimeReference && runtimeReferenceDisabled ? ' workflow-stage-content--reference-disabled' : '')}
@@ -267,16 +276,16 @@ export function WorkflowStageContent(props: WorkflowStageContentProps): React.JS
             {readString(props.data, 'label') || presentation.operationLabel}
           </strong>
         </div>
-        <span className={'workflow-stage-content__status workflow-stage-content__status--' + workflowStatus}>
-          <span className="workflow-stage-content__status-dot" aria-hidden="true" />
-          {configurationState}{elapsed ? ` · ${elapsed.duration}` : ''}
-        </span>
+        <WorkflowNodeStatusBar
+          status={workflowStatus as WorkflowNodeStatus}
+          label={statusLabel(workflowStatus, operation, waitingReasonLabel)}
+          detail={configurationState !== statusLabel(workflowStatus, operation, waitingReasonLabel) ? configurationState : undefined}
+          progress={totalUnits !== null && totalUnits > 0 ? progressLabel : undefined}
+          elapsed={elapsed?.duration}
+        />
+        {elapsed?.duration ? <span className="sr-only">{statusLabel(workflowStatus, operation, waitingReasonLabel)} · {elapsed.duration}</span> : null}
       </header>
-      <div className="workflow-stage-content__ports">
-        <span className="workflow-stage-content__port" title={inputPorts.join(', ')}>{inputPorts.join(' · ') || '无输入'}</span>
-        <span className="workflow-stage-content__port-arrow" aria-hidden="true">→</span>
-        <span className="workflow-stage-content__port" title={outputPorts.join(', ')}>{outputPorts.join(' · ') || '无输出'}</span>
-      </div>
+      <WorkflowNodePorts inputPorts={inputPorts} outputPorts={outputPorts} />
       <p className="workflow-stage-content__summary">{presentation.summary}</p>
       <footer className="workflow-stage-content__footer">
         <span className={'workflow-stage-content__sync workflow-stage-content__sync--' + syncState} title={syncError || syncLabel}>
@@ -289,7 +298,7 @@ export function WorkflowStageContent(props: WorkflowStageContentProps): React.JS
                 : agentProgress?.detail || syncError || syncLabel}
         </span>
         <div className="workflow-stage-content__actions">
-          <Tooltip className="workflow-stage-content__tooltip" label="配置节点" withArrow>
+          {!props.readOnly ? <Tooltip className="workflow-stage-content__tooltip" label="配置节点" withArrow>
             <ActionIcon
               className="workflow-stage-content__action nodrag nopan"
               variant="subtle"
@@ -302,13 +311,13 @@ export function WorkflowStageContent(props: WorkflowStageContentProps): React.JS
             >
               <IconSettings className="workflow-stage-content__action-icon" size={15} aria-hidden="true" />
             </ActionIcon>
-          </Tooltip>
-          {!isRuntimeReference ? <Tooltip className="workflow-stage-content__tooltip" label="执行到此节点 / 隔离测试" withArrow>
+          </Tooltip> : null}
+          {!isRuntimeReference && !props.readOnly ? <Tooltip className="workflow-stage-content__tooltip" label={primaryActionLabel} withArrow>
             <ActionIcon
               className="workflow-stage-content__action workflow-stage-content__action--run nodrag nopan"
               variant="subtle"
               size="sm"
-              aria-label="打开节点运行面板"
+              aria-label={primaryActionLabel}
               onClick={(event) => {
                 event.stopPropagation()
                 openInspector('run')
@@ -347,6 +356,19 @@ export function WorkflowStageContent(props: WorkflowStageContentProps): React.JS
               </ActionIcon>
             </Tooltip>
           ) : null}
+          <Menu className="workflow-stage-content__menu" withinPortal position="bottom-end" shadow="md">
+            <Menu.Target className="workflow-stage-content__menu-target">
+              <ActionIcon className="workflow-stage-content__action nodrag nopan" variant="subtle" size="sm" aria-label="更多节点操作">
+                <IconDots className="workflow-stage-content__icondots" size={15} aria-hidden="true" />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown className="workflow-stage-content__menu-dropdown">
+              <Menu.Label className="workflow-stage-content__menu-label">节点操作</Menu.Label>
+              <Menu.Item className="workflow-stage-content__menu-item" onClick={() => openInspector('configuration')}>查看配置与输入</Menu.Item>
+              {!isRuntimeReference ? <Menu.Item className="workflow-stage-content__menu-item" onClick={() => openInspector('history')}>查看执行历史</Menu.Item> : null}
+              {!isRuntimeReference && itemRuns.length > 0 ? <Menu.Item className="workflow-stage-content__menu-item" onClick={() => useRFStore.getState().updateNodeData(props.nodeId, { workflowRuntimeExpanded: !runtimeExpanded })}>{runtimeExpanded ? '收起逐项运行' : '展开逐项运行'}</Menu.Item> : null}
+            </Menu.Dropdown>
+          </Menu>
         </div>
         {isVideoCoordinator && requestedAt ? (
           <div className="workflow-stage-content__actions">

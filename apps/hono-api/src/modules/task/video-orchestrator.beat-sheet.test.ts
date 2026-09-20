@@ -17,11 +17,6 @@ const GENERATION_CONTRACT = {
   videoModel: "doubao-seedance-2-0-260128",
   durationOptions: [5, 10, 15],
   maxDurationSeconds: 15,
-  referenceImagePolicy: {
-    countUnit: "unique_url" as const,
-    maximumTotalImages: 9,
-    maximumBusinessImages: 9,
-  },
   referenceAudioPolicy: {
     minimumDurationSeconds: 1.8,
     maximumDurationSeconds: 30.2,
@@ -179,6 +174,7 @@ function chapterText(count: number): string {
 describe("Keyframe BeatSheet v2 validation", () => {
 	it("uses canonical source coverage instead of requiring redundant per-beat task bindings", () => {
 		const sheet = makeSheet(1);
+		if (sheet.storyFactsContext.mode !== "task_context") throw new Error("Expected task-context fixture");
 		sheet.storyFactsContext = {
 			...sheet.storyFactsContext,
 			consumedContextKeys: ["chapter-source"],
@@ -277,7 +273,9 @@ describe("Keyframe BeatSheet v2 validation", () => {
 
 	it("reports sequence resolution before the final beat without blocking execution", () => {
 		const sheet = makeSheet(2);
-		sheet.beats[0]!.arcContract.closureMode = "sequence_resolution";
+		const arcContract = sheet.beats[0]?.arcContract;
+		if (!arcContract) throw new Error("Expected arc contract fixture");
+		arcContract.closureMode = "sequence_resolution";
 		const result = validateBeatSheet(sheet, chapterText(2), {
 			generationContract: GENERATION_CONTRACT,
 		});
@@ -414,6 +412,34 @@ describe("Keyframe BeatSheet v2 validation", () => {
 		expect(result.normalized.beats[0]?.speakerNames).toEqual(["医生", "沈知夏·内心"]);
 		expect(result.normalized.beats[0]?.dialogueScript).toHaveLength(1);
 		expect(result.normalized.beats[0]?.narrativeAudioPlan?.lines).toHaveLength(1);
+	});
+
+	it.each(["on_screen", "voice_over"] as const)("preserves authored %s speech when the source speech ledger is empty", (delivery) => {
+		const sheet = makeSheet(1);
+		const line = {
+			lineId: "authored-line-0",
+			speakerName: "讲解者",
+			text: "现在看这个位置。",
+			delivery,
+			afterSourceLineId: null,
+			sourceEvidence: ["source-unit-0000"],
+		};
+		sheet.beats[0]!.dialogueScript = [];
+		sheet.beats[0]!.narrativeAudioPlan = {
+			strategy: "source_grounded_voice",
+			rationale: "按委托创作讲解，原文没有逐字稿。",
+			lines: [line],
+		};
+		sheet.beats[0]!.dialoguePaceRate = 4;
+
+		const result = validateBeatSheet(sheet, chapterText(1), {
+			generationContract: GENERATION_CONTRACT,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.normalized.beats[0]?.dialogueScript).toEqual([]);
+		expect(result.normalized.beats[0]?.narrativeAudioPlan?.lines).toEqual([line]);
+		expect(result.normalized.beats[0]?.speakerNames).toEqual([line.speakerName]);
 	});
 
 	it("accepts an exact dialogueScript when speakerNames are declared", () => {
@@ -986,7 +1012,7 @@ describe("Keyframe BeatSheet v2 validation", () => {
     ).toContain("storyboardFrameCount 必须是 1～3 的整数");
   });
 
-  it("counts object-contract references together with the storyboard before production", () => {
+  it("preserves all object-contract references beyond a catalog image capacity", () => {
     const sheet = makeSheet(1);
     sheet.beats[0]!.assetObjectContracts = [
       objectContract("character", "孟川"),
@@ -998,9 +1024,8 @@ describe("Keyframe BeatSheet v2 validation", () => {
       generationContract: GENERATION_CONTRACT,
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.errors.join("|")).toContain("合并后需要 10 个业务图片槽");
-    expect(result.errors.join("|")).toContain("当前 generationContract 仅允许 9 个");
+    expect(result.ok).toBe(true);
+    expect(result.normalized.beats[0].assetObjectContracts).toHaveLength(9);
   });
 
   it("keeps unmaterialized object contracts in planning but rejects them at execution", () => {

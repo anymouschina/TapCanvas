@@ -103,6 +103,7 @@ export type AgentsChatDurableTerminalDelivery = {
 };
 
 export type AgentsChatTurnStatusSnapshot = {
+	structuredOutputRepair?: Record<string, unknown> | null;
 	sessionId: string;
 	durable: true;
 	activeTurn: boolean;
@@ -517,6 +518,10 @@ export function parseAgentsChatTurnStatusSnapshot(
 		if (!root || root.durable !== true || typeof root.activeTurn !== "boolean") {
 			throw new Error("missing durable status fields");
 		}
+		if (root.structuredOutputRepair !== undefined && root.structuredOutputRepair !== null
+			&& (!asRecord(root.structuredOutputRepair) || root.activeTurn)) {
+			throw new Error("structured repair requires an inactive object checkpoint");
+		}
 		const sessionId = requiredString(root, "sessionId");
 		if (sessionId !== expectedSessionId) throw new Error("sessionId mismatch");
 		if (root.turn === null) {
@@ -601,6 +606,7 @@ export function parseAgentsChatTurnStatusSnapshot(
 			sessionId,
 			durable: true,
 			activeTurn: root.activeTurn,
+			...(root.structuredOutputRepair === undefined ? {} : { structuredOutputRepair: asRecord(root.structuredOutputRepair) }),
 			turn: {
 				turnId: requiredString(turn, "turnId"),
 				internalTurnId: requiredString(turn, "internalTurnId"),
@@ -760,9 +766,9 @@ export async function getAgentsChatTurnStatus(
 	c: AppContext,
 	userId: string,
 	sessionId: string,
-	options: AgentsChatRuntimeRequestOptions,
+	options: AgentsChatRuntimeRequestOptions & { includeStructuredOutputRepair?: boolean },
 ): Promise<AgentsChatTurnStatusSnapshot> {
-	const payload = await postRuntimeJson(c, userId, "/chat/status", { sessionId }, options);
+	const payload = await postRuntimeJson(c, userId, "/chat/status", { sessionId, ...(options.includeStructuredOutputRepair ? { includeStructuredOutputRepair: true } : {}) }, options);
 	return parseAgentsChatTurnStatusSnapshot(payload, sessionId);
 }
 

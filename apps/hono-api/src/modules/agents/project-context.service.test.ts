@@ -17,7 +17,7 @@ vi.mock("../project/project.repo", async () => {
 	};
 });
 
-import { ensureProjectWorkspaceContextFiles } from "./project-context.service";
+import { ensureProjectWorkspaceContextFiles, getProjectBookStyleFacts } from "./project-context.service";
 import { commitStoryFacts } from "./story-facts.store";
 
 function buildBookIndexPath(ownerId: string, projectId: string, bookId: string): string {
@@ -49,6 +49,41 @@ function buildStoryStatePath(ownerId: string, projectId: string): string {
 }
 
 describe("ensureProjectWorkspaceContextFiles", () => {
+	it("exposes authored book style facts for workflow style seeding", async () => {
+		const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+		const ownerId = `test-owner-style-facts-${runId}`;
+		const projectId = `test-project-style-facts-${runId}`;
+		const bookId = `test-book-style-facts-${runId}`;
+		const indexPath = buildBookIndexPath(ownerId, projectId, bookId);
+		await fs.mkdir(path.dirname(indexPath), { recursive: true });
+		await fs.writeFile(indexPath, JSON.stringify({
+			bookId,
+			projectId,
+			chapters: [],
+			updatedAt: "2026-09-03T00:00:00.000Z",
+			assets: {
+				styleBible: {
+					styleName: "统一赛璐璐夜战",
+					visualDirectives: ["二维赛璐璐", "高对比蓝紫夜色"],
+					consistencyRules: ["角色服装主色跨镜不变"],
+					negativeDirectives: ["不得切换写实材质"],
+					referenceImages: ["https://cdn.test/style.png"],
+				},
+			},
+		}), "utf8");
+		try {
+			expect(await getProjectBookStyleFacts({ ownerId, projectId })).toEqual({
+				styleName: "统一赛璐璐夜战",
+				visualDirectives: ["二维赛璐璐", "高对比蓝紫夜色"],
+				consistencyRules: ["角色服装主色跨镜不变"],
+				negativeDirectives: ["不得切换写实材质"],
+				referenceImages: ["https://cdn.test/style.png"],
+			});
+		} finally {
+			await fs.rm(path.dirname(indexPath), { recursive: true, force: true });
+		}
+	});
+
 	it("renders latest character states and recent semantic assets from book metadata", async () => {
 		const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 		const ownerId = `test-owner-project-context-${runId}`;

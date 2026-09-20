@@ -87,7 +87,7 @@ export function compileWorkflowPortEdges(nodes: readonly Node[], edges: readonly
     if (!sourcePorts.outputs.includes(sourcePort)) {
       throw new Error(`节点“${nodeLabel(sourceNode)}”不存在输出端口 ${sourcePort}`)
     }
-    if (!targetPorts.inputs.includes(targetPort)) {
+    if (!targetPorts.inputs.includes(targetPort) && !targetPorts.optionalInputs.includes(targetPort)) {
       throw new Error(`节点“${nodeLabel(targetNode)}”不存在输入端口 ${targetPort}`)
     }
     return { id: edge.id, source: edge.source, sourcePort, target: edge.target, targetPort }

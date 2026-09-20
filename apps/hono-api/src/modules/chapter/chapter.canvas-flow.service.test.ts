@@ -121,7 +121,7 @@ describe("chapter.canvas-flow.service", () => {
 		expect(saved.edges.map((edge) => edge.id)).toEqual(["protected-edge"]);
 	});
 
-	it("普通整图保存不得删除或降级章节唯一真源种子的隐藏合同", async () => {
+	it("整图保存允许编辑章节正文并保留隐藏合同", async () => {
 		const canonicalSeed = {
 			id: "chapter-seed-c1",
 			type: "taskNode",
@@ -168,7 +168,16 @@ describe("chapter.canvas-flow.service", () => {
 		const saved = JSON.parse(chapters.get("c1")?.canvas_flow ?? "{}") as {
 			nodes: Array<{ id: string; data: Record<string, unknown> }>;
 		};
-		expect(saved.nodes.find((node) => node.id === "chapter-seed-c1")).toEqual(canonicalSeed);
+		const edited = saved.nodes.find((node) => node.id === "chapter-seed-c1");
+		expect(edited?.data).toMatchObject({
+			readOnly: false,
+			chapterText: "旧浏览器可见正文，但隐藏合同已丢",
+			content: "旧浏览器可见正文，但隐藏合同已丢",
+			sourceChapterRevision: 8,
+			storyPreviewContract: canonicalSeed.data.storyPreviewContract,
+		});
+		expect(edited?.data.sourceHash).not.toBe("hash-7");
+		expect(chapters.get("c1")).toHaveProperty("summary", "旧浏览器可见正文，但隐藏合同已丢");
 		expect(saved.nodes.find((node) => node.id === "note")?.data.text).toBe("edited");
 	});
 
@@ -253,6 +262,26 @@ describe("chapter.canvas-flow.service", () => {
 			clipIndex: 2,
 			clipRunId: "run1",
 		},
+	});
+
+	it("运行中的章节视频接受模型参数编辑并保留提交时的计费设置", async () => {
+		const node = { id: "editable-clip", type: "taskNode", data: {
+			kind: "video", status: "running", taskId: "provider-task",
+			videoModel: "submitted-model", videoResolution: "720p", videoDurationSeconds: 10,
+		} };
+		chapters.set("c1", { id: "c1", owner_id: "u1",
+			canvas_flow: JSON.stringify({ nodes: [node], edges: [] }), canvas_flow_revision: 5 });
+		const result = await putChapterCanvasFlow(makeCtx(chapters), "u1", "c1", {
+			expectedRevision: 5,
+			flow: { nodes: [{ ...node, data: { ...node.data,
+				videoModel: "user-model", videoResolution: "1080p", videoDurationSeconds: 5,
+			} }], edges: [] },
+		});
+		expect(result.authoritativeFlow?.nodes[0]).toMatchObject({ data: {
+			videoModel: "user-model", videoResolution: "1080p", videoDurationSeconds: 5,
+			taskId: "provider-task", status: "running",
+			workflowSubmittedSettings: { videoModel: "submitted-model", videoResolution: "720p", videoDurationSeconds: 10 },
+		} });
 	});
 
 	it("活跃 run 时：整图 PUT 把 success 视频节点降级回 running → 被护栏挡回 success", async () => {
@@ -363,6 +392,20 @@ describe("chapter.canvas-flow.service", () => {
 		const saved = JSON.parse(chapters.get("c1")!.canvas_flow!);
 		expect(saved.nodes.map((n: { id: string }) => n.id)).toEqual(["vclip-a"]);
 	});
+
+  it("preserves completed image results after the run ends against a stale autosave", async () => {
+    chapters.set("c1", { id: "c1", owner_id: "u1", canvas_flow_revision: 5,
+      canvas_flow: JSON.stringify({ nodes: [{ id: "image1", type: "taskNode", data: {
+        kind: "image", status: "success", imageUrl: "https://cdn/result.png",
+        imageResults: [{ url: "https://cdn/result.png" }], imagePrimaryIndex: 0,
+      } }], edges: [] }),
+    });
+    await putChapterCanvasFlow(makeCtx(chapters, []), "u1", "c1", { expectedRevision: 5,
+      flow: { nodes: [{ id: "image1", type: "taskNode", data: { kind: "image", status: "running", imageUrl: "" } }], edges: [] },
+    });
+    const saved = JSON.parse(chapters.get("c1")!.canvas_flow!) as { nodes: Array<{ data: Record<string, unknown> }> };
+    expect(saved.nodes[0]?.data).toMatchObject({ status: "success", imageUrl: "https://cdn/result.png", imageResults: [{ url: "https://cdn/result.png" }] });
+  });
 
 	it("run 终态后：同 id stale 快照不得把已完成成片降级或抹掉持久 URL", async () => {
 		chapters.set("c1", {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	computeWorkflowAgentPhysicalAttemptDeadlineAt,
 	materializeWorkflowExecutionControl,
 	parseWorkflowExecutionControl,
 	WORKFLOW_VIDEO_PROVIDER_EXECUTOR_REF,
@@ -13,10 +12,10 @@ const admission = {
 		kind: "video_provider_receipt" as const,
 		source: "public_chat" as const,
 		publicTurnId: "turn-1",
-		windowMs: 5 * 60_000,
+		acceptedAt: "2026-08-29T04:58:00.000Z",
 		targetExecutorRef: WORKFLOW_VIDEO_PROVIDER_EXECUTOR_REF,
 	},
-};
+} as const;
 
 describe("workflow production-start deadline", () => {
 	it("freezes only graph ancestors of the provider receipt boundary", () => {
@@ -36,7 +35,7 @@ describe("workflow production-start deadline", () => {
 				{ source: "beat-sheet", target: "video-submit" },
 				{ source: "video-submit", target: "concat" },
 			],
-		}, admission, "2026-08-29T05:00:00.000Z");
+		}, admission);
 
 		expect(control.productionStartDeadline.controlledNodeIds).toEqual([
 			"beat-sheet",
@@ -44,29 +43,12 @@ describe("workflow production-start deadline", () => {
 		]);
 		expect(control.productionStartDeadline).toMatchObject({
 			version: 2,
-			anchor: "workflow_execution_created",
-			acceptedAt: "2026-08-29T05:00:00.000Z",
-			deadlineAt: "2026-08-29T05:05:00.000Z",
+			anchor: "request_accepted",
+			acceptedAt: "2026-08-29T04:58:00.000Z",
+			deadlineAt: "2026-08-29T05:08:00.000Z",
 		});
 		expect(parseWorkflowExecutionControl(control)).toEqual(control);
+		expect(parseWorkflowExecutionControl({ ...control, productionStartDeadline: { ...control.productionStartDeadline, deadlineAt: "2026-08-29T05:03:00.000Z" } })).toBeNull();
 	});
 
-	it("gives every physical attempt the immutable production-start deadline", () => {
-		const control = materializeWorkflowExecutionControl({
-			nodes: [
-				{ id: "agent", data: {} },
-				{
-					id: "video",
-					data: { workflowAtomicSpec: { executorRef: WORKFLOW_VIDEO_PROVIDER_EXECUTOR_REF } },
-				},
-			],
-			edges: [{ source: "agent", target: "video" }],
-		}, admission, "2026-08-29T05:00:00.000Z").productionStartDeadline;
-		expect(computeWorkflowAgentPhysicalAttemptDeadlineAt({
-			productionStartDeadline: control,
-		})).toBe("2026-08-29T05:05:00.000Z");
-		expect(computeWorkflowAgentPhysicalAttemptDeadlineAt({
-			productionStartDeadline: control,
-		})).toBe("2026-08-29T05:05:00.000Z");
-	});
 });

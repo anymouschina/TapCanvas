@@ -48,12 +48,12 @@ describe("workflow Agent public turn identity", () => {
 });
 
 describe("workflow Agent durable session identity", () => {
-	it("uses only the physical transport retry as a new durable session", () => {
+	it("preserves the durable session across physical transport retries", () => {
 		expect(workflowAgentSessionKey({
 			executionId: "execution-1",
 			nodeId: "agent-1",
 			physicalRetryOrdinal: 2,
-		})).toBe("workflow:execution-1:agent-1:physical-retry:2");
+		})).toBe("workflow:execution-1:agent-1");
 	});
 
 	it("bounds long collection retry sessions without collapsing item identity", () => {
@@ -72,8 +72,8 @@ describe("workflow Agent durable session identity", () => {
 		expect(clip07).toHaveLength(240);
 		expect(clip08).toHaveLength(240);
 		expect(clip07).not.toBe(clip08);
-		expect(clip07).toMatch(/:[a-f0-9]{32}:physical-retry:3$/u);
-		expect(clip08).toMatch(/:[a-f0-9]{32}:physical-retry:3$/u);
+		expect(clip07).toMatch(/:[a-f0-9]{32}$/u);
+		expect(clip08).toMatch(/:[a-f0-9]{32}$/u);
 		expect(workflowAgentSessionKey({
 			executionId: `execution-${"b".repeat(64)}`,
 			nodeId: `${sharedNodePrefix}clip-07`,

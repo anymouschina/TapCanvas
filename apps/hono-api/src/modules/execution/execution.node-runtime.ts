@@ -54,6 +54,7 @@ export type WorkflowNodeExecutionResult =
 				| "workflow_node_prompt_not_ready"
 				| "workflow_project_context_required"
 				| "workflow_node_runtime_failed"
+				| "workflow_delivery_coverage_unsatisfied"
 				| "workflow_asset_forbidden"
 				| "workflow_asset_not_found"
 				| "workflow_asset_deleted"

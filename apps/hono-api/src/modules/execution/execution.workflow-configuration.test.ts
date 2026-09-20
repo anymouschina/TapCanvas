@@ -31,6 +31,7 @@ describe("workflow configuration inheritance", () => {
 			workflowNode("cost-estimate", {
 				workflowVideoModelKey: "doubao-seedance-2.5",
 				workflowVideoResolution: "480p",
+				workflowVideoSize: "1280x720",
 				workflowVideoAspectRatio: "16:9",
 			}),
 			workflowNode("launch-cost-estimate", {
@@ -46,6 +47,7 @@ describe("workflow configuration inheritance", () => {
 		expect(resolved[3]?.data).toMatchObject({
 			workflowVideoModelKey: "doubao-seedance-2.5",
 			workflowVideoResolution: "480p",
+			workflowVideoSize: "1280x720",
 			workflowVideoAspectRatio: "16:9",
 		});
 	});

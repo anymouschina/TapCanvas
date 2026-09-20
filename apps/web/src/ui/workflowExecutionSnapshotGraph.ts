@@ -1,3 +1,4 @@
+import { layoutExecutionWorkflowNodes } from "./workflowExecutionLayout"
 import type { Edge, Node, Viewport } from '@xyflow/react'
 import type { WorkflowExecutionSnapshotDto, WorkflowNodeRunDto } from '../api/server'
 import {
@@ -101,7 +102,7 @@ export function buildWorkflowExecutionSnapshotGraph(
     const rawType = readString(value, 'type')
     const type = isCanvasNodeTypeName(rawType) ? rawType : 'taskNode'
     const label = readString(data, 'label') || readString(data, 'workflowNodeId') || id
-    const baseData: WorkflowExecutionSnapshotNodeData = { ...data, readOnly: true, label }
+    const baseData: WorkflowExecutionSnapshotNodeData = { ...data, readOnly: true, label, workflowShowLabel: WORKFLOW_NODE_KINDS.has(readString(data, "kind")) }
     const run = runByNodeId.get(id)
     const node: WorkflowExecutionSnapshotNode = {
       id,
@@ -142,7 +143,7 @@ export function buildWorkflowExecutionSnapshotGraph(
     return [edge]
   })
   const visibleGraph = buildWorkflowAgentVisibleGraph({
-    nodes,
+    nodes: layoutExecutionWorkflowNodes(nodes, edges),
     edges,
     workflowExecutionId: snapshot.executionId,
     outputRefsByAgentNodeId: new Map(nodeRuns.map((run) => [run.nodeId, run.outputRefs] as const)),
@@ -161,8 +162,11 @@ export function buildWorkflowExecutionSnapshotGraph(
       connectable: false,
     }
   })
+  const workflowNodeIds = new Set(visibleNodes.filter(node => WORKFLOW_NODE_KINDS.has(readString(node.data, "kind"))).map(node => node.id))
   const visibleEdges = visibleGraph.edges.map((edge): Edge => ({
     ...edge,
+    // The read-only DAG uses direct routes; editor obstacle detours obscure branches.
+    type: workflowNodeIds.has(edge.source) && workflowNodeIds.has(edge.target) ? "smoothstep" : edge.type,
     data: {
       ...(isRecord(edge.data) ? edge.data : {}),
       readOnly: true,

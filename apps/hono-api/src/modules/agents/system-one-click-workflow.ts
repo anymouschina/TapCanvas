@@ -7,10 +7,18 @@ function sqlText(value: string): string {
 	return "'" + value.replaceAll("'", "''") + "'";
 }
 
+export type BuiltInWorkflowPublication = Readonly<{
+ identity: Readonly<{ id: string; projectId: string; flowId: string; flowVersionId: string; attachmentId: string; releasedAt: string }>;
+ definition: Readonly<{ projectName: string; flowName: string; flowData: string }>;
+ description: string;
+ definitionSource?: string;
+}>;
+
 /** One release definition drives both startup and the reviewable SQL patch. */
-export function builtInOneClickWorkflowSql(): string {
-	const identity = BUILTIN_ONE_CLICK_WORKFLOW;
-	const definition = createBuiltInOneClickWorkflowDefinition();
+export function builtInOneClickWorkflowSql(publication?: BuiltInWorkflowPublication): string {
+ const identity = publication?.identity ?? BUILTIN_ONE_CLICK_WORKFLOW;
+ const definition = publication?.definition ?? createBuiltInOneClickWorkflowDefinition();
+ const description = publication?.description ?? "按字长拆分并添加视频节点；系统级共享工作流。";
 	const descriptor = buildWorkflowCapabilityDescriptor({
 		flow: { id: identity.flowId, name: definition.flowName, data: definition.flowData, project_id: identity.projectId, canvas_revision: 0 },
 		version: { id: identity.flowVersionId, data: definition.flowData },
@@ -30,7 +38,7 @@ export function builtInOneClickWorkflowSql(): string {
 	const descriptorJson = sqlText(JSON.stringify(descriptor));
 	const reportJson = sqlText(JSON.stringify(conflictReport));
 	const releaseTime = sqlText(identity.releasedAt);
-	return `-- Generated from system-one-click-workflow.definition.ts. Do not edit by hand.
+	return `-- Generated from ${publication?.definitionSource ?? "system-one-click-workflow.definition.ts"}. Do not edit by hand.
 -- Apply with psql -v ON_ERROR_STOP=1 after bootstrap, or let API startup publish it.
 -- Owner comes from an explicit transaction setting or the existing system project.
 -- Append-only: no existing workflow, version, preference, run or asset is overwritten.
@@ -47,9 +55,9 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'one_click_v1: an active bootstrap administrator is required';
   END IF;
-  PERFORM pg_advisory_xact_lock(hashtext('tapcanvas.builtin.one-click-video-nodes/v1'));
+  PERFORM pg_advisory_xact_lock(hashtext(${sqlText(identity.id)}));
   INSERT INTO projects (id, name, owner_id, project_kind, description, created_at, updated_at)
-  VALUES (${projectId}, ${sqlText(definition.projectName)}, workflow_owner, 'ai_workflow', '按字长拆分并添加视频节点；系统级共享工作流。', ${releaseTime}, ${releaseTime})
+  VALUES (${projectId}, ${sqlText(definition.projectName)}, workflow_owner, 'ai_workflow', ${sqlText(description)}, ${releaseTime}, ${releaseTime})
   ON CONFLICT (id) DO NOTHING;
   IF NOT EXISTS (SELECT 1 FROM projects WHERE id = ${projectId} AND owner_id = workflow_owner AND project_kind = 'ai_workflow') THEN
     RAISE EXCEPTION 'one_click_v1: reserved project identity collision';

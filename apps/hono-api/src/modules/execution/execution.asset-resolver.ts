@@ -10,6 +10,7 @@ export type WorkflowResolvedAsset = Readonly<{
 	mimeType: string | null;
 	nodeId: string | null;
 	flowId: string | null;
+	styleFingerprint: string | null;
 }>;
 
 export class WorkflowAssetResolverError extends Error {
@@ -189,6 +190,7 @@ export function createWorkflowAssetResolver(input: Readonly<{
 					mimeType: readString(data.mimeType) || null,
 					nodeId: asset.origin?.nodeId ?? null,
 					flowId: asset.origin?.flowId ?? null,
+					styleFingerprint: readString(data.styleFingerprint) || null,
 				};
 			}
 			throw new WorkflowAssetResolverError(`Asset ${assetId} has no ready ${preferredKind ?? "media"} resource`, "workflow_asset_resource_unavailable");

@@ -5,6 +5,8 @@ import type { ConcatVideosToCanvasResult } from "../task/agents-tool-bridge.vide
 import type { WorkflowVideoConcatRequest, WorkflowVideoConcatResult } from "./execution.node-executors";
 import { createWorkflowInternalContext } from "./execution.video-runner";
 import { registerGeneratedMediaAsset } from "../asset/asset.hosting";
+import { probeMediaViaMediaWorker } from "../../platform/media-worker/client";
+import { evaluateWorkflowMediaProbe } from "./execution.media-probe";
 
 export async function concatWorkflowVideos(
 	env: WorkerEnv,
@@ -33,7 +35,16 @@ export async function concatWorkflowVideos(
 				durationSec: request.targetDurationSeconds,
 			},
 		});
-		return { videoUrl, assetId, clipCount: 1, reusedSingleClip: true } as const;
+		return {
+			videoUrl,
+			assetId,
+			clipCount: 1,
+			reusedSingleClip: true,
+			mediaProbeEvidence: evaluateWorkflowMediaProbe(
+				await probeMediaViaMediaWorker({ url: videoUrl }),
+				{ aspectRatio: request.aspectRatio || null, durationSeconds: request.targetDurationSeconds },
+			),
+		} as const;
 	}
 	// 多段成片由独立 media-worker 在后台拼接并直接上传对象存储。
 	let result: ConcatVideosToCanvasResult;
@@ -83,5 +94,9 @@ export async function concatWorkflowVideos(
 		clipCount: result.clipCount,
 		concatPolicy: result.concatPolicy,
 		reusedSingleClip: false,
+		mediaProbeEvidence: evaluateWorkflowMediaProbe(
+			await probeMediaViaMediaWorker({ url: result.videoUrl }),
+			{ aspectRatio: request.aspectRatio || null, durationSeconds: request.targetDurationSeconds },
+		),
 	} as const;
 }

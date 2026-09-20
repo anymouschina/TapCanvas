@@ -1,3 +1,6 @@
+import { rebaseCanvasFlowOnConflict } from './canvas/persistence/flowConflictRebase'
+import { readCanvasMembership } from '@tapcanvas/workflow-kernel-protocol'
+import { prepareCanvasMembershipSave } from './canvas/persistence/canvasMembership'
 import React from 'react'
 import { AppShell, ActionIcon, Group, Box, Button, Badge, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
@@ -721,6 +724,8 @@ function CanvasApp({
               // 标记画布归属为本 flow，供 silentSave 校验，防止上一资源（章节/别的 flow）
               // 的陈旧内容被整图自动保存固化进当前 flow。
               graphProvenanceKey: `flow:${f.id}`,
+              locallyDeletedNodeIds: readCanvasMembership(data).deletedNodeIds,
+              detachedWorkflowExecutionIds: readCanvasMembership(data).detachedExecutionIds,
             })
           })
           useUIStore.getState().setRestoreViewport(viewport && typeof viewport.zoom === 'number' ? viewport : null)
@@ -930,6 +935,9 @@ function CanvasApp({
     snapshot: FlowDto['data']
   }): Promise<FlowSaveReceipt> => {
     const sessionEpoch = canvasSessionEpochRef.current
+    const acknowledgedBase = acknowledgedFlowRef.current
+    const prepared = prepareCanvasMembershipSave(acknowledgedBase, input.snapshot, useRFStore.getState().locallyDeletedNodeIds)
+    const membershipChanges = prepared.changes
     const saveAtRevision = (snapshot: FlowDto['data'], expectedRevision: number): Promise<FlowSaveReceipt> => {
       const authoringSnapshot: FlowDto['data'] = {
         ...snapshot,
@@ -943,6 +951,7 @@ function CanvasApp({
           chapterId: input.ownerId,
           name: input.name,
           ...authoringSnapshot,
+        ...membershipChanges,
           expectedRevision,
         })
       }
@@ -953,6 +962,7 @@ function CanvasApp({
           shotId: input.ownerId,
           name: input.name,
           ...authoringSnapshot,
+        ...membershipChanges,
           expectedRevision,
         })
       }
@@ -961,6 +971,7 @@ function CanvasApp({
         projectId: input.projectId,
         name: input.name,
         ...authoringSnapshot,
+        ...membershipChanges,
         expectedRevision,
       })
     }
@@ -968,15 +979,15 @@ function CanvasApp({
     const expectedRevision = getLocalFlowRevision()
     const result = input.flowId
       ? await saveWithConflictRebase({
-        base: acknowledgedFlowRef.current,
-        local: input.snapshot,
+        base: acknowledgedBase,
+        local: prepared.snapshot,
         expectedRevision,
         save: saveAtRevision,
         loadLatest: () => getServerFlow(input.flowId as string),
       })
       : {
-        flow: await saveAtRevision(input.snapshot, expectedRevision),
-        snapshot: input.snapshot,
+        flow: await saveAtRevision(prepared.snapshot, expectedRevision),
+        snapshot: prepared.snapshot,
         rebased: false,
       }
 
@@ -989,10 +1000,16 @@ function CanvasApp({
     setLocalFlowRevision(result.flow.canvasRevision ?? expectedRevision + 1)
     acknowledgedFlowRef.current = result.snapshot
 
-    if (result.rebased) {
+    if (result.rebased || prepared.adjusted) {
       const currentProvenance = useRFStore.getState().graphProvenanceKey
       if (!input.flowId || !currentProvenance || currentProvenance === `flow:${input.flowId}`) {
-        const sanitized = sanitizeGraphForCanvas(result.snapshot)
+        const latestLocal = useRFStore.getState()
+        const mergedSnapshot = rebaseCanvasFlowOnConflict({
+          base: input.snapshot,
+          local: { ...input.snapshot, nodes: latestLocal.nodes, edges: latestLocal.edges },
+          server: result.snapshot,
+        })
+        const sanitized = sanitizeGraphForCanvas(mergedSnapshot)
         remoteApplyGuard.run(() => {
           workflowExecutionProjectionGuard.run(() => {
             // A conflict rebase restores the persisted authoring graph, which

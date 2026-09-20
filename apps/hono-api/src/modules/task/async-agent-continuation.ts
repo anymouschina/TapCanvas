@@ -1430,6 +1430,44 @@ export async function cancelActiveSessionAgentContinuations(input: {
 	 */
 	scope: "physical_only" | "all";
 }): Promise<number> {
+	return cancelMatchingAgentContinuations({
+		c: input.c,
+		userId: input.userId,
+		matches: (continuation) => continuation.sessionKey === input.sessionKey
+			&& continuation.rootRequestId === input.rootRequestId
+			&& (input.scope === "all" || isRootPhysicalBudgetContinuation(continuation)),
+		projectRootOnFailure: input.scope === "all",
+	});
+}
+
+/** Parent cancellation retires every physical generation, including obsolete roots. */
+export async function cancelCanceledWorkflowAgentContinuations(input: {
+	c: AppContext;
+	userId: string;
+	executionId: string;
+}): Promise<number> {
+	const parent = await input.c.env.DB.workflow_executions.findFirst({
+		where: { id: input.executionId, owner_id: input.userId, status: "canceled" },
+		select: { id: true },
+	});
+	if (!parent) throw new Error("workflow_continuation_cleanup_requires_owned_canceled_execution");
+	const sessionPrefix = `workflow:${parent.id}:`;
+	return cancelMatchingAgentContinuations({
+		c: input.c,
+		userId: input.userId,
+		matches: (continuation) => continuation.sessionKey.startsWith(sessionPrefix),
+		// The authoritative parent is already canceled. Re-projecting an obsolete
+		// root would fail turn identity checks or disturb a newer physical turn.
+		projectRootOnFailure: false,
+	});
+}
+
+async function cancelMatchingAgentContinuations(input: {
+	c: AppContext;
+	userId: string;
+	matches: (continuation: AsyncAgentContinuation) => boolean;
+	projectRootOnFailure: boolean;
+}): Promise<number> {
 	const [waitingRows, claimedRows] = await Promise.all(["waiting", "claimed"].map((status) =>
 		listTaskStatusesForExactSessionScan({ c: input.c, userId: input.userId, status })),
 	);
@@ -1440,9 +1478,7 @@ export async function cancelActiveSessionAgentContinuations(input: {
 		const continuation = parseContinuation(row.data);
 		return continuation &&
 			continuation.userId === input.userId &&
-			continuation.sessionKey === input.sessionKey &&
-			continuation.rootRequestId === input.rootRequestId &&
-			(input.scope === "all" || isRootPhysicalBudgetContinuation(continuation))
+			input.matches(continuation)
 			? [{ continuation, status }]
 			: [];
 	});
@@ -1457,6 +1493,7 @@ export async function cancelActiveSessionAgentContinuations(input: {
 				c: input.c,
 				continuation,
 				status: "failed",
+				projectRootOnFailure: input.projectRootOnFailure,
 			})).terminalized;
 		} else {
 			// Legacy claimed rows had no physical token. They cannot own a v1 repair
@@ -2059,6 +2096,7 @@ export async function completeAsyncAgentContinuation(input: {
 	c: AppContext;
 	continuation: AsyncAgentContinuation;
 	status: "completed" | "failed";
+	projectRootOnFailure?: boolean;
 }): Promise<{ terminalized: boolean; deferred: boolean; status: "completed" | "failed" }> {
 	const nowIso = new Date().toISOString();
 	const claimToken = input.continuation.claimToken?.trim() ?? "";
@@ -2092,7 +2130,7 @@ export async function completeAsyncAgentContinuation(input: {
 		});
 		return { terminalized: false, deferred, status: input.status };
 	}
-	if (input.status === "failed") {
+	if (input.status === "failed" && input.projectRootOnFailure !== false) {
 		await projectAsyncContinuationFailureToRootTurn({
 			c: input.c,
 			continuation: input.continuation,

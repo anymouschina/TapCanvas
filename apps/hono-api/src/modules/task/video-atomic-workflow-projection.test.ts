@@ -197,6 +197,30 @@ describe("video atomic workflow projection", () => {
 		]);
 	});
 
+	it("projects media readiness evidence instead of treating a persisted result as complete", () => {
+		const snapshot = buildVideoAtomicWorkflowSnapshot({
+			run: run({ state: "video_running", total_clips: 1 }),
+			artifacts: [
+				manifest("media_delivery"),
+				artifact("video-submission:0"),
+				artifact("video-result:0", "ready", {
+					clipIndex: 0,
+					videoUrl: "https://cdn.example/pending.mp4",
+					mediaReadiness: "waiting",
+					mediaReadinessPolls: 3,
+				}),
+			],
+			generatedAt: now,
+		});
+
+		const results = snapshot.nodes.find((node) => node.atomicNodeId === "video-results");
+		expect(results).toMatchObject({ status: "waiting_external", completedUnits: 0, totalUnits: 2 });
+		expect(results?.outputRefs.itemRuns[0]).toMatchObject({
+			status: "waiting_external",
+			evidence: { mediaReadiness: "waiting", artifactStatus: "ready" },
+		});
+	});
+
 	it("surfaces corrupt persisted payloads as node errors without hiding the artifact", () => {
 		const broken = { ...artifact("clip:0"), payload: "{not-json" };
 		const snapshot = buildVideoAtomicWorkflowSnapshot({

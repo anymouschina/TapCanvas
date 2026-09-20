@@ -10,6 +10,7 @@ const startWorkflowExecution = vi.hoisted(() => vi.fn(async () => ({
 vi.mock("./execution.start-service", () => ({ startWorkflowExecution }));
 
 import {
+	collectScheduleDiagnosticLogDelta,
 	parseScheduledForFromExecutionTrigger,
 	previewWorkflowSchedule,
 	resolveDueScheduleOccurrence,
@@ -24,6 +25,25 @@ const schedule = createScheduleWorkflowTriggerSpec({
 	enabled: true,
 	misfirePolicy: "skip",
 	maxCatchUpRuns: 0,
+});
+
+describe("workflow schedule diagnostic logging", () => {
+	it("logs an unchanged malformed flow once and reports it when resolved", () => {
+		const diagnostic = {
+			flowId: "flow-1",
+			triggerNodeId: null,
+			code: "schedule_flow_invalid",
+			message: "Saved flow must contain nodes and edges arrays",
+		} as const;
+		const first = collectScheduleDiagnosticLogDelta(new Map(), [diagnostic]);
+		expect(first.added).toEqual([diagnostic]);
+		const unchanged = collectScheduleDiagnosticLogDelta(first.next, [diagnostic]);
+		expect(unchanged.added).toEqual([]);
+		expect(unchanged.resolved).toEqual([]);
+		const resolved = collectScheduleDiagnosticLogDelta(unchanged.next, []);
+		expect(resolved.added).toEqual([]);
+		expect(resolved.resolved).toHaveLength(1);
+	});
 });
 
 function scheduledFlow(): Readonly<Record<string, unknown>> {

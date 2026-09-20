@@ -1,7 +1,12 @@
+import type { WorkerEnv } from "../../types";
+import { buildStoredVideoRetryNode } from "../task/canvas-video-retry";
+import { AppError } from "../../middleware/error";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	getFlowForOwner: vi.fn(),
+    retryCanvasVideo: vi.fn(),
+	reconcileReceipt: vi.fn(),
 	reconcileVideoNodesForFlow: vi.fn(),
 	generateVideoToCanvas: vi.fn(),
 	resolveProjectBillingTeamId: vi.fn(),
@@ -9,7 +14,15 @@ const mocks = vi.hoisted(() => ({
 	persistFlowPatch: vi.fn(),
 	generateAudioToCanvas: vi.fn(),
 	resolveVideoModelReferenceAudioPolicy: vi.fn(),
+	resolveExecutionImageReferences: vi.fn(),
 }));
+
+vi.mock("../task/canvas-video-retry", async () => ({
+  ...await vi.importActual<typeof import("../task/canvas-video-retry")>("../task/canvas-video-retry"),
+  retryCanvasVideo: mocks.retryCanvasVideo,
+}));
+
+vi.mock("./execution.media-receipt", () => ({ reconcileWorkflowMediaReceipt: mocks.reconcileReceipt }));
 
 vi.mock("../flow/flow.repo", () => ({
 	getFlowForOwner: mocks.getFlowForOwner,
@@ -22,6 +35,10 @@ vi.mock("../task/agents-tool-bridge.generate-video-to-canvas", () => ({
 
 vi.mock("../task/agents-tool-bridge.billing-scope", () => ({
 	resolveProjectBillingTeamId: mocks.resolveProjectBillingTeamId,
+}));
+
+vi.mock("../task/agents-tool-bridge.image-reference-ids", () => ({
+	resolveExecutionImageReferences: mocks.resolveExecutionImageReferences,
 }));
 
 vi.mock("../task/video-orchestrator.flow-io", () => ({
@@ -41,8 +58,10 @@ import {
 	buildBudgetedVoiceCalibrationText,
 	assertWorkflowVoiceManifestAudioPolicy,
 	inspectPersistedWorkflowVideoNode,
+	inspectPersistedWorkflowVideoAttempt,
 	prepareWorkflowVideoProductionAssets,
 	runWorkflowVideoNode,
+	prepareWorkflowVideoNode,
 	workflowVideoEffectIdentity,
 } from "./execution.video-runner";
 
@@ -95,6 +114,7 @@ const request = {
 describe("workflow video runner durable effects", () => {
 	beforeEach(() => {
 		mocks.getFlowForOwner.mockReset();
+        mocks.retryCanvasVideo.mockReset();
 		mocks.reconcileVideoNodesForFlow.mockReset();
 		mocks.generateVideoToCanvas.mockReset();
 		mocks.resolveProjectBillingTeamId.mockReset();
@@ -102,7 +122,68 @@ describe("workflow video runner durable effects", () => {
 		mocks.persistFlowPatch.mockReset();
 		mocks.generateAudioToCanvas.mockReset();
 		mocks.resolveVideoModelReferenceAudioPolicy.mockReset();
+		mocks.resolveExecutionImageReferences.mockReset();
 		mocks.freshReadFlowRow.mockImplementation(async () => mocks.getFlowForOwner());
+	});
+	it("persists a manually generatable node, reads it back and replays without provider submission", async () => {
+		mocks.resolveExecutionImageReferences.mockResolvedValue([
+			{ referenceId: "image-hero", source: "node", nodeId: "image-hero", assetId: null, assetRefId: "hero-ref", name: "剑修", url: "https://fixture.invalid/hero.png", previewOnly: false },
+			{ referenceId: "image-forest", source: "node", nodeId: "image-forest", assetId: null, assetRefId: "forest-ref", name: "林地", url: "https://fixture.invalid/forest.png", previewOnly: false },
+		]);
+		let saved = flowRow({ nodes: [], edges: [] });
+		mocks.freshReadFlowRow.mockImplementation(async () => saved);
+		mocks.persistFlowPatch.mockImplementation(async (input: { patch: { createNodes: unknown[] } }) => {
+			saved = flowRow({ nodes: input.patch.createNodes, edges: [] });
+		});
+		const first = await prepareWorkflowVideoNode({} as WorkerEnv, request);
+		expect(await prepareWorkflowVideoNode({} as WorkerEnv, request)).toEqual(first);
+		expect(mocks.persistFlowPatch).toHaveBeenCalledTimes(1);
+		expect(mocks.persistFlowPatch.mock.calls[0]?.[0].patch.createNodes[0].data).toMatchObject({
+			status: "idle", referenceImageNodeIds: request.referenceImageNodeIds,
+			videoModel: request.modelKey, videoDurationSeconds: 30, clipIndex: 0,
+		});
+		const persistedPrompt = mocks.persistFlowPatch.mock.calls[0]?.[0].patch.createNodes[0].data.prompt as string;
+		expect(persistedPrompt).toContain("剑修（identity）：@hero-ref");
+		expect(persistedPrompt).toContain("镜头1（0-30s）：剑修跨步出剑并承受反作用");
+		expect(persistedPrompt).not.toContain("看清动作");
+		expect(mocks.generateVideoToCanvas).not.toHaveBeenCalled();
+	});
+
+	it("persists visible station and reference topology for a prepared video prompt node", async () => {
+		mocks.resolveExecutionImageReferences.mockResolvedValue([
+			{ referenceId: "image-hero", source: "node", nodeId: "image-hero", assetId: null, assetRefId: "hero-ref", name: "剑修", url: "https://fixture.invalid/hero.png", previewOnly: false },
+			{ referenceId: "image-forest", source: "node", nodeId: "image-forest", assetId: null, assetRefId: "forest-ref", name: "林地", url: "https://fixture.invalid/forest.png", previewOnly: false },
+		]);
+		let graph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> } = {
+			nodes: [
+				{ id: "image-hero", data: { kind: "image", imageUrl: "https://fixture.invalid/hero.png" } },
+				{ id: "image-forest", data: { kind: "image", imageUrl: "https://fixture.invalid/forest.png" } },
+				{ id: "blocking-clip-1", data: { kind: "image", imageUrl: "https://fixture.invalid/blocking.png", productionLayer: "blocking_diagram" } },
+			],
+			edges: [],
+		};
+		mocks.freshReadFlowRow.mockImplementation(async () => flowRow(graph));
+		mocks.persistFlowPatch.mockImplementation(async (input: {
+			patch: { createNodes?: Array<Record<string, unknown>>; createEdges?: Array<Record<string, unknown>> };
+		}) => {
+			graph = {
+				nodes: [...graph.nodes, ...(input.patch.createNodes ?? [])],
+				edges: [...graph.edges, ...(input.patch.createEdges ?? [])],
+			};
+		});
+
+		const result = await prepareWorkflowVideoNode({} as never, {
+			...request,
+			structuredClip: { ...request.structuredClip, blockingFrameNodeId: "blocking-clip-1", spatialBlocking: true },
+		});
+
+		expect(result.nodeId).toContain("::output::video");
+		expect(graph.edges.map((edge) => [edge.source, edge.target])).toEqual([
+			["image-hero", result.nodeId],
+			["image-forest", result.nodeId],
+			["blocking-clip-1", result.nodeId],
+		]);
+		expect(graph.edges.every((edge) => edge.targetHandle === "in-any")).toBe(true);
 	});
 	it("derives one stable paid-effect identity per runtime item", () => {
 		expect(workflowVideoEffectIdentity({
@@ -256,6 +337,20 @@ describe("workflow video runner durable effects", () => {
 		]);
 	});
 
+	it.each(["rejected_pre_upstream", "uncertain"])("retries only a proven unaccepted submission: %s", async (state) => {
+		const nodeId = "video-1::family::family-1::output::video";
+		mocks.getFlowForOwner.mockResolvedValue(flowRow({
+			nodes: [{ id: nodeId, data: { kind: "video", status: "failed", workflowSubmissionState: state,
+				workflowEffectId: "family-1:video-1:video-submit" } }], edges: [],
+		}));
+		mocks.generateVideoToCanvas.mockResolvedValue({ status: "running", nodeId, taskId: "accepted-retry" });
+		const result = await runWorkflowVideoNode({ DB: {} } as never, {
+			...request, previousEvidence: { canvasNodeId: nodeId, taskId: null }, resumeOnly: false,
+		});
+		expect(mocks.generateVideoToCanvas).toHaveBeenCalledTimes(state === "rejected_pre_upstream" ? 1 : 0);
+		expect(result.status).toBe(state === "rejected_pre_upstream" ? "waiting_external" : "failed");
+	});
+
 	it("reuses the family-scoped paid effect when a recovery lost its local receipt", async () => {
 		mocks.getFlowForOwner.mockResolvedValue(flowRow({
 			nodes: [{
@@ -298,6 +393,13 @@ describe("workflow video runner durable effects", () => {
 			});
 		},
 	);
+
+	it("preserves the exact persisted provider acceptance time during recovery", () => {
+		expect(inspectPersistedWorkflowVideoNode(
+			flowWithVideo({ status: "running", taskId: "provider-task-1", workflowSubmissionAcceptedAt: "2026-09-07T01:02:03.000Z" }),
+			"video-output-1", "provider-task-1",
+		)).toMatchObject({ taskId: "provider-task-1", providerAcceptedAt: "2026-09-07T01:02:03.000Z", status: "waiting_external" });
+	});
 
 	it("accepts an immediate terminal asset even when the provider has no task id", () => {
 		expect(inspectPersistedWorkflowVideoNode(
@@ -599,6 +701,11 @@ describe("workflow video runner durable effects", () => {
 	});
 
 	it("persists the structured Clip beside the clean execution prompt for final manifest rendering", async () => {
+		const frameEvidence = {
+			sourceEventCoverage: [{ storyEventIndex: 0, shotNos: [1] }],
+			temporalFrameTrack: [{ windowIndex: 0, startSeconds: 0, endSeconds: 0.25, startState: "移动", transition: "接触", carryState: "偏转" }],
+			temporalFrameCoverage: [{ windowIndex: 0, shotNos: [1] }],
+		};
 		mocks.getFlowForOwner.mockResolvedValue(flowRow({ nodes: [], edges: [] }));
 		mocks.generateVideoToCanvas.mockResolvedValue({
 			status: "running",
@@ -609,6 +716,7 @@ describe("workflow video runner durable effects", () => {
 
 		await expect(runWorkflowVideoNode({ DB: {} } as never, {
 			...request,
+			structuredClip: { ...request.structuredClip, ...frameEvidence },
 			previousEvidence: null,
 			resumeOnly: false,
 		})).resolves.toMatchObject({
@@ -620,6 +728,7 @@ describe("workflow video runner durable effects", () => {
 			bodyArgs: {
 				node: expect.objectContaining({
 					data: expect.objectContaining({
+						...frameEvidence,
 						prompt: "prompt",
 						workflowExecutionId: "execution-1",
 						referenceAssetIds: [],
@@ -630,4 +739,137 @@ describe("workflow video runner durable effects", () => {
 			},
 		}));
 	});
+});
+
+
+describe("workflow observes explicitly authorized stored video retries", () => {
+  beforeEach(() => { vi.clearAllMocks(); mocks.reconcileVideoNodesForFlow.mockResolvedValue({}); });
+  it("reconciles the retry task identity without paying again during family recovery", async () => {
+    const source = { id: "original", data: { kind: "video", status: "failed", taskId: "old-task" } };
+    const retry = buildStoredVideoRetryNode(source, "flow-1", 1);
+    retry.data = { ...retry.data, status: "running", taskId: "retry-task" };
+    mocks.freshReadFlowRow.mockResolvedValue(flowRow({ nodes: [source, retry], edges: [] }));
+    const result = await runWorkflowVideoNode({ DB: {} } as never, { ...request,
+      resumeOnly: true, previousEvidence: { canvasNodeId: source.id, taskId: "old-task" } });
+    expect(result).toMatchObject({ status: "waiting_external", nodeId: retry.id, taskId: "retry-task" });
+    expect(mocks.reconcileVideoNodesForFlow).toHaveBeenCalledWith(expect.objectContaining({ target: { nodeId: retry.id, taskId: "retry-task" } }));
+    expect(mocks.generateVideoToCanvas).not.toHaveBeenCalled();
+  });
+  it("uses the accepted retry receipt and then its real asset without overwriting the failed source", () => {
+    const source = { id: "original", data: { kind: "video", status: "failed", taskId: "failed-task", prompt: "persisted prompt" } };
+    const retry = buildStoredVideoRetryNode(source, "flow-1", 1);
+    const running = { ...retry, data: { ...retry.data, status: "running", taskId: "retry-task" } };
+    expect(inspectPersistedWorkflowVideoAttempt(JSON.stringify({ nodes: [source, running] }), source.id, "failed-task", "flow-1"))
+      .toMatchObject({ status: "waiting_external", nodeId: retry.id, taskId: "retry-task" });
+    const completed = { ...running, data: { ...running.data, status: "success", videoUrl: "https://assets.example/retry.mp4" } };
+    expect(inspectPersistedWorkflowVideoAttempt(JSON.stringify({ nodes: [source, completed] }), source.id, "failed-task", "flow-1"))
+      .toMatchObject({ status: "success", nodeId: retry.id, taskId: "retry-task", videoUrl: "https://assets.example/retry.mp4" });
+    expect(source.data.status).toBe("failed");
+  });
+  it("cannot adopt an arbitrary node merely claiming the original id", () => {
+    const source = { id: "original", data: { kind: "video", status: "failed", taskId: "failed-task" } };
+    const unrelated = { id: "unrelated", data: { kind: "video", status: "success", videoUrl: "https://assets.example/other.mp4", videoRetrySourceNodeId: source.id, videoRetryIndex: 1 } };
+    expect(inspectPersistedWorkflowVideoAttempt(JSON.stringify({ nodes: [source, unrelated] }), source.id, "failed-task", "flow-1").status).toBe("failed");
+  });
+});
+
+
+it("recovers a missing projection through the accepted receipt without resubmission", async () => {
+	mocks.freshReadFlowRow.mockResolvedValue(flowRow({ nodes: [], edges: [] }));
+	mocks.generateVideoToCanvas.mockClear();
+	mocks.reconcileVideoNodesForFlow.mockClear();
+	mocks.reconcileReceipt.mockResolvedValue({ status: "success", nodeId: request.previousEvidence.canvasNodeId, taskId: request.previousEvidence.taskId,
+		videoUrl: "https://assets.test/result", assetId: "asset", reused: true });
+	expect(await runWorkflowVideoNode({ DB: {} } as never, request)).toMatchObject({ status: "success", videoUrl: "https://assets.test/result" });
+	expect(mocks.reconcileReceipt).toHaveBeenCalledWith(expect.anything(), request.ownerId, request.previousEvidence.canvasNodeId, request.previousEvidence.taskId, "video");
+	expect(mocks.generateVideoToCanvas).not.toHaveBeenCalled();
+	expect(mocks.reconcileVideoNodesForFlow).not.toHaveBeenCalled();
+});
+
+ describe("workflow explicit one-retry policy", () => {
+ it("reuses successful source and does not pay again", async () => {
+  mocks.retryCanvasVideo.mockReset();
+  mocks.getFlowForOwner.mockResolvedValue(flowRow({nodes:[{id:"video-output-1",data:{kind:"video",status:"success",taskId:"original",videoUrl:"https://assets.test/original.mp4"}}],edges:[]}));
+  const result = await runWorkflowVideoNode({DB:{}} as never, {...request, mediaDeliveryPolicy:{version:1,maxRetries:1,exhausted:"deliver_successes"}});
+  expect(result.status).toBe("success"); expect(mocks.retryCanvasVideo).not.toHaveBeenCalled();
+ });
+ it("submits retry index one and observes that receipt without a second retry", async () => {
+  mocks.retryCanvasVideo.mockReset();
+  const source={id:"video-output-1",data:{kind:"video",status:"failed",taskId:"original"}};
+  const retry=buildStoredVideoRetryNode(source,"flow-1",1);
+  let saved=flowRow({nodes:[source],edges:[]});
+  mocks.getFlowForOwner.mockImplementation(async()=>saved);
+  mocks.freshReadFlowRow.mockImplementation(async()=>saved);
+  mocks.retryCanvasVideo.mockImplementation(async()=>{
+    saved=flowRow({nodes:[source,{...retry,data:{...retry.data,status:"failed",taskId:"retry-task"}}],edges:[]});
+    return {nodeId:retry.id,taskId:"retry-task",status:"failed"};
+  });
+  const configured={...request,mediaDeliveryPolicy:{version:1,maxRetries:1,exhausted:"deliver_successes"} as const};
+  expect((await runWorkflowVideoNode({DB:{}} as never,configured)).status).toBe("failed");
+  expect((await runWorkflowVideoNode({DB:{}} as never,configured)).status).toBe("failed");
+  expect(mocks.retryCanvasVideo).toHaveBeenCalledTimes(1);
+  expect(mocks.retryCanvasVideo.mock.calls[0]?.[0].bodyArgs).toMatchObject({nodeId:source.id,retryIndex:1});
+ });
+});
+
+
+describe("one-retry policy submission boundaries", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+  it("keeps an uncertain accepted receipt waiting without declaring the clip exhausted", async () => {
+    const source = { id: "video-output-1", data: { kind: "video", status: "failed", taskId: "original" } };
+    const saved = flowRow({ nodes: [source], edges: [] });
+    mocks.getFlowForOwner.mockResolvedValue(saved);
+    mocks.freshReadFlowRow.mockResolvedValue(saved);
+    mocks.retryCanvasVideo.mockResolvedValue({ status: "awaiting_receipt_confirmation", nodeId: source.id, taskId: "original" });
+    const result = await runWorkflowVideoNode({ DB: {} } as never, { ...request,
+      mediaDeliveryPolicy: { version: 1, maxRetries: 1, exhausted: "deliver_successes" } });
+    expect(result).toMatchObject({ status: "waiting_external", taskId: "original" });
+    expect(mocks.generateVideoToCanvas).not.toHaveBeenCalled();
+  });
+  it("applies the same retry policy to a confirmed initial submission failure", async () => {
+    const nodeId = "video-1::family::family-1::output::video";
+    const source = { id: nodeId, data: { kind: "video", status: "failed", workflowEffectId: "family-1:video-1:video-submit" } };
+    let saved = flowRow({ nodes: [], edges: [] });
+    mocks.getFlowForOwner.mockImplementation(async () => saved);
+    mocks.freshReadFlowRow.mockImplementation(async () => saved);
+    mocks.generateVideoToCanvas.mockImplementation(async () => {
+      saved = flowRow({ nodes: [source], edges: [] });
+      throw new Error("provider rejected submission");
+    });
+    const retry = buildStoredVideoRetryNode(source, "flow-1", 1);
+    mocks.retryCanvasVideo.mockImplementation(async () => {
+      saved = flowRow({ nodes: [source, { ...retry, data: { ...retry.data, status: "running", taskId: "retry-task" } }], edges: [] });
+      return { status: "running", nodeId: retry.id, taskId: "retry-task" };
+    });
+    const result = await runWorkflowVideoNode({ DB: {} } as never, { ...request, previousEvidence: null, resumeOnly: false,
+      mediaDeliveryPolicy: { version: 1, maxRetries: 1, exhausted: "deliver_successes" } });
+    expect(result).toMatchObject({ status: "waiting_external", taskId: "retry-task" });
+    expect(mocks.retryCanvasVideo).toHaveBeenCalledTimes(1);
+  });
+  it("retry refusal must not hide why the first submission failed", async () => {
+    const nodeId = "video-1::family::family-1::output::video";
+    const source = { id: nodeId, data: { kind: "video", status: "failed", workflowEffectId: "family-1:video-1:video-submit" } };
+    let saved = flowRow({ nodes: [], edges: [] });
+    mocks.getFlowForOwner.mockImplementation(async () => saved);
+    mocks.freshReadFlowRow.mockImplementation(async () => saved);
+    mocks.generateVideoToCanvas.mockImplementation(async () => {
+      saved = flowRow({ nodes: [source], edges: [] });
+      throw new AppError('{"code":400,"message":"模型不存在: Seedance 2.5 720P v2"}', {
+        status: 400, code: "newapi:newapi_request_failed",
+      });
+    });
+    mocks.retryCanvasVideo.mockImplementation(async () => {
+      throw new AppError("Prior submission has no confirmed rejection or receipt; duplicate submission is unsafe", {
+        status: 409, code: "video_retry_submission_uncertain", details: { nodeId },
+      });
+    });
+    const error = await runWorkflowVideoNode({ DB: {} } as never, { ...request, previousEvidence: null, resumeOnly: false,
+      mediaDeliveryPolicy: { version: 1, maxRetries: 1, exhausted: "deliver_successes" } }).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(AppError);
+    const appError = error as AppError;
+    expect(appError.code).toBe("video_retry_submission_uncertain");
+    // 原始供应商拒绝原因必须与重复提交保护同时可见，不能被后者顶掉。
+    expect(appError.message).toContain("模型不存在: Seedance 2.5 720P v2");
+    expect(appError.details).toMatchObject({ nodeId, priorFailure: { nodeId, errorMessage: expect.stringContaining("模型不存在") } });
+  });
 });

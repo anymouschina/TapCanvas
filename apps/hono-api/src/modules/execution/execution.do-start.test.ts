@@ -264,6 +264,58 @@ describe("ExecutionDO start claim", () => {
 		});
 	});
 
+	it("rehydrates a missing scheduler graph before a queued worker starts", async () => {
+		mocks.findExecution.mockResolvedValue({
+			id: "execution-1",
+			flow_version_id: "version-1",
+			status: "running",
+			concurrency: 1,
+		});
+		mocks.findVersion.mockResolvedValue({
+			data: JSON.stringify(freezeWorkflowExecutionSemanticsSnapshot({
+				nodes: [{
+					id: "queued-trigger",
+					type: "taskNode",
+					data: {
+						kind: "workflowStage",
+						workflowAtomicSpec: { executorRef: "workflow.trigger/v1" },
+					},
+				}],
+				edges: [],
+			})),
+		});
+		mocks.findNodeRun.mockResolvedValue({
+			id: "node-run-1",
+			attempt: 1,
+			status: "queued",
+		});
+		mocks.findNodeRuns.mockResolvedValue([
+			{ node_id: "queued-trigger", status: "queued", output_refs: null },
+		]);
+
+		const response = await new ExecutionDO(state(), env()).fetch(new Request("https://do/nodeStarted", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				nodeId: "queued-trigger",
+				nodeRunId: "node-run-1",
+				attempt: 1,
+			}),
+		}));
+
+		expect(response.status).toBe(202);
+		expect(mocks.updateNodeRun).toHaveBeenCalledWith(expect.anything(), {
+			executionId: "execution-1",
+			nodeId: "queued-trigger",
+			status: "running",
+			errorMessage: null,
+			errorCode: null,
+			failureStage: null,
+			startedAt: expect.any(String),
+			finishedAt: null,
+		});
+	});
+
 	it("persists factual per-item progress while an each node is still running", async () => {
 		const executionState = state({
 			status: "running",
@@ -271,6 +323,8 @@ describe("ExecutionDO start claim", () => {
 			running: 1,
 			ready: [],
 			indeg: { "prompt-agent": 0 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "prompt-agent": 0 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "prompt-agent": 0 }).map(id => [id, []])),
 			adj: { "prompt-agent": [] },
 		});
 		const outputRefs = {
@@ -318,6 +372,30 @@ describe("ExecutionDO start claim", () => {
 		}));
 	});
 
+	it("persists a single agent repair checkpoint without ending its running attempt", async () => {
+		const executionState = state({ status: "running", concurrency: 1, running: 1, ready: [],
+			indeg: { "prompt-agent": 0 }, requiredInputPorts: { "prompt-agent": [] },
+			activeInputPorts: { "prompt-agent": [] }, adj: { "prompt-agent": [] } });
+		const outputRefs = { protocolVersion: "1", executorRef: "agents.logical-task/v2",
+			nodeId: "prompt-agent", executionMode: "once", ports: {}, artifacts: [], itemRuns: [],
+			evidence: { executorCompleted: false, continuationReason: "structured_output_repair_required",
+				outputRepair: { candidate: "original author output" } } };
+		const durableObject = new ExecutionDO(executionState, env());
+		const response = await durableObject.fetch(new Request("https://do/nodeProgress", {
+			method: "POST", headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ nodeId: "prompt-agent", nodeRunId: "node-run-1", attempt: 1, outputRefs }),
+		}));
+		expect(response.status).toBe(202);
+		expect(mocks.updateNodeRun).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+			nodeId: "prompt-agent", status: "running", outputRefs,
+		}));
+		const mismatch = await durableObject.fetch(new Request("https://do/nodeProgress", {
+			method: "POST", headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ nodeId: "another-node", nodeRunId: "node-run-1", attempt: 1, outputRefs }),
+		}));
+		expect(mismatch.status).toBe(400);
+	});
+
 	it("does not reserve a second concurrency slot when a scheduled recovery starts", async () => {
 		mocks.findExecution.mockResolvedValue({
 			id: "execution-1",
@@ -341,6 +419,8 @@ describe("ExecutionDO start claim", () => {
 			running: 1,
 			ready: [],
 			indeg: { "recovering-agent": 0 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "recovering-agent": 0 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "recovering-agent": 0 }).map(id => [id, []])),
 			adj: { "recovering-agent": [] },
 		});
 
@@ -371,6 +451,8 @@ describe("ExecutionDO start claim", () => {
 			running: 0,
 			ready: ["queued-agent"],
 			indeg: { "queued-agent": 0 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "queued-agent": 0 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "queued-agent": 0 }).map(id => [id, []])),
 			adj: { "queued-agent": [] },
 		});
 
@@ -405,6 +487,8 @@ describe("ExecutionDO start claim", () => {
 			running: 1,
 			ready: [],
 			indeg: { "long-agent": 0 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "long-agent": 0 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "long-agent": 0 }).map(id => [id, []])),
 			adj: { "long-agent": [] },
 		});
 
@@ -431,6 +515,8 @@ describe("ExecutionDO start claim", () => {
 			running: 1,
 			ready: [],
 			indeg: { "long-agent": 0 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "long-agent": 0 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "long-agent": 0 }).map(id => [id, []])),
 			adj: { "long-agent": [] },
 		});
 
@@ -604,6 +690,17 @@ describe("ExecutionDO start claim", () => {
 		});
 	});
 
+	it("rejects a stage time target as cancellation authority without changing running work", async () => {
+		const executionState = state({ status: "running", running: 1, ready: ["next"] });
+		const response = new ExecutionDO(executionState, env()).fetch(new Request("https://do/cancel", {
+			method: "POST", headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ reasonCode: "video_production_start_deadline_exceeded", actorType: "deadline_enforcer", actorId: "turn-1" }),
+		}));
+		await expect(response).rejects.toThrow("reasonCode must be user_requested");
+		expect(mocks.updateExecutionStatus).not.toHaveBeenCalled();
+		expect(mocks.updateNodeRunsLedger).not.toHaveBeenCalled();
+	});
+
 	it.each(["owning_chat_turn", "owner_eval"] as const)(
 		"cancels one exact user-owned execution for %s, clears scheduling and preserves completed nodes",
 		async (actorType) => {
@@ -619,6 +716,8 @@ describe("ExecutionDO start claim", () => {
 			running: 1,
 			ready: ["queued-output"],
 			indeg: { "completed-input": 0, "running-agent": 0, "queued-output": 1 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "completed-input": 0, "running-agent": 0, "queued-output": 1 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "completed-input": 0, "running-agent": 0, "queued-output": 1 }).map(id => [id, []])),
 			adj: { "completed-input": ["running-agent"], "running-agent": ["queued-output"], "queued-output": [] },
 		});
 		const response = await new ExecutionDO(executionState, env()).fetch(new Request("https://do/cancel", {
@@ -659,7 +758,7 @@ describe("ExecutionDO start claim", () => {
 		},
 	);
 
-	it("terminalizes running and externally waiting siblings when one node fails", async () => {
+	it.each([false, true])("isolates a local failure and only settles when independent work is finished: %s", async (siblingsSettled) => {
 		mocks.findExecution.mockResolvedValue({
 			id: "execution-1",
 			flow_version_id: "version-1",
@@ -684,6 +783,15 @@ describe("ExecutionDO start claim", () => {
 			{ node_id: "running-sibling", status: "running" },
 			{ node_id: "waiting-media", status: "waiting_external" },
 		]);
+		if (siblingsSettled) {
+			unsettledFindMany.mockResolvedValueOnce([{ node_id: "pending-output", status: "pending" }]);
+			unsettledFindMany.mockResolvedValue([
+				{ node_id: "failed-writer", status: "failed" },
+				{ node_id: "pending-output", status: "skipped" },
+				{ node_id: "running-sibling", status: "success" },
+				{ node_id: "waiting-media", status: "success" },
+			]);
+		}
 		const baseEnv = env();
 		const runtime = {
 			...baseEnv,
@@ -701,6 +809,8 @@ describe("ExecutionDO start claim", () => {
 			running: 3,
 			ready: ["pending-output"],
 			indeg: { "failed-writer": 0, "pending-output": 1, "running-sibling": 0, "waiting-media": 0 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "failed-writer": 0, "pending-output": 1, "running-sibling": 0, "waiting-media": 0 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "failed-writer": 0, "pending-output": 1, "running-sibling": 0, "waiting-media": 0 }).map(id => [id, []])),
 			adj: { "failed-writer": ["pending-output"], "pending-output": [], "running-sibling": [], "waiting-media": [] },
 		});
 		const response = await new ExecutionDO(executionState, runtime).fetch(new Request("https://do/nodeComplete", {
@@ -722,17 +832,15 @@ describe("ExecutionDO start claim", () => {
 			nodeIds: ["pending-output"],
 			update: expect.objectContaining({ status: "skipped" }),
 		});
-		expect(mocks.updateNodeRunsLedger).toHaveBeenNthCalledWith(2, expect.anything(), {
-			executionId: "execution-1",
-			nodeIds: ["running-sibling", "waiting-media"],
-			update: expect.objectContaining({
-				status: "canceled",
-				errorCode: "workflow_execution_terminalized",
-			}),
-		});
+		expect(mocks.updateNodeRunsLedger).toHaveBeenCalledTimes(1);
+		if (siblingsSettled) {
+			expect(mocks.updateExecutionStatus).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: "failed" }));
+		} else {
+			expect(mocks.updateExecutionStatus).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: "failed" }));
+		}
 		expect(mocks.insertExecutionEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-			eventType: "execution_failed",
-			data: expect.objectContaining({ terminalizedActiveNodeCount: 2 }),
+			eventType: "node_failure_isolated",
+			data: expect.objectContaining({ blockedNodeCount: 1 }),
 		}));
 	});
 
@@ -743,6 +851,8 @@ describe("ExecutionDO start claim", () => {
 			running: 1,
 			ready: [],
 			indeg: { "running-agent": 0 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "running-agent": 0 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "running-agent": 0 }).map(id => [id, []])),
 			adj: { "running-agent": [] },
 		});
 		const durableObject = new ExecutionDO(executionState, env());
@@ -792,6 +902,8 @@ describe("ExecutionDO start claim", () => {
 			running: 1,
 			ready: [],
 			indeg: { "video-node": 0 },
+			requiredInputPorts: Object.fromEntries(Object.keys({ "video-node": 0 }).map(id => [id, []])),
+			activeInputPorts: Object.fromEntries(Object.keys({ "video-node": 0 }).map(id => [id, []])),
 			adj: { "video-node": [] },
 		});
 		const lateOutputRefs = { ports: { video: { videoUrl: "https://assets.example/late.mp4" } } };
@@ -843,6 +955,8 @@ describe("ExecutionDO start claim", () => {
 			},
 			incoming: { "shared-agent": 0, downstream: 1 },
 			activeIncoming: { "shared-agent": 0, downstream: 0 },
+			activeInputPorts: { "shared-agent": [], downstream: [] },
+			requiredInputPorts: { "shared-agent": [], downstream: [] },
 			selectiveOutputPorts: { "shared-agent": [], downstream: [] },
 			notSelected: [],
 		});
@@ -872,4 +986,21 @@ describe("ExecutionDO start claim", () => {
 		expect(mocks.insertExecutionEvent.mock.calls.filter((call) => call[1]?.eventType === "node_succeeded"))
 			.toHaveLength(1);
 	});
+});
+
+describe("terminal projection release", () => {
+  it("requires a persisted terminal status before releasing even an empty projection", async () => {
+    const instance = new ExecutionDO(state(), env());
+    mocks.findExecution.mockResolvedValue({ id: "execution-1", flow_version_id: "version-1", status: "running", concurrency: 1 });
+    expect(await instance.canRelease()).toBe(false);
+    mocks.findExecution.mockResolvedValue({ id: "execution-1", flow_version_id: "version-1", status: "success", concurrency: 1 });
+    expect(await instance.canRelease()).toBe(true);
+  });
+
+  it("keeps running graph state without querying the database", async () => {
+    const instance = new ExecutionDO(state({ status: "running", requiredInputPorts: {}, activeInputPorts: {} }), env());
+    mocks.findExecution.mockClear();
+    expect(await instance.canRelease()).toBe(false);
+    expect(mocks.findExecution).not.toHaveBeenCalled();
+  });
 });

@@ -1,3 +1,6 @@
+import { isDetachedCanvasNode, projectCanvasMembership } from './canvas-lifecycle';
+export * from './canvas-lifecycle';
+
 export const WORKFLOW_KERNEL_PROTOCOL_VERSION = "1" as const;
 export const AGENT_WORKFLOW_KEY = "agent-workflow/v1" as const;
 
@@ -28,7 +31,13 @@ export type WorkflowAgentOutputEncoding = (typeof WORKFLOW_AGENT_OUTPUT_ENCODING
  * compiler-owned fields before the artifact crosses the typed port boundary.
  */
 export const WORKFLOW_BEAT_SHEET_AGENT_CONTRACT_NAME = "tapcanvas.beat-sheet-artifact" as const;
-export const WORKFLOW_BEAT_SHEET_AGENT_CONTRACT_VERSION = "20" as const;
+export const WORKFLOW_BEAT_SHEET_AGENT_CONTRACT_VERSION = "22" as const;
+/**
+ * BeatSheet-owned sequence timing contract.  The BeatSheet agent freezes the
+ * complete timeline, per-beat pacing mode, explicit slow-motion windows and
+ * cross-beat handoff facts before any clip writer runs.
+ */
+export const WORKFLOW_SEQUENCE_CONTROL_PLAN_PROTOCOL_VERSION = "tapcanvas.sequence-control-plan/v1" as const;
 /**
  * One scheduling boundary shared by whole-workflow and per-item execution.
  * Keeping both admission paths on this contract prevents an authored DAG from
@@ -37,32 +46,33 @@ export const WORKFLOW_BEAT_SHEET_AGENT_CONTRACT_VERSION = "20" as const;
 export const WORKFLOW_CONCURRENCY_MIN = 1 as const;
 export const WORKFLOW_CONCURRENCY_MAX = 16 as const;
 
-/**
- * Cross-execution recovery is an authored workflow fact. `fresh_only` forbids
- * every new physical execution from inheriting an execution family, DAG cursor,
- * checkpoint, or idempotency identity from an earlier execution. It does not
- * affect durable waiting/resumption inside the same physical execution.
- */
-export const WORKFLOW_EXECUTION_RECOVERY_POLICIES = ["recoverable", "fresh_only"] as const;
-export type WorkflowExecutionRecoveryPolicy = (typeof WORKFLOW_EXECUTION_RECOVERY_POLICIES)[number];
 export const WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MIN = 128 as const;
-export const WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX = 32_768 as const;
+/*
+ * A repairable structured Workflow Agent reserves this bound for its single
+ * submission, and a chapter BeatSheet legitimately exceeds 32_768: measured
+ * production output stopped at exactly 32_768 completion tokens while emitting
+ * 78_828 characters (~2.4 characters per token), so the artifact needed roughly
+ * 33-35K tokens and was truncated on every window. A truncated typed artifact
+ * cannot be repaired or continued into a valid one, so the node could never
+ * converge. Keep a hard bound, sized for one complete artifact rather than for a
+ * partial prefix.
+ */
+export const WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX = 65_536 as const;
 
 export const WORKFLOW_COLLECTION_PROTOCOL_VERSION = "workflow.collection/v1" as const;
 
-export const WORKFLOW_KNOWLEDGE_CANDIDATE_SET_VERSION = "workflow.knowledge-candidates/v1" as const;
+export const WORKFLOW_KNOWLEDGE_CANDIDATE_SET_VERSION = "workflow.knowledge-candidates/v2" as const;
 export const WORKFLOW_KNOWLEDGE_CARD_VERSION = "workflow.knowledge-card/v1" as const;
 
-export type WorkflowKnowledgeCandidateV1 = Readonly<{
+export type WorkflowKnowledgeCandidateV2 = Readonly<{
 	cardId: string;
 	sourceRoot: string;
 	domain: string;
 	facet: string | null;
 	title: string;
 	roleScope: readonly string[];
-	keywords: readonly string[];
-	sourceUrls: readonly string[];
-	bodyPreview: string;
+	contentSha256: string;
+	bodyBytes: number;
 	rank: number;
 	score: number;
 	vectorScore: number;
@@ -74,7 +84,7 @@ export type WorkflowKnowledgeCandidateV1 = Readonly<{
  * Durable output of an explicit Knowledge Search node. It carries the exact recalled identities,
  * so a later Knowledge Read node can prove membership without relying on one agent turn's memory.
  */
-export type WorkflowKnowledgeCandidateSetV1 = Readonly<{
+export type WorkflowKnowledgeCandidateSetV2 = Readonly<{
 	protocolVersion: typeof WORKFLOW_KNOWLEDGE_CANDIDATE_SET_VERSION;
 	candidateSetId: string;
 	requestHash: string;
@@ -87,7 +97,7 @@ export type WorkflowKnowledgeCandidateSetV1 = Readonly<{
 		availableCards: number;
 		embeddingModel: string;
 	}>;
-	candidates: readonly WorkflowKnowledgeCandidateV1[];
+	candidates: readonly WorkflowKnowledgeCandidateV2[];
 }>;
 
 export type WorkflowKnowledgeCardV1 = Readonly<{
@@ -125,7 +135,7 @@ function requireFiniteKnowledgeNumber(value: unknown, field: string): number {
 	return value;
 }
 
-function parseWorkflowKnowledgeCandidate(value: unknown, index: number): WorkflowKnowledgeCandidateV1 {
+function parseWorkflowKnowledgeCandidate(value: unknown, index: number): WorkflowKnowledgeCandidateV2 {
 	const candidate = asRecord(value);
 	if (!candidate) throw new Error(`Workflow knowledge candidates[${index}] must be an object`);
 	const rank = requireFiniteKnowledgeNumber(candidate.rank, `candidates[${index}].rank`);
@@ -136,6 +146,11 @@ function parseWorkflowKnowledgeCandidate(value: unknown, index: number): Workflo
 	if (candidate.facet !== null && typeof candidate.facet !== "string") {
 		throw new Error(`Workflow knowledge candidates[${index}].facet must be a string or null`);
 	}
+	const contentSha256 = requireKnowledgeString(candidate.contentSha256, "contentSha256");
+	const bodyBytes = requireFiniteKnowledgeNumber(candidate.bodyBytes, "bodyBytes");
+	if (!/^[a-f0-9]{64}$/.test(contentSha256) || !Number.isSafeInteger(bodyBytes) || bodyBytes < 0) {
+		throw new Error("Workflow knowledge invalid source version or size");
+	}
 	return {
 		cardId: requireKnowledgeString(candidate.cardId, `candidates[${index}].cardId`),
 		sourceRoot: requireKnowledgeString(candidate.sourceRoot, `candidates[${index}].sourceRoot`),
@@ -143,9 +158,8 @@ function parseWorkflowKnowledgeCandidate(value: unknown, index: number): Workflo
 		facet: candidate.facet === null ? null : candidate.facet.trim() || null,
 		title: requireKnowledgeString(candidate.title, `candidates[${index}].title`),
 		roleScope: readKnowledgeStringList(candidate.roleScope, `candidates[${index}].roleScope`),
-		keywords: readKnowledgeStringList(candidate.keywords, `candidates[${index}].keywords`),
-		sourceUrls: readKnowledgeStringList(candidate.sourceUrls, `candidates[${index}].sourceUrls`),
-		bodyPreview: requireKnowledgeString(candidate.bodyPreview, `candidates[${index}].bodyPreview`),
+		contentSha256,
+		bodyBytes,
 		rank,
 		score: requireFiniteKnowledgeNumber(candidate.score, `candidates[${index}].score`),
 		vectorScore: requireFiniteKnowledgeNumber(candidate.vectorScore, `candidates[${index}].vectorScore`),
@@ -154,7 +168,7 @@ function parseWorkflowKnowledgeCandidate(value: unknown, index: number): Workflo
 	};
 }
 
-export function parseWorkflowKnowledgeCandidateSetV1(value: unknown): WorkflowKnowledgeCandidateSetV1 {
+export function parseWorkflowKnowledgeCandidateSetV2(value: unknown): WorkflowKnowledgeCandidateSetV2 {
 	const record = asRecord(value);
 	if (!record || record.protocolVersion !== WORKFLOW_KNOWLEDGE_CANDIDATE_SET_VERSION) {
 		throw new Error(`Workflow knowledge candidate set protocolVersion must be ${WORKFLOW_KNOWLEDGE_CANDIDATE_SET_VERSION}`);
@@ -331,6 +345,15 @@ export type WorkflowAtomicNodeSpecV1 = Readonly<{
 	executionMode: WorkflowNodeExecutionMode;
 	/** Maximum in-flight item executions for `each`; omitted means one-at-a-time. */
 	itemConcurrency?: number;
+	/** Ordered `each` dependency: hand the preceding committed item output to an input port. */
+	itemContinuation?: Readonly<{ inputPort: string; outputPort: string }>;
+	/**
+	 * Explicit relation used when an `each` node consumes collections with
+	 * different cardinalities. `keyed_join` groups every candidate item by the
+	 * declared key path before item execution; it never pads, repeats or
+	 * positionally guesses values.
+	 */
+	inputAlignment?: WorkflowCollectionAlignmentSpecV1;
 	inputPorts: readonly string[];
 	/** Input ports that may be supplied by configuration instead of an edge. */
 	optionalInputPorts?: readonly string[];
@@ -352,6 +375,18 @@ export type WorkflowAtomicNodeSpecV1 = Readonly<{
 	cachePolicy?: WorkflowPureNodeCachePolicyV1;
 }>;
 
+export type WorkflowCollectionAlignmentSpecV1 = Readonly<{
+	strategy: "keyed_join";
+	/** Collection port that defines the `each` item order and cardinality. */
+	primaryPort: string;
+	/** Dot-separated path resolved from each primary item value. */
+	primaryKeyPath: string;
+	/** Dot-separated path resolved from each candidate item value. The result may be a scalar or array. */
+	candidateKeyPath: string;
+	/** Candidate collection ports to join. Omitted means every non-primary collection input. */
+	candidatePorts?: readonly string[];
+}>;
+
 export type WorkflowExecutorPortArtifactContractV1 = Readonly<{
 	inputArtifactTypes: Readonly<Record<string, readonly string[]>>;
 	outputArtifactTypes: Readonly<Record<string, readonly string[]>>;
@@ -365,6 +400,39 @@ export type WorkflowExecutorPortArtifactContractV1 = Readonly<{
  * here instead of changing a consumer silently.
  */
 export const WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS = Object.freeze({
+	"video.chapter-assets.prepare/v1": {
+		inputArtifactTypes: { "chapter-assets": ["tapcanvas.chapter-asset-plan/v1"] },
+		outputArtifactTypes: { "asset-items": ["tapcanvas.asset-plan-items/v2"] },
+	},
+	"video.asset-consumers.bind/v1": {
+		inputArtifactTypes: { "asset-bindings": ["tapcanvas.asset-bindings/v1"], "asset-items": ["tapcanvas.asset-plan-items/v2"] },
+		outputArtifactTypes: { "asset-bindings": ["tapcanvas.asset-bindings/v1"] },
+	},
+	"tapcanvas.chapter-backgrounds.split/v1": {
+		inputArtifactTypes: { "chapter-assets": ["tapcanvas.chapter-asset-plan/v1"] },
+		outputArtifactTypes: { "asset-items": ["tapcanvas.asset-plan-items/v2"] },
+	},
+	"video.clip-design-inputs/v1": {
+		inputArtifactTypes: { "chapter-plan": ["tapcanvas.chapter-beat-plan/v1"], "chapter-assets": ["tapcanvas.chapter-asset-plan/v1"] },
+		outputArtifactTypes: { "clip-design-inputs": ["tapcanvas.clip-design-inputs/v1"] },
+	},
+	"video.beat-sheet.assemble/v1": {
+		inputArtifactTypes: { "chapter-plan": ["tapcanvas.chapter-beat-plan/v1"], "chapter-assets": ["tapcanvas.chapter-asset-plan/v1"], "clip-designs": ["tapcanvas.clip-design/v1"] },
+		outputArtifactTypes: { "beat-sheet": ["tapcanvas.beat-sheet/v2"] },
+	},
+	"tapcanvas.blocking-backgrounds.split/v1": {
+		inputArtifactTypes: { "beat-sheet": ["tapcanvas.beat-sheet/v2", "tapcanvas.launch-beat-sheet/v1"] },
+		outputArtifactTypes: { "asset-items": ["tapcanvas.asset-plan-items/v2"] },
+	},
+	"tapcanvas.blocking-diagrams.materialize/v1": {
+		inputArtifactTypes: {
+			"beat-sheet": ["tapcanvas.beat-sheet/v2", "tapcanvas.launch-beat-sheet/v1"],
+			"background-bindings": ["tapcanvas.asset-bindings/v1"],
+		},
+		outputArtifactTypes: {
+			"beat-sheet": ["tapcanvas.beat-sheet/v2"],
+		},
+	},
 	"video.asset-plans.project/v1": {
 		inputArtifactTypes: {
 			"beat-sheet": ["tapcanvas.beat-sheet/v2", "tapcanvas.launch-beat-sheet/v1"],
@@ -591,6 +659,7 @@ function edgeTouchesNodeIds(value: unknown, nodeIds: ReadonlySet<string>): boole
 
 /** Remove admin-only workflow nodes and every connected edge from a graph-shaped value. */
 export function projectWorkflowGraphForViewer(value: unknown, canViewAdminWorkflow: boolean): unknown {
+	value = projectCanvasMembership(value);
 	if (canViewAdminWorkflow) return value;
 	const graph = readWorkflowGraphRecord(value);
 	if (!graph) return value;
@@ -609,7 +678,6 @@ export function projectWorkflowGraphForViewer(value: unknown, canViewAdminWorkfl
 
 /** Project incremental React Flow patches before they cross a non-admin realtime channel. */
 export function projectWorkflowGraphPatchForViewer(value: unknown, canViewAdminWorkflow: boolean): unknown {
-	if (canViewAdminWorkflow) return value;
 	const patch = readWorkflowGraphRecord(value);
 	if (!patch) return value;
 	const hasNodePatch = Object.prototype.hasOwnProperty.call(patch, "upsertNodes");
@@ -617,17 +685,23 @@ export function projectWorkflowGraphPatchForViewer(value: unknown, canViewAdminW
 	if (!hasNodePatch && !hasEdgePatch) return value;
 	const upsertNodes = Array.isArray(patch.upsertNodes) ? patch.upsertNodes : [];
 	const hiddenNodeIds = new Set(upsertNodes
-		.filter(isAdminWorkflowGraphNode)
+		.filter((node) => isDetachedCanvasNode(node) || (!canViewAdminWorkflow && isAdminWorkflowGraphNode(node)))
 		.map(readWorkflowGraphNodeId)
 		.filter(Boolean));
 	const upsertEdges = Array.isArray(patch.upsertEdges) ? patch.upsertEdges : [];
 	return {
 		...patch,
+		...(upsertNodes.some(isDetachedCanvasNode) ? {
+			removeNodeIds: [...new Set([
+				...(Array.isArray(patch.removeNodeIds) ? patch.removeNodeIds : []),
+				...upsertNodes.filter(isDetachedCanvasNode).map(readWorkflowGraphNodeId),
+			])],
+		} : {}),
 		...(hasNodePatch
-			? { upsertNodes: upsertNodes.filter((node) => !isAdminWorkflowGraphNode(node)) }
+			? { upsertNodes: upsertNodes.filter((node) => !hiddenNodeIds.has(readWorkflowGraphNodeId(node))) }
 			: {}),
 		...(hasEdgePatch
-			? { upsertEdges: upsertEdges.filter((edge) => !edgeTouchesNodeIds(edge, hiddenNodeIds)) }
+			? { upsertEdges: upsertEdges.filter((edge) => !isDetachedCanvasNode(edge) && !edgeTouchesNodeIds(edge, hiddenNodeIds)) }
 			: {}),
 	};
 }

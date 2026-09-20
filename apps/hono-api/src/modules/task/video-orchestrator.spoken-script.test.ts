@@ -118,6 +118,58 @@ describe("narrative audio plan", () => {
     expect(plan?.lines[0]?.delivery).toBe("on_screen");
   });
 
+  it("rejects a narrative line that reuses a frozen source dialogue id", () => {
+    const errors: string[] = [];
+    const plan = parseNarrativeAudioPlan({
+      strategy: "mixed",
+      rationale: "补充一条独立旁白。",
+      lines: [{
+        lineId: "source-0",
+        speakerName: "旁白",
+        text: "不应复用源对白身份。",
+        delivery: "voice_over",
+        afterSourceLineId: "source-0",
+        sourceEvidence: ["source-unit-0001"],
+      }],
+    }, "narrativeAudioPlan", errors);
+    const placementErrors: string[] = [];
+
+    validateNarrativeAudioPlacement([{
+      lineId: "source-0",
+      speakerName: "角色",
+      text: "源对白。",
+      delivery: "on_screen",
+    }], plan, "narrativeAudioPlan", placementErrors);
+
+    expect(errors).toEqual([]);
+    expect(placementErrors).toEqual([
+      expect.stringContaining("must be unique across dialogueScript and narrativeAudioPlan"),
+    ]);
+  });
+
+  it("does not append the explicit source-speech-only projection twice", () => {
+    const plan = {
+      strategy: "source_speech_only" as const,
+      rationale: "完整声明冻结源语音账本。",
+      lines: [{
+        lineId: "source-0",
+        speakerName: "角色",
+        text: "源对白。",
+        delivery: "on_screen" as const,
+        afterSourceLineId: null,
+        sourceEvidence: ["source-unit-0001"],
+      }],
+    };
+    const combined = combineSpokenScript([{
+      lineId: "source-0",
+      speakerName: "角色",
+      text: "源对白。",
+      delivery: "on_screen",
+    }], plan);
+
+    expect(combined.map((line) => line.lineId)).toEqual(["source-0"]);
+  });
+
   it("preserves a missing supplemental delivery for the downstream Clip writer to author", () => {
     const errors: string[] = [];
     const plan = parseNarrativeAudioPlan({
@@ -194,4 +246,43 @@ describe("narrative audio plan", () => {
       expect.stringContaining("必须引用当前 dialogueScript 的 lineId"),
     ]);
   });
+});
+
+it("projects an explicit source reference once while preserving distinct new speech", () => {
+  const source = [{ lineId: "source-1", speakerName: "A", text: "原文", delivery: "voice_over" as const }];
+  const errors: string[] = [];
+  const plan = parseNarrativeAudioPlan({ strategy: "mixed", rationale: "原文加新增",
+    lines: [
+      { lineId: "audio-view", sourceLineId: "source-1", speakerName: "A", text: "引用展示", afterSourceLineId: null, sourceEvidence: [] },
+      { lineId: "new-1", speakerName: "A", text: "原文", afterSourceLineId: "source-1", sourceEvidence: [], narrativeFunction: "有意再次发声" },
+    ],
+  }, "audio", errors);
+  validateNarrativeAudioPlacement(source, plan, "audio", errors);
+  expect(errors).toEqual([]);
+  expect(combineSpokenScript(source, plan).map(line => line.lineId)).toEqual(["source-1", "new-1"]);
+});
+
+it("reports an invalid explicit source identity instead of guessing by text", () => {
+ const errors: string[] = [];
+ const plan = parseNarrativeAudioPlan({ strategy: "mixed", rationale: "test", lines: [
+  { lineId: "view", sourceLineId: "missing", text: "same", speakerName: "A", afterSourceLineId: null, sourceEvidence: [] },
+ ] }, "audio", errors);
+ validateNarrativeAudioPlacement([{ lineId: "source", text: "same", speakerName: "A" }], plan, "audio", errors);
+ expect(errors.join(" ")).toContain("sourceLineId");
+});
+
+
+it("distinguishes a referenced source occurrence from an explicit new occurrence even with identical text", () => {
+  const source = [{ lineId: "source-1", speakerName: "甲", text: "回来。", delivery: "on_screen" as const }];
+  const errors: string[] = [];
+  const plan = parseNarrativeAudioPlan({ strategy: "mixed", rationale: "引用第一次发声并追加一次重复呼喊",
+    lines: [
+      { ...source[0], lineId: "reference", sourceLineId: "source-1", afterSourceLineId: null, sourceEvidence: [] },
+      { ...source[0], lineId: "additional", sourceLineId: null, afterSourceLineId: "source-1", sourceEvidence: [] },
+    ],
+  }, "plan", errors);
+  validateNarrativeAudioPlacement(source, plan, "plan", errors);
+  expect(errors).toEqual([]);
+  expect(combineSpokenScript(source, plan).map(line => line.lineId)).toEqual(["source-1", "additional"]);
+  expect(combineSpokenScript(source, plan).map(line => line.text)).toEqual(["回来。", "回来。"]);
 });

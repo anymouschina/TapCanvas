@@ -1,3 +1,7 @@
+import { assetBindingIdentity } from "./execution.asset-identity";
+import { bindWorkflowClipAssetObjectContracts, parseWorkflowClipAssetObjectContracts } from "./execution.video-workflow-continuity";
+import { inspectDeclaredAssetIdsMatch } from "./execution.agent-output-contract";
+import { sceneReferenceFixture } from "./execution.scene-reference-fixture";
 import { describe, expect, it } from "vitest";
 import { createWorkflowCollection } from "@tapcanvas/workflow-kernel-protocol";
 import {
@@ -11,15 +15,83 @@ import {
 	freezeWorkflowVideoDurationPlan,
 	inspectWorkflowPromptPackageAdmission,
 	parseFrozenWorkflowVideoDurationPlan,
+	parseWorkflowAssetRole,
 	projectVideoAssetPlansFromBeatSheet,
 	compileWorkflowClipWriterFrozenEnvelope,
 	compileWorkflowClipWriterFrozenEnvelopeText,
+	enrichVideoClipContextWithMaterializedAssets,
 	validateWorkflowClipWriterForContext,
 	validateWorkflowAssetPlanProjectReuse,
 } from "./execution.video-workflow-contract";
 import { WorkflowInputContractError } from "./execution.input-contract";
+import { sha256Hex } from "../asset/book-content-hash";
 
 describe("video workflow atomic contracts", () => {
+	it("joins materialized asset bindings into the clip authoring context", () => {
+		const contextItem = {
+			executionScope: "media_delivery",
+			clipIndex: 0,
+			beat: { clipId: "clip-0", durationSeconds: 5 },
+			assetPlans: [],
+			assetObjectContracts: [{
+				kind: "character",
+				name: "Hero",
+				physicalIdentityKey: "hero-body",
+				referenceImageNodeIds: [],
+				referenceAssetIds: [],
+				referenceRole: "identity",
+				identityInvariant: "same body",
+				startState: "ready",
+				spatialRelation: "left",
+				driver: "Hero",
+				stateChange: "moves",
+				endState: "forward",
+			}],
+		};
+		const sequenceContext = {
+			previous: null,
+			current: { clipId: "clip-0", assetObjectContracts: contextItem.assetObjectContracts },
+			next: { clipId: "clip-1", assetObjectContracts: [{ ...contextItem.assetObjectContracts[0], name: "Neighbour", physicalIdentityKey: "neighbour-body" }] },
+		};
+		const originalContext = structuredClone(contextItem);
+		const result = enrichVideoClipContextWithMaterializedAssets({
+			contextItem: { ...contextItem, sequenceContext },
+			materializedAssetCollection: createWorkflowCollection({
+				collectionId: "assets",
+				producerNodeId: "asset-image-generate",
+				producerPortId: "asset-bindings",
+				itemIds: ["plan-hero"],
+				values: [{
+					assetPlan: { assetId: "plan-hero", role: "character://hero-body", consumerClipIds: ["clip-0"] },
+					generatedAssetId: "generated-hero",
+					nodeId: "image-node-hero",
+					imageUrl: "https://assets.example/hero.png",
+				}],
+			}),
+		});
+		expect(result.sequenceContext).toEqual({
+			previous: null,
+			current: expect.objectContaining({ clipId: "clip-0", assetObjectContracts: result.assetObjectContracts }),
+			next: sequenceContext.next,
+		});
+		expect(result.beat).toEqual(expect.objectContaining({ assetObjectContracts: result.assetObjectContracts }));
+		expect(contextItem).toEqual(originalContext);
+		expect(result.assetPlans).toHaveLength(1);
+		expect(result.authoringAssetBindings).toEqual([expect.objectContaining({
+			assetId: "plan-hero",
+			generatedAssetId: "generated-hero",
+			nodeId: "image-node-hero",
+		})]);
+		expect(result.assetObjectContracts).toEqual([expect.objectContaining({
+			assetId: "plan-hero",
+			referenceImageNodeIds: ["image-node-hero"],
+		})]);
+	});
+
+	it.each(["environment://空座町", "wardrobe://主角战斗外套"])("rejects reference-purpose alias as object kind: %s", role => {
+		expect(() => parseWorkflowAssetRole(role, "assetPlans[0].role")).toThrow();
+	});
+
 	it("keeps creative review and semantic verification as non-blocking prompt-package diagnostics", () => {
 		const admission = inspectWorkflowPromptPackageAdmission({
 			protocolVersion: "2",
@@ -47,6 +119,9 @@ describe("video workflow atomic contracts", () => {
 				deliveryVerificationStatus: "unsatisfied",
 				embeddedAuthoringReviewCount: 0,
 				embeddedAuthoringReviewComplete: false,
+				qualityAssessmentStatus: null,
+				qualityAssessmentReviewedClipCount: null,
+				qualityAssessmentComplete: null,
 			},
 		});
 	});
@@ -121,6 +196,29 @@ describe("video workflow atomic contracts", () => {
 		expect(parsed.clips[0]).toHaveProperty("sourceEventCoverage");
 		expect(parsed.clips[0]).toHaveProperty("temporalFrameTrack");
 		expect(parsed.clips[0]).toHaveProperty("temporalFrameCoverage");
+	});
+
+	it("derives executable shot ordinals without changing authored order, timing or event mapping", () => {
+		const shots = [
+			{ action: "进入", visualTask: "进入", durationSeconds: 4, depictedStoryEventIndices: [0] },
+			{ shotNo: 99, action: "离开", visualTask: "离开", durationSeconds: 6, depictedStoryEventIndices: [1] },
+		];
+		const text = JSON.stringify({ clips: [{ shots }] });
+		const result = compileWorkflowClipWriterFrozenEnvelope({ text, contextItem: {
+			clipIndex: 0,
+			assetObjectContracts: [],
+			beat: { clipId: "ordered", durationSeconds: 10, characters: [], exitState: "离开",
+				storyEvents: [
+					{ startSeconds: 0, endSeconds: 4, entryState: "门外", exitState: "进入" },
+					{ startSeconds: 4, endSeconds: 10, entryState: "进入", exitState: "离开" },
+				],
+			},
+		} });
+		expect(result.ok).toBe(true);
+		if (!result.ok) throw new Error("Compilation unexpectedly failed");
+		const compiled = JSON.parse(result.text) as { clips: Array<{ shots: unknown[] }> };
+		expect(compiled.clips[0].shots).toEqual(shots.map((shot, index) => ({ ...shot, shotNo: index + 1 })));
+		expect(JSON.stringify({ clips: [{ shots }] })).toBe(text);
 	});
 
 	it("projects immutable Clip context facts and compiles machine time fields from Agent-authored shots", () => {
@@ -290,7 +388,7 @@ describe("video workflow atomic contracts", () => {
 
 		expect(compilation).toEqual({
 			ok: false,
-			errorMessage: "clipWriter.clips[0].shots[2].depictedStoryEventIndices declares storyEvent 1 outside the shot clock interval",
+			errorMessage: "clipWriter.clips[0].shots[2].depictedStoryEventIndices declares storyEvent 1 outside the shot clock interval (shot=[16,20), storyEvent=[9,16))",
 		});
 	});
 
@@ -434,7 +532,10 @@ describe("video workflow atomic contracts", () => {
 			)),
 		}));
 	};
-	const beatSheet = (beats: readonly Record<string, unknown>[]) => ({
+	const beatSheet = (
+		beats: readonly Record<string, unknown>[],
+		endingHook: string | null = "最后状态把未完成因果交给后续",
+	) => ({
 		text: JSON.stringify({
 			protocolVersion: "keyframe-beat-sheet/v2",
 			sourceId: "workflow-test-source",
@@ -443,13 +544,29 @@ describe("video workflow atomic contracts", () => {
 				storyPromise: "主角必须完成当前来源中的核心任务",
 				protagonistThroughline: "主角的选择按来源顺序推进",
 				primaryPayoff: "来源冻结的不可逆结果得到兑现",
-				endingHook: "最后状态把未完成因果交给后续",
+				endingHook,
 			},
 			filmBible: {},
 			adaptationStrategy: {},
 			castManifest: [],
 			meta: {},
 			sourceCoveragePlan: { speechLedger: [] },
+			sequenceControlPlan: (() => {
+				let cursor = 0;
+				const segments = beats.map((beat, index) => {
+					const startSeconds = cursor;
+					cursor += Number(beat.durationSeconds);
+					return {
+						clipId: typeof beat.clipId === "string" ? beat.clipId : `clip-${index}`,
+						startSeconds,
+						endSeconds: cursor,
+						temporalDirectives: [],
+						transitionFromPrevious: index === 0 ? "从整章入口进入" : `承接第 ${index} 段退出`,
+						transitionToNext: index === beats.length - 1 ? "保留整章出口" : `把结果交给第 ${index + 2} 段`,
+					};
+				});
+				return { protocolVersion: "tapcanvas.sequence-control-plan/v1", totalDurationSeconds: cursor, segments };
+			})(),
 			beats: beats.map((beat, index) => {
 				const durationSeconds = Number(beat.durationSeconds);
 				const exitState = typeof beat.exitState === "string" ? beat.exitState : `clip-${index}-exit`;
@@ -502,7 +619,7 @@ describe("video workflow atomic contracts", () => {
 	});
 	type TestAssetBinding = Readonly<{ assetId: string; role: string }>;
 	const testObjectContracts = (assets: readonly TestAssetBinding[]) => {
-		const planned = assets.map(({ role }) => {
+		const planned = [...new Set(assets.map((asset) => asset.role))].map((role) => {
 			const [kind = "", name = ""] = role.split("://");
 			return {
 				...objectContract(
@@ -656,8 +773,8 @@ describe("video workflow atomic contracts", () => {
 				...sourceObject,
 				assetPlans: [{
 					role: "character://hero",
-					prompt: "中性角色卡，稳定骨相、发型与服装基线",
-					negativePrompt: "剧情伤势、年龄漂移、脸型漂移",
+					prompt: "完整的中性四视图角色设计：稳定骨相、固定发型与独有衣领细节",
+					negativePrompt: "不得改变年龄；不得改变脸型；不要让街口和裂隙进入身份板",
 					identityAnchors: ["稳定骨相", "固定发型剪影"],
 					prohibitedDrift: ["不得改变年龄", "不得改变脸型"],
 				}, {
@@ -671,10 +788,11 @@ describe("video workflow atomic contracts", () => {
 		});
 		expect(projected.assets).toEqual([]);
 		expect(JSON.parse(projected.text)).toEqual([{
-			assetId: "asset-plan:character://hero",
+			assetId: expect.stringMatching(/^planned-image:[a-f0-9]{64}$/),
+			objectId: "",
 			role: "character://hero",
-			prompt: "中性角色卡，稳定骨相、发型与服装基线",
-			negativePrompt: "剧情伤势、年龄漂移、脸型漂移",
+			prompt: "完整的中性四视图角色设计：稳定骨相、固定发型与独有衣领细节",
+			negativePrompt: "不得改变年龄；不得改变脸型；不要让街口和裂隙进入身份板",
 			consumerClipIds: ["clip-a"],
 			referenceType: "character",
 			roleName: "hero",
@@ -682,7 +800,120 @@ describe("video workflow atomic contracts", () => {
 			characterProfileVersion: "character-card/v3",
 			identityAnchors: ["稳定骨相", "固定发型剪影"],
 			prohibitedDrift: ["不得改变年龄", "不得改变脸型"],
+		}, {
+			assetId: expect.stringMatching(/^planned-image:[a-f0-9]{64}$/),
+			objectId: "",
+			role: "prop://旧铜钥匙",
+			prompt: "旧铜钥匙中性道具参考",
+			negativePrompt: "手持表演、环境、文字",
+			consumerClipIds: ["clip-a"],
 		}]);
+	});
+
+	it.each(["prop", "vfx"])("retains a shared %s plan across clips without resetting object states", (kind) => {
+		const source = beatSheet(["clip-a", "clip-b"].map((clipId, index) => ({
+			clipId,
+			durationSeconds: 5,
+			characters: [],
+			assetObjectContracts: [{ ...objectContract(kind, "共享对象", kind), startState: index === 0 ? "完整" : "局部破损", endState: index === 0 ? "局部破损" : "消散" }],
+		})));
+		const plans = buildVideoAssetPlanCollection({
+			executionId: "execution-1",
+			nodeId: "asset-fan-out",
+			beatSheetAgentResult: source,
+			assetAgentResult: assetPlanResult([{
+				assetId: "original-product",
+				role: `${kind}://共享对象`,
+				prompt: "原商品参考",
+				negativePrompt: "无关对象",
+				consumerClipIds: ["clip-a"],
+				existingAssetId: "project-product",
+				existingNodeId: "uploaded-product",
+				existingImageUrl: "https://assets.tapcanvas.test/product.png",
+			}]),
+		});
+		expect(plans.items).toHaveLength(1);
+		expect(plans.items[0]?.value).toMatchObject({
+			role: `${kind}://共享对象`,
+			consumerClipIds: ["clip-a", "clip-b"],
+			existingNodeId: "uploaded-product",
+		});
+		const contexts = buildVideoClipContexts({
+			executionId: "execution-1",
+			nodeId: "clips",
+			deliveryContract: deliveryContract([5, 5]),
+			beatSheetAgentResult: source,
+		});
+		const materialized = createWorkflowCollection({
+			collectionId: "images",
+			producerNodeId: "materialize",
+			producerPortId: "asset-bindings",
+			itemIds: ["original-product"],
+			values: [{
+				assetPlan: plans.items[0]!.value,
+				generatedAssetId: "project-product",
+				nodeId: "uploaded-product",
+				imageUrl: "https://assets.tapcanvas.test/product.png",
+			}],
+		});
+		for (const [index, item] of contexts.items.entries()) {
+			const bound = enrichVideoClipContextWithMaterializedAssets({
+				contextItem: item.value,
+				materializedAssetCollection: materialized,
+			});
+			expect(bound.assetObjectContracts).toEqual([expect.objectContaining({
+				name: "共享对象",
+				referenceRole: kind,
+				referenceImageNodeIds: ["uploaded-product"],
+				startState: index === 0 ? "完整" : "局部破损",
+				endState: index === 0 ? "局部破损" : "消散",
+			})]);
+		}
+	});
+
+	it("preserves scene contract through projection, fan-out and clip context without rewriting performance", () => {
+		const source = beatSheet([{
+			clipId: "crowded-clip", durationSeconds: 5, characters: ["乘客"],
+			assetObjectContracts: [objectContract("scene", "公交车厢", "environment", "乘客贴挤、车辆摇晃")],
+		}]);
+		const story = JSON.parse(source.text) as Record<string, unknown>;
+		const scenePlan = {
+			role: "scene://公交车厢", sceneCard: sceneReferenceFixture,
+			identityAnchors: ["中央过道与两侧座椅"], prohibitedDrift: ["固定门窗位置"],
+		};
+		const authored = { text: JSON.stringify({ ...story, assetPlans: [scenePlan] }) };
+		const projected = projectVideoAssetPlansFromBeatSheet(authored);
+		const collection = buildVideoAssetPlanCollection({ executionId: "scene-execution", nodeId: "assets",
+			beatSheetAgentResult: authored, assetAgentResult: projected });
+		expect(collection.items[0]?.value).toMatchObject({ ...scenePlan, referenceType: "scene" });
+		expect(JSON.parse(authored.text).beats).toEqual(story.beats);
+	});
+
+	it("binds a canonical scene kind with environment reference purpose", () => {
+		const source = beatSheet([{
+			clipId: "clip-environment",
+			durationSeconds: 5,
+			characters: ["主角"],
+			assetObjectContracts: [
+				objectContract("character", "主角", "none"),
+				objectContract("scene", "空座町", "environment"),
+			],
+		}]);
+		const sourceObject = JSON.parse(source.text) as Record<string, unknown>;
+		const projected = projectVideoAssetPlansFromBeatSheet({
+			text: JSON.stringify({
+				...sourceObject,
+				assetPlans: [{
+					role: "scene://空座町",
+					sceneCard: sceneReferenceFixture,
+					identityAnchors: ["高楼与霓虹街区"],
+					prohibitedDrift: ["不得改为空间无关背景"],
+				}],
+			}),
+		});
+		expect(JSON.parse(projected.text).map((plan: Record<string, unknown>) => plan.role)).toEqual([
+			"scene://空座町",
+		]);
 	});
 
 	it("freezes a semantic duration window without imposing clip topology", () => {
@@ -700,6 +931,41 @@ describe("video workflow atomic contracts", () => {
 			...frozen,
 			policy: "model_max_duration",
 		})).toBeNull();
+	});
+
+	it("freezes canonical source speech capacity into the delivery contract for the BeatSheet agent", () => {
+		const durationPlan = {
+			targetDurationSeconds: null,
+			modelKey: "doubao-seedance-2.0",
+			durationOptions: [5, 10, 15],
+			maxDurationSeconds: 15,
+		};
+		const withSpeech = buildVideoDeliveryContract({
+			executionId: "execution-source-profile",
+			workflowKey: "tapcanvas.video-production",
+			executionScope: "media_delivery",
+			canvasFacts: {
+				sourceMode: "project_context",
+				authoritativeSources: [{ nodeId: "chapter-seed", sourceId: "chapter-seed", content: "第1章\n“到了吗？”\n“不要紧张，一定能过的。”\n" }],
+			},
+			durationPlan,
+		});
+		expect(withSpeech.sourceProfile).toMatchObject({
+			protocolVersion: "tapcanvas.beat-sheet-source-profile/v1",
+			sourceSpeechUnits: [{ verbatim: "到了吗？" }, { verbatim: "不要紧张，一定能过的。" }],
+			sourceSpeechChars: "到了吗？不要紧张，一定能过的。".length,
+			minimumPlannedSeconds: Math.ceil("到了吗？不要紧张，一定能过的。".length / 6),
+			minimumClipCount: Math.ceil(Math.ceil("到了吗？不要紧张，一定能过的。".length / 6) / 15),
+			speechMaxCharsPerSecond: 6,
+		});
+		const withoutSources = buildVideoDeliveryContract({
+			executionId: "execution-source-profile-empty",
+			workflowKey: "tapcanvas.video-production",
+			executionScope: "media_delivery",
+			canvasFacts: { sourceMode: "project_context" },
+			durationPlan,
+		});
+		expect(withoutSources.sourceProfile).toBeUndefined();
 	});
 
 	it("preserves an explicit clip count even when total duration remains Agent-authored", () => {
@@ -803,6 +1069,7 @@ describe("video workflow atomic contracts", () => {
 
 	it("stores authoritative chapter text once in the delivery contract", () => {
 		const chapterText = "第一章完整正文";
+		const selectedNodeFacts = [{ nodeId: "image-1", assetIds: ["asset-1"], metadata: { kind: "image", description: "商品来源描述" } }];
 		const contract = buildVideoDeliveryContract({
 			executionId: "execution-full-chapter",
 			workflowKey: "tapcanvas.video-production",
@@ -810,6 +1077,8 @@ describe("video workflow atomic contracts", () => {
 			canvasFacts: {
 				sourceMode: "project_context",
 				nodes: [{ nodeId: "chapter-1", kind: "text", content: chapterText, label: "第一章" }],
+				selectedNodeFacts,
+				missingSelectedNodeIds: ["missing-image"],
 				authoritativeSources: [{ nodeId: "chapter-1", content: chapterText, label: "第一章" }],
 			},
 			durationPlan: {
@@ -822,7 +1091,9 @@ describe("video workflow atomic contracts", () => {
 		expect(contract.canvasFacts).toEqual({
 			sourceMode: "project_context",
 			nodes: [{ nodeId: "chapter-1", kind: "text", label: "第一章" }],
-			authoritativeSources: [{ nodeId: "chapter-1", content: chapterText, label: "第一章" }],
+			selectedNodeFacts,
+			missingSelectedNodeIds: ["missing-image"],
+			authoritativeSources: [{ nodeId: "chapter-1", sourceId: "chapter-1", sourceFingerprint: sha256Hex(chapterText.trim()), content: chapterText, label: "第一章" }],
 		});
 		expect(JSON.stringify(contract).split(chapterText)).toHaveLength(2);
 	});
@@ -853,6 +1124,101 @@ describe("video workflow atomic contracts", () => {
 		expect(contexts.items.map((item) => item.itemId)).toEqual(["clip-a", "clip-b", "clip-c"]);
 	});
 
+	it("carries upstream Skill and knowledge receipts into every clip context", () => {
+		const beatSheetResult = {
+			...beatSheet([{ clipId: "clip-evidence", durationSeconds: 15, sourceText: "A" }]),
+			executionProvenance: {
+				version: 1,
+				loadedSkillSources: [{ skill: "tapcanvas-dramatic-adapter", source: "references/combat.md" }],
+				loadedKnowledgeSources: [{ cardId: "card-combat", title: "战斗节奏" }],
+			},
+			knowledgeCandidateSearch: { status: "candidate_found", candidateCount: 2, blocking: false },
+			retrievalCandidateSets: [{ candidateSetId: "set-1", candidates: [{ id: "card-combat" }] }],
+		};
+		const contexts = buildVideoClipContexts({
+			executionId: "execution-evidence",
+			nodeId: "fan-out",
+			deliveryContract: deliveryContract([15]),
+			beatSheetAgentResult: beatSheetResult,
+		});
+		const value = contexts.items[0]?.value as Record<string, unknown> | undefined;
+		expect(value?.authoringEvidencePacket).toEqual(expect.objectContaining({
+			protocolVersion: "tapcanvas.authoring-evidence/v1",
+			dependencyProvenance: beatSheetResult.executionProvenance,
+			knowledgeCandidateSearch: beatSheetResult.knowledgeCandidateSearch,
+			retrievalCandidateSets: beatSheetResult.retrievalCandidateSets,
+		}));
+	});
+
+	it.each([true, false])("keeps original source evidence separate from authored beats (identity matches: %s)", (matches) => {
+		const original = "  爬升再俯冲。\n卸力翻滚踩稳。  ";
+		const summary = "急速滑翔，拖脚犁出五米火星";
+		const authored = beatSheet([{ clipId: "clip-a", durationSeconds: 5, sourceSpan: summary }]);
+		const authoredFacts = JSON.parse(authored.text) as Record<string, unknown>;
+		authoredFacts.sourceFingerprint = sha256Hex(original.trim());
+		const contexts = buildVideoClipContexts({
+			executionId: "source-evidence", nodeId: "fan-out",
+			deliveryContract: {
+				...deliveryContract([5]),
+				canvasFacts: { authoritativeSources: [{
+					sourceId: "workflow-test-source",
+					sourceFingerprint: matches ? sha256Hex(original.trim()) : "wrong-version",
+					content: original,
+				}] },
+			},
+			beatSheetAgentResult: { ...authored, text: JSON.stringify(authoredFacts) },
+		});
+		const context = contexts.items[0]?.value as Record<string, unknown>;
+		expect(context.beat).toMatchObject({ sourceSpan: summary });
+		const sourceEvidence = matches ? expect.objectContaining({ status: "matched", sources: [expect.objectContaining({ content: original })] }) : expect.objectContaining({
+			status: "unavailable", diagnostic: { reason: "source_fingerprint_mismatch", blocking: false },
+		});
+		expect(context.sourceEvidence).toEqual(sourceEvidence);
+		expect(JSON.stringify(context).split(JSON.stringify(original).slice(1, -1))).toHaveLength(matches ? 2 : 1);
+		const joined = enrichVideoClipContextWithMaterializedAssets({
+			contextItem: context,
+			materializedAssetCollection: createWorkflowCollection({
+				collectionId: "no-assets", producerNodeId: "assets", producerPortId: "asset-bindings", itemIds: [], values: [],
+			}),
+		});
+		expect(joined.sourceEvidence).toEqual(context.sourceEvidence);
+	});
+
+	it("hands each writer exact adjacent events, speech and state facts on the same frozen timeline", () => {
+		const speech = (id: string, text: string) => ({ lineId: id, speakerName: "主角", text, delivery: "on_screen" });
+		const audio = (id: string, text: string) => ({
+			strategy: "source_grounded_voice", rationale: "source-grounded authored speech",
+			lines: [{ ...speech(id, text), afterSourceLineId: null, sourceEvidence: [id] }],
+		});
+		const input = beatSheet([
+			{ clipId: "first", durationSeconds: 5, startKeyframe: "A", endKeyframe: "B", narrativeAudioPlan: audio("line-a", "问题") },
+			{ clipId: "middle", durationSeconds: 8, startKeyframe: "B", endKeyframe: "C", narrativeAudioPlan: audio("line-b", "查找"), storyEvents: [
+				{ sourceBeatId: "source-middle", event: "inspect", startSeconds: 5, endSeconds: 13, entryState: "B", exitState: "C" },
+			] },
+			{ clipId: "last", durationSeconds: 5, startKeyframe: "C", endKeyframe: "D", narrativeAudioPlan: audio("line-c", "结果") },
+		]);
+		const original = JSON.stringify(input);
+		for (const executionScope of ["prompt_only", "media_delivery"] as const) {
+			const contexts = buildVideoClipContexts({
+				executionId: "sequence-facts", nodeId: "fan-out",
+				deliveryContract: { ...deliveryContract([5, 8, 5]), executionScope },
+				beatSheetAgentResult: input,
+			});
+			const middle = contexts.items[1]!.value as Record<string, unknown>;
+			expect(middle.sequenceContext).toMatchObject({
+				previous: { clipId: "first", startKeyframe: "A", endKeyframe: "B", spokenScript: [speech("line-a", "问题")], storyEvents: [{ event: "event-0" }], assetObjectContracts: defaultObjectContracts },
+				current: { clipId: "middle", spokenScript: [speech("line-b", "查找")], storyEvents: [{ startSeconds: 0, endSeconds: 8, entryState: "B", exitState: "C" }] },
+				next: { clipId: "last", startKeyframe: "C", endKeyframe: "D", spokenScript: [speech("line-c", "结果")], assetObjectContracts: defaultObjectContracts },
+			});
+			const sequence = middle.sequenceContext as Record<string, unknown>;
+			expect(sequence.sequenceTimeline).toHaveLength(3);
+			expect(middle.spokenScript).toEqual([speech("line-b", "查找")]);
+			expect(contexts.items[0]!.value).toMatchObject({ sequenceContext: { previous: null } });
+			expect(contexts.items[2]!.value).toMatchObject({ sequenceContext: { next: null } });
+		}
+		expect(JSON.stringify(input)).toBe(original);
+	});
+
 	it("rejects a delivery contract without an immutable execution scope", () => {
 		expect(() => buildVideoDeliveryContract({
 			executionId: "execution-1",
@@ -881,13 +1247,14 @@ describe("video workflow atomic contracts", () => {
 			sourceId: "workflow-test-source",
 			sourceFingerprint: "workflow-test-fingerprint",
 		});
-		expect(firstContext?.sequenceContext).toEqual({
+		expect(firstContext?.sequenceContext).toMatchObject({
 			chapterArc: {
 				storyPromise: "主角必须完成当前来源中的核心任务",
 				protagonistThroughline: "主角的选择按来源顺序推进",
 				primaryPayoff: "来源冻结的不可逆结果得到兑现",
 				endingHook: "最后状态把未完成因果交给后续",
 			},
+			executionPolicy: "execute_frozen_beat",
 			previous: null,
 			current: {
 				clipId: "clip-a",
@@ -906,6 +1273,12 @@ describe("video workflow atomic contracts", () => {
 				handoffToNext: "把冻结结尾钩子留给后续",
 			},
 		});
+		const sequenceContext = firstContext?.sequenceContext as Record<string, unknown>;
+		expect(sequenceContext.sequenceControlPlan).toMatchObject({
+			protocolVersion: "tapcanvas.sequence-control-plan/v1",
+			totalDurationSeconds: 13,
+		});
+		expect(sequenceContext.sequenceTimeline).toHaveLength(2);
 		expect(firstContext?.beat).toMatchObject({
 			characters: ["主角"],
 			assetObjectContracts: expect.any(Array),
@@ -913,6 +1286,21 @@ describe("video workflow atomic contracts", () => {
 		});
 		expect(firstContext?.beat).not.toHaveProperty("stagingPlan");
 		expect(firstContext).not.toHaveProperty("beatSheetContext");
+	});
+
+	it("preserves a null chapter endingHook through Clip fan-out context", () => {
+		const contexts = buildVideoClipContexts({
+			executionId: "execution-no-hook",
+			nodeId: "fan-out",
+			deliveryContract: deliveryContract([5]),
+			beatSheetAgentResult: beatSheet([
+				{ clipId: "clip-no-hook", durationSeconds: 5, sourceText: "A" },
+			], null),
+		});
+		const firstContext = contexts.items[0]?.value as Record<string, unknown> | undefined;
+		const sequenceContext = firstContext?.sequenceContext as Record<string, unknown> | undefined;
+		const chapterArc = sequenceContext?.chapterArc as Record<string, unknown> | undefined;
+		expect(chapterArc?.endingHook).toBeNull();
 	});
 
 	it("materializes omitted dialogueScript as [] only when the frozen speech ledger is empty", () => {
@@ -927,6 +1315,17 @@ describe("video workflow atomic contracts", () => {
 		const value = contexts.items[0]?.value as { spokenScript?: unknown; sourceDialogueLineIds?: unknown } | undefined;
 		expect(value?.spokenScript).toEqual([]);
 		expect(value?.sourceDialogueLineIds).toEqual([]);
+	});
+
+	it("reports invalid speech references across every beat in one repair receipt", () => {
+		const candidate = beatSheet([0, 1].map((index) => ({
+			clipId: `clip-${index}`, durationSeconds: 5, sourceText: "A", dialogueScript: [],
+			narrativeAudioPlan: { strategy: "source_grounded_voice", rationale: "Source narration", lines: [{
+				lineId: `narrative-${index}`, speakerName: "Narrator", text: "Storm approaches.",
+				delivery: "voice_over", afterSourceLineId: `missing-${index}`, sourceEvidence: ["source-a"],
+			}] },
+		})));
+		expect(() => projectVideoAssetPlansFromBeatSheet(candidate)).toThrow(/beats\[0\].*missing-0.*beats\[1\].*missing-1/);
 	});
 
 	it("derives BeatSheet speakers from the frozen spoken script instead of trusting a redundant stale array", () => {
@@ -1028,6 +1427,8 @@ describe("video workflow atomic contracts", () => {
 			beatSheetAgentResult: beatSheet([heroBeat]),
 		});
 		expect(assets.items[0]?.value).toMatchObject({
+			prompt: "角色参考",
+			negativePrompt: "文字",
 			referenceType: "character",
 			roleName: "hero",
 			characterAssetRole: "identity_anchor",
@@ -1138,7 +1539,7 @@ describe("video workflow atomic contracts", () => {
 			referenceRole: "wardrobe",
 			referenceImageNodeIds: [],
 		});
-		expect(assets.items[0]?.itemId).toBe("hero-wardrobe");
+		expect(assets.items[0]?.value).toMatchObject({assetId: "hero-wardrobe"});
 	});
 
 	it("passes through a caller-project asset reuse declaration in the validated plan", () => {
@@ -1199,19 +1600,19 @@ describe("video workflow atomic contracts", () => {
 			beatSheetAgentResult: beatSheet([heroBeat]),
 			assetAgentResult: assetPlanResult([]),
 			reusableAssetFacts: {
-				"character://hero": {
+				"character://hero": [{
 					existingAssetId: "asset-ready-hero",
 					existingProjectId: "project-ready",
 					existingNodeId: "node-ready-hero",
-				},
-				"scene://测试场景": {
+				}],
+				"scene://测试场景": [{
 					existingAssetId: "asset-ready-scene",
 					existingProjectId: "project-ready",
-				},
+				}],
 			},
 		});
 
-		expect(assets.items.map((item) => item.itemId)).toEqual(["asset-ready-hero", "asset-ready-scene"]);
+		expect(assets.items.map((item) => (item.value as {assetId: string}).assetId)).toEqual(["asset-ready-hero", "asset-ready-scene"]);
 		expect(assets.items.map((item) => item.value)).toEqual([
 			expect.objectContaining({
 				role: "character://hero",
@@ -1251,17 +1652,17 @@ describe("video workflow atomic contracts", () => {
 			beatSheetAgentResult: beatSheet(chapterBeats),
 			assetAgentResult: assetPlanResult([]),
 			reusableAssetFacts: {
-				"character://hero": {
+				"character://hero": [{
 					planAssetId: "identity-hero",
 					existingNodeId: "launch-image-node-hero",
 					existingImageUrl: "https://assets.tapcanvas.test/identity-hero.png",
-				},
+				}],
 			},
 		});
 
 		expect(assets.items).toHaveLength(1);
 		expect(assets.items[0]).toMatchObject({
-			itemId: "identity-hero",
+			itemId: assetBindingIdentity("identity-hero", "character://hero"),
 			value: {
 				assetId: "identity-hero",
 				role: "character://hero",
@@ -1272,7 +1673,7 @@ describe("video workflow atomic contracts", () => {
 		});
 	});
 
-	it("rejects a visible Boss clip whose identity reference is missing from its real consumers", () => {
+	it("returns missing creative plans to the author instead of synthesizing paid prompts", () => {
 		const bossBeat = {
 			clipId: "clip-boss",
 			durationSeconds: 10,
@@ -1294,7 +1695,7 @@ describe("video workflow atomic contracts", () => {
 				negativePrompt: "文字",
 				consumerClipIds: ["clip-boss"],
 			}]),
-		})).toThrow("frozen visual asset role character://大头佛 requires exactly one plan");
+		})).toThrow("character://大头佛 requires exactly one plan");
 	});
 
 	it("rejects a paid image plan for a text-only weapon before asset fan-out", () => {
@@ -1406,14 +1807,17 @@ describe("video workflow atomic contracts", () => {
 				{
 					assetId: "asset-yizhuang",
 					role: "scene://义庄",
-					prompt: "义庄空间参考",
-					negativePrompt: "人物、文字",
+					sceneCard: sceneReferenceFixture,
+					identityAnchors: ["义庄入口"],
+					prohibitedDrift: ["固定入口"],
+					prompt: sceneReferenceFixture.spacePrompt,
+					negativePrompt: sceneReferenceFixture.negativePrompt,
 					consumerClipIds: ["clip-shared-body"],
 				},
 			]),
 		});
 
-		expect(assets.items.map((item) => item.itemId)).toEqual([
+		expect(assets.items.map((item) => (item.value as {assetId: string}).assetId)).toEqual([
 			"asset-shared-body",
 			"asset-yizhuang",
 		]);
@@ -1463,7 +1867,7 @@ describe("video workflow atomic contracts", () => {
 			endState: "枪托抵肩、枪口朝向大头佛",
 		});
 		expect(gunContract).not.toHaveProperty("assetId");
-		expect(assets.items.map((item) => item.itemId)).toEqual(["asset-ajiao"]);
+		expect(assets.items.map((item) => (item.value as {assetId: string}).assetId)).toEqual(["asset-ajiao"]);
 	});
 
 	it("preserves an adjacent Clip whose model-authored start state differs from the prior end state", () => {
@@ -1725,6 +2129,11 @@ describe("video workflow atomic contracts", () => {
 				sourceCoveragePlan: {
 					speechLedger: [{ lineId: "source-001", speakerName: "阿乔", text: lineText }],
 				},
+				sequenceControlPlan: {
+					protocolVersion: "tapcanvas.sequence-control-plan/v1",
+					totalDurationSeconds: 5,
+					segments: [{ clipId: "login-reveal", startSeconds: 0, endSeconds: 5, temporalDirectives: [], transitionFromPrevious: "从登录完成进入", transitionToNext: "把异常确认交给追查" }],
+				},
 				beats: [{
 					clipId: "login-reveal",
 					clipIndex: 0,
@@ -1839,6 +2248,13 @@ describe("video workflow atomic contracts", () => {
 		expect(promptPackage.deliveryEvidence.writerEnvelopeCharacters).toBe(
 			promptPackage.clips[0]?.promptMetrics.writerEnvelopeCharacters,
 		);
+		expect(promptPackage.qualityAssessment).toMatchObject({
+			status: "reviewed",
+			verdict: "not_scored",
+			clipCount: 1,
+			reviewedClipCount: 1,
+			unreviewedClipIndices: [],
+		});
 	});
 
 	it("projects speech-shot references and frozen speaker asset kinds before validation", () => {
@@ -1934,6 +2350,80 @@ describe("video workflow atomic contracts", () => {
 			shots: [{ shotNo: 1, durationSeconds: 5 }],
 		});
 		expect(promptPackage.deliveryVerification.status).toBe("satisfied");
+		expect(promptPackage.qualityAssessment).toMatchObject({
+			status: "reviewed",
+			reviewedClipCount: 2,
+			unreviewedClipIndices: [],
+			verdict: "not_scored",
+		});
+	});
+
+	it("does not call an unreviewed prompt package quality-approved", () => {
+		const writer = clipWriterResult("clip-unreviewed", 5, "未提供复盘证据");
+		const parsed = JSON.parse(writer.text) as Record<string, unknown>;
+		delete parsed.creativeReview;
+		const prompts = createWorkflowCollection({
+			collectionId: "clip-prompts-unreviewed",
+			producerNodeId: "writer",
+			producerPortId: "clip-prompts",
+			itemIds: ["clip-unreviewed"],
+			values: [{ text: JSON.stringify(parsed) }],
+		});
+		const contexts = createWorkflowCollection({
+			collectionId: "clip-contexts-unreviewed",
+			producerNodeId: "fan-out",
+			producerPortId: "clip-contexts",
+			itemIds: ["clip-unreviewed"],
+			values: [clipContext("clip-unreviewed", 5)],
+		});
+		const promptPackage = buildWorkflowPromptPackage({
+			executionId: "execution-unreviewed",
+			workflowKey: "tapcanvas.video-production",
+			clipPromptCollection: prompts,
+			clipContextCollection: contexts,
+		});
+		expect(promptPackage.deliveryVerification.status).toBe("satisfied");
+		expect(promptPackage.qualityAssessment).toMatchObject({
+			status: "unreviewed",
+			verdict: "not_scored",
+			clipCount: 1,
+			reviewedClipCount: 0,
+			unreviewedClipIndices: [0],
+		});
+	});
+
+	it("does not trust malformed quality assessment evidence", () => {
+		const promptPackage = buildWorkflowPromptPackage({
+			executionId: "execution-quality-malformed",
+			workflowKey: "tapcanvas.video-production",
+			clipPromptCollection: createWorkflowCollection({
+				collectionId: "clip-prompts-quality-malformed",
+				producerNodeId: "writer",
+				producerPortId: "clip-prompts",
+				itemIds: ["clip-a"],
+				values: [clipWriterResult("clip-a", 5, "有效提示词")],
+			}),
+			clipContextCollection: createWorkflowCollection({
+				collectionId: "clip-contexts-quality-malformed",
+				producerNodeId: "fan-out",
+				producerPortId: "clip-contexts",
+				itemIds: ["clip-a"],
+				values: [clipContext("clip-a", 5)],
+			}),
+		});
+		const malformed = {
+			...promptPackage,
+			qualityAssessment: {
+				...promptPackage.qualityAssessment,
+				status: "reviewed",
+				unreviewedClipIndices: [0],
+			},
+		};
+		const admission = inspectWorkflowPromptPackageAdmission(malformed);
+		expect(admission.structurallyValid).toBe(true);
+		expect(admission.diagnostics.qualityAssessmentStatus).toBeNull();
+		expect(admission.diagnostics.qualityAssessmentReviewedClipCount).toBeNull();
+		expect(admission.diagnostics.qualityAssessmentComplete).toBeNull();
 	});
 
 	it("preserves frozen visual object contracts when the asset-plan input is structurally omitted", () => {
@@ -2076,10 +2566,11 @@ describe("video workflow atomic contracts", () => {
 			clipContextCollection: contexts,
 		});
 		const prompt = promptPackage.clips[0]?.prompt ?? "";
-		expect(prompt).toContain("1 | 0-2s");
-		expect(prompt).toContain("2 | 2-5s");
-		expect(prompt).toContain("VISUAL_ONLY=动作段：状态变化 1");
-		expect(prompt).toContain("VISUAL_ONLY=动作段：状态变化 2");
+		expect(prompt).toContain("镜头1（0-2s）");
+		expect(prompt).toContain("镜头2（2-5s）");
+		expect(prompt.split("动作段").length - 1).toBe(2);
+		expect(prompt).not.toContain("状态变化");
+		expect(prompt).not.toContain("VISUAL_ONLY");
 	});
 
 	it("rejects a structured Clip whose shot durations do not equal the frozen Clip duration", () => {
@@ -2185,11 +2676,6 @@ describe("video workflow atomic contracts", () => {
 				videoModel: "doubao-seedance-2.5",
 				durationOptions: [5, 10, 15],
 				maxDurationSeconds: 15,
-				referenceImagePolicy: {
-					countUnit: "unique_url",
-					maximumTotalImages: 9,
-					maximumBusinessImages: 9,
-				},
 				referenceAudioPolicy: {
 					minimumDurationSeconds: 1.8,
 					maximumDurationSeconds: 30.2,
@@ -2203,8 +2689,7 @@ describe("video workflow atomic contracts", () => {
 			videoReferencePolicy: "forbidden",
 			generationContract: {
 				videoModel: "doubao-seedance-2.5",
-				referenceImagePolicy: { maximumTotalImages: 9 },
-			},
+				},
 			referenceImageNodeIds: ["image-node-hero", "image-node-forest"],
 			structuredClip: {
 				assetObjectContracts: [
@@ -2214,6 +2699,62 @@ describe("video workflow atomic contracts", () => {
 			},
 		});
 		expect((productionPlan.items[0]?.value as { prompt?: string }).prompt).not.toContain("negativePrompt");
+	});
+
+	it("preserves every original view of one object in the compiled provider input", () => {
+		const ids = ["original-a", "original-b", "original-c", "original-d"];
+		const bindings = ids.map((assetId) => ({ assetId, role: "scene://原物空间" }));
+		const prompts = createWorkflowCollection({ collectionId: "prompts", producerNodeId: "writer", producerPortId: "clip-prompts",
+			itemIds: ["clip-a"], values: [clipWriterResult("clip-a", 10, "原物的连续展示", bindings)] });
+		const contexts = createWorkflowCollection({ collectionId: "contexts", producerNodeId: "fan-out", producerPortId: "clip-contexts",
+			itemIds: ["clip-a"], values: [clipContext("clip-a", 10, bindings)] });
+		const plans = assetPlans(bindings.map((binding) => ({ ...binding, existingAssetId: binding.assetId, existingProjectId: "project-1" })));
+		const promptPackage = buildWorkflowPromptPackage({ executionId: "execution-1", workflowKey: "tapcanvas.video-production",
+			clipPromptCollection: prompts, clipContextCollection: contexts, assetPlanCollection: plans });
+		expect(promptPackage.clips[0]?.declaredAssetIds).toEqual(ids);
+		const production = buildVideoProductionPlan({ executionId: "execution-1", nodeId: "handoff", promptPackage,
+			estimate: { estimateIdentity: "estimate-1", modelKey: "seedance20", resolution: "720p", aspectRatio: "16:9" },
+			assetBindings: createWorkflowCollection({ collectionId: "resolved", producerNodeId: "resolver", producerPortId: "asset-bindings",
+				itemIds: ids, values: ids.map((assetId) => ({ assetPlan: { assetId }, generatedAssetId: assetId,
+					nodeId: `node-${assetId}`, imageUrl: `https://assets.example/${assetId}.png` })) }),
+			voiceManifest: { protocolVersion: "tapcanvas.voice-manifest/v1", entries: [] },
+		});
+		expect(production.items[0]?.value).toMatchObject({ referenceAssetIds: ids, referenceImageNodeIds: [],
+			structuredClip: { assetObjectContracts: expect.arrayContaining([expect.objectContaining({ name: "原物空间", referenceAssetIds: ids })]) } });
+	});
+
+	it("keeps a multi-clip reference allocation intact through the final provider plan", () => {
+		const groups = [["view-2", "view-1", "view-3"], ["view-4", "view-5"], ["view-6", "view-7"], ["view-8", "view-9"]];
+		const bindings = groups.map((ids, index) => [
+			...ids.map((assetId) => ({ assetId, role: "character://model" })),
+			{ assetId: `scene-${index}`, role: `scene://location-${index}` },
+		]);
+		const clipIds = groups.map((_, index) => `clip-${index}`);
+		const contexts = bindings.map((items, index) => {
+			const context = clipContext(clipIds[index]!, 15, items, index);
+			return { ...context, assetObjectContracts: context.assetObjectContracts.map((contract) => ({ ...contract,
+				referenceAssetIds: items.filter((item) => item.role === `${contract.kind}://${contract.name}`).map((item) => item.assetId),
+			})) };
+		});
+		const all = bindings.flat();
+		const plans = assetPlans([...all].reverse().map((binding) => ({ ...binding, existingAssetId: binding.assetId,
+			existingProjectId: "project-1", consumerClipIds: clipIds.filter((_, index) => bindings[index]!.some((item) => item.assetId === binding.assetId)) })));
+		const promptPackage = buildWorkflowPromptPackage({ executionId: "e", workflowKey: "video",
+			clipPromptCollection: createWorkflowCollection({ collectionId: "prompts", producerNodeId: "writer", producerPortId: "prompts",
+				itemIds: clipIds, values: bindings.map((items, index) => clipWriterResult(clipIds[index]!, 15, "展示本段服装状态", items, [15], index)) }),
+			clipContextCollection: createWorkflowCollection({ collectionId: "contexts", producerNodeId: "fan-out", producerPortId: "contexts", itemIds: clipIds, values: contexts }),
+			assetPlanCollection: plans,
+		});
+		const production = buildVideoProductionPlan({ executionId: "e", nodeId: "handoff", promptPackage,
+			estimate: { estimateIdentity: "estimate", modelKey: "seedance20", resolution: "720p", aspectRatio: "9:16" },
+			assetBindings: createWorkflowCollection({ collectionId: "resolved", producerNodeId: "resolver", producerPortId: "assets",
+				itemIds: all.map((item) => item.assetId), values: all.map(({ assetId }) => ({ assetPlan: { assetId }, generatedAssetId: assetId,
+					nodeId: `node-${assetId}`, imageUrl: `https://assets.example/${assetId}.png` })) }),
+			voiceManifest: { protocolVersion: "tapcanvas.voice-manifest/v1", entries: [] },
+		});
+		expect(production.items.map((item) => (item.value as { referenceAssetIds: string[] }).referenceAssetIds))
+			.toEqual(bindings.map((items) => items.map((item) => item.assetId)));
+		expect(production.items.map((item) => (item.value as { durationSeconds: number }).durationSeconds)).toEqual([15, 15, 15, 15]);
 	});
 
 	it("rejects video-reference protocol fields at the paid workflow boundary", () => {
@@ -2496,4 +3037,55 @@ describe("video workflow atomic contracts", () => {
 			},
 		})).toThrow("expectedAtMost=10:actual=15");
 	});
+});
+
+it("preserves all selected plans for one object through binding, parsing and exact verification", () => {
+ const contracts = parseWorkflowClipAssetObjectContracts([{
+  kind: "character", name: "Hero", physicalIdentityKey: "body", referenceRole: "identity",
+  referenceImageNodeIds: [], identityInvariant: "one person", startState: "standing",
+  spatialRelation: "left", driver: "walk", stateChange: "step", endState: "right",
+ }], "test");
+ const bound = bindWorkflowClipAssetObjectContracts({ contracts, field: "test", assetBindings: [
+  { assetId: "front-plan", kind: "character", name: "body", nodeId: "front-node" },
+  { assetId: "side-plan", kind: "character", name: "body", nodeId: "side-node" },
+ ] });
+ expect(bound[0]?.assetIds).toEqual(["front-plan", "side-plan"]);
+ expect(bound[0]?.referenceImageNodeIds).toEqual(["front-node", "side-node"]);
+ const parsed = parseWorkflowClipAssetObjectContracts(bound, "roundTrip");
+ expect(inspectDeclaredAssetIdsMatch([{ assetObjectContracts: parsed }], ["assetObjectContracts"], ["front-plan", "side-plan"])).toBeNull();
+ expect(inspectDeclaredAssetIdsMatch([{ assetObjectContracts: parsed }], ["assetObjectContracts"], ["front-plan", "side-plan", "missing-plan"])).toContain("missing-plan");
+});
+
+/*
+ * 资产计划与绑定按 `kind://physicalIdentityName` 命名（角色取 physicalIdentityKey），
+ * 而 `assetObjectContracts[].name` 保留显示名。两处只比一种写法时，一个完全正常的产物
+ * （计划角色用物理身份键、合同 name 用显示名）会在 clip 阶段被判成"没有资产计划"——
+ * ch2 实测 25/30 段因此失败。这里钉住两种精确写法都能匹配。
+ */
+describe("clip asset binding identity", () => {
+  const contracts = parseWorkflowClipAssetObjectContracts([{
+    kind: "character", name: "白真真", physicalIdentityKey: "char_bai_zhenzhen_genius_girl",
+    referenceRole: "identity", referenceImageNodeIds: [], identityInvariant: "16岁少女",
+    startState: "站", spatialRelation: "左", driver: "走", stateChange: "转身", endState: "右",
+  }], "test");
+
+  it("matches a binding that uses the physical identity key", () => {
+    const bound = bindWorkflowClipAssetObjectContracts({ contracts, field: "test", assetBindings: [
+      { assetId: "plan-canonical", kind: "character", name: "char_bai_zhenzhen_genius_girl", nodeId: "node-canonical" },
+    ] });
+    expect(bound[0]?.assetId).toBe("plan-canonical");
+  });
+
+  it("matches a binding that uses the display name", () => {
+    const bound = bindWorkflowClipAssetObjectContracts({ contracts, field: "test", assetBindings: [
+      { assetId: "plan-display", kind: "character", name: "白真真", nodeId: "node-display" },
+    ] });
+    expect(bound[0]?.assetId).toBe("plan-display");
+  });
+
+  it("still rejects a binding that matches no contract identity", () => {
+    expect(() => bindWorkflowClipAssetObjectContracts({ contracts, field: "test", assetBindings: [
+      { assetId: "plan-other", kind: "character", name: "另一个人", nodeId: "node-other" },
+    ] })).toThrow(/has no matching BeatSheet object contract/);
+  });
 });

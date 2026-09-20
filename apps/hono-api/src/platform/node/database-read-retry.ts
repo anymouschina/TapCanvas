@@ -2,6 +2,13 @@ const TRANSIENT_DATABASE_ERROR_CODES = new Set([
 	"40P01", // PostgreSQL deadlock_detected
 	"40001", // PostgreSQL serialization_failure
 	"P2034", // Prisma transaction conflict / deadlock
+	"57P03", // PostgreSQL cannot_connect_now / database startup
+	"08001", // PostgreSQL client unable to establish connection
+	"08003", // PostgreSQL connection does not exist
+	"08004", // PostgreSQL server rejected connection
+	"08006", // PostgreSQL connection failure
+	"08007", // PostgreSQL transaction resolution unknown
+	"57P01", // PostgreSQL admin shutdown
 ]);
 
 const DATABASE_ERROR_CONTAINER_KEYS = [
@@ -65,6 +72,19 @@ export function readDatabaseErrorCodes(error: unknown): readonly string[] {
 			: "";
 	for (const code of TRANSIENT_DATABASE_ERROR_CODES) {
 		if (message.includes(code)) codes.add(code);
+	}
+	// Prisma's PostgreSQL adapter can discard SQLSTATE while retaining the
+	// finite, deterministic readiness message. Map only those protocol-level
+	// messages back to the corresponding SQLSTATE; never inspect business text.
+	const readinessMessages: readonly [string, string][] = [
+		["database system is not yet accepting connections", "57P03"],
+		["database system is starting up", "57P03"],
+		["database system is shutting down", "57P01"],
+		["server closed the connection unexpectedly", "08006"],
+		["connection refused", "08001"],
+	];
+	for (const [fragment, code] of readinessMessages) {
+		if (message.toLowerCase().includes(fragment)) codes.add(code);
 	}
 	return [...codes].sort();
 }

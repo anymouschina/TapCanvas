@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	ExecutionEventTypeSchema,
+	RunFlowExecutionRequestSchema,
 	WorkflowExecutionEventSchema,
 	WorkflowExecutionResumeRequestSchema,
 } from "./execution.schemas";
@@ -72,5 +73,28 @@ describe("workflow execution resume schema", () => {
 				apiStyle: "chat",
 			},
 		}).success).toBe(false);
+	});
+});
+
+describe("RunFlowExecutionRequestSchema", () => {
+	it("keeps explicit triggerPayload facts available to project-context construction", () => {
+		const parsed = RunFlowExecutionRequestSchema.parse({
+			flowId: "flow-1",
+			triggerNodeId: "trigger-1",
+			trigger: "agent",
+			triggerPayload: {
+				styleFacts: {
+					styleName: "用户确认的二维赛璐璐",
+					visualDirectives: ["高对比蓝紫夜色"],
+				},
+			},
+		});
+
+		expect(parsed.triggerPayload).toEqual({
+			styleFacts: {
+				styleName: "用户确认的二维赛璐璐",
+				visualDirectives: ["高对比蓝紫夜色"],
+			},
+		});
 	});
 });

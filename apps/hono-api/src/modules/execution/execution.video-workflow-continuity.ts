@@ -1,3 +1,4 @@
+import { orderClipReferenceEntries } from "./execution.clip-reference-selection";
 import {
 	parseAssetObjectContracts,
 	requiresAuthoringVisualReference,
@@ -10,12 +11,15 @@ type JsonRecord = Record<string, unknown>;
 export type WorkflowClipAssetObjectContract = AssetObjectContract & Readonly<{
 	/** Stable identity of a visual authoring plan. Text-only objects omit it. */
 	assetId?: string;
+	/** Multiple selected visual plans for this one physical object. */
+	assetIds?: readonly string[];
 }>;
 
 export type WorkflowVisualAssetBinding = Readonly<{
 	assetId: string;
 	kind: AssetObjectKind;
 	name: string;
+	nodeId?: string;
 }>;
 
 export type WorkflowBeatObjectContinuityDiagnostic = Readonly<{
@@ -98,6 +102,10 @@ export function parseWorkflowClipAssetObjectContracts(
 	return parsed.contracts.map((contract, index) => {
 		const raw = value[index];
 		const assetId = isRecord(raw) ? readString(raw.assetId) : "";
+		const assetIds = isRecord(raw) ? raw.assetIds : undefined;
+		if (assetIds !== undefined && (!Array.isArray(assetIds) || assetIds.some((id) => typeof id !== "string" || !id.trim()))) {
+			throw new Error(`${field}[${index}].assetIds must contain non-empty plan identities`);
+		}
 		if (contract.kind === "character" && !readString(contract.physicalIdentityKey)) {
 			throw new Error(`${field}[${index}].physicalIdentityKey must be a non-empty agent-authored physical identity`);
 		}
@@ -109,6 +117,7 @@ export function parseWorkflowClipAssetObjectContracts(
 		return {
 			...contract,
 			...(assetId ? { assetId } : {}),
+			...(Array.isArray(assetIds) ? { assetIds: assetIds.map((id: string) => id.trim()) } : {}),
 		};
 	});
 }
@@ -118,14 +127,41 @@ export function parseWorkflowClipAssetObjectContracts(
  * referenceRole=none remain in the motion/state ledger without creating the
  * useless production images that previously cluttered the canvas.
  */
+/**
+ * 一个合同可被绑定匹配的身份键集合。
+ *
+ * 资产计划与绑定按 `kind://physicalIdentityName` 命名（角色用 `physicalIdentityKey`），
+ * 而 `assetObjectContracts[].name` 保留显示名。两处只比一种写法会让"计划角色用物理身份键、
+ * 合同 name 用显示名"这种正常产物在 clip 阶段被判成"没有资产计划"——ch2 实测 25/30 段因此失败，
+ * 报 `character:白真真 requires one visual asset plan`，而计划与已生成资产其实都在。
+ * 这里同时接受物理身份键与显示名两种**精确**写法；不做模糊匹配、不做大小写或空白归一。
+ */
+function contractBindingIdentities(
+	contract: Pick<AssetObjectContract, "kind" | "name" | "physicalIdentityKey">,
+): readonly string[] {
+	return [...new Set([
+		JSON.stringify([contract.kind, physicalIdentityName(contract)]),
+		JSON.stringify([contract.kind, contract.name]),
+	])];
+}
+
 export function bindWorkflowClipAssetObjectContracts(input: Readonly<{
 	contracts: readonly WorkflowClipAssetObjectContract[];
 	assetBindings: readonly WorkflowVisualAssetBinding[];
 	field: string;
 }>): WorkflowClipAssetObjectContract[] {
-	const contractsByIdentity = new Map(input.contracts.map((contract) => [identityKey(contract), contract] as const));
+	const identitiesByContract = new Map(
+		input.contracts.map((contract) => [contract, new Set(contractBindingIdentities(contract))] as const),
+	);
+	const findContractForBinding = (binding: WorkflowVisualAssetBinding) => {
+		const bindingIdentity = JSON.stringify([binding.kind, binding.name]);
+		for (const [contract, identities] of identitiesByContract) {
+			if (identities.has(bindingIdentity)) return contract;
+		}
+		return undefined;
+	};
 	for (const binding of input.assetBindings) {
-		const contract = contractsByIdentity.get(JSON.stringify([binding.kind, binding.name]));
+		const contract = findContractForBinding(binding);
 		if (!contract) {
 			const expectedVisualRoles = input.contracts
 				.filter(requiresAuthoringVisualReference)
@@ -139,11 +175,12 @@ export function bindWorkflowClipAssetObjectContracts(input: Readonly<{
 		}
 	}
 	return input.contracts.map((contract) => {
-		const matches = input.assetBindings.filter((binding) => (
-			JSON.stringify([binding.kind, binding.name]) === identityKey(contract)
-		));
-		if (matches.length > 1) {
-			throw new Error(`${input.field} object ${contract.kind}:${contract.name} has multiple visual asset plans`);
+		const identities = identitiesByContract.get(contract) ?? new Set(contractBindingIdentities(contract));
+		const matches = orderClipReferenceEntries(input.assetBindings.filter((binding) => (
+			identities.has(JSON.stringify([binding.kind, binding.name]))
+		)), [contract]);
+		if (new Set(matches.map((binding) => binding.assetId)).size !== matches.length) {
+			throw new Error(`${input.field} object ${contract.kind}:${contract.name} has duplicate visual asset bindings`);
 		}
 		const binding = matches[0];
 		if (requiresAuthoringVisualReference(contract) && !binding) {
@@ -154,8 +191,11 @@ export function bindWorkflowClipAssetObjectContracts(input: Readonly<{
 		}
 		return {
 			...contract,
-			referenceImageNodeIds: [],
-			...(binding ? { assetId: binding.assetId } : {}),
+			referenceImageNodeIds: [...new Set([
+				...contract.referenceImageNodeIds, ...matches.flatMap((match) => match.nodeId ? [match.nodeId] : []),
+			])],
+			...(matches.length === 1 && binding ? { assetId: binding.assetId } : {}),
+			...(matches.length > 1 ? { assetIds: matches.map((match) => match.assetId) } : {}),
 		};
 	});
 }
@@ -166,10 +206,34 @@ export function assertExactWorkflowClipAssetObjectContracts(input: Readonly<{
 	field: string;
 }>): WorkflowClipAssetObjectContract[] {
 	const actual = parseWorkflowClipAssetObjectContracts(input.actual, input.field);
-	if (JSON.stringify(actual) !== JSON.stringify(input.expected)) {
+	// Image references are execution-scoped bindings, not BeatSheet-authored
+	// continuity facts.  The clip writer may echo the concrete generated canvas
+	// node ids after it has seen the asset bindings; those ids are re-derived by
+	// the host from the validated asset plan before video submission.  Compare
+	// the frozen semantic/object contract and stable asset identity while
+	// intentionally ignoring those runtime reference handles.
+	const stripRuntimeBindings = (value: WorkflowClipAssetObjectContract): Record<string, unknown> =>
+		Object.fromEntries(Object.entries(value).filter(([key]) => (
+			key !== "referenceImageNodeIds" && key !== "referenceAssetIds" && key !== "assetIds"
+		)));
+	const expectedFrozen = input.expected.map(stripRuntimeBindings);
+	// `assetId` is a host-owned binding.  Current writers omit it (the host
+	// projects it from the materialized asset plan), while older/runtime writers
+	// may echo the same value.  Accept the omission and project the frozen value;
+	// any non-empty value still has to match exactly, so an invented binding is
+	// never accepted.
+	const normalizedActual = actual.map((contract, index) => {
+		const expected = input.expected[index];
+		const expectedAssetId = readString(expected?.assetId);
+		const actualAssetId = readString(contract.assetId);
+		if (!actualAssetId && expectedAssetId) return { ...contract, assetId: expectedAssetId };
+		return contract;
+	});
+	const actualFrozen = normalizedActual.map(stripRuntimeBindings);
+	if (JSON.stringify(actualFrozen) !== JSON.stringify(expectedFrozen)) {
 		throw new Error(`${input.field} must preserve the frozen BeatSheet object contracts exactly, including order, state facts and assetId`);
 	}
-	return actual;
+	return normalizedActual;
 }
 
 /**

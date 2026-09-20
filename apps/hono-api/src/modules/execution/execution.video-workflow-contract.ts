@@ -1,3 +1,11 @@
+import { assetBindingIdentity, assetFactIdentity } from "./execution.asset-identity";
+import { inspectSceneReferencePlan, type SceneReferenceCard } from "../../../../../packages/schemas/scene-reference-contract/index.mjs";
+import type { WorkflowReusableAssetRoleFacts } from "./execution.project-image-references";
+import { buildFrozenSequenceContext, type FrozenSequenceClip } from "./execution.video-sequence-context";
+import { bindWorkflowVideoSourceEvidence } from "./execution.video-source-evidence";
+import { freezeWorkflowAuthoritativeSource } from "./execution.source-lineage";
+import { deriveBeatSheetSourceProfile } from "./execution.beat-sheet-source-coverage";
+import { orderClipReferenceEntries } from "./execution.clip-reference-selection";
 import {
 	createWorkflowCollection,
 	isWorkflowCollection,
@@ -28,6 +36,7 @@ import {
 } from "../task/video-orchestrator.temporal-frame-track";
 import {
 	ASSET_OBJECT_KINDS,
+	ASSET_ROLE_KINDS,
 	ASSET_REFERENCE_ROLES,
 	parseAssetObjectContracts,
 	requiresAuthoringVisualReference,
@@ -50,8 +59,45 @@ import {
 	createWorkflowArtifactContract,
 	WorkflowInputContractError,
 } from "./execution.input-contract";
+import {
+	parseCharacterIdentityBoardSpec,
+	type CharacterIdentityBoardSpec,
+} from "./execution.character-identity-contract";
 
 type JsonRecord = Record<string, unknown>;
+
+/** Project a contiguous chapter-global event clock into one Clip's local clock. */
+function normalizeClipLocalStoryEvents(
+	storyEvents: readonly unknown[],
+	durationSeconds: number,
+): readonly unknown[] {
+	if (storyEvents.length === 0) return storyEvents;
+	const intervals = storyEvents.map((raw) => {
+		if (!isRecord(raw)) return null;
+		const startSeconds = raw.startSeconds;
+		const endSeconds = raw.endSeconds;
+		return typeof startSeconds === "number" && Number.isFinite(startSeconds)
+			&& typeof endSeconds === "number" && Number.isFinite(endSeconds)
+			? { startSeconds, endSeconds }
+			: null;
+	});
+	if (intervals.some((interval) => interval === null)) return storyEvents;
+	const first = intervals[0];
+	const last = intervals[intervals.length - 1];
+	if (!first || !last || first.startSeconds <= 0) return storyEvents;
+	if (Number((last.endSeconds - first.startSeconds).toFixed(6)) !== Number(durationSeconds.toFixed(6))) {
+		return storyEvents;
+	}
+	return storyEvents.map((raw, index) => {
+		const interval = intervals[index];
+		if (!isRecord(raw) || !interval) return raw;
+		return {
+			...raw,
+			startSeconds: Number((interval.startSeconds - first.startSeconds).toFixed(6)),
+			endSeconds: Number((interval.endSeconds - first.startSeconds).toFixed(6)),
+		};
+	});
+}
 
 export const WORKFLOW_VIDEO_REFERENCE_POLICY = "forbidden" as const;
 
@@ -97,6 +143,19 @@ export type WorkflowCanvasProjectContextFacts = Readonly<{
 	sourceMode: "project_context";
 	flowId: string;
 	sourceNodeIds: readonly string[];
+	/** Selected material descriptions, distinct from authoritative narrative. */
+	selectedNodeFacts?: readonly Readonly<{
+		nodeId: string;
+		assetIds: readonly string[];
+		metadata: Readonly<Record<string, string>>;
+	}>[];
+	missingSelectedNodeIds?: readonly string[];
+	/** Explicitly selected video nodes used only for reference understanding.
+	 * Their media is never forwarded to the generation provider as a reference
+	 * input; the source executor resolves analysis facts before BeatSheet.
+	 */
+	referenceVideoNodeIds?: readonly string[];
+	referenceVideoDiagnostics?: readonly Readonly<{ nodeId: string; code: string; analysisRequested: boolean }>[];
 	nodes: readonly JsonRecord[];
 	authoritativeSources?: readonly JsonRecord[];
 	userRequest?: Readonly<{
@@ -108,6 +167,7 @@ export type WorkflowCanvasProjectContextFacts = Readonly<{
 }>;
 
 export type WorkflowVideoDurationPlan = Readonly<{
+	maxReferenceImages?: number | null;
 	targetDurationSeconds: number | null;
 	modelKey: string;
 	durationOptions: readonly number[];
@@ -136,10 +196,12 @@ export type WorkflowVideoAssetPlan = Readonly<{
 	prompt?: string;
 	negativePrompt?: string;
 	consumerClipIds: readonly string[];
-	referenceType?: "character";
+	referenceType?: "character" | "scene";
+	sceneCard?: SceneReferenceCard;
 	roleName?: string;
 	characterAssetRole?: "identity_anchor";
 	characterProfileVersion?: "character-card/v3";
+	identityBoardSpec?: CharacterIdentityBoardSpec;
 	identityAnchors?: readonly string[];
 	prohibitedDrift?: readonly string[];
 	/**
@@ -189,6 +251,8 @@ export type WorkflowPromptPackage = Readonly<{
 			}>;
 			sourceDialogueLineIds: readonly string[];
 			spokenLineIds: readonly string[];
+			dependencyProvenance?: Readonly<Record<string, unknown>>;
+			retrievalReceipts?: readonly Readonly<Record<string, unknown>>[];
 		}>;
 		promptMetrics: Readonly<{
 			writerEnvelopeCharacters: number;
@@ -211,6 +275,13 @@ export type WorkflowPromptPackage = Readonly<{
 		providerPromptCharacters: number;
 		providerToEnvelopeRatio: number;
 	}>;
+	/**
+	 * Non-blocking authoring evidence. This is deliberately separate from
+	 * deliveryVerification: a prompt can be executable while its embedded
+	 * authoring review evidence is incomplete. The field never gates media
+	 * submission; it makes that distinction explicit to trace consumers.
+	 */
+	qualityAssessment: WorkflowPromptQualityAssessment;
 	deliveryVerification: Readonly<{
 		version: 2;
 		status: "satisfied";
@@ -218,11 +289,35 @@ export type WorkflowPromptPackage = Readonly<{
 	}>;
 }>;
 
+export type WorkflowPromptQualityAssessment = Readonly<{
+	version: 1;
+	method: "embedded_authoring";
+	status: "reviewed" | "unreviewed";
+	verdict: "not_scored";
+	clipCount: number;
+	reviewedClipCount: number;
+	unreviewedClipIndices: readonly number[];
+}>;
+
 export type WorkflowPromptAssetBinding = Readonly<{
 	assetId: string;
 	kind: AssetObjectKind;
 	name: string;
 	referenceRole: AssetReferenceRole;
+}>;
+
+/**
+ * A materialized image binding is the only asset evidence a Clip writer may
+ * consume.  The plan describes what the image means; the binding proves that
+ * the image was actually resolved/generated and records the provider-facing
+ * handles without asking the model to infer them from names.
+ */
+export type WorkflowMaterializedAssetBinding = Readonly<{
+	assetId: string;
+	generatedAssetId?: string;
+	nodeId: string;
+	imageUrl: string;
+	assetPlan: WorkflowVideoAssetPlan;
 }>;
 
 export type WorkflowVoiceManifest = Readonly<{
@@ -400,6 +495,9 @@ export type WorkflowPromptPackageAdmission = Readonly<{
 		deliveryVerificationStatus: string | null;
 		embeddedAuthoringReviewCount: number | null;
 		embeddedAuthoringReviewComplete: boolean | null;
+		qualityAssessmentStatus: string | null;
+		qualityAssessmentReviewedClipCount: number | null;
+		qualityAssessmentComplete: boolean | null;
 	}>;
 }>;
 
@@ -413,6 +511,42 @@ function readString(value: unknown): string {
 
 function readNonNegativeInteger(value: unknown): number | null {
 	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function parseWorkflowPromptQualityAssessment(
+	value: unknown,
+	clipCount: number,
+): WorkflowPromptQualityAssessment | null {
+	if (!isRecord(value)) return null;
+	if (value.version !== 1 || value.method !== "embedded_authoring" || value.verdict !== "not_scored") return null;
+	const status = value.status === "reviewed" || value.status === "unreviewed" ? value.status : null;
+	const reviewedClipCount = readNonNegativeInteger(value.reviewedClipCount);
+	const declaredClipCount = readNonNegativeInteger(value.clipCount);
+	const unreviewedClipIndices = Array.isArray(value.unreviewedClipIndices)
+		? value.unreviewedClipIndices.every((item): item is number => typeof item === "number" && Number.isInteger(item) && item >= 0 && item < clipCount)
+			? value.unreviewedClipIndices
+			: null
+		: null;
+	if (
+		status === null
+		|| reviewedClipCount === null
+		|| declaredClipCount !== clipCount
+		|| unreviewedClipIndices === null
+		|| new Set(unreviewedClipIndices).size !== unreviewedClipIndices.length
+		|| reviewedClipCount + unreviewedClipIndices.length !== clipCount
+		|| (status === "reviewed" && unreviewedClipIndices.length !== 0)
+		|| (status === "unreviewed" && unreviewedClipIndices.length === 0 && reviewedClipCount !== 0)
+		|| reviewedClipCount > clipCount
+	) return null;
+	return {
+		version: 1,
+		method: "embedded_authoring",
+		status,
+		verdict: "not_scored",
+		clipCount,
+		reviewedClipCount,
+		unreviewedClipIndices: [...unreviewedClipIndices],
+	};
 }
 
 /**
@@ -431,6 +565,9 @@ export function inspectWorkflowPromptPackageAdmission(value: unknown): WorkflowP
 				deliveryVerificationStatus: null,
 				embeddedAuthoringReviewCount: null,
 				embeddedAuthoringReviewComplete: null,
+				qualityAssessmentStatus: null,
+				qualityAssessmentReviewedClipCount: null,
+				qualityAssessmentComplete: null,
 			},
 		};
 	}
@@ -496,6 +633,14 @@ export function inspectWorkflowPromptPackageAdmission(value: unknown): WorkflowP
 	if (!verification || verification.version !== 2) {
 		issues.push("deliveryVerification.version must be 2");
 	}
+	const qualityAssessment = parseWorkflowPromptQualityAssessment(value.qualityAssessment, clips.length);
+	const qualityAssessmentStatus = qualityAssessment?.status ?? null;
+	const qualityAssessmentReviewedClipCount = qualityAssessment?.reviewedClipCount ?? null;
+	const qualityAssessmentComplete = qualityAssessment
+		? qualityAssessment.status === "reviewed"
+			&& qualityAssessment.reviewedClipCount === clips.length
+			&& qualityAssessment.unreviewedClipIndices.length === 0
+		: null;
 	const embeddedAuthoringReviewCount = evidence
 		? readNonNegativeInteger(evidence.embeddedAuthoringReviewCount)
 		: null;
@@ -509,20 +654,25 @@ export function inspectWorkflowPromptPackageAdmission(value: unknown): WorkflowP
 			embeddedAuthoringReviewComplete: embeddedAuthoringReviewCount === null
 				? null
 				: embeddedAuthoringReviewCount === clips.length,
+			qualityAssessmentStatus,
+			qualityAssessmentReviewedClipCount,
+			qualityAssessmentComplete,
 		},
 	};
 }
 
 function projectCanvasFactsForDeliveryContract(canvasFacts: JsonRecord): JsonRecord {
 	const authoritativeSources = Array.isArray(canvasFacts.authoritativeSources)
-		? canvasFacts.authoritativeSources.filter(isRecord)
+		? canvasFacts.authoritativeSources.filter(isRecord).map(freezeWorkflowAuthoritativeSource)
 		: [];
-	if (authoritativeSources.length === 0 || !Array.isArray(canvasFacts.nodes)) return canvasFacts;
+	if (authoritativeSources.length === 0) return canvasFacts;
+	const frozenFacts = { ...canvasFacts, authoritativeSources };
+	if (!Array.isArray(canvasFacts.nodes)) return frozenFacts;
 	const authoritativeSourceIds = new Set(authoritativeSources.flatMap((source) => {
 		const sourceId = readString(source.sourceId) || readString(source.nodeId);
 		return sourceId ? [sourceId] : [];
 	}));
-	if (authoritativeSourceIds.size === 0) return canvasFacts;
+	if (authoritativeSourceIds.size === 0) return frozenFacts;
 	const nodes = canvasFacts.nodes.map((node) => {
 		if (!isRecord(node) || !authoritativeSourceIds.has(readString(node.nodeId))) return node;
 		const {
@@ -533,7 +683,7 @@ function projectCanvasFactsForDeliveryContract(canvasFacts: JsonRecord): JsonRec
 		} = node;
 		return structuralFacts;
 	});
-	return { ...canvasFacts, nodes };
+	return { ...frozenFacts, nodes };
 }
 
 function positiveIntegerList(value: unknown): number[] {
@@ -549,6 +699,7 @@ function positiveIntegerList(value: unknown): number[] {
  * provider maximum into a story structure or a fixed clip count.
  */
 export function freezeWorkflowVideoDurationPlan(input: Readonly<{
+	maxReferenceImages?: number | null;
 	targetDurationSeconds: number;
 	modelKey: string;
 	durationOptions: readonly number[];
@@ -576,6 +727,7 @@ export function freezeWorkflowVideoDurationPlan(input: Readonly<{
 		durationOptions,
 		maxDurationSeconds: Math.max(...durationOptions),
 		policy: "agent_semantic_duration_budget",
+		...(input.maxReferenceImages !== undefined ? { maxReferenceImages: input.maxReferenceImages } : {}),
 		...(input.explicitDurations?.length ? { providerSubmissionTopology: feasibility } : {}),
 	};
 }
@@ -613,7 +765,10 @@ export function parseFrozenWorkflowVideoDurationPlan(
 		|| rawTopology.source !== "user_clip_durations"
 		|| explicitDurations.length === 0
 	)) return null;
+	if (value.maxReferenceImages !== undefined && value.maxReferenceImages !== null
+		&& (typeof value.maxReferenceImages !== "number" || !Number.isInteger(value.maxReferenceImages) || value.maxReferenceImages < 0)) return null;
 	const canonical = freezeWorkflowVideoDurationPlan({
+		...(value.maxReferenceImages !== undefined ? { maxReferenceImages: value.maxReferenceImages as number | null } : {}),
 		targetDurationSeconds,
 		modelKey,
 		durationOptions,
@@ -688,11 +843,17 @@ export function compileWorkflowClipWriterFrozenEnvelope(input: Readonly<{
 		if (!Array.isArray(input.contextItem.assetObjectContracts)) {
 			return clipWriterCompilationFailure("clipWriter frozen assetObjectContracts must be an array");
 		}
-		const storyEvents = Array.isArray(beat.storyEvents) ? beat.storyEvents : [];
+		const storyEvents = Array.isArray(beat.storyEvents)
+			? normalizeClipLocalStoryEvents(beat.storyEvents, durationSeconds)
+			: [];
 		if (storyEvents.length === 0) {
 			return clipWriterCompilationFailure("clipWriter frozen beat.storyEvents must be non-empty");
 		}
-		const authoredShots = rawClip.shots;
+		// Array position owns the executable ordinal. Never ask the author to
+		// echo a redundant ID or reorder creative content to repair one.
+		const authoredShots = Array.isArray(rawClip.shots)
+			? rawClip.shots.map((shot, index) => isRecord(shot) ? { ...shot, shotNo: index + 1 } : shot)
+			: rawClip.shots;
 		const frozenEnvelope = {
 			...parsed,
 			clips: [{
@@ -811,9 +972,10 @@ export function parseWorkflowAssetRole(value: unknown, field: string): Readonly<
 	if (separatorIndex <= 0 || separatorIndex + 3 >= role.length) {
 		throw new Error(`${field} must use kind://canonical-name`);
 	}
-	const kind = role.slice(0, separatorIndex) as AssetObjectKind;
+	const rawKind = role.slice(0, separatorIndex);
+	const kind = rawKind as AssetObjectKind;
 	const name = role.slice(separatorIndex + 3).trim();
-	if (!ASSET_OBJECT_KINDS.includes(kind) || !name) {
+	if (!ASSET_ROLE_KINDS.includes(rawKind as (typeof ASSET_ROLE_KINDS)[number]) || !name) {
 		throw new Error(`${field} must use a supported asset kind and non-empty canonical name`);
 	}
 	return { kind, name, referenceRole: REFERENCE_ROLE_BY_OBJECT_KIND[kind] };
@@ -885,9 +1047,11 @@ function structuredClipFromWriter(input: Readonly<{
 	storyEvents: readonly unknown[];
 	characterRoleNames: readonly string[];
 	exitState: string;
+	blockingFrameNodeId: string;
+	blockingPlan: Readonly<Record<string, unknown>> | null;
 	spokenScript: readonly SpokenScriptLine[];
 	sourceDialogueLineIds: readonly string[];
-	dialoguePaceRate: number;
+	dialoguePaceRate: number | null;
 	field: string;
 }>): Readonly<{
 	structuredClip: Record<string, unknown>;
@@ -982,6 +1146,11 @@ function structuredClipFromWriter(input: Readonly<{
 	const structuredClip = {
 		...(compileShotSpeechEventReferences(materialized.clip) as StructuredClip & Record<string, unknown>),
 		assetObjectContracts: input.outputAssetObjectContracts ?? assetObjectContracts,
+		...(input.blockingFrameNodeId ? {
+			blockingFrameNodeId: input.blockingFrameNodeId,
+			spatialBlocking: true,
+		} : {}),
+		...(input.blockingPlan ? { blockingPlan: input.blockingPlan } : {}),
 	};
 	const dialogueIssues = validateShotDialogueConservation({
 		clip: structuredClip,
@@ -1061,7 +1230,7 @@ export function validateWorkflowClipWriterForContext(input: Readonly<{
 		&& Number.isFinite(input.contextItem.dialoguePaceRate)
 		&& input.contextItem.dialoguePaceRate > 0
 		? input.contextItem.dialoguePaceRate
-		: 4;
+		: null;
 	const sourceDialogueLineIds = Array.isArray(input.contextItem.sourceDialogueLineIds)
 		? uniqueNonEmptyStrings(input.contextItem.sourceDialogueLineIds)
 		: [];
@@ -1083,7 +1252,11 @@ export function validateWorkflowClipWriterForContext(input: Readonly<{
 		}
 		const exitState = readString(beat?.exitState);
 		if (!exitState) throw new Error("clipContext.beat.exitState must be non-empty");
-		const storyEvents = Array.isArray(beat?.storyEvents) ? beat.storyEvents : [];
+		const blockingFrameNodeId = readString(beat?.blockingFrameNodeId);
+		const blockingPlan = isRecord(beat?.blockingPlan) ? beat.blockingPlan : null;
+		const storyEvents = Array.isArray(beat?.storyEvents)
+			? normalizeClipLocalStoryEvents(beat.storyEvents, durationSeconds)
+			: [];
 		if (storyEvents.length === 0) throw new Error("clipContext.beat.storyEvents must be non-empty");
 		const expectedAssetObjectContracts = parseWorkflowClipAssetObjectContracts(
 			input.contextItem.assetObjectContracts,
@@ -1100,6 +1273,8 @@ export function validateWorkflowClipWriterForContext(input: Readonly<{
 			storyEvents,
 			characterRoleNames,
 			exitState,
+			blockingFrameNodeId,
+			blockingPlan,
 			spokenScript,
 			sourceDialogueLineIds,
 			dialoguePaceRate,
@@ -1128,6 +1303,7 @@ function assertExactAssetIds(input: Readonly<{
 }
 
 export function buildVideoDeliveryContract(input: Readonly<{
+  onlyVideoNodes?: boolean;
 	executionId: string;
 	workflowKey: string | null;
 	executionScope: unknown;
@@ -1165,17 +1341,26 @@ export function buildVideoDeliveryContract(input: Readonly<{
 				requestedClipCount: input.requestedClipCount ?? null,
 			});
 	const canvasFacts = projectCanvasFactsForDeliveryContract(input.canvasFacts);
+	// 原文人声容量事实：宿主在受理边界一次性推导，Agent 与交付校验共用同一份事实，
+	// 避免「Agent 自行估时长、宿主事后才发现整章被压成摘要」的双份判断。
+	const sourceProfile = deriveBeatSheetSourceProfile(
+		{ canvasFacts },
+		{ maxDurationSeconds: input.durationPlan.maxDurationSeconds },
+	);
 	return {
 		protocolVersion: "2",
 		executionId: input.executionId,
 		workflowKey: input.workflowKey ?? "tapcanvas.video-production",
 		executionScope: scope,
+    onlyVideoNodes: input.onlyVideoNodes === true,
 		canvasFacts,
+		...(sourceProfile ? { sourceProfile } : {}),
 		...(input.durationPlan.targetDurationSeconds === null
 			? {}
 			: { targetDurationSeconds: input.durationPlan.targetDurationSeconds }),
 		generationContract: {
 			videoModel: input.durationPlan.modelKey,
+			maxReferenceImages: input.durationPlan.maxReferenceImages ?? null,
 			durationOptions: input.durationPlan.durationOptions,
 			maxDurationSeconds: input.durationPlan.maxDurationSeconds,
 			clipPlanningPolicy: "agent_semantic_duration_budget",
@@ -1184,7 +1369,7 @@ export function buildVideoDeliveryContract(input: Readonly<{
 				: { requestedClipCount: input.requestedClipCount }),
 			...(providerSubmissionTopology ? { providerSubmissionTopology } : {}),
 		},
-		expectedDelivery: scope === "prompt_only"
+		expectedDelivery: input.onlyVideoNodes === true ? { artifactType: "tapcanvas.video-node/v1", requiresMediaSideEffects: true, requirements: ["all_clip_nodes_persisted", "prompts_persisted", "asset_bindings_ready", "durable_workflow_output"] } : scope === "prompt_only"
 			? {
 				artifactType: "tapcanvas.prompt-package/v2",
 				requiresMediaSideEffects: false,
@@ -1299,26 +1484,34 @@ function beatSheetFacts(beatSheetAgentResult: unknown): Readonly<{
 	const speechLedger = sourceCoveragePlan && Array.isArray(sourceCoveragePlan.speechLedger)
 		? sourceCoveragePlan.speechLedger
 		: null;
+	const spokenScriptErrors: string[] = [];
 	const beats = parsed.beats.map((rawBeat, beatIndex) => {
-		if (!isRecord(rawBeat)) return rawBeat;
-		if (Array.isArray(rawBeat.dialogueScript)) {
-			const spokenScript = workflowBeatSpokenScript(rawBeat, `beats[${beatIndex}]`);
+		try {
+			if (!isRecord(rawBeat)) return rawBeat;
+			if (Array.isArray(rawBeat.dialogueScript)) {
+				const spokenScript = workflowBeatSpokenScript(rawBeat, `beats[${beatIndex}]`);
+				return {
+					...rawBeat,
+					speakers: collectSpokenSpeakerNames(spokenScript),
+				};
+			}
+			if (speechLedger?.length !== 0) return rawBeat;
+			// The accepted authoritative ledger is explicitly empty, so [] is the
+			// only possible dialogue value. Canonicalize at the single BeatSheet read
+			// boundary; a non-empty or missing ledger never receives this projection.
+			const normalizedBeat = { ...rawBeat, dialogueScript: [] };
+			const spokenScript = workflowBeatSpokenScript(normalizedBeat, `beats[${beatIndex}]`);
 			return {
-				...rawBeat,
+				...normalizedBeat,
 				speakers: collectSpokenSpeakerNames(spokenScript),
 			};
+		} catch (error) {
+			if (!(error instanceof Error)) throw error;
+			spokenScriptErrors.push(error.message);
+			return rawBeat;
 		}
-		if (speechLedger?.length !== 0) return rawBeat;
-		// The accepted authoritative ledger is explicitly empty, so [] is the
-		// only possible dialogue value. Canonicalize at the single BeatSheet read
-		// boundary; a non-empty or missing ledger never receives this projection.
-		const normalizedBeat = { ...rawBeat, dialogueScript: [] };
-		const spokenScript = workflowBeatSpokenScript(normalizedBeat, `beats[${beatIndex}]`);
-		return {
-			...normalizedBeat,
-			speakers: collectSpokenSpeakerNames(spokenScript),
-		};
 	});
+	if (spokenScriptErrors.length > 0) throw new Error(spokenScriptErrors.join("; "));
 	return { beats, context, durationCoverage };
 }
 
@@ -1329,6 +1522,10 @@ function workflowChapterArc(context: JsonRecord): JsonRecord {
 	if (!isRecord(context.chapterArc)) throw new Error("BeatSheet chapterArc must be an object");
 	const chapterArc: JsonRecord = {};
 	for (const field of CHAPTER_ARC_FIELDS) {
+		if (field === "endingHook" && context.chapterArc[field] === null) {
+			chapterArc[field] = null;
+			continue;
+		}
 		const value = readString(context.chapterArc[field]);
 		if (!value) throw new Error(`BeatSheet chapterArc.${field} must be non-empty`);
 		chapterArc[field] = value;
@@ -1346,7 +1543,56 @@ function workflowSourceReceipt(context: JsonRecord): JsonRecord {
 	return { protocolVersion, sourceId, sourceFingerprint };
 }
 
-function workflowSequenceBeat(beat: unknown, index: number): JsonRecord {
+function workflowSequenceControlPlan(context: JsonRecord, beats: readonly unknown[]): JsonRecord {
+	if (!isRecord(context.sequenceControlPlan)) throw new Error("BeatSheet sequenceControlPlan must be an object");
+	const plan = context.sequenceControlPlan;
+	const protocolVersion = readString(plan.protocolVersion);
+	if (!protocolVersion) throw new Error("BeatSheet sequenceControlPlan.protocolVersion must be non-empty");
+	const totalDurationSeconds = plan.totalDurationSeconds;
+	if (typeof totalDurationSeconds !== "number" || !Number.isFinite(totalDurationSeconds) || totalDurationSeconds <= 0) {
+		throw new Error("BeatSheet sequenceControlPlan.totalDurationSeconds must be positive");
+	}
+	if (!Array.isArray(plan.segments) || plan.segments.length !== beats.length) {
+		throw new Error("BeatSheet sequenceControlPlan.segments must contain one item for every beat");
+	}
+	let cursor = 0;
+	const segments = plan.segments.map((rawTiming, index) => {
+		if (!isRecord(rawTiming)) throw new Error(`BeatSheet sequenceControlPlan.segments[${index}] must be an object`);
+		const beat = beats[index];
+		if (!isRecord(beat)) throw new Error(`BeatSheet clip ${index + 1} must be an object`);
+		const clipId = readString(rawTiming.clipId);
+		if (!clipId) throw new Error(`BeatSheet sequenceControlPlan.segments[${index}].clipId must be non-empty`);
+		const startSeconds = rawTiming.startSeconds;
+		const endSeconds = rawTiming.endSeconds;
+		if (typeof startSeconds !== "number" || !Number.isFinite(startSeconds) || typeof endSeconds !== "number" || !Number.isFinite(endSeconds) || endSeconds <= startSeconds || Math.abs(startSeconds - cursor) > 1e-6) {
+			throw new Error(`BeatSheet sequenceControlPlan.segments[${index}] must form a contiguous positive interval`);
+		}
+		if (typeof beat.durationSeconds !== "number" || Math.abs((endSeconds - startSeconds) - beat.durationSeconds) > 1e-6) {
+			throw new Error(`BeatSheet sequenceControlPlan.segments[${index}] interval must equal beat durationSeconds`);
+		}
+		if (!Array.isArray(rawTiming.temporalDirectives)) throw new Error(`BeatSheet sequenceControlPlan.segments[${index}].temporalDirectives must be an array`);
+		const temporalDirectives = rawTiming.temporalDirectives.map((rawWindow, windowIndex) => {
+			if (!isRecord(rawWindow)) throw new Error(`BeatSheet sequenceControlPlan.segments[${index}].temporalDirectives[${windowIndex}] must be an object`);
+			const windowStart = rawWindow.startSeconds;
+			const windowEnd = rawWindow.endSeconds;
+			const kind = readString(rawWindow.kind);
+			const reason = readString(rawWindow.reason);
+			if (typeof windowStart !== "number" || !Number.isFinite(windowStart) || typeof windowEnd !== "number" || !Number.isFinite(windowEnd) || windowStart < startSeconds || windowEnd <= windowStart || windowEnd > endSeconds || !kind || !reason) {
+				throw new Error(`BeatSheet sequenceControlPlan.segments[${index}].temporalDirectives[${windowIndex}] is outside the segment interval or missing kind/reason`);
+			}
+			return { startSeconds: windowStart, endSeconds: windowEnd, kind, reason };
+		});
+		const transitionFromPrevious = readString(rawTiming.transitionFromPrevious);
+		const transitionToNext = readString(rawTiming.transitionToNext);
+		if (!transitionFromPrevious || !transitionToNext) throw new Error(`BeatSheet sequenceControlPlan.segments[${index}] requires transition facts`);
+		cursor = endSeconds;
+		return { clipId, startSeconds, endSeconds, temporalDirectives, transitionFromPrevious, transitionToNext };
+	});
+	if (Math.abs(cursor - totalDurationSeconds) > 1e-6) throw new Error("BeatSheet sequenceControlPlan.totalDurationSeconds must equal the final segment endSeconds");
+	return { protocolVersion, totalDurationSeconds, segments };
+}
+
+function workflowSequenceBeat(beat: unknown, index: number, timing: JsonRecord): JsonRecord {
 	if (!isRecord(beat)) throw new Error(`BeatSheet clip ${index + 1} must be an object`);
 	const sequenceBeat: JsonRecord = {
 		clipId: readString(beat.clipId),
@@ -1358,6 +1604,7 @@ function workflowSequenceBeat(beat: unknown, index: number): JsonRecord {
 		if (!value) throw new Error(`BeatSheet clip ${index + 1}.${field} must be non-empty`);
 		sequenceBeat[field] = value;
 	}
+	sequenceBeat.timing = timing;
 	return sequenceBeat;
 }
 
@@ -1454,26 +1701,69 @@ function clipIdsFromBeatSheet(beatSheetAgentResult: unknown): readonly string[] 
  * collection compiler replaces that set with the exact per-Clip object usage
  * and overlays frozen project-asset reuse facts.
  */
-export function projectVideoAssetPlansFromBeatSheet(
-	beatSheetAgentResult: unknown,
-): Readonly<{ text: string; assets: readonly unknown[] }> {
-	const beatSheet = beatSheetFacts(beatSheetAgentResult);
-	const clipIds = clipIdsFromBeatSheet(beatSheetAgentResult);
-	const authoringRoles = new Set(resolveVideoAssetRoleAllowlist(beatSheetAgentResult));
-	if (!Array.isArray(beatSheet.context.assetPlans)) {
-		throw new Error("BeatSheet v20 requires an assetPlans array");
-	}
-	const seenRoles = new Set<string>();
-	const assetPlans = beatSheet.context.assetPlans.map((value, index) => {
-		if (!isRecord(value)) throw new Error(`BeatSheet assetPlans[${index}] must be an object`);
-		const role = readString(value.role);
-		const prompt = readString(value.prompt);
-		const negativePrompt = readString(value.negativePrompt);
-		if (!role || !prompt || !negativePrompt) {
-			throw new Error(`BeatSheet assetPlans[${index}] requires role, prompt and negativePrompt`);
+export function compileWorkflowAssetPlanDrafts(
+	assetPlanDrafts: readonly unknown[],
+	objectRegistry: readonly unknown[],
+	clipIds: readonly string[],
+	authoringContracts: readonly WorkflowClipAssetObjectContract[],
+) {
+	const registryById = new Map<string, Readonly<{ kind: string; name: string; physicalIdentityKey: string | null }>>();
+	const registrySource = objectRegistry;
+	{
+		for (const rawObject of registrySource) {
+			if (!isRecord(rawObject)) continue;
+			const objectId = readString(rawObject.objectId);
+			const kind = readString(rawObject.kind);
+			const name = readString(rawObject.name);
+			if (!objectId || !kind || !name) continue;
+			registryById.set(objectId, {
+				kind,
+				name,
+				physicalIdentityKey: readString(rawObject.physicalIdentityKey) || null,
+			});
 		}
-		if (seenRoles.has(role)) throw new Error(`BeatSheet assetPlans contains duplicate role ${role}`);
-		seenRoles.add(role);
+	}
+	const compiledPlanRole = (value: Record<string, unknown>, index: number): string => {
+		const authored = readString(value.role);
+		if (authored) return authored;
+		const objectId = readString(value.objectId);
+		const object = objectId ? registryById.get(objectId) : undefined;
+		if (!object) {
+			throw new Error(`BeatSheet assetPlans[${index}].objectId must name an objectRegistry object; the runtime compiles the plan role from it`);
+		}
+		const canonical = object.kind === "character" ? object.physicalIdentityKey : object.name;
+		if (!canonical) {
+			throw new Error(`BeatSheet assetPlans[${index}].objectId=${JSON.stringify(objectId)} cannot produce a role: objectRegistry[].${object.kind === "character" ? "physicalIdentityKey" : "name"} must be non-empty`);
+		}
+		return `${object.kind}://${canonical}`;
+	};
+	const seenRoles = new Map<string, number>();
+	const assetPlans = assetPlanDrafts.map((value, index) => {
+		if (!isRecord(value)) throw new Error(`BeatSheet assetPlans[${index}] must be an object`);
+		const declaredRole = compiledPlanRole(value, index);
+		const sceneError = inspectSceneReferencePlan({ ...value, role: declaredRole }, `BeatSheet assetPlans[${index}]`);
+		if (sceneError) throw new Error(sceneError);
+		const sceneCard = isRecord(value.sceneCard) ? value.sceneCard : null;
+		const prompt = sceneCard ? sceneCard.spacePrompt as string : readString(value.prompt);
+		const negativePrompt = sceneCard ? sceneCard.negativePrompt as string : readString(value.negativePrompt);
+		if (!declaredRole || !prompt || !negativePrompt) {
+			throw new Error(`BeatSheet assetPlans[${index}] requires role and its typed executable prompt fields`);
+		}
+		const parsedDeclaredRole = parseWorkflowAssetRole(declaredRole, `BeatSheet assetPlans[${index}].role`);
+		// Character identity plans written with the display name are canonicalized
+		// to the frozen physical identity key. This is a structural identity
+		// projection, not a semantic name/keyword route.
+		const matchingContract = authoringContracts.find((contract) => (
+			contract.kind === parsedDeclaredRole.kind
+				&& (parsedDeclaredRole.kind === "character"
+					? (contract.name === parsedDeclaredRole.name || contract.physicalIdentityKey === parsedDeclaredRole.name)
+					: contract.name === parsedDeclaredRole.name)
+		));
+		const role = matchingContract
+			? workflowVisualAssetRole(matchingContract)
+			: `${parsedDeclaredRole.kind}://${parsedDeclaredRole.name}`;
+		if (seenRoles.has(role)) throw new Error(`BeatSheet assetPlans[${index}].role=${JSON.stringify(role)} duplicates assetPlans[${seenRoles.get(role)}].role; repair these numeric array positions in the retained candidate`);
+		seenRoles.set(role, index);
 		const parsedRole = parseWorkflowAssetRole(role, `BeatSheet assetPlans[${index}].role`);
 		const identityAnchors = Array.isArray(value.identityAnchors)
 			? uniqueNonEmptyStrings(value.identityAnchors)
@@ -1484,25 +1774,77 @@ export function projectVideoAssetPlansFromBeatSheet(
 		if (identityAnchors.length === 0 || prohibitedDrift.length === 0) {
 			throw new Error(`BeatSheet assetPlans[${index}] requires identityAnchors and prohibitedDrift`);
 		}
+		const identityBoardSpec = parsedRole.kind === "character"
+			? parseCharacterIdentityBoardSpec(value.identityBoardSpec, `BeatSheet assetPlans[${index}].identityBoardSpec`)
+			: undefined;
 		return {
-			assetId: `asset-plan:${role}`,
+			assetId: assetFactIdentity("planned-image", { objectId: value.objectId, specification: value }),
+			objectId: readString(value.objectId),
 			role,
+			// Preserve the Agent-authored media brief; identity metadata is not a second prompt.
 			prompt,
 			negativePrompt,
 			consumerClipIds: clipIds,
+			...(parsedRole.kind === "scene" ? {
+				referenceType: "scene" as const,
+				sceneCard: value.sceneCard as SceneReferenceCard,
+				identityAnchors,
+				prohibitedDrift,
+			} : {}),
 			...(parsedRole.kind === "character" ? {
 				referenceType: "character" as const,
 				roleName: parsedRole.name,
 				characterAssetRole: "identity_anchor" as const,
 				characterProfileVersion: "character-card/v3" as const,
+				...(identityBoardSpec ? { identityBoardSpec } : {}),
 				identityAnchors,
 				prohibitedDrift,
 			} : {}),
 		};
 	});
+	return assetPlans;
+}
+
+export function projectVideoAssetPlansFromBeatSheet(
+	beatSheetAgentResult: unknown,
+	reusedRoles: readonly string[] = [],
+	/**
+	 * 章级对象身份注册表。交付文本是剥掉 objectRegistry 的紧凑投影（下游只消费展开后的
+	 * assetObjectContracts），因此角色必须由调用方显式传入这份原始注册表来编译；缺省时
+	 * 回落到交付文本自带的 registry（历史候选）。
+	 */
+	objectRegistry: readonly unknown[] = [],
+): Readonly<{ text: string; assets: readonly unknown[] }> {
+	const beatSheet = beatSheetFacts(beatSheetAgentResult);
+	const clipIds = clipIdsFromBeatSheet(beatSheetAgentResult);
+	const authoringRoles = new Set(resolveVideoAssetRoleAllowlist(beatSheetAgentResult));
+	const objectContracts = validateWorkflowBeatObjectContinuity(
+		beatSheet.beats.map((beat, index) => {
+			if (!isRecord(beat)) throw new Error(`BeatSheet clip ${index + 1} must be an object`);
+			return beat;
+		}),
+	).flat();
+	const authoringContracts = objectContracts.filter(requiresAuthoringVisualReference);
+	if (!Array.isArray(beatSheet.context.assetPlans)) {
+		throw new Error("BeatSheet v20 requires an assetPlans array");
+	}
+	/*
+	 * 现行 BeatSheet 合同要求计划用 objectId 命名对象，role 由运行时从 objectRegistry 编译；
+	 * 只有历史候选才自带 role。投影必须先编译出角色再校验：共享 scene 校验按 role 判定
+	 * kind，直接拿未编译的候选去校验会把角色计划读成"非角色"，于是任何按合同写对的计划
+	 * 都会被判成 identityBoardSpec/sceneCard 用错对象，作者在物理窗口之间永远过不了。
+	 */
+	const registrySource = objectRegistry.length > 0 ? objectRegistry
+		: Array.isArray(beatSheet.context.objectRegistry) ? beatSheet.context.objectRegistry : [];
+	const assetPlans = compileWorkflowAssetPlanDrafts(beatSheet.context.assetPlans, registrySource, clipIds, authoringContracts);
+	const seenRoles = new Map(assetPlans.map((plan, index) => [plan.role, index]));
+	// Creative gaps belong to the authoring Agent. Never synthesize executable
+	// prompts from object state prose or guess a role from a different object.
+	const projectedAssetPlans = assetPlans.filter((plan) => !reusedRoles.includes(plan.role));
+	for (const role of reusedRoles) seenRoles.set(role, -1);
 	const missingAuthoringRoles = [...authoringRoles].filter((role) => !seenRoles.has(role));
 	if (missingAuthoringRoles.length > 0) {
-		throw new Error(`BeatSheet assetPlans is missing frozen authoring roles ${JSON.stringify(missingAuthoringRoles)}`);
+		throw new Error(`BeatSheet assetPlans is missing frozen authoring roles ${JSON.stringify(missingAuthoringRoles)}. Required roles: ${JSON.stringify([...authoringRoles])}. Retain existing assetPlans roles: ${JSON.stringify(assetPlans.map((plan) => plan.role))}. Add missing entries without replacing the existing collection; source-backed existing asset bindings remain available through objectRegistry.referenceAssetIds.`);
 	}
 	// The frozen object contract, not the presence of a creative brief, decides
 	// whether a paid reference image is executable. A prop/VFX/palette may stay
@@ -1511,7 +1853,7 @@ export function projectVideoAssetPlansFromBeatSheet(
 	// with buildVideoAssetPlanCollection and prevents an upstream creative
 	// superset from failing the downstream fan-out contract.
 	return {
-		text: JSON.stringify(assetPlans.filter((plan) => authoringRoles.has(plan.role))),
+		text: JSON.stringify(projectedAssetPlans.filter((plan) => authoringRoles.has(plan.role))),
 		assets: [],
 	};
 }
@@ -1540,10 +1882,17 @@ function parseAssetPlan(value: unknown, index: number, knownClipIds: ReadonlySet
 	const existingNodeId = readString(value.existingNodeId);
 	const existingAssetId = readString(value.existingAssetId);
 	const existingProjectId = readString(value.existingProjectId);
+	if (!existingAssetId) {
+		const sceneError = inspectSceneReferencePlan(value, `Asset plan ${assetId}`, "projected");
+		if (sceneError) throw new Error(sceneError);
+	}
 	const referenceType = readString(value.referenceType);
 	const roleName = readString(value.roleName);
 	const characterAssetRole = readString(value.characterAssetRole);
 	const characterProfileVersion = readString(value.characterProfileVersion);
+	const identityBoardSpec = parsedRole.kind === "character"
+		? parseCharacterIdentityBoardSpec(value.identityBoardSpec, `Asset plan ${assetId}.identityBoardSpec`)
+		: undefined;
 	const identityAnchors = Array.isArray(value.identityAnchors)
 		? uniqueNonEmptyStrings(value.identityAnchors)
 		: [];
@@ -1564,6 +1913,7 @@ function parseAssetPlan(value: unknown, index: number, knownClipIds: ReadonlySet
 			);
 		}
 	}
+
 	if (existingImageUrl || existingNodeId || existingAssetId) {
 		if (!existingAssetId && (!existingImageUrl || !existingNodeId)) {
 			throw new Error(`Asset plan ${assetId} reuse declaration requires existingImageUrl and existingNodeId together, or existingAssetId`);
@@ -1581,11 +1931,20 @@ function parseAssetPlan(value: unknown, index: number, knownClipIds: ReadonlySet
 		prompt,
 		negativePrompt,
 		consumerClipIds,
+		...(parsedRole.kind === "scene" && !existingAssetId ? {
+			referenceType: "scene" as const,
+			sceneCard: value.sceneCard as SceneReferenceCard,
+			prompt: (value.sceneCard as SceneReferenceCard).spacePrompt,
+			negativePrompt: (value.sceneCard as SceneReferenceCard).negativePrompt,
+			identityAnchors,
+			prohibitedDrift,
+		} : {}),
 		...(parsedRole.kind === "character" && !existingAssetId ? {
 			referenceType: "character" as const,
 			roleName,
 			characterAssetRole: "identity_anchor" as const,
 			characterProfileVersion: "character-card/v3" as const,
+			...(identityBoardSpec ? { identityBoardSpec } : {}),
 			identityAnchors,
 			prohibitedDrift,
 		} : {}),
@@ -1599,69 +1958,71 @@ export function buildVideoAssetPlanCollection(input: Readonly<{
 	nodeId: string;
 	beatSheetAgentResult: unknown;
 	assetAgentResult: unknown;
-	reusableAssetFacts?: Readonly<Record<string, Readonly<{
-		planAssetId?: string;
-		existingAssetId?: string;
-		existingProjectId?: string;
-		existingNodeId?: string;
-		existingImageUrl?: string;
-	}>>>;
+	reusableAssetFacts?: WorkflowReusableAssetRoleFacts;
 }>): WorkflowCollectionV1 {
 	const clipIds = clipIdsFromBeatSheet(input.beatSheetAgentResult);
 	const knownClipIds = new Set(clipIds);
 	const requiredAssetRoles = resolveVideoAssetRoleAllowlist(input.beatSheetAgentResult);
-	const parsed = parseJsonText(agentText(input.assetAgentResult, "assetPlans"), "assetPlans.text");
-	if (!Array.isArray(parsed)) {
-		throw new Error("Asset coverage must deliver one asset plan array");
-	}
-	const reusableAssetFacts = input.reusableAssetFacts ?? {};
-	const reusableRoles = new Set(requiredAssetRoles.filter((role) => {
-		const fact = reusableAssetFacts[role];
-		return Boolean(
-			(fact?.existingAssetId && fact.existingProjectId)
-			|| (fact?.planAssetId && fact.existingNodeId && fact.existingImageUrl),
-		);
-	}));
-	const unresolvedAssetRoles = requiredAssetRoles.filter((role) => !reusableRoles.has(role));
-	if (parsed.length === 0 && unresolvedAssetRoles.length > 0) {
-		throw new Error("Asset coverage must deliver plans for the frozen visual-reference roles");
-	}
-	const submittedPlans = parsed
-		.map((value, index) => parseAssetPlan(value, index, knownClipIds))
-		.filter((plan) => !reusableRoles.has(plan.role));
-	if (new Set(submittedPlans.map((plan) => plan.assetId)).size !== submittedPlans.length) {
-		throw new Error("Asset plan assetId values must be unique");
-	}
 	const beatRecords = beatSheetFacts(input.beatSheetAgentResult).beats.map((beat, index) => {
 		if (!isRecord(beat)) throw new Error(`BeatSheet clip ${index + 1} must be an object`);
 		return beat;
 	});
 	const objectContractsByBeat = validateWorkflowBeatObjectContinuity(beatRecords);
-	const deterministicReusePlans = requiredAssetRoles.flatMap<WorkflowVideoAssetPlan>((role): WorkflowVideoAssetPlan[] => {
-		const fact = reusableAssetFacts[role];
-		if (!fact) return [];
-		if (fact.existingAssetId && fact.existingProjectId) {
-			return [{
-				assetId: fact.planAssetId || fact.existingAssetId,
-				role,
-				consumerClipIds: [],
-				existingAssetId: fact.existingAssetId,
-				existingProjectId: fact.existingProjectId,
-				...(fact.existingNodeId ? { existingNodeId: fact.existingNodeId } : {}),
-			}];
-		}
-		if (!fact.planAssetId || !fact.existingNodeId || !fact.existingImageUrl) return [];
-		return [{
-			assetId: fact.planAssetId,
-			role,
-			consumerClipIds: [],
-			existingImageUrl: fact.existingImageUrl,
-			existingNodeId: fact.existingNodeId,
-		}];
+	const authoringContracts = objectContractsByBeat.flat().filter(requiresAuthoringVisualReference);
+	const parsed = parseJsonText(agentText(input.assetAgentResult, "assetPlans"), "assetPlans.text");
+	if (!Array.isArray(parsed)) {
+		throw new Error("Asset coverage must deliver one asset plan array");
+	}
+	const normalizedDrafts = parsed.map((value) => {
+		if (!isRecord(value)) return value;
+		const declaredRole = readString(value.role);
+		if (!declaredRole) return value;
+		const parsedRole = parseWorkflowAssetRole(declaredRole, "Asset coverage assetPlans.role");
+		const matchingContract = authoringContracts.find((contract) => (
+			contract.kind === parsedRole.kind
+				&& (parsedRole.kind === "character"
+					? (contract.name === parsedRole.name || contract.physicalIdentityKey === parsedRole.name)
+					: contract.name === parsedRole.name)
+		));
+		return matchingContract
+			? { ...value, role: workflowVisualAssetRole(matchingContract) }
+			: value;
 	});
+	const reusableAssetFacts = input.reusableAssetFacts ?? {};
+	const reusableRoles = new Set(requiredAssetRoles.filter((role) => {
+		const references = reusableAssetFacts[role];
+		return Boolean(references?.length && references.every((reference) => (
+			(reference.existingAssetId && reference.existingProjectId)
+			|| (reference.planAssetId && reference.existingNodeId && reference.existingImageUrl)
+		)));
+	}));
+	const unresolvedAssetRoles = requiredAssetRoles.filter((role) => !reusableRoles.has(role));
+	if (normalizedDrafts.length === 0 && unresolvedAssetRoles.length > 0) {
+		throw new Error("Asset coverage must deliver plans for the frozen visual-reference roles");
+	}
+	const submittedPlans = normalizedDrafts
+		.map((value, index) => parseAssetPlan(value, index, knownClipIds))
+		.filter((plan) => !reusableRoles.has(plan.role));
+	if (new Set(submittedPlans.map((plan) => plan.assetId)).size !== submittedPlans.length) {
+		throw new Error("Asset plan assetId values must be unique");
+	}
+	const deterministicReusePlans = requiredAssetRoles.flatMap<WorkflowVideoAssetPlan>((role) => (
+		(reusableAssetFacts[role] ?? []).map((reference): WorkflowVideoAssetPlan => {
+			if (reference.existingAssetId && reference.existingProjectId) return {
+				assetId: reference.planAssetId || reference.existingAssetId, role, consumerClipIds: [],
+				existingAssetId: reference.existingAssetId, existingProjectId: reference.existingProjectId,
+				...(reference.existingNodeId ? { existingNodeId: reference.existingNodeId } : {}),
+			};
+			if (!reference.planAssetId || !reference.existingNodeId || !reference.existingImageUrl) {
+				throw new Error(`Incomplete reuse reference for ${role}`);
+			}
+			return { assetId: reference.planAssetId, role, consumerClipIds: [],
+				existingImageUrl: reference.existingImageUrl, existingNodeId: reference.existingNodeId };
+		})
+	));
 	const allPlans = [...deterministicReusePlans, ...submittedPlans];
-	if (new Set(allPlans.map((plan) => plan.assetId)).size !== allPlans.length) {
-		throw new Error("Asset plan assetId values must be unique across reused and generated plans");
+	if (new Set(allPlans.map((plan) => assetBindingIdentity(plan.assetId, plan.role))).size !== allPlans.length) {
+		throw new Error("Asset binding identities must be unique");
 	}
 	const submittedRoleCounts = new Map<string, number>();
 	for (const plan of allPlans) {
@@ -1672,7 +2033,7 @@ export function buildVideoAssetPlanCollection(input: Readonly<{
 			.filter(([role]) => !requiredAssetRoles.includes(role))
 			.map(([role]) => `visual asset role ${role} has no frozen object requiring an authoring reference`),
 		...[...submittedRoleCounts.entries()]
-			.filter(([, count]) => count > 1)
+			.filter(([role, count]) => count > 1 && !reusableRoles.has(role))
 			.map(([role, count]) => `visual asset role ${role} has ${String(count)} plans; expected exactly one`),
 		...requiredAssetRoles
 			.filter((role) => !submittedRoleCounts.has(role))
@@ -1700,6 +2061,10 @@ export function buildVideoAssetPlanCollection(input: Readonly<{
 				(objectContractsByBeat[index] ?? []).some((contract) => (
 					requiresAuthoringVisualReference(contract)
 						&& workflowVisualAssetRole(contract) === plan.role
+						&& (!plan.existingAssetId
+							|| (!contract.referenceAssetIds?.length && !contract.referenceImageNodeIds.length)
+							|| contract.referenceAssetIds?.includes(plan.existingAssetId)
+							|| Boolean(plan.existingNodeId && contract.referenceImageNodeIds.includes(plan.existingNodeId)))
 				))
 			)),
 		};
@@ -1721,7 +2086,7 @@ export function buildVideoAssetPlanCollection(input: Readonly<{
 		collectionId: `${input.executionId}:${input.nodeId}:asset-plans`,
 		producerNodeId: input.nodeId,
 		producerPortId: "asset-items",
-		itemIds: plans.map((plan) => plan.assetId),
+		itemIds: plans.map((plan) => assetBindingIdentity(plan.assetId, plan.role)),
 		values: plans,
 	});
 }
@@ -1764,6 +2129,9 @@ function optionalAssetPlans(assetPlanCollection: unknown): readonly WorkflowVide
 		const roleName = readString(item.value.roleName);
 		const characterAssetRole = readString(item.value.characterAssetRole);
 		const characterProfileVersion = readString(item.value.characterProfileVersion);
+		const identityBoardSpec = referenceType === "character"
+			? parseCharacterIdentityBoardSpec(item.value.identityBoardSpec, `Validated asset plan item ${assetId}.identityBoardSpec`)
+			: undefined;
 		const identityAnchors = Array.isArray(item.value.identityAnchors)
 			? uniqueNonEmptyStrings(item.value.identityAnchors)
 			: [];
@@ -1781,17 +2149,27 @@ function optionalAssetPlans(assetPlanCollection: unknown): readonly WorkflowVide
 				throw new Error(`Validated asset plan item ${assetId} existingImageUrl is not persistent HTTP(S)`);
 			}
 		}
+
 		return {
 			assetId,
 			role,
 			...(prompt ? { prompt } : {}),
 			...(negativePrompt ? { negativePrompt } : {}),
 			consumerClipIds,
+			...(referenceType === "scene" && !existingAssetId ? {
+				referenceType: "scene" as const,
+				sceneCard: item.value.sceneCard as SceneReferenceCard,
+				prompt: (item.value.sceneCard as SceneReferenceCard).spacePrompt,
+				negativePrompt: (item.value.sceneCard as SceneReferenceCard).negativePrompt,
+				identityAnchors,
+				prohibitedDrift,
+			} : {}),
 			...(referenceType === "character" ? {
 				referenceType: "character" as const,
 				roleName,
 				characterAssetRole: characterAssetRole === "identity_anchor" ? "identity_anchor" as const : undefined,
 				characterProfileVersion: characterProfileVersion === "character-card/v3" ? "character-card/v3" as const : undefined,
+				...(identityBoardSpec ? { identityBoardSpec } : {}),
 				identityAnchors,
 				prohibitedDrift,
 			} : {}),
@@ -1841,6 +2219,35 @@ export function buildVideoClipContexts(input: Readonly<{
 	});
 	try {
 	const beatSheet = beatSheetFacts(input.beatSheetAgentResult);
+	const beatSheetEvidence = isRecord(input.beatSheetAgentResult)
+		? input.beatSheetAgentResult
+		: null;
+	const authoringEvidencePacket = beatSheetEvidence && (
+		isRecord(beatSheetEvidence.executionProvenance)
+		|| Array.isArray(beatSheetEvidence.executionProvenanceHistory)
+		|| isRecord(beatSheetEvidence.knowledgeCandidateSearch)
+		|| isRecord(beatSheetEvidence.promptExampleCandidateSearch)
+		|| Array.isArray(beatSheetEvidence.retrievalCandidateSets)
+	)
+		? {
+			protocolVersion: "tapcanvas.authoring-evidence/v1",
+			...(isRecord(beatSheetEvidence.executionProvenance)
+				? { dependencyProvenance: beatSheetEvidence.executionProvenance }
+				: {}),
+			...(Array.isArray(beatSheetEvidence.executionProvenanceHistory)
+				? { dependencyProvenanceHistory: beatSheetEvidence.executionProvenanceHistory }
+				: {}),
+			...(isRecord(beatSheetEvidence.knowledgeCandidateSearch)
+				? { knowledgeCandidateSearch: beatSheetEvidence.knowledgeCandidateSearch }
+				: {}),
+			...(isRecord(beatSheetEvidence.promptExampleCandidateSearch)
+				? { promptExampleCandidateSearch: beatSheetEvidence.promptExampleCandidateSearch }
+				: {}),
+			...(Array.isArray(beatSheetEvidence.retrievalCandidateSets)
+				? { retrievalCandidateSets: beatSheetEvidence.retrievalCandidateSets }
+				: {}),
+		}
+		: null;
 	const beats = beatSheet.beats;
 	if (beats.length === 0 || beats.length > 64) {
 		throw new Error(`BeatSheet must contain 1..64 semantic clips; actual=${beats.length}`);
@@ -1848,7 +2255,17 @@ export function buildVideoClipContexts(input: Readonly<{
 	assertWorkflowSpeechLedgerConservation({ context: beatSheet.context, beats });
 	const chapterArc = workflowChapterArc(beatSheet.context);
 	const sourceReceipt = workflowSourceReceipt(beatSheet.context);
-	const sequenceBeats = beats.map(workflowSequenceBeat);
+	const sourceEvidence = bindWorkflowVideoSourceEvidence({
+		deliveryContract: input.deliveryContract,
+		sourceReceipt,
+	});
+	const sequenceControlPlan = workflowSequenceControlPlan(beatSheet.context, beats);
+	const timingBeats = Array.isArray(sequenceControlPlan.segments) ? sequenceControlPlan.segments : [];
+	const sequenceBeats = beats.map((beat, index) => {
+		const timing = timingBeats[index];
+		if (!isRecord(timing)) throw new Error(`BeatSheet sequenceControlPlan.segments[${index}] is missing`);
+		return workflowSequenceBeat(beat, index, timing);
+	});
 	let totalDurationSeconds = 0;
 	const beatRecords: JsonRecord[] = [];
 	const actualClipDurations: number[] = [];
@@ -1913,42 +2330,48 @@ export function buildVideoClipContexts(input: Readonly<{
 		);
 	}
 	const objectContractsByBeat = validateWorkflowBeatObjectContinuity(beatRecords);
+	const frozenClips: FrozenSequenceClip[] = beatRecords.map((beat, index) => {
+		const spokenScript = workflowBeatSpokenScript(beat, `beats[${index}]`);
+		return {
+			beat: {
+				...beat,
+				storyEvents: Array.isArray(beat.storyEvents)
+					? normalizeClipLocalStoryEvents(beat.storyEvents, Number(beat.durationSeconds))
+					: [],
+				speakers: collectSpokenSpeakerNames(spokenScript),
+			},
+			spokenScript,
+			assetObjectContracts: objectContractsByBeat[index] ?? [],
+		};
+	});
 	return createWorkflowCollection({
 		collectionId: `${input.executionId}:${input.nodeId}:clip-contexts`,
 		producerNodeId: input.nodeId,
 		producerPortId: "clip-contexts",
 		itemIds,
-		values: beats.map((beat, index) => {
-			if (!isRecord(beat)) throw new Error(`BeatSheet clip ${index + 1} must be an object`);
-			const frozenObjectContracts = objectContractsByBeat[index] ?? [];
-			const assetObjectContracts = frozenObjectContracts.map((contract) => ({ ...contract }));
+		values: frozenClips.map(({ beat, spokenScript, assetObjectContracts }, index) => {
 			const sourceDialogue = parseWorkflowDialogueScript(beat.dialogueScript, `beats[${index}].dialogueScript`);
-			const spokenScript = workflowBeatSpokenScript(beat, `beats[${index}]`);
-			const canonicalBeat = {
-				...beat,
-				speakers: collectSpokenSpeakerNames(spokenScript),
-			};
 			const dialoguePaceRate = typeof beat.dialoguePaceRate === "number" && Number.isFinite(beat.dialoguePaceRate) && beat.dialoguePaceRate > 0
 				? beat.dialoguePaceRate
-				: 4;
-			const storyEvents = Array.isArray(beat.storyEvents) ? beat.storyEvents : [];
-			const exitState = readString(beat.exitState);
-			const durationSeconds = Number(beat.durationSeconds);
+				: null;
 			return {
 				executionScope,
 				clipIndex: index,
-				beat: canonicalBeat,
+				beat,
 				sourceReceipt,
-				sequenceContext: {
+				sourceEvidence,
+				sequenceContext: buildFrozenSequenceContext({
+					clipIndex: index,
 					chapterArc,
-					previous: sequenceBeats[index - 1] ?? null,
-					current: sequenceBeats[index],
-					next: sequenceBeats[index + 1] ?? null,
-				},
+					sequenceControlPlan,
+					sequenceTimeline: sequenceBeats,
+					clips: frozenClips,
+				}),
 				spokenScript,
 				sourceDialogueLineIds: sourceDialogue.map((line) => line.lineId),
 				dialoguePaceRate,
 				assetPlans: [],
+				...(authoringEvidencePacket ? { authoringEvidencePacket } : {}),
 				// Writer receives the exact canonical object grammar it must preserve.
 				// The stable assetId remains alongside the structural object identity so
 				// generation-time exact-set validation and Prompt Package compilation share
@@ -1965,6 +2388,98 @@ export function buildVideoClipContexts(input: Readonly<{
 			cause: error,
 		});
 	}
+}
+
+/**
+ * Join the clip contract with the materialized asset branch immediately before
+ * Clip authoring.  The graph carries plans and generated bindings separately;
+ * this pure join makes the writer see one immutable, clip-scoped packet and
+ * prevents the old empty `assetPlans`/reference-id projection from silently
+ * dropping images between fan-out and prompt compilation.
+ */
+export function enrichVideoClipContextWithMaterializedAssets(input: Readonly<{
+	contextItem: unknown;
+	materializedAssetCollection: unknown;
+}>): Record<string, unknown> {
+	if (!isRecord(input.contextItem)) throw new Error("Clip context must be an object");
+	if (!isWorkflowCollection(input.materializedAssetCollection)) {
+		throw new Error("Clip writer asset-bindings input must be a validated workflow collection");
+	}
+	const beat = isRecord(input.contextItem.beat) ? input.contextItem.beat : null;
+	const clipId = readString(beat?.clipId);
+	if (!clipId) throw new Error("Clip writer context requires beat.clipId before asset join");
+	const materialized = input.materializedAssetCollection.items.map((item, index) => {
+		if (!isRecord(item.value) || !isRecord(item.value.assetPlan)) {
+			throw new Error(`Clip writer materialized asset binding ${index + 1} requires assetPlan`);
+		}
+		const assetPlan = item.value.assetPlan;
+		const assetId = readString(assetPlan.assetId) || readString(item.value.assetId);
+		const role = readString(assetPlan.role);
+		const consumerClipIds = assetPlan.consumerClipIds;
+		if (!role || !Array.isArray(consumerClipIds) || !consumerClipIds.every((id): id is string => typeof id === "string" && id.length > 0)) {
+			throw new Error(`Clip writer materialized asset binding ${index + 1} requires role and consumerClipIds`);
+		}
+		const generatedAssetId = readString(item.value.generatedAssetId);
+		const nodeId = readString(item.value.nodeId);
+		const imageUrl = readString(item.value.imageUrl);
+		if (!assetId || !nodeId || !imageUrl) {
+			throw new Error(`Clip writer materialized asset binding ${index + 1} requires assetId, nodeId and imageUrl`);
+		}
+		return {
+			assetId,
+			...(generatedAssetId ? { generatedAssetId } : {}),
+			nodeId,
+			imageUrl,
+			assetPlan: { ...assetPlan, assetId, role, consumerClipIds },
+		} satisfies WorkflowMaterializedAssetBinding;
+	});
+	const clipAssets = materialized.filter((binding) => (
+		Array.isArray(binding.assetPlan.consumerClipIds)
+		&& binding.assetPlan.consumerClipIds.some((value) => readString(value) === clipId)
+	));
+	const bindForClip = (contracts: unknown, consumerClipId: string) => bindWorkflowClipAssetObjectContracts({
+		contracts: parseWorkflowClipAssetObjectContracts(contracts, "clipContext.assetObjectContracts"),
+		assetBindings: materialized.filter((binding) => (
+			Array.isArray(binding.assetPlan.consumerClipIds)
+			&& binding.assetPlan.consumerClipIds.includes(consumerClipId)
+		)).map((binding) => ({
+			assetId: binding.assetId,
+			...parseWorkflowAssetRole(binding.assetPlan.role, `clipContext.assetPlans.${binding.assetId}.role`),
+			nodeId: binding.nodeId,
+		})),
+		field: "clipContext.assetObjectContracts",
+	});
+	const boundContracts = bindForClip(input.contextItem.assetObjectContracts, clipId);
+	const sequenceContext = isRecord(input.contextItem.sequenceContext) ? input.contextItem.sequenceContext : null;
+	const boundSequenceContext = sequenceContext ? {
+		...sequenceContext,
+		...Object.fromEntries(["previous", "current", "next"].map((field) => {
+			const neighbour = sequenceContext[field];
+			if (!isRecord(neighbour)) return [field, neighbour];
+			return [field, {
+				...neighbour,
+				// The collection join supplies only this clip's executable assets.
+				// Neighbours are continuity context, not additional asset consumers.
+				assetObjectContracts: readString(neighbour.clipId) === clipId
+					? boundContracts
+					: neighbour.assetObjectContracts,
+			}];
+		})),
+	} : null;
+	return {
+		...input.contextItem,
+		beat: { ...beat, assetObjectContracts: boundContracts },
+		...(boundSequenceContext ? { sequenceContext: boundSequenceContext } : {}),
+		assetPlans: clipAssets.map((binding) => binding.assetPlan),
+		assetObjectContracts: boundContracts,
+		authoringAssetBindings: clipAssets.map((binding) => ({
+			assetId: binding.assetId,
+			...(binding.generatedAssetId ? { generatedAssetId: binding.generatedAssetId } : {}),
+			nodeId: binding.nodeId,
+			imageUrl: binding.imageUrl,
+			role: binding.assetPlan.role,
+		})),
+	};
 }
 
 export function buildWorkflowPromptPackage(input: Readonly<{
@@ -2005,13 +2520,14 @@ export function buildWorkflowPromptPackage(input: Readonly<{
 			throw new Error("Prompt-only package must not receive visual asset plans");
 		}
 		const clipAssetPlans = executionScope === "media_delivery"
-			? assetPlans.filter((plan) => plan.consumerClipIds.includes(item.itemId))
+			? orderClipReferenceEntries(assetPlans.filter((plan) => plan.consumerClipIds.includes(item.itemId)),
+				parseWorkflowClipAssetObjectContracts(isRecord(contextItem) ? contextItem.assetObjectContracts : null, `clipContexts[${item.index}].assetObjectContracts`))
 			: [];
 		const assetBindings = clipAssetPlans.map((plan) => ({
 			assetId: plan.assetId,
 			...parseWorkflowAssetRole(plan.role, `Clip ${item.itemId} asset ${plan.assetId}.role`),
 		}));
-		const declaredAssetIds = assetBindings.map((binding) => binding.assetId);
+		const declaredAssetIds = [...new Set(assetBindings.map((binding) => binding.assetId))];
 		const durationSeconds = (() => {
 			const beat = isRecord(contextItem) && isRecord(contextItem.beat) ? contextItem.beat : null;
 			const duration = beat?.durationSeconds;
@@ -2028,7 +2544,7 @@ export function buildWorkflowPromptPackage(input: Readonly<{
 		})();
 		const dialoguePaceRate = isRecord(contextItem) && typeof contextItem.dialoguePaceRate === "number"
 			? contextItem.dialoguePaceRate
-			: 4;
+			: null;
 		const sourceDialogueLineIds = isRecord(contextItem) && Array.isArray(contextItem.sourceDialogueLineIds)
 			? uniqueNonEmptyStrings(contextItem.sourceDialogueLineIds)
 			: [];
@@ -2049,7 +2565,11 @@ export function buildWorkflowPromptPackage(input: Readonly<{
 			? contextItem.beat.characters.map(readString).filter(Boolean)
 			: [];
 		const exitState = readString(contextItem.beat.exitState);
-		const storyEvents = Array.isArray(contextItem.beat.storyEvents) ? contextItem.beat.storyEvents : [];
+		const blockingFrameNodeId = readString(contextItem.beat.blockingFrameNodeId);
+		const blockingPlan = isRecord(contextItem.beat.blockingPlan) ? contextItem.beat.blockingPlan : null;
+		const storyEvents = Array.isArray(contextItem.beat.storyEvents)
+			? normalizeClipLocalStoryEvents(contextItem.beat.storyEvents, durationSeconds)
+			: [];
 		if (characterRoleNames.length !== contextItem.beat.characters.length || !exitState || storyEvents.length === 0) {
 			throw new Error(`clipContexts[${item.index}] requires a valid frozen characters array, exitState and storyEvents`);
 		}
@@ -2076,16 +2596,30 @@ export function buildWorkflowPromptPackage(input: Readonly<{
 			clipIndex: item.index,
 			durationSeconds,
 			assetBindings,
-			expectedAssetObjectContracts,
+			// Compare the writer against the same contract projection that the
+			// materialized asset branch exposed to it.  The pre-bind BeatSheet
+			// contracts intentionally have no runtime assetId; using them here
+			// rejected every valid media-delivery clip as soon as an asset plan
+			// was materialized.
+			expectedAssetObjectContracts: outputAssetObjectContracts,
 			outputAssetObjectContracts,
 			storyEvents,
 			characterRoleNames,
 			exitState,
+			blockingFrameNodeId,
+			blockingPlan,
 			spokenScript,
 			sourceDialogueLineIds,
 			dialoguePaceRate,
 			field: `${field}.text`,
 		});
+		const runtimeEvidence = isRecord(item.value) ? item.value : null;
+		const dependencyProvenance = runtimeEvidence && isRecord(runtimeEvidence.executionProvenance)
+			? runtimeEvidence.executionProvenance
+			: null;
+		const retrievalReceipts = runtimeEvidence && Array.isArray(runtimeEvidence.retrievalCandidateSets)
+			? runtimeEvidence.retrievalCandidateSets.filter(isRecord)
+			: [];
 		const writerEnvelopeCharacters = Array.from(writerText).length;
 		const providerPromptCharacters = Array.from(compiled.prompt).length;
 		const providerToEnvelopeRatio = writerEnvelopeCharacters > 0
@@ -2099,7 +2633,11 @@ export function buildWorkflowPromptPackage(input: Readonly<{
 			declaredAssetIds,
 			structuredClip: compiled.structuredClip,
 			assetBindings,
-			authoringEvidence: compiled.authoringEvidence,
+			authoringEvidence: {
+				...compiled.authoringEvidence,
+				...(dependencyProvenance ? { dependencyProvenance } : {}),
+				...(retrievalReceipts.length > 0 ? { retrievalReceipts } : {}),
+			},
 			promptMetrics: {
 				writerEnvelopeCharacters,
 				providerPromptCharacters,
@@ -2116,6 +2654,10 @@ export function buildWorkflowPromptPackage(input: Readonly<{
 		(total, clip) => total + clip.promptMetrics.providerPromptCharacters,
 		0,
 	);
+	const unreviewedClipIndices = clips
+		.filter((clip) => (clip.authoringEvidence.creativeReview?.iterations ?? 0) <= 0)
+		.map((clip) => clip.index);
+	const reviewedClipCount = clips.length - unreviewedClipIndices.length;
 	return {
 		protocolVersion: "2",
 		artifactType: "tapcanvas.prompt-package/v2",
@@ -2140,6 +2682,15 @@ export function buildWorkflowPromptPackage(input: Readonly<{
 			providerToEnvelopeRatio: writerEnvelopeCharacters > 0
 				? Math.round((providerPromptCharacters / writerEnvelopeCharacters) * 10_000) / 10_000
 				: 0,
+		},
+		qualityAssessment: {
+			version: 1,
+			method: "embedded_authoring",
+			status: reviewedClipCount === clips.length ? "reviewed" : "unreviewed",
+			verdict: "not_scored",
+			clipCount: clips.length,
+			reviewedClipCount,
+			unreviewedClipIndices,
 		},
 		deliveryVerification: {
 			version: 2,
@@ -2201,6 +2752,7 @@ export function buildVideoProductionPlan(input: Readonly<{
 		throw new Error("Production handoff voice manifest contains duplicate speakers");
 	}
 	type ResolvedAssetReference = Readonly<{
+		imageUrl: string;
 		nodeId: string | null;
 		assetId: string | null;
 	}>;
@@ -2222,8 +2774,13 @@ export function buildVideoProductionPlan(input: Readonly<{
 		} catch {
 			throw new Error(`Generated asset binding ${assetId} imageUrl is not persistent HTTP(S)`);
 		}
-		if (referenceByAssetId.has(assetId)) throw new Error(`Generated asset binding ${assetId} is duplicated`);
+		const previousReference = referenceByAssetId.get(assetId);
+		if (previousReference && (previousReference.nodeId !== (generatedAssetId ? null : nodeId)
+			|| previousReference.assetId !== (generatedAssetId || null) || previousReference.imageUrl !== imageUrl)) {
+			throw new Error(`Generated asset ${assetId} has conflicting materialization receipts`);
+		}
 		referenceByAssetId.set(assetId, {
+			imageUrl,
 			nodeId: generatedAssetId ? null : nodeId,
 			assetId: generatedAssetId || null,
 		});
@@ -2301,8 +2858,8 @@ export function buildVideoProductionPlan(input: Readonly<{
 			if (!entry) throw new Error(`Production handoff voice manifest is missing speaker ${speakerName}`);
 			return [entry];
 		});
-		const executableClip: StructuredClip & Record<string, unknown> = {
-			...structuredClip,
+			const executableClip = ({
+				...structuredClip,
 			assetObjectContracts: contracts,
 			voiceBinding: voiceEntries.map((entry) => ({
 				character: entry.speakerName,
@@ -2315,7 +2872,7 @@ export function buildVideoProductionPlan(input: Readonly<{
 			})),
 			referenceAudioUrls: voiceEntries.map((entry) => entry.audioUrl),
 			referenceAudioRequired: voiceEntries.length > 0 && input.referenceAudioPolicy !== "optional",
-		} as StructuredClip & Record<string, unknown>;
+			} as unknown) as StructuredClip & Record<string, unknown>;
 		const compiled = compileStructuredClipForExecution(executableClip);
 		const prompt = readString(compiled.clipPrompt);
 		if (!prompt) throw new Error(`Prompt package clip ${index + 1} compiled to an empty execution prompt`);

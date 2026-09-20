@@ -1,5 +1,9 @@
+import { MEDIA_ASSET_PURPOSES, type MediaAssetPurpose } from "../../../../../packages/schemas/media-asset-purpose/index.mjs";
+import { projectCanvasMembership } from "@tapcanvas/workflow-kernel-protocol";
 import type { MaterialAssetDto } from "../material/material.schemas";
+import type { CanvasIndexStyleLock } from "../material/material.repo";
 import { workflowAssetContentFingerprint } from "./execution.asset-content-fingerprint";
+import type { ImageUnderstandingEvidence } from "../task/image-understanding-evidence";
 
 export const WORKFLOW_PROJECT_CONTEXT_VERSION = 3 as const;
 
@@ -31,9 +35,11 @@ export type WorkflowProjectAssetSnapshot = Readonly<{
 	mediaKind: "image" | "video" | "audio" | "text" | "unknown";
 	state: "ready" | "transcoding" | "deleted" | "unavailable";
 	assetUsage: "production" | "preview_only" | null;
-	assetPurpose: "story_preview" | null;
+	assetPurpose: MediaAssetPurpose | null;
 	productionEligible: boolean;
 	productionExclusionReason: "legacy_untyped_workflow_image" | null;
+	/** Source visual-style provenance, when the asset was authored under a project style lock. */
+	styleFingerprint: string | null;
 	/**
 	 * Compact, source-preserving metadata for every visible asset. This is copied
 	 * from the persisted payload without semantic reinterpretation so the Agent
@@ -51,6 +57,8 @@ export type WorkflowProjectAssetSnapshot = Readonly<{
 		workflowExecutionId: string | null;
 		taskId: string | null;
 		prompt: string | null;
+		/** Authored structured identity/space facts, present only when persisted. */
+		referenceContract?: Readonly<Record<string, unknown>>;
 	}>;
 	updatedAt: string;
 }>;
@@ -62,6 +70,11 @@ export type WorkflowProjectContext = Readonly<{
 	/** Canonical story source for this canvas scope; null for a free-form project canvas. */
 	sourceNodeId: string | null;
 	selectedAssetIds: readonly string[];
+	/** Requested identities that could not enter the executable image selection. */
+	assetSelectionDiagnostics?: readonly Readonly<{
+		assetId: string;
+		code: "asset_not_visible" | "asset_not_ready_image";
+	}>[];
 	projectAssetIds: readonly string[];
 	timeline: Readonly<{
 		clips: readonly Readonly<{
@@ -85,6 +98,15 @@ export type WorkflowProjectContext = Readonly<{
 		assetWrite: boolean;
 	}>;
 	assetSnapshot: readonly WorkflowProjectAssetSnapshot[];
+	/** Successful model observations, kept separate from confirmed user facts. */
+	mediaUnderstanding?: readonly ImageUnderstandingEvidence[];
+	mediaUnderstandingDiagnostics?: readonly Readonly<{ referenceId: string | null; code: string }>[];
+	/** Frozen project-wide visual anchor shared by every generated image/video node. */
+	visualStyle?: Readonly<{
+		referenceImages: readonly string[];
+		styleLock: CanvasIndexStyleLock | null;
+		styleFingerprint: string | null;
+	}>;
 	capturedAt: string;
 }>;
 
@@ -152,6 +174,11 @@ export function projectAssetSnapshot(asset: MaterialAssetDto): WorkflowProjectAs
 		workflowExecutionId: readString(data.workflowExecutionId) || null,
 		taskId: readString(data.taskId) || null,
 		prompt: readString(data.prompt) || null,
+		referenceContract: Object.fromEntries([
+			"displayName", "assetPurpose", "sourcePlanAssetId", "workflowObjectId",
+			"identityBoardSpec", "sceneAssetRole", "sceneProfileVersion", "sceneOccupancy",
+			"sceneLightingSpec", "sceneAnchors", "prohibitedSceneDrift", "negativePrompt",
+		].filter((field) => data[field] !== undefined).map((field) => [field, data[field]])),
 	} as const;
 	const canonicalName = readString(data.canonicalName)
 		|| readString(data.roleName)
@@ -178,22 +205,23 @@ export function projectAssetSnapshot(asset: MaterialAssetDto): WorkflowProjectAs
 		assetUsage: readString(data.assetUsage) === "preview_only"
 			? "preview_only"
 			: readString(data.assetUsage) === "production" ? "production" : null,
-		assetPurpose: readString(data.assetPurpose) === "story_preview" ? "story_preview" : null,
+		assetPurpose: MEDIA_ASSET_PURPOSES.find(purpose => purpose === data.assetPurpose) ?? null,
 		productionEligible:
 			readString(data.assetUsage) !== "preview_only"
 			&& readString(data.assetPurpose) !== "story_preview"
 			&& data.productionEligible !== false,
 		productionExclusionReason: null,
+		styleFingerprint: readString(data.styleFingerprint) || null,
 		sourceFacts,
 		updatedAt: asset.updatedAt,
 	};
 }
 
 function parseCanvasRoot(canvasData: unknown): Record<string, unknown> {
-	if (typeof canvasData !== "string") return isRecord(canvasData) ? canvasData : {};
+	if (typeof canvasData !== "string") return isRecord(canvasData) ? projectCanvasMembership(canvasData) as Record<string, unknown> : {};
 	try {
 		const parsed = JSON.parse(canvasData) as unknown;
-		return isRecord(parsed) ? parsed : {};
+		return isRecord(parsed) ? projectCanvasMembership(parsed) as Record<string, unknown> : {};
 	} catch {
 		return {};
 	}
@@ -330,6 +358,7 @@ export function createWorkflowProjectContext(input: Readonly<{
 	principalId: string;
 	canvasData: unknown;
 	assets: readonly MaterialAssetDto[];
+	visualStyle?: WorkflowProjectContext["visualStyle"];
 	selectedAssetIds?: readonly string[];
 	selectedNodeIds?: readonly string[];
 	activeNodeId?: string | null;
@@ -352,8 +381,21 @@ export function createWorkflowProjectContext(input: Readonly<{
 	// selectedAssetIds is the visual input contract for a media workflow.  A
 	// visible text/draft node is not a usable image reference and must not leak
 	// into the frozen selection that Agents receive.
-	const selectedAssetIds = uniqueStrings(input.selectedAssetIds ?? []).filter((assetId) => readyImageIds.has(assetId));
+	const selectedNodeIds = uniqueStrings(input.selectedNodeIds ?? []);
+	const selectedNodeIdSet = new Set(selectedNodeIds);
+	const selectedAssetIds = uniqueStrings([
+		...(input.selectedAssetIds ?? []),
+		...initialSnapshot.filter((asset) => (
+			asset.flowId === input.canvasId && asset.nodeId !== null && selectedNodeIdSet.has(asset.nodeId)
+		)).map((asset) => asset.assetId),
+	]).filter((assetId) => readyImageIds.has(assetId));
 	const selectedAssetIdSet = new Set(selectedAssetIds);
+	const assetsById = new Map(initialSnapshot.map((asset) => [asset.assetId, asset]));
+	const assetSelectionDiagnostics = uniqueStrings(input.selectedAssetIds ?? [])
+		.filter((assetId) => !selectedAssetIdSet.has(assetId))
+		.map((assetId) => ({ assetId,
+			code: assetsById.has(assetId) ? "asset_not_ready_image" as const : "asset_not_visible" as const,
+		}));
 	// Pre-contract workflow generations used to persist only an image URL and a
 	// display label.  They remain immutable history, but an unselected image with
 	// no object identity must not silently re-enter a later production run.  An
@@ -373,16 +415,14 @@ export function createWorkflowProjectContext(input: Readonly<{
 			}
 			: asset
 	));
-	const selectedNodeIds = uniqueStrings([
-		...(input.selectedNodeIds ?? []),
-		...(input.activeNodeId ? [input.activeNodeId] : []),
-	]);
+
 	return {
 		version: WORKFLOW_PROJECT_CONTEXT_VERSION,
 		projectId: input.projectId,
 		canvasId: input.canvasId,
 		sourceNodeId: input.sourceNodeId?.trim() || null,
 		selectedAssetIds,
+		assetSelectionDiagnostics,
 		projectAssetIds: snapshot.map((asset) => asset.assetId),
 		timeline: { clips: timelineClips(input.canvasData) },
 		selection: {
@@ -399,6 +439,7 @@ export function createWorkflowProjectContext(input: Readonly<{
 			assetWrite: input.assetWrite !== false,
 		},
 		assetSnapshot: snapshot,
+		visualStyle: input.visualStyle ?? { referenceImages: [], styleLock: null, styleFingerprint: null },
 		capturedAt: (input.now ?? new Date()).toISOString(),
 	};
 }

@@ -16,6 +16,13 @@ import {
 } from "./video-orchestrator.authoring.repo";
 import { VIDEO_ORCHESTRATOR_PROTOCOL_VERSION } from "@tapcanvas/video-orchestrator-protocol";
 import { listProjectNodeAssetsForOwner } from "../material/material.service";
+import { readCanvasIndexStyleImages, readCanvasIndexStyleLock } from "../material/material.repo";
+import {
+  buildProjectStyleProvenance,
+  resolveProjectStyleAnchorSources,
+} from "./authoring-style-provenance";
+import { getActiveProjectLookBible } from "../material/project-look-bible";
+import { getProjectBookStyleFacts } from "../agents/project-context.service";
 import { readVoiceCardProfile } from "./voice-card-dub";
 import { readCanvasCardStateMarker, classifyCanvasCardForRegistry } from "./material-card-classify";
 import {
@@ -31,7 +38,6 @@ import type {
 } from "./video-reference-manifest";
 import { purposeForAssetReferenceRole } from "./video-reference-manifest";
 import type { VideoReferenceDeliveryContract } from "./video-reference-delivery";
-import { validateSd2ClipReferenceBudget } from "./video-reference-budget";
 import { restoreBeatSheetVideoReferenceAuthority } from "./video-orchestrator.reference-authority";
 import { buildDeclaredClipSceneData } from "./video-orchestrator.clip-scene";
 import {
@@ -241,7 +247,6 @@ import {
   type ClipSpeakerBinding,
 } from "./video-orchestrator.speaker-contract";
 import {
-  bindVerifiedVoiceReferences,
   parseShotMotionDynamics,
   type ClipSpeechEvent,
   type ClipShot,
@@ -251,10 +256,10 @@ import {
   type BridgeFrameRole,
 } from "./video-orchestrator.clip-structure";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   resolveObjectStorageConfig,
   createObjectStorageClientFromConfig,
+  createObjectStorageSignedUrl,
   extractObjectStorageObjectKey,
 } from "../asset/rustfs.client";
 
@@ -2004,10 +2009,10 @@ async function presignVideoFrameUrlsForArk(
     const key = extractObjectStorageObjectKey(config, url) || "";
     if (!key) return url;
     try {
-      const signed = await getSignedUrl(
+		const signed = await createObjectStorageSignedUrl(
         client,
         new GetObjectCommand({ Bucket: config.bucket, Key: key }),
-        { expiresIn: 3600 },
+			3600,
       );
       if (signed && signed !== url) presignedToOriginal.set(signed, url);
       return signed;
@@ -2631,11 +2636,6 @@ export async function orchestrateVideoRun(input: {
         videoModel: "",
         durationOptions: [],
         maxDurationSeconds: 0,
-        referenceImagePolicy: {
-          countUnit: "unique_url",
-          maximumTotalImages: 0,
-          maximumBusinessImages: 0,
-        },
         referenceAudioPolicy: {
           minimumDurationSeconds: 0,
           maximumDurationSeconds: 0,
@@ -2856,6 +2856,35 @@ async function orchestrateVideoRunUnlocked(input: {
   });
 
   let flowNodes = readFlowNodes(row);
+  // Freeze the project-level visual anchor once per orchestration run. Both the
+  // workflow-runtime executor and this direct clip orchestrator must consume
+  // the same immutable style facts; otherwise the same one-click action can
+  // submit clips with different media/palette systems depending on its entry
+  // path. Missing style configuration remains a valid unknown state; it is
+  // represented by an empty reference set and no fabricated prompt.
+  const projectId = readTrimmedString(row.project_id);
+  const ownerId = readTrimmedString(row.owner_id);
+  const projectStyleProvenance = projectId && ownerId
+    ? await (async () => {
+        const [canvasStyleReferenceImages, canvasStyleLock, activeLookBible, bookStyleFacts] = await Promise.all([
+          readCanvasIndexStyleImages(projectId, ownerId),
+          readCanvasIndexStyleLock(projectId, ownerId),
+          getActiveProjectLookBible({ ownerId, projectId }),
+          getProjectBookStyleFacts({ ownerId, projectId }),
+        ]);
+        const styleSources = resolveProjectStyleAnchorSources({
+          canvasStyleReferenceImages,
+          canvasStyleLock,
+          activeLookBible,
+          triggerStyleFacts: args.styleFacts,
+          bookStyleFacts,
+        });
+        return buildProjectStyleProvenance({
+          styleReferenceImages: styleSources.styleReferenceImages,
+          styleLock: styleSources.styleLock,
+        });
+      })()
+    : buildProjectStyleProvenance({ styleReferenceImages: [], styleLock: null });
 
   // —— Change A（flag VIDEO_ORCHESTRATOR_PLAN_ON_CANVAS，默认 OFF）：plan 时把每段「计划」
   // 一次性落成画布上的 planned 占位节点（StoryPlan 变画布事实，供事件驱动续跑读取）。
@@ -3517,7 +3546,7 @@ async function orchestrateVideoRunUnlocked(input: {
             details: referenceIdentityError.current.details,
           });
         }
-        let groupRefs = [...new Set(clipRefEntries.map((entry) => entry.url))];
+        const groupRefs = [...new Set(clipRefEntries.map((entry) => entry.url))];
         const refLabelByUrl = new Map(clipRefEntries.map((e) => [e.url, e.label]));
         const refPurposesByUrl = new Map<string, VideoReferencePurpose[]>();
         for (const entry of clipRefEntries) {
@@ -3525,27 +3554,6 @@ async function orchestrateVideoRunUnlocked(input: {
           const purpose = entry.purpose ?? "other";
           if (!purposes.includes(purpose)) purposes.push(purpose);
           refPurposesByUrl.set(entry.url, purposes);
-        }
-        if (/seedance/i.test(plan.videoModel)) {
-          const budget = validateSd2ClipReferenceBudget({
-            clipIndex: pending.clipIndex,
-            businessReferenceImages: groupRefs,
-			maximumBusinessReferences: generationContract.referenceImagePolicy.maximumBusinessImages,
-          });
-          if (!budget.ok) {
-            throw new AppError(budget.message, {
-              status: 422,
-              code:
-                "clip_reference_budget_exceeded",
-              // This validation runs before generateVideoToCanvas and therefore
-              // proves that no provider task was accepted. Keep the durable
-              // run from remaining in video_running after a deterministic
-              // reference-contract failure.
-              terminal: true,
-              details: budget,
-            });
-          }
-          groupRefs = budget.businessReferenceImages;
         }
         // 本镜故事板关键帧 / 目标尾帧按相邻 clip 已闭合的连续性合同解释：
         // 本 clip 是 bridge head 才使用真实首帧；下一 clip 是 bridge head 时，本 clip 才使用真实尾帧。
@@ -3705,7 +3713,7 @@ async function orchestrateVideoRunUnlocked(input: {
           referenceAudioRequired: structuredSpeakerNames.length > 0,
           generateAudio: nativeAudioSupported,
           // 生成边界必须消费与 estimate/start 相同的冻结模型合同，尤其是
-          // referenceImagePolicy。此前这里只写了 videoModel，导致编排节点进入
+          // 时长与音频合同。此前这里只写了 videoModel，导致编排节点进入
           // generateVideoToCanvas 后无法验真引用预算，所有 clip 都被拒绝。
           generationContract,
           ...frozenStructuredClip,
@@ -3725,6 +3733,11 @@ async function orchestrateVideoRunUnlocked(input: {
           durationSeconds: pending.durationSeconds,
           ...(plan.aspect ? { aspectRatio: plan.aspect } : {}),
           ...(effectiveResolution ? { resolution: effectiveResolution } : {}),
+          ...(projectStyleProvenance.stylePrompt
+            ? { stylePrompt: projectStyleProvenance.stylePrompt }
+            : {}),
+          stylePromptApplied: Boolean(projectStyleProvenance.stylePrompt),
+          styleFingerprint: projectStyleProvenance.styleFingerprint,
           // S4.1 章节一致性门禁：把 storyPlan 里的分镜板绑定透传进 nodeData，
           // 否则 generateVideoToCanvas 读 nodeData.storyboardImageNodeId 为空就报"未绑定"。
           // 【2026-06-26 补绑】master 子板经入边回溯解析到（手写节点漏设 storyboardImageNodeId）时，
@@ -3905,10 +3918,10 @@ async function orchestrateVideoRunUnlocked(input: {
                 referenceAudioPolicy: generationContract.referenceAudioPolicy,
               });
               videoData.referenceAudioUrls = dialogAudio.urls;
-              videoData.prompt = bindVerifiedVoiceReferences(
-                readTrimmedString(videoData.prompt) || clipPromptText,
-                dialogAudio.bindingInstruction,
-              );
+              // Voice references stay in the verified reference-audio
+              // manifest. They are transport metadata, not prompt prose;
+              // never append a machine binding block to the provider prompt.
+              videoData.prompt = readTrimmedString(videoData.prompt) || clipPromptText;
               console.log(
                 `[clip-dialog-audio] 镜${pending.clipIndex} 附音色参考×${dialogAudio.urls.length}（${dialogAudio.segments.map((segment) => `${segment.speaker}${typeof segment.durationSec === "number" ? segment.durationSec.toFixed(1) + "s" : ""}`).join("/")}）`,
               );
@@ -3948,7 +3961,6 @@ async function orchestrateVideoRunUnlocked(input: {
               clipIndex: pending.clipIndex,
               binding: assetBinding,
               onScreenRoleNames,
-              cap: generationContract.referenceImagePolicy.maximumBusinessImages,
               droppedCount: 0,
             });
             if (diags.length) {

@@ -4,7 +4,7 @@ import {
   createManualWorkflowTriggerSpec,
   createScheduleWorkflowTriggerSpec,
   parseWorkflowTriggerSpec,
-  parseWorkflowKnowledgeCandidateSetV1,
+  parseWorkflowKnowledgeCandidateSetV2,
   preserveAdminWorkflowGraphForNonAdmin,
   projectWorkflowGraphForViewer,
   projectWorkflowGraphPatchForViewer,
@@ -27,7 +27,7 @@ describe('workflow kernel trigger protocol', () => {
 
   it('validates durable knowledge candidates as an exact typed workflow artifact', () => {
     const artifact = {
-      protocolVersion: 'workflow.knowledge-candidates/v1',
+      protocolVersion: 'workflow.knowledge-candidates/v2',
       candidateSetId: 'domain_123',
       requestHash: 'hash-1',
       createdAt: '2026-08-13T00:00:00.000Z',
@@ -46,9 +46,8 @@ describe('workflow kernel trigger protocol', () => {
         facet: null,
         title: '镜头设计',
         roleScope: ['director'],
-        keywords: ['景别'],
-        sourceUrls: [],
-        bodyPreview: '镜头设计预览',
+        contentSha256: 'a'.repeat(64),
+        bodyBytes: 100,
         rank: 1,
         score: 0.9,
         vectorScore: 0.9,
@@ -56,8 +55,8 @@ describe('workflow kernel trigger protocol', () => {
         matchedQueryIds: ['raw-user-request'],
       }],
     }
-    expect(parseWorkflowKnowledgeCandidateSetV1(artifact)).toEqual(artifact)
-    expect(() => parseWorkflowKnowledgeCandidateSetV1({
+    expect(parseWorkflowKnowledgeCandidateSetV2(artifact)).toEqual(artifact)
+    expect(() => parseWorkflowKnowledgeCandidateSetV2({
       ...artifact,
       candidates: [{ ...artifact.candidates[0], rank: 2 }],
     })).toThrow('ranks must match result order')

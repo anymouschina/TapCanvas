@@ -17,14 +17,15 @@ const mockConcatVideosToCanvas = vi.fn(async () => ({
 		colorMatch: false,
 	},
 }));
-const mockRegisterGeneratedMediaAsset = vi.fn(async () => "asset-master-1");
+type RegisterGeneratedMediaAssetInput = Parameters<typeof import("../asset/asset.hosting").registerGeneratedMediaAsset>[0];
+const mockRegisterGeneratedMediaAsset = vi.fn(async (_input: RegisterGeneratedMediaAssetInput) => "asset-master-1");
 
 vi.mock("../task/agents-tool-bridge.video-concat", () => ({
 	concatVideosToCanvas: (...args: unknown[]) => mockConcatVideosToCanvas(...(args as Parameters<typeof mockConcatVideosToCanvas>)),
 }));
 
 vi.mock("../asset/asset.hosting", () => ({
-	registerGeneratedMediaAsset: (...args: unknown[]) => mockRegisterGeneratedMediaAsset(...args),
+	registerGeneratedMediaAsset: (input: RegisterGeneratedMediaAssetInput) => mockRegisterGeneratedMediaAsset(input),
 }));
 
 function makeRequest(overrides: Partial<WorkflowVideoConcatRequest> = {}): WorkflowVideoConcatRequest {
@@ -57,12 +58,13 @@ describe("concatWorkflowVideos", () => {
 			videoUrls: ["https://assets.example.com/single.mp4"],
 		}));
 
-		expect(result).toEqual({
+		expect(result).toEqual(expect.objectContaining({
 			videoUrl: "https://assets.example.com/single.mp4",
 			assetId: "asset-master-1",
 			clipCount: 1,
 			reusedSingleClip: true,
-		});
+		}));
+		expect(result.mediaProbeEvidence?.diagnostics[0]?.code).toBe("media_probe_unavailable");
 		expect(mockConcatVideosToCanvas).not.toHaveBeenCalled();
 	});
 
@@ -71,13 +73,14 @@ describe("concatWorkflowVideos", () => {
 		const result = await concatWorkflowVideos(env, makeRequest());
 
 		expect(mockConcatVideosToCanvas).toHaveBeenCalledTimes(1);
-		expect(result).toEqual({
+		expect(result).toEqual(expect.objectContaining({
 			videoUrl: "https://assets.example.com/final.mp4",
 			assetId: "asset-master-1",
 			clipCount: 2,
 			concatPolicy: { joinMode: "hard_cut", xfadeSeconds: 0, colorMatch: false },
 			reusedSingleClip: false,
-		});
+		}));
+		expect(result.mediaProbeEvidence?.diagnostics[0]?.code).toBe("media_probe_unavailable");
 	});
 
 	it("registers the final master against the workflow project before delivery", async () => {

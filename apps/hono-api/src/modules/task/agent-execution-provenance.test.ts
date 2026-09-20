@@ -73,3 +73,12 @@ describe("agent execution provenance bridge contract", () => {
     }).success).toBe(false);
   });
 });
+
+
+it("preserves retrieval decisions and read identity through the bridge", () => {
+  const readReceipt = { toolCallId: "read-1", candidateSetId: "set-1", tool: "knowledge_read", readAt: "2026-09-09T08:00:00.000Z" };
+  const retrievalDecisions = [{ version: 1, blocking: false, toolNames: ["knowledge_read"], toolCallIds: ["read-1"], rationale: "Resolve spatial continuity", status: "tool_actions_requested", at: readReceipt.readAt }];
+  const parsed = AgentExecutionProvenanceSchema.parse({ ...CURRENT_PROVENANCE, retrievalDecisions, loadedKnowledgeSources: [{ ...CURRENT_PROVENANCE.loadedKnowledgeSources[0], readReceipt }] });
+  expect(parsed.retrievalDecisions).toEqual(retrievalDecisions);
+  expect(parsed.loadedKnowledgeSources?.[0]?.readReceipt).toEqual(readReceipt);
+});

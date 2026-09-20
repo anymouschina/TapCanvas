@@ -4,11 +4,14 @@
   position: absolute;
   inset: 0;
   display: grid;
+  place-items: center;
   overflow: visible;
   place-items: center;
   color: var(--tc-workflow-category-color);
   cursor: pointer;
 }
+
+.tc-workflow-node-shell__body { display: contents; }
 
 .tc-workflow-node-shell__icon-frame {
   position: relative;
@@ -20,7 +23,7 @@
   border-radius: var(--tc-radius-panel, 10px);
   background: var(--tc-workflow-category-surface);
   color: var(--tc-workflow-category-color);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  box-shadow: none;
   transition: border-color 120ms ease, background 120ms ease, color 120ms ease, transform 120ms ease;
 }
 
@@ -367,14 +370,12 @@
   }
 }
 
-.tc-task-node--workflow:hover .tc-workflow-node-shell__icon-frame,
 .tc-task-node--workflow[data-workflow-selected='true'] .tc-workflow-node-shell__icon-frame {
   border-color: var(--tc-color-text-secondary, #a9afb9);
   background-color: color-mix(in srgb, var(--tc-workflow-category-color) 16%, var(--tc-color-surface-raised, #10161d));
   transform: translateY(-1px);
 }
 
-.tc-task-node--workflow:hover .tc-workflow-node-shell__preview-frame,
 .tc-task-node--workflow[data-workflow-selected='true'] .tc-workflow-node-shell__preview-frame {
   border-color: var(--tc-color-text-secondary, #a9afb9);
   box-shadow: 0 0 0 2px var(--tc-color-border-strong, rgba(198, 203, 211, 0.3)),
@@ -392,8 +393,7 @@
     0 10px 22px rgba(0, 0, 0, 0.24);
 }
 
-.tc-task-node--workflow[data-workflow-selected='true'] .tc-workflow-node-shell--control .tc-workflow-node-shell__icon-frame,
-.tc-task-node--workflow:hover .tc-workflow-node-shell--control .tc-workflow-node-shell__icon-frame {
+.tc-task-node--workflow[data-workflow-selected='true'] .tc-workflow-node-shell--control .tc-workflow-node-shell__icon-frame {
   transform: rotate(45deg) translate(-1px, -1px);
 }
 
@@ -423,7 +423,6 @@
   transform: translate(50%, -50%) !important;
 }
 
-.tc-task-node--workflow:hover .react-flow__handle.tc-handle,
 .tc-task-node--workflow[data-workflow-selected='true'] .react-flow__handle.tc-handle,
 .tc-canvas[data-connecting-active='true'] .tc-task-node--workflow .react-flow__handle.tc-handle {
   background: var(--tc-color-text-primary, #eef0f4) !important;
@@ -431,13 +430,11 @@
   opacity: 1 !important;
 }
 
-.tc-task-node--workflow:hover .react-flow__handle-left.tc-handle,
 .tc-task-node--workflow[data-workflow-selected='true'] .react-flow__handle-left.tc-handle,
 .tc-canvas[data-connecting-active='true'] .tc-task-node--workflow .react-flow__handle-left.tc-handle {
   transform: translate(-50%, -50%) !important;
 }
 
-.tc-task-node--workflow:hover .react-flow__handle-right.tc-handle,
 .tc-task-node--workflow[data-workflow-selected='true'] .react-flow__handle-right.tc-handle,
 .tc-canvas[data-connecting-active='true'] .tc-task-node--workflow .react-flow__handle-right.tc-handle {
   transform: translate(50%, -50%) !important;
@@ -459,4 +456,20 @@
   .tc-workflow-node-shell__status--running::after {
     animation: none;
   }
+}
+
+.tc-workflow-node-shell__persistent-title {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 184px;
+  color: #eef0f4;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  white-space: normal;
+  pointer-events: none;
+  text-shadow: 0 1px 4px #000;
 }

@@ -1,0 +1,156 @@
+{
+  "baseContract": "tapcanvas/video-prompt-authoring@2.0.0",
+  "candidateContract": "tapcanvas/video-prompt-authoring@2.0.1",
+  "claims": [
+    {
+      "claimId": "writer-context-must-be-clip-local",
+      "source": "2026-08-24 novel-chapter-video integration run and buildVideoClipContexts runtime inspection",
+      "evidence": "The same chapter-level sourceCoveragePlan and sourceFidelityAudit were serialized into every parallel Clip writer even though each writer already receives its frozen beat, spokenScript, object contracts and adjacent sequence obligations.",
+      "appliesTo": "all multi-Clip authoring workflows",
+      "proposal": "Replace the repeated chapter payload with a compact source receipt plus the current beat and adjacent sequence projection. Keep chapter-wide truth in the frozen BeatSheet artifact only."
+    },
+    {
+      "claimId": "compiler-owned-beatsheet-copies-must-not-be-model-output",
+      "source": "BeatSheet v12 runtime contract and repeated structured-correction failures",
+      "evidence": "sourceId, sourceFingerprint, protocolVersion, clipIndex, dialogueScript, speakers, exitState, sourceOrder and sourceBeat duration are all reproducible from frozen inputs or the delivered event and speech ledgers.",
+      "appliesTo": "all Keyframe BeatSheet v2 runs",
+      "proposal": "Project deterministic copies before versioned validation and keep the model responsible only for semantic source beats, event timing, narrative choices and object-state facts."
+    },
+    {
+      "claimId": "ready-asset-reuse-is-a-host-fact",
+      "source": "ProjectContext asset snapshot and chapter integration run",
+      "evidence": "A ready production-eligible image with an exact kind://canonical-name role is already a deterministic project fact; asking the asset Agent to rewrite prompt and negativePrompt for that same asset adds work without changing the execution decision.",
+      "appliesTo": "all media_delivery asset planning runs",
+      "proposal": "Partition exact ready reuse roles before Agent dispatch, materialize their plans deterministically and send only unresolved visual roles to the asset Agent."
+    },
+    {
+      "claimId": "performance-verdict-needs-stage-evidence",
+      "source": "quality platform reconciliation of the 2026-08-24 run",
+      "evidence": "A single end-to-end threshold did not explain queue delay, BeatSheet wall time, writer wall time, reused/generated asset counts or per-item latency without manual report reconstruction.",
+      "appliesTo": "all managed workflow evaluations",
+      "proposal": "Persist generic stage clocks, item-duration summaries and asset disposition counts as factual evaluation evidence."
+    }
+  ],
+  "mappings": [
+    {
+      "claimId": "writer-context-must-be-clip-local",
+      "classification": "universal_contract_upgrade",
+      "dimensionIds": [
+        "immutable_clip_fact_projection",
+        "source_coverage_and_causality",
+        "intra_clip_state_chain"
+      ],
+      "targetFiles": [
+        "apps/agents-cli/skills/tapcanvas-video-prompt-writer/references/authoring-contract-v1.json",
+        "apps/agents-cli/skills/tapcanvas-video-prompt-writer/SKILL.md",
+        "apps/agents-cli/skills/tapcanvas-video-workflow/SKILL.md",
+        "apps/hono-api/src/modules/execution/execution.video-workflow-contract.ts"
+      ],
+      "reason": "The semantic dimensions do not change, but the writer input owner and carrier become explicitly clip-local. This is a patch-level owner projection clarification, not a new output field."
+    },
+    {
+      "claimId": "compiler-owned-beatsheet-copies-must-not-be-model-output",
+      "classification": "presentation_projection",
+      "dimensionIds": [
+        "immutable_clip_fact_projection",
+        "dialogue_and_voice_performance",
+        "continuity_and_exit_state",
+        "deterministic_render_projection"
+      ],
+      "targetFiles": [
+        "apps/agents-cli/src/core/structured-output-contract.ts",
+        "apps/hono-api/src/modules/execution/execution.agent-output-contract.ts",
+        "apps/web/src/canvas/videoWorkflowCanvasTemplate.ts"
+      ],
+      "reason": "The final artifact keeps the same facts; only the deterministic owner writes reproducible copies."
+    },
+    {
+      "claimId": "ready-asset-reuse-is-a-host-fact",
+      "classification": "presentation_projection",
+      "dimensionIds": [
+        "asset_roles_and_identity",
+        "deterministic_render_projection"
+      ],
+      "targetFiles": [
+        "apps/hono-api/src/modules/execution/execution.node-executors.ts",
+        "apps/hono-api/src/modules/execution/execution.video-workflow-contract.ts",
+        "apps/web/src/canvas/videoWorkflowCanvasTemplate.ts"
+      ],
+      "reason": "Exact canonical identity and ready URL eligibility are deterministic protocol facts; unresolved roles remain Agent-owned."
+    },
+    {
+      "claimId": "performance-verdict-needs-stage-evidence",
+      "classification": "presentation_projection",
+      "dimensionIds": [],
+      "targetFiles": [
+        "apps/agents-cli/src/core/evals/platform/contracts.ts",
+        "apps/agents-cli/src/core/evals/platform/direct-cli-executor.ts",
+        "apps/agents-cli/src/core/evals/platform/dashboard-server.ts"
+      ],
+      "reason": "This changes diagnostics and evaluation evidence, not authoring semantics or runtime generation admission."
+    }
+  ],
+  "contractChanges": [
+    "Patch tapcanvas/video-prompt-authoring to 2.0.1 and replace beatSheetContext.sourceFidelityAudit writer input with sourceReceipt plus frozen current-beat and sequence projections.",
+    "Do not add a semantic quality gate, keyword heuristic, provider constant or new writer output field."
+  ],
+  "writerChanges": [
+    "Read only sourceReceipt, current beat, spokenScript, assetObjectContracts and sequenceContext for the assigned Clip.",
+    "Keep explicit depictedStoryEventIndices as the authored evidence used by the deterministic coverage compiler.",
+    "Do not reconstruct or request the chapter-wide speech/source ledger."
+  ],
+  "reviewerChanges": [
+    "Review the assigned Clip against its frozen event and sequence receipts; do not require a duplicated chapter payload.",
+    "Keep review evidence non-blocking and inside the same writer context."
+  ],
+  "conflicts": [
+    {
+      "claimId": "ready-asset-reuse-is-a-host-fact",
+      "conflict": "Canonical-name equality cannot decide whether a semantically different composition image should replace a stable identity asset.",
+      "resolution": "Only exact kind://canonical-name identity reuse is deterministic. Composition and every unresolved role stay in the Agent path."
+    },
+    {
+      "claimId": "performance-verdict-needs-stage-evidence",
+      "conflict": "A performance threshold must not be relaxed or inferred from incomplete historical attempts.",
+      "resolution": "Diagnostics remain factual; the five-minute assertion stays unchanged and fresh evaluations use a new execution family."
+    }
+  ],
+  "evalCases": [
+    {
+      "id": "clip-local-context-long-chapter",
+      "purpose": "Verify a writer preserves one Clip's story events, speech and adjacent handoff without receiving the chapter-wide ledgers."
+    },
+    {
+      "id": "clip-local-context-dialogue-and-continuity",
+      "purpose": "Verify source speech coordinates and object exit state remain correct after deterministic projection."
+    },
+    {
+      "id": "ready-assets-plus-missing-composition",
+      "purpose": "Verify ready character/scene identities are reused while an unresolved composition role remains Agent-authored."
+    },
+    {
+      "id": "fixed-eight-prompt-only-performance",
+      "purpose": "Measure fresh BeatSheet-to-eight-writer critical path with zero media side effects and unchanged five-minute admission."
+    }
+  ],
+  "blindEvaluation": {
+    "evaluatedAt": "2026-08-25",
+    "mode": "blind_current_vs_candidate_same_model",
+    "mediaSideEffects": false,
+    "case": "10-second two-event key handoff with one frozen on-screen speech line",
+    "rubricDimensions": [
+      "ordered_event_coverage",
+      "speech_coordinate_conservation",
+      "duration_and_state_continuity",
+      "participant_reaction_without_invention",
+      "audio_and_caption_constraints",
+      "depicted_event_index_accuracy",
+      "execution_legibility"
+    ],
+    "baseScore": 14,
+    "candidateScore": 14,
+    "maximumScore": 14,
+    "verdict": "tie_no_semantic_regression",
+    "judgeRationale": "Both anonymous outputs fully covered the two events in order, conserved speech coordinates 0..16, closed ten seconds, preserved object and participant state, and introduced no unsupported story, music or captions."
+  }
+}

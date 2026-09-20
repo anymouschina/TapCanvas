@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const prismaMock = vi.hoisted(() => ({
 	$transaction: vi.fn(),
+	$queryRawUnsafe: vi.fn(),
 	workflow_executions: { create: vi.fn(), findMany: vi.fn() },
 }));
 
@@ -105,9 +106,7 @@ describe("execution node run history mapping", () => {
 
 describe("workflow execution event journal", () => {
 	it("allocates the next sequence while holding the parent execution row lock", async () => {
-		transactionClient.$queryRawUnsafe.mockResolvedValue([{ id: "execution-1" }]);
-		transactionClient.workflow_execution_events.findFirst.mockResolvedValue({ seq: 7 });
-		transactionClient.workflow_execution_events.create.mockResolvedValue({ id: "event-8" });
+		prismaMock.$transaction.mockResolvedValue([[{ id: "execution-1" }], [{ seq: 8 }]]);
 
 		const seq = await insertExecutionEvent({} as never, {
 			id: "event-8",
@@ -119,22 +118,18 @@ describe("workflow execution event journal", () => {
 		});
 
 		expect(seq).toBe(8);
-		expect(transactionClient.$queryRawUnsafe).toHaveBeenCalledWith(
-			expect.stringContaining("FOR UPDATE"),
-			"execution-1",
-		);
-		expect(transactionClient.workflow_execution_events.create).toHaveBeenCalledWith({
-			data: expect.objectContaining({
-				id: "event-8",
-				execution_id: "execution-1",
-				seq: 8,
-				event_type: "node_progress",
-			}),
-		});
+		expect(prismaMock.$queryRawUnsafe).toHaveBeenNthCalledWith(1,
+			expect.stringContaining("FOR UPDATE"), "execution-1");
+		expect(prismaMock.$queryRawUnsafe).toHaveBeenNthCalledWith(2,
+			expect.stringContaining('RETURNING "seq"'), "event-8", "execution-1",
+			"node_progress", "info", "node-1", null, '{"progress":0.5}',
+			"2026-08-14T05:30:00.000Z");
+		expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Array),
+			{ isolationLevel: "ReadCommitted" });
 	});
 
 	it("fails explicitly when the parent execution no longer exists", async () => {
-		transactionClient.$queryRawUnsafe.mockResolvedValue([]);
+		prismaMock.$transaction.mockResolvedValue([[], []]);
 
 		await expect(insertExecutionEvent({} as never, {
 			id: "event-orphan",
@@ -166,11 +161,15 @@ describe("workflow recovery admission", () => {
 			owner_id: "user-1",
 			status: "failed",
 			execution_family_id: "execution-family",
+			created_at: "2026-08-29T03:15:00.000Z",
 		}]);
 		transactionClient.workflow_execution_events.findFirst.mockResolvedValue(null);
 
 		await createExecution({} as never, recoveryInput);
 
+		expect(transactionClient.workflow_execution_events.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+			where: expect.objectContaining({ event_type: "execution_canceled", created_at: { gte: "2026-08-29T03:15:00.000Z" } }),
+		}));
 		expect(transactionClient.$queryRawUnsafe).toHaveBeenCalledWith(
 			expect.stringContaining("FOR UPDATE"),
 			"execution-source",
@@ -190,6 +189,7 @@ describe("workflow recovery admission", () => {
 			owner_id: "user-1",
 			status: "canceled",
 			execution_family_id: "execution-family",
+			created_at: "2026-08-29T03:15:00.000Z",
 		}]);
 
 		await expect(createExecution({} as never, recoveryInput)).rejects.toMatchObject({
@@ -199,12 +199,60 @@ describe("workflow recovery admission", () => {
 		expect(transactionClient.workflow_executions.create).not.toHaveBeenCalled();
 	});
 
+	it("admits a balance recovery whose own fence already canceled the source", async () => {
+		// Balance recovery cancels the provider-blocked execution before admission so
+		// no live turn can race the new member. Reading that fence back as an
+		// unexpected status change would reject every balance recovery.
+		transactionClient.$queryRawUnsafe.mockResolvedValue([{
+			id: "execution-source",
+			owner_id: "user-1",
+			status: "canceled",
+			execution_family_id: "execution-family",
+			created_at: "2026-08-29T03:15:00.000Z",
+		}]);
+		transactionClient.workflow_execution_events.findFirst.mockResolvedValue(null);
+
+		await createExecution({} as never, {
+			...recoveryInput,
+			recoveryAdmission: "provider_balance_recovery" as const,
+		});
+
+		expect(transactionClient.workflow_executions.create).toHaveBeenCalledWith({
+			data: expect.objectContaining({
+				id: "execution-recovery",
+				recovery_of_execution_id: "execution-source",
+			}),
+		});
+	});
+
+	it("keeps the family cancellation fence out of the balance-recovery admission", async () => {
+		// A balance recovery necessarily creates the family's cancellation event as
+		// its own fence, so the failed_source fence check cannot apply to it.
+		transactionClient.$queryRawUnsafe.mockResolvedValue([{
+			id: "execution-source",
+			owner_id: "user-1",
+			status: "canceled",
+			execution_family_id: "execution-family",
+			created_at: "2026-08-29T03:15:00.000Z",
+		}]);
+		transactionClient.workflow_execution_events.findFirst.mockResolvedValue({ id: "event-canceled" });
+
+		await createExecution({} as never, {
+			...recoveryInput,
+			recoveryAdmission: "provider_balance_recovery" as const,
+		});
+
+		expect(transactionClient.workflow_execution_events.findFirst).not.toHaveBeenCalled();
+		expect(transactionClient.workflow_executions.create).toHaveBeenCalled();
+	});
+
 	it("requires explicit cancellation revocation to cross a family cancellation fence", async () => {
 		transactionClient.$queryRawUnsafe.mockResolvedValue([{
 			id: "execution-source",
 			owner_id: "user-1",
 			status: "failed",
 			execution_family_id: "execution-family",
+			created_at: "2026-08-29T03:15:00.000Z",
 		}]);
 		transactionClient.workflow_execution_events.findFirst.mockResolvedValue({ id: "event-canceled" });
 

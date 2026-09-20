@@ -7,6 +7,7 @@ import type {
 	WorkflowNodeRunHistoryDto,
 	WorkflowNodeRunDto,
 } from "./execution.schemas";
+import { resolveWorkflowWaitingReason } from "./execution.workflow-waiting-reason";
 export {
 	ensureNodeRuns,
 	incrementNodeRunAttempt,
@@ -65,7 +66,7 @@ export type NodeRunRow = {
 
 export type ExecutionHistoryNodeRow = Pick<
 	NodeRunRow,
-	"node_id" | "status" | "error_message" | "created_at"
+	"node_id" | "status" | "error_message" | "created_at" | "output_refs"
 >;
 
 export class WorkflowRecoveryAdmissionError extends Error {
@@ -80,6 +81,26 @@ export class WorkflowRecoveryAdmissionError extends Error {
 		super(message);
 		this.name = "WorkflowRecoveryAdmissionError";
 	}
+}
+
+/**
+ * The status a recovery source must already have when the child execution is
+ * admitted.
+ *
+ * `provider_balance_recovery` (balance restoration and Agent model cutover)
+ * fences its own source before admission: the caller cancels the active
+ * execution so no live turn can race the recovery. That fence leaves the
+ * source `canceled`, so requiring `failed` here would reject the very recovery
+ * that just performed it. A terminal source that was never fenced stays
+ * admissible too, because the suspension receipt — not the execution status —
+ * is the authority for this mode.
+ */
+function requiredRecoverySourceStatus(
+	admission: "failed_source" | "cancellation_revocation" | "provider_balance_recovery",
+): readonly string[] {
+	if (admission === "failed_source") return ["failed"];
+	if (admission === "cancellation_revocation") return ["canceled"];
+	return ["canceled", "failed"];
 }
 
 export type ExecutionHistoryRow = ExecutionRow & {
@@ -234,6 +255,12 @@ export function mapExecutionHistoryRow(row: ExecutionHistoryRow): WorkflowExecut
 		if (statusDelta !== 0) return statusDelta;
 		return left.created_at.localeCompare(right.created_at);
 	})[0];
+	// The waiting reason is projected from the same versioned receipt the node
+	// run and canvas surfaces read, so the history list can name the exact
+	// external boundary instead of the generic wait state.
+	const focusWaitingReason = focus?.status === "waiting_external"
+		? resolveWorkflowWaitingReason(parseStoredJson(focus.output_refs))
+		: null;
 	return {
 		...execution,
 		nodeSummary: summary,
@@ -243,6 +270,8 @@ export function mapExecutionHistoryRow(row: ExecutionHistoryRow): WorkflowExecut
 				nodeLabel: frozenNodeLabel(row.flow_versions.data, focus.node_id),
 				status: (focus.status === "pending" ? "queued" : focus.status) as WorkflowNodeRunDto["status"],
 				errorMessage: focus.error_message,
+				waitingReasonCode: focusWaitingReason?.code ?? null,
+				waitingReasonLabel: focusWaitingReason?.label ?? null,
 			}
 			: null,
 	};
@@ -345,7 +374,7 @@ export async function createExecution(
 		projectContext?: unknown;
 		assetSnapshot?: unknown;
 		recoveryOfExecutionId?: string | null;
-		recoveryAdmission?: "failed_source" | "cancellation_revocation";
+		recoveryAdmission?: "failed_source" | "cancellation_revocation" | "provider_balance_recovery";
 		executionFamilyId: string;
 		usesProjectAssets?: boolean;
 		nowIso: string;
@@ -388,8 +417,9 @@ export async function createExecution(
 			owner_id: string;
 			status: string;
 			execution_family_id: string;
+			created_at: string;
 		}>>(
-			'SELECT "id", "owner_id", "status", "execution_family_id" FROM "workflow_executions" WHERE "id" = $1 FOR UPDATE',
+			'SELECT "id", "owner_id", "status", "execution_family_id", "created_at" FROM "workflow_executions" WHERE "id" = $1 FOR UPDATE',
 			sourceExecutionId,
 		);
 		const source = sources[0];
@@ -405,10 +435,10 @@ export async function createExecution(
 				"recovery_source_owner_mismatch",
 			);
 		}
-		const requiredStatus = admission === "cancellation_revocation" ? "canceled" : "failed";
-		if (source.status !== requiredStatus) {
+		const requiredStatuses = requiredRecoverySourceStatus(admission);
+		if (!requiredStatuses.includes(source.status)) {
 			throw new WorkflowRecoveryAdmissionError(
-				`Workflow recovery source status changed from ${requiredStatus} to ${source.status}`,
+				`Workflow recovery source status changed from ${requiredStatuses.join("/")} to ${source.status}`,
 				"recovery_source_status_changed",
 			);
 		}
@@ -416,6 +446,11 @@ export async function createExecution(
 			const canceledFamilyMember = await transaction.workflow_execution_events.findFirst({
 				where: {
 					event_type: "execution_canceled",
+					// This source was already admitted across earlier fences by an
+					// authorized recovery. Only cancellations since that admission
+					// can revoke its right to continue; historical cutover/revocation
+					// receipts must not permanently poison the whole execution family.
+					created_at: { gte: source.created_at },
 					workflow_executions: {
 						execution_family_id: source.execution_family_id,
 						owner_id: ownerId,
@@ -509,6 +544,7 @@ export async function listExecutionHistoryForOwnerFlow(
 					status: true,
 					error_message: true,
 					created_at: true,
+					output_refs: true,
 				},
 			},
 		},
@@ -539,6 +575,7 @@ export async function listExecutionHistoryPageForOwner(
 					status: true,
 					error_message: true,
 					created_at: true,
+					output_refs: true,
 				},
 			},
 		},
@@ -592,29 +629,6 @@ export async function listNodeRunsForExecutionOwner(
 	});
 }
 
-/**
- * Reads only the successful, authored workflow output boundary for one owned
- * execution. Callers use this as the canonical user-delivery surface instead
- * of scanning arbitrary intermediate node output.
- */
-export async function listSuccessfulWorkflowOutputNodeRunsForExecutionOwner(
-	db: PrismaClient,
-	params: { ownerId: string; executionId: string },
-): Promise<NodeRunRow[]> {
-	void db;
-	return getPrismaClient().workflow_node_runs.findMany({
-		where: {
-			execution_id: params.executionId,
-			status: "success",
-			node_type: "workflow.output/v1",
-			workflow_executions: {
-				owner_id: params.ownerId,
-			},
-		},
-		orderBy: [{ created_at: "asc" }, { id: "asc" }],
-	});
-}
-
 export async function listNodeRunHistoryForOwnerFlow(
 	db: PrismaClient,
 	params: { ownerId: string; flowId: string; nodeId: string; limit?: number },
@@ -651,6 +665,22 @@ export async function listNodeRunHistoryForOwnerFlow(
 		orderBy: { created_at: "desc" },
 		take: limit,
 	});
+}
+
+/** Re-admit only an owner-scoped execution that never acquired a scheduler. */
+export async function requeueUnstartedExecution(
+	db: PrismaClient,
+	input: Readonly<{ executionId: string; ownerId: string }>,
+): Promise<boolean> {
+	const result = await db.workflow_executions.updateMany({
+		where: {
+			id: input.executionId, owner_id: input.ownerId, status: "failed",
+			started_at: null, workflow_node_runs: { none: {} },
+			OR: [{ error_code: null }, { error_code: "workflow_dispatch_pending" }],
+		},
+		data: { status: "queued", finished_at: null, error_message: null, error_code: null, failure_stage: null },
+	});
+	return result.count === 1;
 }
 
 export async function updateExecutionStatus(
@@ -710,40 +740,31 @@ export async function insertExecutionEvent(
 					}
 				})()
 			: null;
-	return getPrismaClient().$transaction(async (transaction) => {
-		const lockedExecution = await transaction.$queryRawUnsafe<Array<{ id: string }>>(
+	const prisma = getPrismaClient();
+	// Keep lock acquisition and sequence allocation in separate READ COMMITTED
+	// statements: allocation must see commits made while waiting for the lock.
+	// Batch execution avoids a JS interactive transaction expiring between calls.
+	const [lockedExecution, inserted] = await prisma.$transaction([
+		prisma.$queryRawUnsafe<Array<{ id: string }>>(
 			'SELECT "id" FROM "workflow_executions" WHERE "id" = $1 FOR UPDATE',
 			params.executionId,
-		);
-		if (lockedExecution.length !== 1) {
-			throw new Error(`workflow execution not found while appending event: ${params.executionId}`);
-		}
-		const latest = await transaction.workflow_execution_events.findFirst({
-			where: { execution_id: params.executionId },
-			select: { seq: true },
-			orderBy: { seq: "desc" },
-		});
-		const seq = (latest?.seq ?? 0) + 1;
-		await transaction.workflow_execution_events.create({
-			data: {
-				id: params.id,
-				execution_id: params.executionId,
-				seq,
-				event_type: params.eventType,
-				level: params.level || "info",
-				node_id: params.nodeId ?? null,
-				message: params.message ?? null,
-				data: payload,
-				created_at: params.nowIso,
-			},
-		});
-		return seq;
-	}, {
-		// 交互式事务默认 5s 超时；媒体/工作流事件追加在 DB 负载高时会超时（与
-		// execution_trace_events 同款 "Transaction already closed" 症状），显式放宽。
-		timeout: 20_000,
-		maxWait: 10_000,
-	});
+		),
+		prisma.$queryRawUnsafe<Array<{ seq: number }>>(
+			`INSERT INTO "workflow_execution_events"
+			 ("id", "execution_id", "seq", "event_type", "level", "node_id", "message", "data", "created_at")
+			 SELECT $1, parent."id", COALESCE((
+			   SELECT MAX("seq") FROM "workflow_execution_events" WHERE "execution_id" = $2
+			 ), 0) + 1, $3, $4, $5, $6, $7, $8
+			 FROM "workflow_executions" parent WHERE parent."id" = $2
+			 RETURNING "seq"`,
+			params.id, params.executionId, params.eventType, params.level || "info",
+			params.nodeId ?? null, params.message ?? null, payload, params.nowIso,
+		),
+	], { isolationLevel: "ReadCommitted" });
+	if (lockedExecution.length !== 1 || inserted.length !== 1) {
+		throw new Error(`workflow execution not found while appending event: ${params.executionId}`);
+	}
+	return inserted[0].seq;
 }
 
 export async function listExecutionEvents(
@@ -846,4 +867,34 @@ export async function getWorkflowExecutionMetricsForOwner(
 			projectAssetUsage: bucketRows(assetUsage),
 		},
 	};
+}
+
+export async function listSuccessfulWorkflowOutputNodeRunsForExecutionOwner(
+	db: PrismaClient,
+	params: { ownerId: string; executionId: string },
+): Promise<NodeRunRow[]> {
+	void db;
+	return getPrismaClient().workflow_node_runs.findMany({
+		where: {
+			execution_id: params.executionId,
+			status: "success",
+			workflow_executions: {
+				owner_id: params.ownerId,
+			},
+		},
+		orderBy: [{ created_at: "asc" }, { id: "asc" }],
+	});
+}
+
+export async function readExecutionFrozenGraphForOwner(
+	db: PrismaClient,
+	params: { ownerId: string; executionId: string },
+): Promise<unknown> {
+	void db;
+	const row = await getPrismaClient().workflow_executions.findFirst({
+		where: { id: params.executionId, owner_id: params.ownerId },
+		select: { flow_versions: { select: { data: true } } },
+	});
+	if (!row) throw new Error("Workflow execution not found for owner");
+	return JSON.parse(row.flow_versions.data) as unknown;
 }

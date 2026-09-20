@@ -4,6 +4,7 @@ import {
   listWorkflowExecutions,
   listWorkflowNodeRuns,
   type WorkflowNodeRunDto,
+  type WorkflowExecutionDto,
 } from '../api/server'
 import { useRFStore } from './store'
 import { isWorkflowAgentNode } from './workflowAgentContext'
@@ -28,6 +29,21 @@ import { resolveWorkflowWaitingReason, type WorkflowWaitingReason } from './work
  * an older canvas snapshot.
  */
 export const WORKFLOW_EXECUTION_PLACEHOLDER_NODE_TYPE = 'workflowExecutionNode'
+
+export const WORKFLOW_EXECUTION_SYNC_POLL_INTERVAL_MS = 1_200
+export const WORKFLOW_EXECUTION_SYNC_MAX_POLL_INTERVAL_MS = 10_000
+
+/** Back off only after transport/read failures; a successful read restores responsiveness. */
+export function resolveWorkflowExecutionSyncPollIntervalMs(consecutiveFailures: number): number {
+  if (!Number.isFinite(consecutiveFailures) || consecutiveFailures <= 0) {
+    return WORKFLOW_EXECUTION_SYNC_POLL_INTERVAL_MS
+  }
+  const exponent = Math.min(4, Math.trunc(consecutiveFailures))
+  return Math.min(
+    WORKFLOW_EXECUTION_SYNC_MAX_POLL_INTERVAL_MS,
+    WORKFLOW_EXECUTION_SYNC_POLL_INTERVAL_MS * (2 ** exponent),
+  )
+}
 
 export function workflowExecutionPlaceholderNodeId(executionId: string): string {
   return `wf-exec-${executionId.trim()}`
@@ -106,21 +122,26 @@ function earliestRunCreatedAt(runs: readonly WorkflowNodeRunDto[]): string {
   }, '')
 }
 
-type PlaceholderExecutionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+type PlaceholderExecutionStatus = 'queued' | 'running' | 'waiting_external' | 'succeeded' | 'failed' | 'cancelled' | 'partial'
 
-function aggregatePlaceholderStatus(runs: readonly WorkflowNodeRunDto[]): PlaceholderExecutionStatus {
-  if (runs.length === 0) return 'queued'
-  let failed = false
-  let active = false
-  let canceled = false
-  for (const run of runs) {
-    if (run.status === 'failed') failed = true
-    else if (run.status === 'running' || run.status === 'queued' || run.status === 'waiting_external') active = true
-    else if (run.status === 'canceled') canceled = true
-  }
+function aggregatePlaceholderStatus(
+  runs: readonly WorkflowNodeRunDto[],
+  executionStatus?: WorkflowExecutionDto['status'],
+): PlaceholderExecutionStatus {
+  if (executionStatus === 'success') return 'succeeded'
+  if (executionStatus === 'failed') return 'failed'
+  if (executionStatus === 'canceled') return 'cancelled'
+  if (executionStatus === 'queued') return 'queued'
+  const failed = runs.some((run) => run.status === 'failed')
+  const running = runs.some((run) => run.status === 'running')
+  const waiting = runs.some((run) => run.status === 'waiting_external')
+  if (failed && (running || waiting || executionStatus === 'running')) return 'partial'
+  if (running) return 'running'
+  if (waiting) return 'waiting_external'
   if (failed) return 'failed'
-  if (active) return 'running'
-  return canceled ? 'cancelled' : 'succeeded'
+  // A set of successful nodes is not the execution's delivery verdict.
+  if (runs.some((run) => run.status === 'success') || executionStatus === 'running') return 'running'
+  return runs.some((run) => run.status === 'canceled') ? 'cancelled' : 'queued'
 }
 
 function placeholderProgress(runs: readonly WorkflowNodeRunDto[]): Readonly<{
@@ -137,7 +158,7 @@ function placeholderProgress(runs: readonly WorkflowNodeRunDto[]): Readonly<{
 
 function placeholderWaitingReason(runs: readonly WorkflowNodeRunDto[]): WorkflowWaitingReason | null {
   const reasons = runs.flatMap((run) => {
-    if (run.status !== 'waiting_external') return []
+    if (run.status !== 'waiting_external' && run.status !== 'running') return []
     const reason = resolveWorkflowWaitingReason(run.outputRefs)
     return reason ? [reason] : []
   })
@@ -151,30 +172,48 @@ function placeholderWaitingReason(runs: readonly WorkflowNodeRunDto[]): Workflow
  * 避免多次小T 触发后画布堆满执行节点。优先更新 admission 已持久化的服务端节点；
  * 历史执行没有该节点时才创建不写回 flow 的 workflowRuntimeReference 恢复投影。
  */
+function updateProjectionData(nodeId: string, patch: Record<string, unknown>): boolean {
+  const store = useRFStore.getState()
+  const node = store.nodes.find(candidate => candidate.id === nodeId)
+  if (!node || !isRecord(node.data)) return false
+  const data = node.data
+  const changed = Object.entries(patch).some(([key, value]) => (
+    !Object.is(data[key], value) && JSON.stringify(data[key]) !== JSON.stringify(value)
+  ))
+  if (!changed) return false
+  store.updateNodeData(nodeId, patch)
+  return true
+}
+
 export function ensureWorkflowExecutionPlaceholderNode(
   executionId: string,
   runs: readonly WorkflowNodeRunDto[],
+  executionStatus?: WorkflowExecutionDto['status'],
+  executionFamilyId?: string,
 ): void {
   const normalizedExecutionId = executionId.trim()
   if (!normalizedExecutionId) return
   const nodeId = workflowExecutionPlaceholderNodeId(normalizedExecutionId)
-  const status = aggregatePlaceholderStatus(runs)
+  const status = aggregatePlaceholderStatus(runs, executionStatus)
   const progress = placeholderProgress(runs)
   const waitingReason = placeholderWaitingReason(runs)
   const executionCreatedAt = earliestRunCreatedAt(runs)
   const store = useRFStore.getState()
+  if (store.locallyDeletedNodeIds.includes(nodeId) || store.detachedWorkflowExecutionIds.includes(normalizedExecutionId) || (executionFamilyId && store.detachedWorkflowExecutionIds.includes(executionFamilyId))) return
+
   const existing = store.nodes.find((node) => node.id === nodeId || (
     isDurableWorkflowExecutionProjectionNode(node.data)
     && nodeAcceptsProjection(node.id, normalizedExecutionId, executionCreatedAt)
   ))
   if (existing) {
-    store.updateNodeData(existing.id, {
+    updateProjectionData(existing.id, {
       workflowExecutionId: normalizedExecutionId,
       workflowExecutionCreatedAt: executionCreatedAt || undefined,
       workflowStatus: status,
       workflowCompletedUnits: progress.completed,
       workflowTotalUnits: progress.total > 0 ? progress.total : undefined,
       workflowErrorCount: progress.failed,
+      workflowErrorDetail: runs.find((run) => run.errorMessage)?.errorMessage ?? undefined,
       workflowWaitingReasonCode: waitingReason?.code,
       workflowWaitingReasonLabel: waitingReason?.label,
     })
@@ -214,12 +253,13 @@ export function ensureWorkflowExecutionPlaceholderNode(
             workflowCompletedUnits: progress.completed,
             workflowTotalUnits: progress.total > 0 ? progress.total : undefined,
             workflowErrorCount: progress.failed,
+            workflowErrorDetail: runs.find((run) => run.errorMessage)?.errorMessage ?? undefined,
             workflowWaitingReasonCode: waitingReason?.code,
             workflowWaitingReasonLabel: waitingReason?.label,
             label: '工作流执行',
           },
           selectable: true,
-          deletable: false,
+          deletable: true,
         },
       ],
     }
@@ -249,7 +289,7 @@ function clearNodesOmittedFromProjection(
       && readString(node.data.workflowInstanceId) === workflowInstanceId
     if (!isSameWorkflow || !nodeAcceptsProjection(node.id, executionId, executionCreatedAt)) continue
     if (isWorkflowAgentNode(node.data)) clearWorkflowAgentReferenceProjection(node.id)
-    state.updateNodeData(node.id, {
+    updateProjectionData(node.id, {
       workflowExecutionId: executionId,
       workflowExecutionCreatedAt: executionCreatedAt,
       workflowStatus: 'queued',
@@ -274,8 +314,9 @@ function clearNodesOmittedFromProjection(
 export function applyWorkflowNodeRuns(
   executionId: string,
   runs: readonly WorkflowNodeRunDto[],
+  executionStatus?: WorkflowExecutionDto['status'],
+  executionFamilyId?: string,
 ): void {
-  const store = useRFStore.getState()
   workflowExecutionProjectionGuard.run(() => {
     const executionCreatedAt = earliestRunCreatedAt(runs)
     if (executionCreatedAt) clearNodesOmittedFromProjection(executionId, executionCreatedAt, runs)
@@ -291,7 +332,7 @@ export function applyWorkflowNodeRuns(
         ? resolveWorkflowWaitingReason(run.outputRefs)
         : null
       const items = itemRunFacts(outputRefs)
-      store.updateNodeData(run.nodeId, {
+      updateProjectionData(run.nodeId, {
         workflowExecutionId: executionId,
         workflowExecutionCreatedAt: run.createdAt,
         workflowStatus: projectedStatus,
@@ -320,12 +361,14 @@ export function applyWorkflowNodeRuns(
       }
     }
     // 单节点执行占位：小T 触发等无手动路径的执行也通过它实时回显状态（转圈/绿/红）。
-    ensureWorkflowExecutionPlaceholderNode(executionId, runs)
+    ensureWorkflowExecutionPlaceholderNode(executionId, runs, executionStatus, executionFamilyId)
   })
 }
 
 export type LatestWorkflowExecutionProjection = Readonly<{
   executionId: string
+  executionStatus: WorkflowExecutionDto['status']
+  executionFamilyId?: string
   runs: readonly WorkflowNodeRunDto[]
 }>
 
@@ -452,6 +495,8 @@ export async function loadLatestWorkflowExecutionProjection(
   if (!latest) return null
   return {
     executionId: latest.id,
+    executionFamilyId: latest.executionFamilyId,
+    executionStatus: latest.status,
     runs: await listWorkflowNodeRuns(latest.id),
   }
 }
@@ -472,6 +517,8 @@ export async function loadWorkflowExecutionProjection(
   if (!latestExecutionId) throw new Error('工作流执行族缺少最新执行身份')
   return {
     executionId: latestExecutionId,
+    executionFamilyId: family.executionFamilyId,
+    executionStatus: family.latestExecutionStatus,
     runs: await listWorkflowNodeRuns(latestExecutionId),
   }
 }
@@ -480,13 +527,12 @@ export async function loadWorkflowExecutionProjection(
  * Restores the newest durable execution onto a freshly loaded workflow canvas.
  * The flow snapshot stores authoring state; execution rows remain the authority
  * for status, ports, item checkpoints, artifacts and errors after a reload.
- * The single execution placeholder node is restored unconditionally (小T 触发等
- * 执行可能没有对应的画布模板节点可投影，但执行状态仍应回显在画布上)。
+ * Deleted cards and detached execution families remain absent after reload.
  */
 export async function restoreLatestWorkflowExecutionProjection(flowId: string): Promise<string | null> {
   const projection = await loadLatestWorkflowExecutionProjection(flowId)
   if (!projection) return null
-  ensureWorkflowExecutionPlaceholderNode(projection.executionId, projection.runs)
+  ensureWorkflowExecutionPlaceholderNode(projection.executionId, projection.runs, projection.executionStatus, projection.executionFamilyId)
   // 画布没有工作流模板节点时没有可投影的节点级目标，直接返回（占位已恢复）。
   const hasAdminWorkflow = useRFStore.getState().nodes.some((node) => {
     if (!isRecord(node.data)) return false
@@ -495,39 +541,45 @@ export async function restoreLatestWorkflowExecutionProjection(flowId: string): 
   })
   if (!hasAdminWorkflow) return projection.executionId
   if (!await waitForWorkflowExecutionProjectionMatch(projection.runs)) return projection.executionId
-  applyWorkflowNodeRuns(projection.executionId, projection.runs)
+  applyWorkflowNodeRuns(projection.executionId, projection.runs, projection.executionStatus, projection.executionFamilyId)
   return projection.executionId
 }
 
 export async function watchWorkflowExecution(
   executionId: string,
   onFailure: (message: string) => void,
+  onSyncFailure?: (message: string) => void,
 ): Promise<void> {
-  const syncFailureLimit = 60
+  const scopeKey = useRFStore.getState().graphProvenanceKey
   let consecutiveSyncFailures = 0
   let terminal = false
   while (!terminal) {
+    if (useRFStore.getState().graphProvenanceKey !== scopeKey) return
     try {
       const [execution, runs] = await Promise.all([
         getWorkflowExecution(executionId),
         listWorkflowNodeRuns(executionId),
       ])
+      if (useRFStore.getState().graphProvenanceKey !== scopeKey) return
       consecutiveSyncFailures = 0
-      applyWorkflowNodeRuns(executionId, runs)
+      applyWorkflowNodeRuns(executionId, runs, execution.status, execution.executionFamilyId)
       terminal = execution.status === 'success' || execution.status === 'failed' || execution.status === 'canceled'
       if (execution.status === 'failed') {
         onFailure(execution.errorMessage || '工作流执行失败')
       }
     } catch (error: unknown) {
       consecutiveSyncFailures += 1
-      if (consecutiveSyncFailures >= syncFailureLimit) {
+      if (consecutiveSyncFailures === 1) {
         const detail = error instanceof Error ? error.message : '无法同步工作流节点状态'
-        onFailure(`持久执行仍由服务端推进，但画布状态连续同步失败 ${syncFailureLimit} 次：${detail}`)
-        return
+        console.error('[workflow-execution] status sync unavailable', { executionId, detail })
+        onSyncFailure?.(`暂时无法读取执行状态，正在自动重连：${detail}`)
       }
     }
     if (!terminal) {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 1_200))
+      await new Promise<void>((resolve) => window.setTimeout(
+        resolve,
+        resolveWorkflowExecutionSyncPollIntervalMs(consecutiveSyncFailures),
+      ))
     }
   }
 }

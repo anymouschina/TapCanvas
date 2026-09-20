@@ -1,0 +1,76 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createWorkflowRefreshQueue } from './workflowRefreshQueue'
+
+describe('workflow refresh queue', () => {
+  it('coalesces 100 events and serializes a trailing refresh; ignores replay', async () => {
+    const pending: Array<(value: string) => void> = []
+    const read = vi.fn(() => new Promise<string>(resolve => pending.push(resolve)))
+    const apply = vi.fn()
+    const queue = createWorkflowRefreshQueue({ read, apply, onError: vi.fn() })
+    for (let i = 0; i < 100; i++) queue.request('exec', i)
+    await Promise.resolve()
+    expect(read).toHaveBeenCalledTimes(1)
+    for (let i = 100; i < 200; i++) queue.request('exec', i)
+    pending[0]('first')
+    await Promise.resolve()
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+    pending[1]('latest')
+    await Promise.resolve()
+    queue.request('exec', 1)
+    await Promise.resolve()
+    expect(read).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(apply.mock.calls).toEqual([['exec', 'first'], ['exec', 'latest']]))
+    queue.dispose()
+  })
+  it('does not apply results after navigation and reports errors', async () => {
+    const apply = vi.fn()
+    const onError = vi.fn()
+    let resolveRead: (value: string) => void = () => { throw new Error('read not started') }
+    const queue = createWorkflowRefreshQueue({ read: () => new Promise<string>(resolve => { resolveRead = resolve }), apply, onError })
+    queue.request('exec', 1)
+    await Promise.resolve()
+    queue.dispose()
+    resolveRead('stale')
+    await Promise.resolve()
+    expect(apply).not.toHaveBeenCalled()
+    const failed = createWorkflowRefreshQueue({ read: async () => { throw new Error('offline') }, apply, onError })
+    failed.request('exec', 1)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(onError).toHaveBeenCalledWith('exec', expect.objectContaining({ message: 'offline' }))
+    failed.dispose()
+  })
+})
+
+it('recovers a failed terminal refresh without another event and clears retries on navigation', async () => {
+  vi.useFakeTimers()
+  const read = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('failed')
+  const apply = vi.fn()
+  const queue = createWorkflowRefreshQueue({ read, apply, onError: vi.fn() })
+  try {
+    queue.request('exec', 30)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(apply).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(apply).toHaveBeenCalledWith('exec', 'failed')
+    expect(read).toHaveBeenCalledTimes(2)
+    read.mockRejectedValue(new Error('offline'))
+    queue.request('exec', 31)
+    await vi.advanceTimersByTimeAsync(0)
+    queue.dispose()
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(read).toHaveBeenCalledTimes(3)
+  } finally { queue.dispose(); vi.useRealTimers() }
+})
+
+it('allows the same event to recover a failed read on replay', async () => {
+  const read = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('recovered')
+  const apply = vi.fn()
+  const onError = vi.fn()
+  const queue = createWorkflowRefreshQueue({ read, apply, onError })
+  queue.request('exec', 7)
+  await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
+  queue.request('exec', 7)
+  await vi.waitFor(() => expect(apply).toHaveBeenCalledWith('exec', 'recovered'))
+  queue.dispose()
+})

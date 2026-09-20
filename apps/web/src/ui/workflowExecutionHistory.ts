@@ -34,6 +34,17 @@ export function workflowNodeRunStatusLabel(
   return '已跳过'
 }
 
+/**
+ * The execution list only carries the projected focus node, not its full
+ * receipt. Prefer the server-projected label so this surface names the same
+ * external boundary the canvas and node history already show.
+ */
+export function workflowFocusNodeStatusLabel(focus: NonNullable<WorkflowExecutionDto['focusNode']>): string {
+  const projected = focus.waitingReasonLabel?.trim()
+  if (focus.status === 'waiting_external' && projected) return projected
+  return workflowNodeRunStatusLabel(focus.status)
+}
+
 export function workflowFocusNodePrefix(status: WorkflowNodeRunDto['status']): string {
   if (status === 'failed') return '失败于'
   if (status === 'waiting_external') return '等待在'

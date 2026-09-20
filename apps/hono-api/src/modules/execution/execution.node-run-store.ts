@@ -4,6 +4,8 @@ import {
 } from "@tapcanvas/workflow-kernel-protocol";
 import type { PrismaClient } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
+import { readDatabaseErrorCodes } from "../../platform/node/database-read-retry";
+import { runDatabaseTransactionWithTransientRetry } from "../../platform/node/database-transaction-retry";
 import { readWorkflowNodeExecutionSemantics } from "./execution.semantics-snapshot";
 
 // Workflow media nodes can update their aggregate row while several sibling
@@ -15,6 +17,28 @@ import { readWorkflowNodeExecutionSemantics } from "./execution.semantics-snapsh
 const WORKFLOW_NODE_TRANSACTION_OPTIONS = {
 	timeout: 20_000,
 	maxWait: 10_000,
+} as const;
+
+// A PostgreSQL restart can overlap a media fan-out's result writes. These
+// mutations contain only durable workflow ledger state, so replaying the
+// whole transaction is safe and preserves idempotent identities. Wait in
+// bounded 5s intervals for the database to become ready instead of turning
+// one transient infrastructure window into a failed user task.
+const WORKFLOW_NODE_PERSISTENCE_RETRY_OPTIONS = {
+	maxAttempts: 3,
+	baseDelayMs: 5_000,
+	onRetry: (diagnostic: Readonly<{
+		operation: string;
+		attempt: number;
+		maxAttempts: number;
+		nextDelayMs: number;
+		errorCodes: readonly string[];
+	}>) => {
+		console.warn(JSON.stringify({
+			message: "workflow_node_persistence_database_retry",
+			...diagnostic,
+		}));
+	},
 } as const;
 
 export type WorkflowNodeAttemptTrigger =
@@ -93,24 +117,25 @@ function storedStringList(value: string | null): readonly string[] {
 }
 
 function collectDeclaredOutputValues(value: unknown, field: string): readonly string[] {
-	const values: string[] = [];
-	const queue: unknown[] = [value];
-	let visited = 0;
-	while (queue.length > 0) {
-		const current = queue.shift();
-		visited += 1;
-		if (visited > 20_000) throw new Error("Workflow output exceeds the provider-receipt traversal bound");
-		if (Array.isArray(current)) {
-			queue.push(...current);
-			continue;
+	// The input has already passed JSON serialization. Its finite size is not a
+	// provider boundary: a receipt-indexing limit must not discard valid output.
+	// An indexed queue is linear (unlike repeated shift); enqueue only containers
+	// and avoid spread arguments, so wide arrays cannot exhaust the call stack.
+	const values = new Set<string>();
+	const queue: object[] = [];
+	if (value !== null && typeof value === "object") queue.push(value);
+	for (let cursor = 0; cursor < queue.length; cursor += 1) {
+		const current = queue[cursor];
+		if (!Array.isArray(current)) {
+			const candidate = (current as Record<string, unknown>)[field];
+			if (typeof candidate === "string" && candidate.trim()) values.add(candidate.trim());
 		}
-		if (!current || typeof current !== "object") continue;
-		const record = current as Record<string, unknown>;
-		const candidate = record[field];
-		if (typeof candidate === "string" && candidate.trim()) values.push(candidate.trim());
-		queue.push(...Object.values(record));
+		const children: unknown[] = Array.isArray(current) ? current : Object.values(current);
+		for (const child of children) {
+			if (child !== null && typeof child === "object") queue.push(child);
+		}
 	}
-	return [...new Set(values)];
+	return [...values];
 }
 
 function providerReceipts(
@@ -152,7 +177,7 @@ export async function ensureNodeRuns(
 	if (params.nodeIds.length === 0) return;
 	if (new Set(params.nodeIds).size !== params.nodeIds.length) throw new Error("Workflow node run identities must be unique");
 	const prisma = getPrismaClient();
-	await prisma.$transaction(async (transaction) => {
+	await runDatabaseTransactionWithTransientRetry(() => prisma.$transaction(async (transaction) => {
 		const execution = await transaction.workflow_executions.findUnique({
 			where: { id: params.executionId },
 			select: {
@@ -211,7 +236,10 @@ export async function ensureNodeRuns(
 		if (persistedCount !== attempts.length) {
 			throw new Error("Workflow node attempt ledger does not cover every current node run");
 		}
-	}, WORKFLOW_NODE_TRANSACTION_OPTIONS);
+	}, WORKFLOW_NODE_TRANSACTION_OPTIONS), {
+		operation: "workflow_node_runs.ensure",
+		...WORKFLOW_NODE_PERSISTENCE_RETRY_OPTIONS,
+	});
 }
 
 export async function updateNodeRun(
@@ -220,35 +248,83 @@ export async function updateNodeRun(
 ): Promise<void> {
 	void db;
 	const prisma = getPrismaClient();
-	await prisma.$transaction(async (transaction) => {
-		const nodeRun = await transaction.workflow_node_runs.update({
-			where: { execution_id_node_id: { execution_id: params.executionId, node_id: params.nodeId } },
-			data: nodeRunMutationData(params),
-		});
-		const attempt = await transaction.workflow_node_attempts.findUnique({
-			where: { node_run_id_attempt: { node_run_id: nodeRun.id, attempt: nodeRun.attempt } },
-		});
-		if (!attempt) throw new Error(`Workflow node ${params.nodeId} current attempt has no ledger row`);
-		const semantics = parseWorkflowExecutionSemanticsV2(parseStoredJson(attempt.semantics_snapshot));
-		await transaction.workflow_node_attempts.update({
-			where: { node_run_id_attempt: { node_run_id: nodeRun.id, attempt: nodeRun.attempt } },
-			data: {
-				status: nodeRun.status,
-				input_refs: nodeRun.input_refs,
-				output_refs: nodeRun.output_refs,
-				tool_calls: nodeRun.tool_calls,
-				provider_receipts: providerReceipts(semantics, nodeRun.output_refs, attempt.provider_receipts),
-				error_message: nodeRun.error_message,
-				error_code: nodeRun.error_code,
-				failure_stage: nodeRun.failure_stage,
-				node_type: nodeRun.node_type,
-				tool_name: nodeRun.tool_name,
-				model_key: nodeRun.model_key,
-				started_at: nodeRun.started_at,
-				finished_at: nodeRun.finished_at,
+	// Serialize before acquiring the row lock. Only changed fields cross the
+	// connection; returning/replaying the full collection makes every checkpoint
+	// transfer all accumulated inputs and tool history twice.
+	const mutation = nodeRunMutationData(params);
+	const { retry_count: ignoredRetryCount, ...attemptMutation } = mutation;
+	void ignoredRetryCount;
+	const startedAt = performance.now();
+	let phase = "transaction_admission";
+	let phaseStartedAt = startedAt;
+	const phaseDurationsMs: Record<string, number> = {};
+	const enterPhase = (next: string): void => {
+		const now = performance.now();
+		phaseDurationsMs[phase] = (phaseDurationsMs[phase] ?? 0) + now - phaseStartedAt;
+		phase = next;
+		phaseStartedAt = now;
+	};
+	let outcome: "success" | "failed" = "failed";
+	let errorCodes: readonly string[] = [];
+	try {
+		await runDatabaseTransactionWithTransientRetry(() => {
+			enterPhase("transaction_admission");
+			return prisma.$transaction(async (transaction) => {
+				enterPhase("update_node_run");
+				const nodeRun = await transaction.workflow_node_runs.update({
+					where: { execution_id_node_id: { execution_id: params.executionId, node_id: params.nodeId } },
+					data: mutation,
+					select: { id: true, attempt: true },
+				});
+				enterPhase("read_attempt_contract");
+				const attempt = await transaction.workflow_node_attempts.findUnique({
+					where: { node_run_id_attempt: { node_run_id: nodeRun.id, attempt: nodeRun.attempt } },
+					select: { semantics_snapshot: true, provider_receipts: true },
+				});
+				if (!attempt) throw new Error(`Workflow node ${params.nodeId} current attempt has no ledger row`);
+				enterPhase("collect_provider_receipts");
+				const semantics = parseWorkflowExecutionSemanticsV2(parseStoredJson(attempt.semantics_snapshot));
+				const receipts = mutation.output_refs !== undefined
+					? providerReceipts(semantics, mutation.output_refs, attempt.provider_receipts)
+					: undefined;
+				enterPhase("update_attempt");
+				await transaction.workflow_node_attempts.update({
+					where: { node_run_id_attempt: { node_run_id: nodeRun.id, attempt: nodeRun.attempt } },
+					data: {
+						...attemptMutation,
+						...(mutation.output_refs !== undefined ? {
+							provider_receipts: receipts,
+						} : {}),
+					},
+					select: { id: true },
+				});
+				enterPhase("commit");
+			}, WORKFLOW_NODE_TRANSACTION_OPTIONS);
+		}, {
+			operation: "workflow_node_runs.update",
+			...WORKFLOW_NODE_PERSISTENCE_RETRY_OPTIONS,
+			onRetry: (diagnostic) => {
+				enterPhase("retry_backoff");
+				WORKFLOW_NODE_PERSISTENCE_RETRY_OPTIONS.onRetry(diagnostic);
 			},
 		});
-	}, WORKFLOW_NODE_TRANSACTION_OPTIONS);
+		outcome = "success";
+	} catch (error: unknown) {
+		errorCodes = readDatabaseErrorCodes(error);
+		throw error;
+	} finally {
+		const elapsedMs = performance.now() - startedAt;
+		const lastPhase = phase;
+		enterPhase("finished");
+		if (outcome === "failed" || elapsedMs >= 1_000) {
+			console.warn(JSON.stringify({
+				message: "workflow_node_persistence_timing",
+				executionId: params.executionId, nodeId: params.nodeId,
+				outcome, elapsedMs, lastPhase, phaseDurationsMs, errorCodes,
+				outputBytes: mutation.output_refs === undefined ? 0 : Buffer.byteLength(mutation.output_refs),
+			}));
+		}
+	}
 }
 
 export async function incrementNodeRunAttempt(
@@ -266,7 +342,7 @@ export async function incrementNodeRunAttempt(
 ): Promise<number> {
 	void db;
 	const prisma = getPrismaClient();
-	return prisma.$transaction(async (transaction) => {
+	return runDatabaseTransactionWithTransientRetry(() => prisma.$transaction(async (transaction) => {
 		const current = await transaction.workflow_node_runs.findUnique({
 			where: { execution_id_node_id: { execution_id: params.executionId, node_id: params.nodeId } },
 		});
@@ -334,7 +410,10 @@ export async function incrementNodeRunAttempt(
 			},
 		});
 		return next.attempt;
-	}, WORKFLOW_NODE_TRANSACTION_OPTIONS);
+	}, WORKFLOW_NODE_TRANSACTION_OPTIONS), {
+		operation: "workflow_node_runs.increment_attempt",
+		...WORKFLOW_NODE_PERSISTENCE_RETRY_OPTIONS,
+	});
 }
 
 export async function updateNodeRuns(

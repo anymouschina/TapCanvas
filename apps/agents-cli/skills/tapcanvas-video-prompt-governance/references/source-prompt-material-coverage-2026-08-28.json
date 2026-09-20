@@ -1,0 +1,39 @@
+{
+  "version": "tapcanvas-source-coverage/v1",
+  "expectedDelivery": "完整分析《前置成品提示词资料2.docx》，识别可迁移机制、冲突规则与 TapCanvas 可落地改造",
+  "sources": [
+    {
+      "sourceId": "file:/Users/libiqiang/workspace/TapCanvas-pro/apps/source/前置成品提示词资料2.docx:sha256:c3fbe8ee168fac2019863a0e74cf875a624bc3e711a9f80583d2427457a26f52:rendered-pages",
+      "label": "前置成品提示词资料2.docx（249 页渲染审查）",
+      "unit": "pages",
+      "expectedRange": { "start": 1, "end": 250 },
+      "coveredRanges": [
+        {
+          "start": 1,
+          "end": 250,
+          "evidenceIds": [
+            "sha256:rendered-pdf:989504576b7e5308d891e35cbf71bc220f9041642990d27a175a375e395eb102",
+            "sha256:pdf-layout:c647d354c7cba8a8b7a0ac8b132aa2a20cc72db16c36f17d10482ab85d7ac537"
+          ]
+        }
+      ],
+      "failedRanges": []
+    },
+    {
+      "sourceId": "file:/Users/libiqiang/workspace/TapCanvas-pro/apps/source/前置成品提示词资料2.docx:sha256:c3fbe8ee168fac2019863a0e74cf875a624bc3e711a9f80583d2427457a26f52:tables",
+      "label": "前置成品提示词资料2.docx（46 个提示词表格结构）",
+      "unit": "items",
+      "expectedRange": { "start": 0, "end": 46 },
+      "coveredRanges": [
+        {
+          "start": 0,
+          "end": 46,
+          "evidenceIds": [
+            "sha256:docx-structure:805c4216ae48fc0fcf34e1f5c9055434923ea0cc55642536fe59d46cce661c18"
+          ]
+        }
+      ],
+      "failedRanges": []
+    }
+  ]
+}

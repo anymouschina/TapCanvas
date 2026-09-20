@@ -7,6 +7,7 @@ export type WorkflowVideoSubmissionState =
 	| "uncertain";
 
 export type WorkflowVideoEffectReplayDecision =
+	| Readonly<{ action: "retry_pre_upstream" }>
 	| Readonly<{ action: "reuse_success" }>
 	| Readonly<{ action: "reuse_running"; taskId: string }>
 	| Readonly<{ action: "reject_terminal"; reason: string }>
@@ -33,10 +34,10 @@ export function resolveWorkflowVideoEffectReplay(
 		return { action: "reuse_running", taskId };
 	}
 	if (status === "failed" && submissionState === "rejected_pre_upstream") {
-		return {
-			action: "reject_terminal",
-			reason: "The workflow media effect reached a terminal rejection; a new provider submission requires a new explicit execution family",
-		};
+		if (!taskId && !readString(data.videoUrl) && !(Array.isArray(data.videoResults) && data.videoResults.length > 0)) {
+			return { action: "retry_pre_upstream" };
+		}
+		return { action: "reject_uncertain", reason: "A pre-upstream rejection conflicts with a persisted provider receipt or asset" };
 	}
 	if (status === "failed" && submissionState === "rejected_by_provider") {
 		return {
