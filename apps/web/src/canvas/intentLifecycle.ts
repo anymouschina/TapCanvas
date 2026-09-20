@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import type { ChapterCanvasIntent } from '@tapcanvas/chapter-canvas-intents'
 import type { PendingUserInputRequest } from './streamChapterIntent'
+import type { SelectedChatModelRequest } from '../ui/chat/chatModelSelection'
 
 export type PendingInputContext = {
+  languageModel: SelectedChatModelRequest
   request: PendingUserInputRequest
   intent: ChapterCanvasIntent
   sourceNodeId: string

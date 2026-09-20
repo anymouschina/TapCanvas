@@ -10,6 +10,7 @@ import {
 
 function makeParams(): StreamChapterIntentParams {
   return {
+    languageModel: { field: 'modelKey', model: 'catalog-language-model' },
     executionId: 'batch-01HZX',
     intent: 'generate_scene_references',
     sourceNodeId: 'source-1',
@@ -70,6 +71,29 @@ function logicalTaskState(
 }
 
 describe('chapter intent unified public-chat contract', () => {
+  it.each(['generate_scene_references', 'generate_shot_placeholders'] as const)(
+    'sends exactly the selected language model for %s, independently of the image model',
+    (intent) => {
+      const params = makeParams()
+      params.intent = intent
+      params.generationConfig = { imageModel: 'catalog-image-model', imageSize: '2K' }
+      for (const field of ['modelKey', 'modelAlias'] as const) {
+        params.languageModel = { field, model: 'selected-language-model' }
+        const { body } = buildChapterIntentChatRequest(params)
+        expect(body[field]).toBe('selected-language-model')
+        expect(body[field === 'modelKey' ? 'modelAlias' : 'modelKey']).toBeUndefined()
+        expect(body.model).toBeUndefined()
+        expect(body.chapterIntentGenerationConfig).toEqual(params.generationConfig)
+      }
+    },
+  )
+
+  it('rejects an empty language model before admission', () => {
+    const params = makeParams()
+    params.languageModel = { field: 'modelKey', model: ' ' }
+    expect(() => buildChapterIntentChatRequest(params)).toThrow('语言模型标识为空')
+  })
+
   it('binds a durable turn identity and real chapter canvas scope', () => {
     const params = makeParams()
     const request = buildChapterIntentChatRequest(params)
@@ -78,6 +102,7 @@ describe('chapter intent unified public-chat contract', () => {
     expect(request.body).toMatchObject({
       sessionKey: request.sessionKey,
       clientPendingId: 'batch-01HZX',
+      modelKey: 'catalog-language-model',
       canvasProjectId: 'project-1',
       canvasNodeId: 'source-1',
       bookId: 'book-1',

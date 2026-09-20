@@ -13,11 +13,12 @@ export function CanvasIntentInputDialog() {
 
   if (!pendingUserInput) return null
 
-  const { request, intent, sourceNodeId, chapterContext, generationConfig, variantParams } = pendingUserInput
+  const { request, intent, sourceNodeId, chapterContext, generationConfig, variantParams, languageModel } = pendingUserInput
 
   function handleSubmit(response: { requestId: string; answers: PendingUserInputAnswer[] }) {
     clearPendingUserInput()
     void dispatchIntent(intent, sourceNodeId, {
+      languageModel,
       chapterContext,
       generationConfig,
       variantParams,

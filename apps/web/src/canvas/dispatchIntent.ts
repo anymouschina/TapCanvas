@@ -4,6 +4,12 @@ import { streamChapterIntent, type PendingUserInputRequest } from './streamChapt
 import { useIntentLifecycle } from './intentLifecycle'
 import { toast } from '../ui/toast'
 import { useUIStore } from '../ui/uiStore'
+import { preloadModelOptions } from '../config/useModelOptions'
+import {
+  readStoredChatModelValue,
+  requireSelectedChatModelRequest,
+  type SelectedChatModelRequest,
+} from '../ui/chat/chatModelSelection'
 
 function formatIntentFailure(err: { message?: string; code?: string }): string {
   const message = String(err.message || '').trim() || '未知错误'
@@ -12,6 +18,7 @@ function formatIntentFailure(err: { message?: string; code?: string }): string {
 }
 
 export type DispatchIntentOptions = {
+  languageModel?: SelectedChatModelRequest
   chapterContext?: {
     projectId: string
     bookId: string | null
@@ -65,7 +72,14 @@ export async function dispatchIntent(
       throw new Error('章节画布 Agent 执行缺少真实 projectId 或 chapterId')
     }
     const activeStyleBible = useUIStore.getState().activeStyleBible
+    const selectedValue = readStoredChatModelValue()
+    const languageModel = options.languageModel ?? requireSelectedChatModelRequest(
+      await preloadModelOptions('text'),
+      selectedValue,
+    )
+    if (abortController.signal.aborted) return
     await streamChapterIntent({
+      languageModel,
       executionId: batchUlid,
       intent,
       sourceNodeId,
@@ -132,6 +146,7 @@ export async function dispatchIntent(
       onPendingUserInput: (req) => {
         terminalObserved = true
         useIntentLifecycle.getState().setPendingUserInput({
+          languageModel,
           request: req,
           intent,
           sourceNodeId,

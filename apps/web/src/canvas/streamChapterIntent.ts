@@ -1,4 +1,5 @@
 import type { ChapterCanvasIntent } from '@tapcanvas/chapter-canvas-intents'
+import { toAgentsChatModelPayload, type SelectedChatModelRequest } from '../ui/chat/chatModelSelection'
 import {
   agentsChatStream,
   getAgentsChatTurnStatus,
@@ -20,6 +21,7 @@ export type PendingUserInputRequest = {
 }
 
 export type StreamChapterIntentParams = {
+  languageModel: SelectedChatModelRequest
   executionId: string
   intent: ChapterCanvasIntent
   sourceNodeId: string
@@ -237,6 +239,7 @@ export function buildChapterIntentChatRequest(params: StreamChapterIntentParams)
 } {
   const sessionKey = buildChapterIntentSessionKey(params)
   const body: ChapterIntentChatRequest = {
+    ...toAgentsChatModelPayload(params.languageModel),
     sessionKey,
     clientPendingId: params.executionId,
     canvasProjectId: params.chapterContext.projectId,
