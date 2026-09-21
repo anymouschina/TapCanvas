@@ -1,0 +1,50 @@
+[
+  {
+    "path": "apps/agents-cli/skills/tapcanvas-api/SKILL.md",
+    "sourceSha256": "691ad9e491db592e217fe70bc4492bfe718f8ffb4fdf1d7de44abbd278529dde",
+    "targetSha256": "ff9da37eadd2159fd00c3f646506034865f1506bd07e75d94e083df03e882e29",
+    "identical": false
+  },
+  {
+    "path": "apps/agents-cli/skills/tapcanvas-api/references/endpoint-reference.md",
+    "sourceSha256": "a386891c66cffcb9afa4db675e3f011395eadb42a63c0b5e846da89f3a1c16bd",
+    "targetSha256": "a386891c66cffcb9afa4db675e3f011395eadb42a63c0b5e846da89f3a1c16bd",
+    "identical": true
+  },
+  {
+    "path": "apps/agents-cli/skills/tapcanvas-generate-scene-references/SKILL.md",
+    "sourceSha256": "d63d42c4210163bb68618d2d6c086bc5042ff82ca44d2e32bf88027c45751286",
+    "targetSha256": "d63d42c4210163bb68618d2d6c086bc5042ff82ca44d2e32bf88027c45751286",
+    "identical": true
+  },
+  {
+    "path": "apps/agents-cli/skills/tapcanvas-generate-shot-placeholders/SKILL.md",
+    "sourceSha256": "5eb2278a822a2f1b996e7e4925b6fbd801aa4cb240aea3d5bbf74144daeebc1e",
+    "targetSha256": "5eb2278a822a2f1b996e7e4925b6fbd801aa4cb240aea3d5bbf74144daeebc1e",
+    "identical": true
+  },
+  {
+    "path": "apps/web/src/canvas/nodes/taskNode/intentActions.ts",
+    "sourceSha256": "a04f37f3773f954d181cf048129b4f265607a206288a574b283d45a00c0e50d0",
+    "targetSha256": "a04f37f3773f954d181cf048129b4f265607a206288a574b283d45a00c0e50d0",
+    "identical": true
+  },
+  {
+    "path": "apps/agents-cli/skills/tapcanvas-generate-shot-placeholders/references/model-and-ref-protocol.md",
+    "sourceSha256": "9528545a9ba2e54b9b58411b0a4e61341ba38771c003d6adc33ff607158470bc",
+    "targetSha256": "9528545a9ba2e54b9b58411b0a4e61341ba38771c003d6adc33ff607158470bc",
+    "identical": true
+  },
+  {
+    "path": "apps/agents-cli/skills/tapcanvas-generate-shot-placeholders/references/director-discipline.md",
+    "sourceSha256": "3ca39e526a5abc7af1bb0ce4fd4aaae4d7c1a0c9023fe11948078bc979542159",
+    "targetSha256": "3ca39e526a5abc7af1bb0ce4fd4aaae4d7c1a0c9023fe11948078bc979542159",
+    "identical": true
+  },
+  {
+    "path": "apps/agents-cli/skills/tapcanvas-generate-shot-placeholders/references/lessons-v2-to-v5.md",
+    "sourceSha256": "a426b8789c71319cd7643d9308700dc30a19c3d11977971fd78327f37ba10d38",
+    "targetSha256": "a426b8789c71319cd7643d9308700dc30a19c3d11977971fd78327f37ba10d38",
+    "identical": true
+  }
+]

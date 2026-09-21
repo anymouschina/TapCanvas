@@ -4,6 +4,8 @@
 
 不再维护旧 `agents-cli` 自研 agent loop，也没有旧运行时兼容分支。
 
+本次从 TapCanvas-pro 同步章节参考图与设计板的生产合同：独立资产逐项提交或同轮并发；单个 `completionBoundary="submission"` 仅证明该节点已受理，不能证明整章交付，也不代表图片已经生成。Agent 核对完整清单，保留已受理节点与 taskId，按实际视觉依赖等待真实 URL。设计板入口明确要求图片，只有用户明确只要占位时才只创建节点。目标仓库保留 DSH Harness 单一路径；源仓库的 `core/agent-loop`、TaskStore、Skill 候选回执与专用交付审查器已无对应模块，其修复不复制为第二套运行时。此同步不表示 DSH 已完成真实批量生图验收。
+
 ## 安装
 
 在仓库根目录执行：

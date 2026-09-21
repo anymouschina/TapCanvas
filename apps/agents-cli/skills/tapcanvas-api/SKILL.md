@@ -175,7 +175,7 @@ tapcanvas agent-api wait --profile '<local|production>' --job-id '<job-id>' --in
 - Agent API 内部仍复用统一 agents bridge、UserIntentContract、视频工作流、异步 continuation 与 `expectedDelivery -> deliveryEvidence -> deliveryVerification` 验收链；它不是新的本地 prompt 路由或第二套视频 SOP。
 - Agent API 提交身份必须来自当前已启用的用户 API Key；浏览器 JWT 不能单独替代该接入凭据。队列只持久化 `apiKeyId/userId/billing scope`，禁止保存长期 key 明文。worker 在执行前重新验证原 key 仍启用并属于同一 owner，再用版本化内部委托凭证进入统一 agents bridge；每个远程工具回调继续恢复原 `apiKeyId`、角色和计费归属。原 key 被撤销、内部 worker token 缺失或身份归属漂移时必须在 Agent 开始付费生产前显式失败，禁止匿名运行、降级为无 key 调用或等待下游返回 `auth_missing`。
 
-Agent 单图与图片多变体统一使用持久异步合同；`node.data.waitForResult` 只能省略或显式为 `false`，`true` 会在付费提交前被拒绝。多变体复用 `tapcanvas_image_generate_to_canvas.nodes[]`，单批最多 8 张独立异步任务。省略每个节点的 `seed` 表示随机新变体；显式整数 seed 会原样传给支持该参数的供应商。供应商受理后的 running 节点、nodeId 与 taskId 就是持久证据；工具只在节点与 taskId 都已落库时返回 `completionBoundary="submission"`，对话父任务随即成功结束，不再监听资产物化。原图片节点继续由 SSE/reconcile 收取同一任务并回写 `success|error`；这不表示提交时已经出图。禁止因 HTTP 返回尚无 URL 而重复付费提交。批量只在全部子项提交成功时携带该边界；任一失败仍保留已受理资产，但不得把父任务误报为成功。
+Agent 单图与图片多变体统一使用持久异步合同；`node.data.waitForResult` 只能省略或显式为 `false`，`true` 会在付费提交前被拒绝。多变体复用 `tapcanvas_image_generate_to_canvas.nodes[]`，单批最多 8 张独立异步任务。省略每个节点的 `seed` 表示随机新变体；显式整数 seed 会原样传给支持该参数的供应商。供应商受理后的 running 节点、nodeId 与 taskId 就是持久证据；工具只在节点与 taskId 都已落库时返回 `completionBoundary="submission"`，该节点提交已完成，不再监听或轮询它的资产物化；主代理继续分析并提交其余独立资产，全部本轮交付的提交范围经自检覆盖后再结束对话。原图片节点继续由 SSE/reconcile 收取同一任务并回写 `success|error`；这不表示提交时已经出图。禁止因 HTTP 返回尚无 URL 而重复付费提交。批量只在全部子项提交成功时携带该边界；任一失败仍保留已受理资产，但不得把父任务误报为成功。
 
 业务工具执行固定使用“目录 → 动态合同 → 调用”三步：
 

@@ -1,7 +1,7 @@
 ---
 name: tapcanvas-generate-scene-references
 description: TapCanvas 章节场景与人物参考资产的轻量编排 Skill。仅用于 `generate_scene_references` intent：读取章节和真实画布，识别本章需要稳定视觉身份的场景与人物，差量调用 tapcanvas-scene-card / tapcanvas-character-card 编译完整节点，再通过允许的工具落画布。本 Skill 不维护任何场景 prompt、灯光模板、角色模板、固定模型、URL 复用或语义关键词规则。
-disable-model-invocation: true
+disable-model-invocation: false
 requires-skills:
   - tapcanvas-api
   - tapcanvas-scene-card
@@ -18,20 +18,17 @@ requires-skills:
 2. 识别本章需要稳定视觉资产的 canonical 场景与角色；
 3. 用结构化身份和真实 ID 做差量对账；
 4. 把场景逐项交给 `tapcanvas-scene-card`，把人物逐项交给 `tapcanvas-character-card`；
-5. 在当前 intent 允许范围内落节点并 `finalize`。
+5. 逐项提交实际生图，保留真实节点与任务回执，核对完整资产清单。
 
 场景空间设计、材质生态、去同质化、灯光设计与 prompt 只来自 `tapcanvas-scene-card`；角色设计、身份板、状态派生与 prompt 只来自 `tapcanvas-character-card`。本 Skill 不得修改两者编译结果，只补 `sourceNodeId`、`chapterId`、`chapterTitle`、`creationStage` 和画布布局字段。
 
 ## 输出工具合同
 
-只能通过 `tapcanvas_call_tool` 调用当前 intent 允许的：
+通过 `tapcanvas-api` 的当前工具目录发现并读取 schema，使用 `tapcanvas_image_generate_to_canvas` 提交实际图片。不得要求已退役的 `add_node` / `finalize`，不能把创建占位节点当作图片交付。
 
-- `add_node`
-- `finalize`
+由 Agent 根据章节建立本轮资产清单与真实复用证据，每完成一个独立资产的设计即可提交，不必等其余提示词全部写完。互不依赖的资产可同轮并发；有视觉依赖的资产等待前置真实图片就绪。单张受理只覆盖该项，继续处理剩余清单。已受理项用原 taskId 对账，不重复生成；已有成功资产保留。用户明确只要占位或提示词时才只落节点。
 
-禁止 `connect_edge`、`set_param`、`link_existing_asset` 和纯文本 flowPatch。每个 `add_node` 必须一次写完整 data；最后恰好调用一次 `finalize`。若工具的结构 schema 不明确，可先调用 `tapcanvas_get_tool_schema`，但不得据此创造第二套语义规则。
-
-本 intent 只有占位编排权限时，新节点保持 `needs_confirmation`，不得声称已经生成真实图片。具备媒体生成权限的上层任务应直接走两个权威 Skill 的同链生成与 reconcile，不创建另一套空节点流程。
+结束前核对清单每项的复用证据、受理回执或未执行原因。提交完成与图片完成分别报告，已受理的媒体不在主对话中反复轮询。
 
 ## 1. 读取真实上下文
 
@@ -170,9 +167,9 @@ requires-skills:
 
 项目画风由服务端 style lock 自动注入。角色与场景身份只传 ID，禁止将 URL 写入 prompt、`referenceImages`、`anchorBindings` 或 `assetInputs`。`label` 只用于展示，不承担身份匹配。
 
-## 6. Finalize 对账
+## 6. 交付对账
 
-`finalize.summary` 必须基于真实操作列出：
+最终交付说明必须基于真实操作列出：
 
 - 本章应有的 canonical 场景清单；
 - 本章应有的 canonical 人物清单；
@@ -180,7 +177,7 @@ requires-skills:
 - `sceneAssetRole` / `characterAssetRole` 与状态；
 - 本轮实际新增数、复用数和仍待真实生成数。
 
-不得把 reusable descriptor、prompt、add_node 成功或子任务完成直接说成真实图片已生成。清单项缺少对应完整节点时继续同链补齐；只有当前权限确实不能取得必要事实/授权时才显式报告缺口。
+不得把 reusable descriptor、prompt、节点创建成功或子任务完成直接说成真实图片已生成。清单项缺少对应完整节点时继续同链补齐；只有当前权限确实不能取得必要事实/授权时才显式报告缺口。
 
 ## 删除的旧路径
 

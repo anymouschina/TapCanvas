@@ -49,11 +49,11 @@ export const INTENT_ACTIONS: IntentActionDef[] = [
     key: 'generate_shot_placeholders',
     intent: 'generate_shot_placeholders',
     icon: IconLayoutGrid as React.ComponentType<{ size?: number }>,
-    label: '镜头设计板',
+    label: '生成镜头设计板图片',
     resolveLabel: ({ preset, semanticKind }) =>
       preset === 'chapter-info' || semanticKind === 'storyboardScript'
-        ? '自动拆分设计板'
-        : '镜头设计板',
+        ? '拆分并生成设计板图片'
+        : '生成镜头设计板图片',
     applicableTo: isTextIntentSource,
     requiresConfig: true,
   },

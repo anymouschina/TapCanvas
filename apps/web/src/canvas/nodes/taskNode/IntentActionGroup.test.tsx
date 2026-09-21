@@ -50,7 +50,7 @@ beforeEach(() => {
 describe('chapter toolbar to main AI conversation', () => {
   it.each([
     ['生成场景/人物参考图', 'generate_scene_references'],
-    ['自动拆分设计板', 'generate_shot_placeholders'],
+    ['拆分并生成设计板图片', 'generate_shot_placeholders'],
   ])('clicking %s and confirming submits the configured action to chat', (label, intent) => {
     render(
       <MantineProvider env="test">
