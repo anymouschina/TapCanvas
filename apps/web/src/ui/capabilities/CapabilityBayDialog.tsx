@@ -51,7 +51,7 @@ type CapabilityBayDialogProps = {
 }
 
 type CapabilityBayTab = 'workflows' | 'equipped' | 'skills' | 'built_in' | 'invocations'
-type PrimaryRouteDecision = 'replace_existing' | 'keep_existing' | 'edit_workflow'
+type PrimaryRouteDecision = 'replace_existing' | 'coexist' | 'keep_existing' | 'edit_workflow'
 type WorkflowCatalogItem = {
   key: string
   projectId: string | null
@@ -78,6 +78,12 @@ function effectLabel(effect: CapabilityBayCandidateDto['descriptor']['sideEffect
   return '只读或纯计算'
 }
 
+function formatCapabilityDate(value: string | null): string | null {
+  if (!value) return null
+  const timestamp = new Date(value)
+  return Number.isNaN(timestamp.getTime()) ? null : timestamp.toLocaleString('zh-CN', { hour12: false })
+}
+
 export function CapabilityBayDialog({ opened, projectId, focusRequest = null, onClose }: CapabilityBayDialogProps): JSX.Element {
   const [data, setData] = React.useState<CapabilityBayDto | null>(null)
   const [activeTab, setActiveTab] = React.useState<CapabilityBayTab>('workflows')
@@ -87,6 +93,9 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
   const [error, setError] = React.useState('')
   const [notice, setNotice] = React.useState('')
   const [inspection, setInspection] = React.useState<CapabilityInspectionDto | null>(null)
+  const updatingInspection = Boolean(inspection && data?.attachments.some(
+    (attachment) => attachment.sourceId === inspection.descriptor.sourceId,
+  ))
   const [routeDecisions, setRouteDecisions] = React.useState<Record<string, PrimaryRouteDecision>>({})
   // 工作流装配给小T的作用范围：管理员可选全体用户/当前用户；普通用户保持 current_user。
   const [equipScope, setEquipScope] = React.useState<WorkflowEquipScope>('current_user')
@@ -162,20 +171,44 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
   const userEnabledBySourceId = React.useMemo(() => new Map((data?.attachments ?? [])
     .map((attachment) => [attachment.sourceId, attachment.userEnabled] as const)), [data?.attachments])
 
-  const inspect = React.useCallback(async (candidate: CapabilityBayCandidateDto): Promise<void> => {
+  const inspect = React.useCallback(async (candidate: CapabilityBayCandidateDto, updateExisting = false): Promise<void> => {
     setBusyFlowId(candidate.descriptor.sourceId)
     setError('')
     setNotice('')
     setInspection(null)
     setRouteDecisions({})
+    setEquipScope(attachmentScopeBySourceId.get(candidate.descriptor.sourceId) ?? 'current_user')
     try {
-      setInspection(await inspectWorkflowCapability(candidate.descriptor.sourceId))
+      const result = await inspectWorkflowCapability(candidate.descriptor.sourceId)
+      const existing = data?.attachments.find((attachment) => attachment.sourceId === candidate.descriptor.sourceId)
+      if (updateExisting && existing && !result.report.blocking) {
+        await equipWorkflowCapability({
+          flowId: result.descriptor.sourceId,
+          sourceVersionId: result.descriptor.sourceVersionId,
+          descriptorSha256: result.descriptorSha256,
+          inspectionToken: result.inspectionToken,
+          scope: existing.scope,
+          resolutions: result.report.conflicts.map((conflict) => {
+            const previous = existing.routeDecisions.find((decision) => decision.withCapabilityId === conflict.withCapabilityId)
+            return {
+              conflictId: conflict.id,
+              withCapabilityId: conflict.withCapabilityId,
+              action: conflict.resolutionMode !== 'choose_primary' ? 'acknowledge'
+                : previous?.action === 'coexist' ? 'coexist' : 'replace_existing',
+            }
+          }),
+        })
+        setNotice(`“${result.descriptor.name}”已更新装载，小T现在可以使用${existing.scope === 'all_users' ? '（全体用户）' : ''}`)
+        await load()
+      } else {
+        setInspection(result)
+      }
     } catch (nextError: unknown) {
       setError(errorMessage(nextError))
     } finally {
       setBusyFlowId('')
     }
-  }, [])
+  }, [attachmentScopeBySourceId, data?.attachments, load])
 
   React.useEffect(() => {
     if (!opened || !data || !focusRequest) return
@@ -213,19 +246,21 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
         resolutions: inspection.report.conflicts.map((conflict) => ({
           conflictId: conflict.id,
           withCapabilityId: conflict.withCapabilityId,
-          action: conflict.resolutionMode === 'choose_primary' ? 'replace_existing' : 'acknowledge',
+          action: conflict.resolutionMode === 'choose_primary'
+            ? (routeDecisions[conflict.id] === 'coexist' ? 'coexist' : 'replace_existing')
+            : 'acknowledge',
         })),
         scope: equipScope,
       })
       setInspection(null)
-      setNotice(`“${inspection.descriptor.name}”已添加，小T现在可以使用${equipScope === 'all_users' ? '（全体用户）' : ''}`)
+      setNotice(`“${inspection.descriptor.name}”已${updatingInspection ? '更新装载' : '添加'}，小T现在可以使用${equipScope === 'all_users' ? '（全体用户）' : ''}`)
       await load()
     } catch (nextError: unknown) {
       setError(errorMessage(nextError))
     } finally {
       setBusyFlowId('')
     }
-  }, [inspection, load, equipScope])
+  }, [inspection, load, equipScope, routeDecisions, updatingInspection])
 
   const unequip = React.useCallback(async (candidate: CapabilityBayCandidateDto): Promise<void> => {
     setBusyFlowId(candidate.descriptor.sourceId)
@@ -465,6 +500,9 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
   const hasEditDecision = primaryRouteConflicts.some(
     (conflict) => routeDecisions[conflict.id] === 'edit_workflow',
   )
+  const hasReplacementDecision = primaryRouteConflicts.some(
+    (conflict) => routeDecisions[conflict.id] === 'replace_existing',
+  )
   const canEquip = Boolean(inspection) && !inspection?.report.blocking && allPrimaryRoutesDecided && !hasKeepDecision && !hasEditDecision
   // 尚未做出选择的主路由冲突：确认按钮被禁用时用它给出明确指引（为什么不能点、要去哪里选）。
   const pendingPrimaryRoute = primaryRouteConflicts.find(
@@ -597,6 +635,8 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                   const routingReady = candidate ? routingReadySourceIds.has(candidate.descriptor.sourceId) : false
                   const routeConfirmationRequired = candidate ? candidate.attached && !routingReady : false
                   const versionChanged = candidate ? candidate.attached && candidate.attachedVersionId !== candidate.descriptor.sourceVersionId : false
+                  const attachedAt = candidate?.attachedAt ?? null
+                  const updatedAt = candidate ? candidate.updatedAt : item.updatedAt
                   return (
                     <article className={`capability-bay__item${candidate && selectedCandidate?.descriptor.sourceId === candidate.descriptor.sourceId ? ' is-selected' : ''}`} key={item.key}>
                       <span className="capability-bay__item-icon" aria-hidden="true"><IconTopologyStar3 className="capability-bay__item-svg" size={19} /></span>
@@ -613,6 +653,8 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                           <span className="capability-bay__meta-item">{item.projectName}</span>
                           {candidate ? <span className="capability-bay__meta-item">{candidate.descriptor.nodeCount} 节点</span> : null}
                           {candidate ? <span className="capability-bay__meta-item">版本 {candidate.descriptor.sourceRevision}</span> : null}
+                          {candidate && formatCapabilityDate(attachedAt) ? <span className="capability-bay__meta-item">装载于 {formatCapabilityDate(attachedAt)}</span> : null}
+                          {candidate && formatCapabilityDate(updatedAt) ? <span className="capability-bay__meta-item">更新于 {formatCapabilityDate(updatedAt)}</span> : null}
                           {candidate ? <span className="capability-bay__meta-item">{candidate.descriptor.sideEffects.map(effectLabel).join(' · ')}</span> : null}
                           {!candidate && item.updatedAt ? <span className="capability-bay__meta-item">更新于 {new Date(item.updatedAt).toLocaleString('zh-CN', { hour12: false })}</span> : null}
                           {!candidate ? <span className="capability-bay__meta-item">尚无可添加的已保存工作流</span> : null}
@@ -625,9 +667,9 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                           routingReady && !candidate.stale ? (
                             <button className="capability-bay__secondary-action" type="button" disabled><IconCheck className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">已添加</span></button>
                           ) : (
-                            <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate)}>
+                            <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate, candidate.attached)}>
                               {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnected className="capability-bay__button-icon" size={15} />}
-                              <span className="capability-bay__button-label">{routeConfirmationRequired ? '重新检查' : versionChanged ? '检查并更新' : '检查并添加'}</span>
+                              <span className="capability-bay__button-label">{routeConfirmationRequired ? '重新检查' : versionChanged ? '更新并覆盖' : '检查并添加'}</span>
                             </button>
                           )
                         ) : (
@@ -647,6 +689,8 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
               const versionChanged = candidate.attached && candidate.attachedVersionId !== candidate.descriptor.sourceVersionId
               const isSystemWorkflow = attachmentScopeBySourceId.get(candidate.descriptor.sourceId) === 'all_users'
               const userEnabled = userEnabledBySourceId.get(candidate.descriptor.sourceId) ?? true
+              const attachedAt = candidate.attachedAt
+              const updatedAt = candidate.updatedAt
               return (
                 <article className={`capability-bay__item${selectedCandidate?.descriptor.sourceId === candidate.descriptor.sourceId ? ' is-selected' : ''}`} key={candidate.descriptor.sourceId}>
                   <span className="capability-bay__item-icon" aria-hidden="true"><IconTopologyStar3 className="capability-bay__item-svg" size={19} /></span>
@@ -664,10 +708,18 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                       <span className="capability-bay__meta-item">{candidate.projectName || '个人工作流'}</span>
                       <span className="capability-bay__meta-item">{candidate.descriptor.nodeCount} 节点</span>
                       <span className="capability-bay__meta-item">版本 {candidate.descriptor.sourceRevision}</span>
+                      {formatCapabilityDate(attachedAt) ? <span className="capability-bay__meta-item">装载于 {formatCapabilityDate(attachedAt)}</span> : null}
+                      {formatCapabilityDate(updatedAt) ? <span className="capability-bay__meta-item">更新于 {formatCapabilityDate(updatedAt)}</span> : null}
                       <span className="capability-bay__meta-item">{candidate.descriptor.sideEffects.map(effectLabel).join(' · ')}</span>
                     </span>
                   </span>
                   <span className="capability-bay__item-actions">
+                    {isSystemWorkflow && candidate.stale && adminUser ? (
+                      <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate, candidate.attached)}>
+                        <IconRefresh className="capability-bay__button-icon" size={15} />
+                        <span className="capability-bay__button-label">更新并覆盖</span>
+                      </button>
+                    ) : null}
                     {isSystemWorkflow ? (
                       <Tooltip className="capability-bay__tooltip" label={userEnabled ? '关闭后该工作流不会出现在你的小T中（仅对当前账号生效）' : '重新启用该系统级工作流'} withArrow>
                         <button className={userEnabled ? 'capability-bay__secondary-action' : 'capability-bay__primary-action'} type="button" disabled={busy} onClick={() => void toggleWorkflow(candidate, !userEnabled)}>
@@ -683,9 +735,9 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                         </button>
                       </Tooltip>
                     ) : (
-                      <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate)}>
+                      <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate, candidate.attached)}>
                         {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnected className="capability-bay__button-icon" size={15} />}
-                        <span className="capability-bay__button-label">{routeConfirmationRequired ? '重新检查' : versionChanged ? '检查并更新' : '检查并添加'}</span>
+                        <span className="capability-bay__button-label">{routeConfirmationRequired ? '重新检查' : versionChanged ? '更新并覆盖' : '检查并添加'}</span>
                       </button>
                     )}
                   </span>
@@ -780,19 +832,19 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
           </div>
 
           {inspection ? (
-            <aside className="capability-bay__inspection" aria-label="添加前检查结果">
+            <aside className="capability-bay__inspection" aria-label={updatingInspection ? '更新前检查结果' : '添加前检查结果'}>
               <header className="capability-bay__inspection-header">
                 <span className="capability-bay__inspection-icon" aria-hidden="true"><IconShieldCheck className="capability-bay__inspection-svg" size={18} /></span>
                 <span className="capability-bay__inspection-copy">
-                  <strong className="capability-bay__inspection-title">添加前检查</strong>
-                  <span className="capability-bay__inspection-subtitle">检查工作流冲突和使用权限</span>
+                  <strong className="capability-bay__inspection-title">{updatingInspection ? '更新前检查' : '添加前检查'}</strong>
+                  <span className="capability-bay__inspection-subtitle">检查已保存版本、工作流冲突和使用权限</span>
                 </span>
               </header>
               <div className="capability-bay__inspection-summary">
                 {inspection.report.semanticAnalysis?.status === 'unavailable'
                   ? `结构、权限与已知能力关系已完成确定性检查；语义冲突分析暂时不可用（${inspection.report.semanticAnalysis.errorCode}），该辅助检查不会阻断版本更新。`
                   : inspection.report.conflicts.length === 0
-                  ? '没有发现冲突，可以直接添加。'
+                  ? (updatingInspection ? '没有发现冲突，可以更新为已保存版本。' : '没有发现冲突，可以直接添加。')
                   : primaryRouteConflicts.length > 0
                     ? `发现 ${inspection.report.conflicts.length} 项检查结果，其中 ${primaryRouteConflicts.length} 项需要你选择处理方式；其余确认后自动采纳建议。`
                     : `发现 ${inspection.report.conflicts.length} 项检查结果，均自动采纳建议，可直接添加。`}
@@ -832,6 +884,12 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                             onClick={() => setRouteDecisions((current) => ({ ...current, [conflict.id]: 'replace_existing' }))}
                           >用新工作流替换</button>
                           <button
+                            className={`capability-bay__route-option${routeDecisions[conflict.id] === 'coexist' ? ' is-selected' : ''}`}
+                            type="button"
+                            aria-pressed={routeDecisions[conflict.id] === 'coexist'}
+                            onClick={() => setRouteDecisions((current) => ({ ...current, [conflict.id]: 'coexist' }))}
+                          >并列保留两者</button>
+                          <button
                             className={`capability-bay__route-option${routeDecisions[conflict.id] === 'keep_existing' ? ' is-selected' : ''}`}
                             type="button"
                             aria-pressed={routeDecisions[conflict.id] === 'keep_existing'}
@@ -870,13 +928,13 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                 ) : null}
                 {pendingPrimaryRoute ? (
                   <p className="capability-bay__inspection-hint" role="status">
-                    请先为「{pendingPrimaryRoute.title}」选择处理方式：用新工作流替换 / 保留当前，不添加 / 编辑为委托关系。
+                    请先为「{pendingPrimaryRoute.title}」选择处理方式：用新工作流替换 / 并列保留两者 / 保留当前，不添加 / 编辑为委托关系。
                   </p>
                 ) : null}
                 <button className="capability-bay__cancel-action" type="button" onClick={() => setInspection(null)}>取消</button>
                 <button className="capability-bay__confirm-action" type="button" disabled={inspection.report.blocking || !allPrimaryRoutesDecided || busyFlowId === inspection.descriptor.sourceId} onClick={finishPrimaryRouteDecision}>
                   {busyFlowId === inspection.descriptor.sourceId ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnected className="capability-bay__button-icon" size={15} />}
-                  <span className="capability-bay__button-label">{hasEditDecision ? '去编辑工作流' : hasKeepDecision ? '保留当前设置' : canEquip && primaryRouteConflicts.length > 0 ? '确认替换并添加' : '添加给小T'}</span>
+                  <span className="capability-bay__button-label">{hasEditDecision ? '去编辑工作流' : hasKeepDecision ? '保留当前设置' : canEquip && primaryRouteConflicts.length > 0 ? (hasReplacementDecision ? (updatingInspection ? '确认替换并更新' : '确认替换并添加') : (updatingInspection ? '确认并列并更新' : '确认并列并添加')) : (updatingInspection ? '确认更新装载' : '添加给小T')}</span>
                 </button>
               </footer>
             </aside>

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 	preferenceUpsert: vi.fn(),
 	preferenceDeleteMany: vi.fn(),
 	attachmentDeleteMany: vi.fn(),
+	attachmentUpsert: vi.fn(),
 	systemSettingFindMany: vi.fn(),
 	skillFindMany: vi.fn(),
 	flowFindFirst: vi.fn(),
@@ -43,11 +44,13 @@ import {
 	generateWorkflowCapabilityDescription,
 	getBuiltInCapabilityAvailability,
 	getCapabilityBay,
+	inspectWorkflowCapability,
 	listEquippedWorkflowCapabilities,
 	obsoleteWorkflowReplacementPreferences,
 	resolveEquippedWorkflowExecutionTarget,
 	unequipWorkflowCapability,
 	updateBuiltInCapabilityState,
+	validateCapabilityRouteResolutions,
 } from "./capability-bay.service";
 
 describe("generateWorkflowCapabilityDescription", () => {
@@ -157,6 +160,7 @@ const database = {
 		findFirst: mocks.attachmentFindFirst,
 		findMany: mocks.attachmentFindMany,
 		deleteMany: mocks.attachmentDeleteMany,
+		upsert: mocks.attachmentUpsert,
 	},
 	flows: { findFirst: mocks.flowFindFirst, findMany: mocks.flowFindMany },
 	flow_versions: {
@@ -532,6 +536,15 @@ describe("workflow equip scope", () => {
 describe("workflow replacement lifecycle", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	it("releases a previous replacement only when the new decision explicitly chooses coexistence", () => {
+		const preference = { capability_kind: "built_in", capability_id: "one_click_video", enabled: 0,
+			disabled_reason: "replaced", replaced_by_capability_id: "workflow:flow-1" };
+		expect(obsoleteWorkflowReplacementPreferences({ workflowCapabilityId: "workflow:flow-1",
+			replacementTargets: [], requiredSkills: [], coexistingTargets: ["builtin:one_click_video"],
+			preferences: [preference, { ...preference, replaced_by_capability_id: "workflow:another" }],
+		})).toEqual([{ capabilityKind: "built_in", capabilityId: "one_click_video" }]);
 	});
 
 	it("releases only self-disabled Skill dependencies and preserves confirmed built-in replacements across versions", () => {
@@ -1528,5 +1541,67 @@ describe("workflow fanout diff stale tolerance", () => {
 
 		await expect(resolveEquippedWorkflowExecutionTarget(context, "user-1", "attachment-1"))
 			.rejects.toMatchObject({ code: "capability_attachment_stale", status: 409 });
+	});
+});
+describe("capability coexistence action boundary", () => {
+  for (const capabilityId of ["builtin:paid_media_generation", "tapcanvas-video-prompt-writer"]) {
+    it(`preserves ${capabilityId} for coexist while rejecting replacement`, () => {
+      const input = {
+        descriptor: { ...descriptor, requiredSkills: ["tapcanvas-video-prompt-writer"] },
+        report: { ...report, conflicts: [{
+          id: "overlap", severity: "warning" as const, category: "semantic_overlap" as const,
+          withCapabilityId: capabilityId, resolutionMode: "choose_primary" as const,
+          title: "Shared dependency", rationale: "The workflow consumes this capability", resolution: "Keep dependency",
+        }] },
+      };
+      expect(validateCapabilityRouteResolutions({ ...input, resolutions: [{
+        conflictId: "overlap", withCapabilityId: capabilityId, action: "coexist",
+      }] })).toEqual([]);
+      expect(() => validateCapabilityRouteResolutions({ ...input, resolutions: [{
+        conflictId: "overlap", withCapabilityId: capabilityId, action: "replace_existing",
+      }] })).toThrow();
+    });
+  }
+});
+
+
+describe("workflow version replacement transaction", () => {
+	it("replaces the attachment with the newly inspected version and preserves its primary route", async () => {
+		vi.clearAllMocks();
+		mocks.flowFindFirst.mockResolvedValue({ ...flowRow, data: capabilityWorkflowJson });
+		mocks.getProjectForUserAccess.mockResolvedValue({ id: "project-1", access: "owner" });
+		const previousRoute = { conflictId: "old-route", withCapabilityId: "builtin:one_click_video", action: "replace_existing" };
+		mocks.attachmentFindMany.mockResolvedValue([{ ...attachmentRow, route_decisions_json: JSON.stringify([previousRoute]) }]);
+		mocks.preferenceFindMany.mockResolvedValue([]);
+		mocks.skillFindMany.mockResolvedValue([]);
+		mocks.systemSettingFindMany.mockResolvedValue([]);
+		mocks.attachmentUpsert.mockImplementation(async (input: { update: Record<string, unknown> }) => ({
+			...attachmentRow, ...input.update, conflict_report_revision: 2,
+		}));
+		const c = { env: { DB: { ...database,
+			agent_skills: { findMany: mocks.skillFindMany },
+			agent_builtin_capability_settings: { findMany: mocks.systemSettingFindMany },
+		}, AGENTS_BRIDGE_BASE_URL: "http://bridge", JWT_SECRET: "test-secret" } } as unknown as AppContext;
+		mocks.transaction.mockImplementation(async (operation: (db: typeof c.env.DB) => Promise<unknown>) => operation(c.env.DB));
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ conflicts: [] }), { status: 200 }));
+		try {
+			const inspection = await inspectWorkflowCapability(c, "user-1", "flow-1");
+			const result = await equipWorkflowCapability(c, "user-1", "flow-1", {
+				sourceVersionId: inspection.descriptor.sourceVersionId,
+				descriptorSha256: inspection.descriptorSha256,
+				inspectionToken: inspection.inspectionToken,
+				resolutions: inspection.report.conflicts.map((conflict) => ({ conflictId: conflict.id,
+					withCapabilityId: conflict.withCapabilityId,
+					action: conflict.resolutionMode === "choose_primary" ? "replace_existing" : "acknowledge" })),
+			});
+			expect(result.sourceVersionId).toBe(inspection.descriptor.sourceVersionId);
+			expect(result.sourceVersionId).not.toBe(attachmentRow.source_version_id);
+			expect(result.descriptorSha256).toBe(inspection.descriptorSha256);
+			expect(result.routeDecisions).toContainEqual(previousRoute);
+			expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
+			expect(mocks.versionUpsert).toHaveBeenCalledWith(expect.objectContaining({ update: {} }));
+		} finally {
+			fetchMock.mockRestore();
+		}
 	});
 });

@@ -70,6 +70,7 @@ describe("capability bay descriptor", () => {
 				{
 					id: "trigger",
 					data: {
+						kind: "workflowStage",
 						workflowKey: "one-click-production/v1",
 						workflowCanvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION - 1,
 					},
@@ -77,6 +78,7 @@ describe("capability bay descriptor", () => {
 				{
 					id: "stage",
 					data: {
+						kind: "workflowStage",
 						workflowKey: "one-click-production/v1",
 						workflowCanvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
 						workflowCanvasDefinitionFingerprint: VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
@@ -104,7 +106,8 @@ describe("capability bay descriptor", () => {
 			nodes: [{
 				id: "stage",
 				data: {
-					workflowKey: "one-click-production/v1",
+					kind: "workflowStage",
+						workflowKey: "one-click-production/v1",
 					workflowCanvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
 					workflowCanvasDefinitionFingerprint: "sha256:stale-contract",
 				},
@@ -406,7 +409,7 @@ describe("capability bay descriptor", () => {
 		expect(detectStructuralCapabilityConflicts(firstVideo, [anotherFirstVideo])).toEqual([
 			expect.objectContaining({
 				withCapabilityId: "workflow:another-first-video",
-				resolutionMode: "choose_primary",
+				resolutionMode: "acknowledge",
 			}),
 		]);
 
@@ -427,7 +430,7 @@ describe("capability bay descriptor", () => {
 		)).toEqual([]);
 	});
 
-	it("reports version changes separately from functional overlap", () => {
+	it("reports shared contracts as information without inferring functional competition", () => {
 		const target = buildWorkflowCapabilityDescriptor(workflowVersion("version-2"));
 		const previous = buildWorkflowCapabilityDescriptor(workflowVersion("version-1"));
 		const other = {
@@ -442,8 +445,8 @@ describe("capability bay descriptor", () => {
 		expect(conflicts.map((conflict) => conflict.category)).toEqual(["version_change", "functional_overlap"]);
 		expect(conflicts[0]?.severity).toBe("info");
 		expect(conflicts[0]?.resolutionMode).toBe("acknowledge");
-		expect(conflicts[1]?.severity).toBe("warning");
-		expect(conflicts[1]?.resolutionMode).toBe("choose_primary");
+		expect(conflicts[1]?.severity).toBe("info");
+		expect(conflicts[1]?.resolutionMode).toBe("acknowledge");
 	});
 
 	it("detects a built-in primary-route overlap from frozen tool-family ids", () => {

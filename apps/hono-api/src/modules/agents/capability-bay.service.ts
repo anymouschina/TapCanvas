@@ -3,6 +3,7 @@ import type { AppContext, PrismaClient } from "../../types";
 import { getConfig } from "../../config";
 import { signJwtHS256, verifyJwtHS256 } from "../../jwt";
 import { AppError } from "../../middleware/error";
+import { mergeWorkflowRouteDecisions } from "./capability-route-update";
 import {
 	getProjectAccessSummary,
 	listProjectAccessSummaries,
@@ -47,7 +48,7 @@ type CapabilityConflict = CapabilityConflictReport["conflicts"][number];
 type CapabilityRouteResolution = {
 	conflictId: string;
 	withCapabilityId: string | null;
-	action: "acknowledge" | "replace_existing";
+	action: "acknowledge" | "replace_existing" | "coexist";
 };
 
 type LatestFlowVersionRow = {
@@ -172,9 +173,11 @@ export function obsoleteWorkflowReplacementPreferences(input: Readonly<{
 	replacementTargets: readonly string[];
 	requiredSkills: readonly string[];
 	preferences: readonly CapabilityPreferenceSnapshot[];
+	coexistingTargets?: readonly string[];
 }>): CapabilityPreferenceKey[] {
 	const activeTargets = new Set(input.replacementTargets);
 	const requiredSkills = new Set(input.requiredSkills);
+	const coexistingTargets = new Set(input.coexistingTargets ?? []);
 	return input.preferences.flatMap((preference) => {
 		if (
 			preference.enabled !== 0 ||
@@ -185,8 +188,7 @@ export function obsoleteWorkflowReplacementPreferences(input: Readonly<{
 		if (
 			!targetId ||
 			activeTargets.has(targetId) ||
-			preference.capability_kind !== "skill" ||
-			!requiredSkills.has(targetId)
+			(!coexistingTargets.has(targetId) && (preference.capability_kind !== "skill" || !requiredSkills.has(targetId)))
 		) return [];
 		return [{
 			capabilityKind: preference.capability_kind as CapabilityPreferenceKey["capabilityKind"],
@@ -206,7 +208,7 @@ function builtInCapabilityStateSha256(
 	});
 }
 
-function validateCapabilityRouteResolutions(input: {
+export function validateCapabilityRouteResolutions(input: {
 	descriptor: WorkflowCapabilityDescriptor;
 	report: CapabilityConflictReport;
 	resolutions: CapabilityRouteResolution[];
@@ -259,14 +261,14 @@ function validateCapabilityRouteResolutions(input: {
 			}
 			continue;
 		}
-		if (resolution.action !== "replace_existing" || !conflict.withCapabilityId) {
-			throw new AppError("职责重叠必须明确替换原主能力；保留原能力时不能装配候选工作流", {
+		if (!["replace_existing", "coexist"].includes(resolution.action) || !conflict.withCapabilityId) {
+			throw new AppError("职责重叠必须明确替换原主能力或并列保留；保留原能力时不能装配候选工作流", {
 				status: 409,
 				code: "capability_primary_route_not_selected",
 				details: { conflictId: conflict.id, withCapabilityId: conflict.withCapabilityId },
 			});
 		}
-		if (conflict.withCapabilityId.startsWith("builtin:")) {
+		if (resolution.action === "replace_existing" && conflict.withCapabilityId.startsWith("builtin:")) {
 			const capabilityKey = conflict.withCapabilityId.slice("builtin:".length);
 			const builtIn = listBuiltInSmallTCapabilities().find((item) => item.key === capabilityKey);
 			if (builtIn?.replaceable === false) {
@@ -277,14 +279,14 @@ function validateCapabilityRouteResolutions(input: {
 				});
 			}
 		}
-		if (input.descriptor.requiredSkills.includes(conflict.withCapabilityId)) {
+		if (resolution.action === "replace_existing" && input.descriptor.requiredSkills.includes(conflict.withCapabilityId)) {
 			throw new AppError("工作流依赖的 Skill 不能同时被该工作流停用；请返回工作流编辑并修正职责合同", {
 				status: 409,
 				code: "capability_required_skill_replacement_invalid",
 				details: { conflictId: conflict.id, skillKey: conflict.withCapabilityId },
 			});
 		}
-		replacementTargets.push(conflict.withCapabilityId);
+		if (resolution.action === "replace_existing") replacementTargets.push(conflict.withCapabilityId);
 	}
 	return [...new Set(replacementTargets)];
 }
@@ -719,6 +721,8 @@ export async function getCapabilityBay(c: AppContext, userId: string, projectId?
 				descriptor,
 				descriptorSha256,
 				projectName: flow.project_id ? projectNameById.get(flow.project_id) ?? null : null,
+				updatedAt: flow.updated_at,
+				attachedAt: attached?.createdAt ?? null,
 				attached: Boolean(attached),
 				attachedVersionId: attached?.sourceVersionId ?? null,
 				stale: !canvasDefinition.current || Boolean(attached && (
@@ -1418,9 +1422,19 @@ export async function equipWorkflowCapability(c: AppContext, userId: string, flo
 					code: "capability_inspection_stale",
 				});
 			}
+			const previousAttachment = attachmentRows.find((attachment) => attachment.source_id === flowId);
+			const routeDecisions = mergeWorkflowRouteDecisions({
+				previous: previousAttachment ? mapAttachment(previousAttachment).routeDecisions : [],
+				current: input.resolutions,
+				requiredSkills: descriptor.requiredSkills,
+				nonReplaceableCapabilityIds: listBuiltInSmallTCapabilities()
+					.filter((capability) => capability.replaceable === false)
+					.map((capability) => `builtin:${capability.key}`),
+			});
 			const obsoleteReplacementPreferences = obsoleteWorkflowReplacementPreferences({
 				workflowCapabilityId: descriptor.capabilityId,
 				replacementTargets,
+				coexistingTargets: input.resolutions.flatMap((decision) => decision.action === "coexist" && decision.withCapabilityId ? [decision.withCapabilityId] : []),
 				requiredSkills: descriptor.requiredSkills,
 				preferences: preferenceRows,
 			});
@@ -1538,7 +1552,7 @@ export async function equipWorkflowCapability(c: AppContext, userId: string, flo
 					id: randomUUID(), user_id: userId, capability_kind: "workflow", source_id: flowId,
 					source_version_id: descriptor.sourceVersionId,
 					descriptor_json: JSON.stringify(descriptor), descriptor_sha256: descriptorSha256,
-					conflict_report_json: JSON.stringify(report), route_decisions_json: JSON.stringify(input.resolutions),
+					conflict_report_json: JSON.stringify(report), route_decisions_json: JSON.stringify(routeDecisions),
 					scope,
 					created_at: now, updated_at: now,
 				},
@@ -1546,7 +1560,7 @@ export async function equipWorkflowCapability(c: AppContext, userId: string, flo
 					source_version_id: descriptor.sourceVersionId,
 					descriptor_json: JSON.stringify(descriptor), descriptor_sha256: descriptorSha256,
 					conflict_report_json: JSON.stringify(report),
-					route_decisions_json: JSON.stringify(input.resolutions),
+					route_decisions_json: JSON.stringify(routeDecisions),
 					scope,
 					conflict_report_revision: { increment: 1 }, updated_at: now,
 				},

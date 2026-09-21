@@ -81,7 +81,7 @@ export type CapabilityConflictReport = z.infer<typeof CapabilityConflictReportSc
 export const CapabilityRouteDecisionSchema = z.object({
 	conflictId: z.string().min(1),
 	withCapabilityId: z.string().nullable(),
-	action: z.enum(["acknowledge", "replace_existing"]),
+	action: z.enum(["acknowledge", "replace_existing", "coexist"]),
 }).strict();
 
 /**
@@ -113,6 +113,8 @@ export const CapabilityBayCandidateSchema = z.object({
 	descriptor: WorkflowCapabilityDescriptorSchema,
 	descriptorSha256: z.string(),
 	projectName: z.string().nullable(),
+	updatedAt: z.string().min(1),
+	attachedAt: z.string().nullable(),
 	attached: z.boolean(),
 	attachedVersionId: z.string().nullable(),
 	stale: z.boolean(),

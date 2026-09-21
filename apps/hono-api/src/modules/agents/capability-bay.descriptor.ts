@@ -362,16 +362,16 @@ export function detectStructuralCapabilityConflicts(
 		if (sharedOutputs.length === 0 && sharedTools.length === 0) continue;
 		conflicts.push({
 			id: `functional:${existing.capabilityId}`,
-			severity: "warning",
+			severity: "info",
 			category: "functional_overlap",
 			withCapabilityId: existing.capabilityId,
-			resolutionMode: "choose_primary",
-			title: `与“${existing.name}”存在功能重叠`,
+			resolutionMode: "acknowledge",
+			title: `与“${existing.name}”共享工具或输出合同`,
 			rationale: [
 				sharedOutputs.length ? `共同输出：${sharedOutputs.join("、")}` : "",
 				sharedTools.length ? `共同工具：${sharedTools.join("、")}` : "",
 			].filter(Boolean).join("；"),
-			resolution: "必须选择一个主能力：用当前工作流替换已装配工作流，或保留原能力并取消本次装配。",
+			resolution: "共享工具或输出格式不代表职责冲突；使用关系由智能体依据工作流职责判断。",
 		});
 	}
 	return conflicts;

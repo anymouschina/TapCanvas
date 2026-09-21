@@ -2845,7 +2845,7 @@ const AgentCapabilityAttachmentDtoSchema = z.object({
   routeDecisions: z.array(z.object({
     conflictId: z.string(),
     withCapabilityId: z.string().nullable(),
-    action: z.enum(['acknowledge', 'replace_existing']),
+    action: z.enum(['acknowledge', 'replace_existing', 'coexist']),
   }).strict()),
   routingReady: z.boolean(),
   scope: z.enum(['current_user', 'all_users']).default('current_user'),
@@ -2858,6 +2858,8 @@ const CapabilityBayCandidateDtoSchema = z.object({
   descriptor: WorkflowCapabilityDescriptorDtoSchema,
   descriptorSha256: z.string(),
   projectName: z.string().nullable(),
+  updatedAt: z.string().min(1),
+  attachedAt: z.string().nullable(),
   attached: z.boolean(),
   attachedVersionId: z.string().nullable(),
   stale: z.boolean(),
@@ -3062,7 +3064,7 @@ export async function equipWorkflowCapability(input: {
   resolutions: Array<{
     conflictId: string
     withCapabilityId: string | null
-    action: 'acknowledge' | 'replace_existing'
+    action: 'acknowledge' | 'replace_existing' | 'coexist'
   }>
   scope?: 'current_user' | 'all_users'
 }): Promise<AgentCapabilityAttachmentDto> {

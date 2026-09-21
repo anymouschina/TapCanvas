@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CapabilityBayDialog } from './CapabilityBayDialog'
 
 const apiMocks = vi.hoisted(() => ({
+  admin: vi.fn(() => false),
+  updateWorkflow: vi.fn(),
   adoptProject: vi.fn(),
   createProject: vi.fn(),
   deleteProject: vi.fn(),
@@ -19,6 +21,8 @@ const apiMocks = vi.hoisted(() => ({
   unequip: vi.fn(),
 }))
 
+vi.mock('../../auth/isAdmin', () => ({ isCurrentUserAdmin: apiMocks.admin }))
+
 vi.mock('../../api/server', () => ({
   adoptAiWorkflowProject: apiMocks.adoptProject,
   createAiWorkflowProject: apiMocks.createProject,
@@ -28,6 +32,7 @@ vi.mock('../../api/server', () => ({
   inspectWorkflowCapability: apiMocks.inspect,
   updateBuiltInCapabilityState: apiMocks.updateBuiltIn,
   updateSkillCapabilityState: apiMocks.updateSkill,
+  updateWorkflowCapabilityState: apiMocks.updateWorkflow,
   unequipWorkflowCapability: apiMocks.unequip,
 }))
 
@@ -79,6 +84,8 @@ function bay(attached = false, stale = false, routingReady = attached, systemEna
       descriptor,
       descriptorSha256: warningReport.descriptorSha256,
       projectName: '文艺短片项目',
+      updatedAt: '2026-09-20T08:59:01.726Z',
+      attachedAt: attached ? '2026-08-21T02:29:48.832Z' : null,
       attached,
       attachedVersionId: attached ? (stale ? 'version-7' : descriptor.sourceVersionId) : null,
       stale,
@@ -188,6 +195,7 @@ describe('CapabilityBayDialog', () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
     }))
+    apiMocks.admin.mockReturnValue(false)
     apiMocks.getBay.mockResolvedValue(bay())
     apiMocks.inspect.mockResolvedValue({
       descriptor,
@@ -216,6 +224,73 @@ describe('CapabilityBayDialog', () => {
     cleanup()
     vi.clearAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('shows the workflow timestamp in both lists while preserving the original attachment date', async () => {
+    const data = bay(true)
+    data.workflowProjects[0].id = descriptor.projectId
+    apiMocks.getBay.mockResolvedValue(data)
+    renderDialog()
+
+    const format = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false })
+    const updatedLabel = `更新于 ${format(data.candidates[0].updatedAt)}`
+    const attachedLabel = `装载于 ${format('2026-08-21T02:29:48.832Z')}`
+    expect(await screen.findByText(updatedLabel)).toBeInTheDocument()
+    expect(screen.getByText(attachedLabel)).toBeInTheDocument()
+    expect(screen.queryByText(`更新于 ${format(data.workflowProjects[0].updatedAt)}`)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '已添加' }))
+    expect(await screen.findByText(updatedLabel)).toBeInTheDocument()
+    expect(screen.getByText(attachedLabel)).toBeInTheDocument()
+  })
+
+  it('submits coexistence without requesting replacement', async () => {
+    renderDialog()
+    fireEvent.click(await screen.findByRole('button', { name: '检查并添加' }))
+    fireEvent.click(await screen.findByRole('button', { name: '并列保留两者' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认并列并添加' }))
+    await waitFor(() => expect(apiMocks.equip).toHaveBeenCalledWith(expect.objectContaining({
+      resolutions: [expect.objectContaining({ action: 'coexist' })],
+    })))
+  })
+
+  it('updates a stale system workflow to the inspected new version while preserving all-users scope', async () => {
+    apiMocks.admin.mockReturnValue(true)
+    const data = bay(true, true)
+    apiMocks.getBay.mockResolvedValue({ ...data, attachments: data.attachments.map((attachment) => ({
+      ...attachment, scope: 'all_users', userEnabled: true,
+    })) })
+    apiMocks.inspect.mockResolvedValue({ descriptor, descriptorSha256: warningReport.descriptorSha256,
+      report: { ...warningReport, conflicts: [], requiresConfirmation: false }, inspectionToken: 'new-version-token' })
+    renderDialog()
+    fireEvent.click(await screen.findByRole('tab', { name: '已添加' }))
+    fireEvent.click(await screen.findByRole('button', { name: '更新并覆盖' }))
+    await waitFor(() => expect(apiMocks.equip).toHaveBeenCalledWith(expect.objectContaining({
+      sourceVersionId: 'version-8', scope: 'all_users', inspectionToken: 'new-version-token',
+    })))
+  })
+
+  it('updates in one action and preserves previously confirmed coexistence', async () => {
+    const data = bay(true, true)
+    apiMocks.getBay.mockResolvedValue({ ...data, attachments: data.attachments.map((attachment) => ({
+      ...attachment, scope: 'current_user', userEnabled: true,
+      routeDecisions: attachment.routeDecisions.map((decision) => ({ ...decision, action: 'coexist' })),
+    })) })
+    renderDialog()
+    fireEvent.click(await screen.findByRole('button', { name: '更新并覆盖' }))
+    await waitFor(() => expect(apiMocks.equip).toHaveBeenCalledWith(expect.objectContaining({
+      scope: 'current_user', resolutions: [expect.objectContaining({ action: 'coexist' })],
+    })))
+  })
+
+  it('does not overwrite an attachment when inspection is blocking', async () => {
+    apiMocks.getBay.mockResolvedValue(bay(true, true))
+    apiMocks.inspect.mockResolvedValue({ descriptor, descriptorSha256: warningReport.descriptorSha256,
+      report: { ...warningReport, blocking: true }, inspectionToken: 'blocked-token' })
+    renderDialog()
+    fireEvent.click(await screen.findByRole('button', { name: '更新并覆盖' }))
+    expect(await screen.findByRole('complementary', { name: '更新前检查结果' })).toBeInTheDocument()
+    expect(apiMocks.equip).not.toHaveBeenCalled()
   })
 
   it('leaves the loading state and exposes a retryable error when loading times out', async () => {
@@ -264,7 +339,7 @@ describe('CapabilityBayDialog', () => {
     expect(screen.getByText('发现 1 项检查结果，其中 1 项需要你选择处理方式；其余确认后自动采纳建议。')).toBeInTheDocument()
     // 未选择处理方式前，底部按钮禁用，并给出明确的“怎么确认”指引
     expect(screen.getByRole('button', { name: '添加给小T' })).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent('请先为「与内置成片能力职责重叠」选择处理方式：用新工作流替换 / 保留当前，不添加 / 编辑为委托关系。')
+    expect(screen.getByRole('status')).toHaveTextContent('请先为「与内置成片能力职责重叠」选择处理方式：用新工作流替换 / 并列保留两者 / 保留当前，不添加 / 编辑为委托关系。')
     fireEvent.click(screen.getByRole('button', { name: '用新工作流替换' }))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '确认替换并添加' }))
@@ -329,7 +404,7 @@ describe('CapabilityBayDialog', () => {
     renderDialog()
 
     expect(await screen.findByText('有新版本')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '检查并更新' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '更新并覆盖' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '移除' })).not.toBeInTheDocument()
   })
 
