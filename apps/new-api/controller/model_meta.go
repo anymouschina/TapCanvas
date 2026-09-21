@@ -33,6 +33,7 @@ type updateModelProtocolsRequest struct {
 }
 
 type modelPricingPolicyRequest struct {
+	SellingMultiplier             *float64                  `json:"selling_multiplier"`
 	BillingMode                   string                    `json:"billing_mode"`
 	FixedPrice                    *float64                  `json:"fixed_price"`
 	FixedPriceCurrency            *string                   `json:"fixed_price_currency"`
@@ -203,6 +204,7 @@ func UpdateModelPricingPolicy(c *gin.Context) {
 		return
 	}
 	policy, err := model.UpdateModelPricingPolicy(modelID, model.ModelPricingPolicyUpdate{
+		SellingMultiplier:             request.SellingMultiplier,
 		BillingMode:                   request.BillingMode,
 		FixedPrice:                    request.FixedPrice,
 		FixedPriceCurrency:            request.FixedPriceCurrency,

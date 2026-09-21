@@ -1,5 +1,5 @@
 import { parseImagePromptSpecV2, type ImagePromptSpecV2 } from '@tapcanvas/image-prompt-spec'
-import { runPublicTask } from '../../../api/server'
+import { runPublicTaskWithAuth } from '../../../api/server'
 import { hasAuthSession } from '../../../auth/store'
 import { useUIStore } from '../../../ui/uiStore'
 import { extractTextFromTaskResult } from '../taskNodeHelpers'
@@ -69,8 +69,7 @@ export async function refineStructuredImagePrompt(
   }
 
   const ui = useUIStore.getState()
-  const apiKey = (ui.publicApiKey || '').trim()
-  if (!apiKey && !hasAuthSession()) {
+  if (!hasAuthSession()) {
     throw new Error('请先登录后再试')
   }
 
@@ -111,7 +110,7 @@ export async function refineStructuredImagePrompt(
     .filter(Boolean)
     .join('\n\n')
 
-  const taskRes = await runPublicTask(apiKey, {
+  const taskRes = await runPublicTaskWithAuth({
     vendor: 'auto',
     ...(vendorCandidates.length > 0 ? { vendorCandidates } : {}),
     request: {

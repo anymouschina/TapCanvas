@@ -1,7 +1,7 @@
 import React from 'react'
 import { Modal, Button, Group, Text, Stack, UnstyledButton, SegmentedControl, Tooltip } from '@mantine/core'
 import { IconFolder, IconFolderFilled, IconCheck } from '@tabler/icons-react'
-import { createMaterialAsset, createTeamMaterialAsset, type MaterialKindDto } from '../../../../api/server'
+import { createMaterialAsset, createTeamMaterialAsset, listMyTeams, type MaterialKindDto } from '../../../../api/server'
 import { toast } from '../../../../ui/toast'
 import { useActiveTeamId } from '../../../../ui/team/TeamManagementModal'
 
@@ -24,7 +24,10 @@ type SaveToLibraryModalProps = {
 
 export function SaveToLibraryModal({ open, onClose, projectId, imageUrl, nodeName, teamId: projectTeamId }: SaveToLibraryModalProps) {
   const activeTeamId = useActiveTeamId()
-  const teamId = activeTeamId ?? projectTeamId ?? null
+  // The current project's team is authoritative for a team save. The globally
+  // selected team can belong to another project and otherwise causes a 403.
+  const teamId = projectTeamId ?? activeTeamId ?? null
+  const [eligibleTeamId, setEligibleTeamId] = React.useState<string | null>(null)
   const [tab, setTab] = React.useState<'personal' | 'team'>('personal')
   const [selectedKind, setSelectedKind] = React.useState<MaterialKindDto | null>(null)
   const [saving, setSaving] = React.useState(false)
@@ -36,13 +39,27 @@ export function SaveToLibraryModal({ open, onClose, projectId, imageUrl, nodeNam
     }
   }, [open])
 
+  React.useEffect(() => {
+    if (!open || !teamId) {
+      setEligibleTeamId(null)
+      return
+    }
+    let cancelled = false
+    void listMyTeams().then((teams) => {
+      if (!cancelled) setEligibleTeamId(teams.some((team) => team.id === teamId && !team.personal) ? teamId : null)
+    }).catch(() => {
+      if (!cancelled) setEligibleTeamId(null)
+    })
+    return () => { cancelled = true }
+  }, [open, teamId])
+
   const handleSave = async () => {
     if (!selectedKind || !imageUrl) return
     setSaving(true)
     try {
-      if (tab === 'team' && teamId) {
+      if (tab === 'team' && eligibleTeamId) {
         await createTeamMaterialAsset({
-          teamId,
+          teamId: eligibleTeamId,
           kind: selectedKind,
           name: nodeName || '未命名',
           initialData: { imageUrl },
@@ -58,14 +75,15 @@ export function SaveToLibraryModal({ open, onClose, projectId, imageUrl, nodeNam
       }
       toast('已保存到素材库', 'success')
       onClose()
-    } catch {
-      toast('保存失败，请重试', 'error')
+    } catch (error: unknown) {
+      const message = error instanceof Error && error.message.trim() ? error.message : '保存失败，请重试'
+      toast(message, 'error')
     } finally {
       setSaving(false)
     }
   }
 
-  const hasTeam = !!teamId
+  const hasTeam = !!eligibleTeamId
 
   return (
     <Modal

@@ -254,6 +254,7 @@ export function buildHarnessDeliveryClosure(input: {
   turnContext: JsonObject;
   text: string;
   harnessCompleted: boolean;
+  termination?: JsonObject;
   deliveryReport?: HarnessDeliveryReport | null;
   remoteExecutions?: readonly RemoteToolExecution[];
   exitedAt?: string;
@@ -266,12 +267,16 @@ export function buildHarnessDeliveryClosure(input: {
     : "user_delivery";
 
   if (!input.harnessCompleted) {
-    return failedClosure({
+    const failure = isJsonObject(input.termination?.error) ? input.termination.error : null;
+    const message = typeof failure?.message === 'string' ? failure.message.trim() : '';
+    const closure = failedClosure({
       turnContext: input.turnContext,
-      reasonCode: "deepseek_harness_turn_incomplete",
-      rationale: "DeepSeek Harness did not reach a completed turn boundary.",
+      reasonCode: failure ? "deepseek_harness_provider_error" : "deepseek_harness_turn_incomplete",
+      rationale: message || "DeepSeek Harness did not reach a completed turn boundary.",
       exitedAt,
     });
+    if (message) closure.runOutcome.message = message;
+    return closure;
   }
 
   if (authority === "workflow_action" && isJsonObject(input.turnContext.outputContract) && !input.structuredSubmission) {

@@ -1,5 +1,5 @@
 import type { ModelOption } from '../../config/models'
-import { findModelOptionByIdentifier } from '../../config/useModelOptions'
+import { findModelOptionByIdentifier, preloadModelOptions } from '../../config/useModelOptions'
 
 export const CHAT_MODEL_STORAGE_KEY = 'tapcanvas-chat-model'
 
@@ -68,6 +68,14 @@ export function resolveSelectedChatModelRequest(
   return catalogValue ? { field: 'modelAlias', model: catalogValue } : null
 }
 
+/** Reconcile a saved preference against the executable catalog in catalog order. */
+export function resolveAvailableChatModelOption(
+  options: readonly ModelOption[],
+  selectedValue: string | null,
+): ModelOption | null {
+  return findModelOptionByIdentifier(options, selectedValue) ?? options[0] ?? null
+}
+
 export function requireSelectedChatModelRequest(
   options: readonly ModelOption[],
   selectedValue: string | null,
@@ -95,4 +103,21 @@ export function toAgentsChatModelPayload(
   return request.field === 'modelKey'
     ? { modelKey: model }
     : { modelAlias: model }
+}
+
+/** Await the catalog itself: a hidden dialog's React loading state can still be idle. */
+export async function loadSelectedChatModel(value: string | null): Promise<{
+  option: ModelOption
+  request: SelectedChatModelRequest
+}> {
+  let options: ModelOption[]
+  try {
+    options = await preloadModelOptions('text')
+  } catch (error: unknown) {
+    throw new Error(`对话模型目录加载失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+  const option = resolveAvailableChatModelOption(options, value)
+  if (!option) throw new Error('对话模型目录为空')
+  const request = requireSelectedChatModelRequest(options, option.value)
+  return { option, request }
 }

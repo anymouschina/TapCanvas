@@ -108,15 +108,46 @@ describe("book-source-parser", () => {
 		);
 	});
 
-	it("fails explicitly for non-UTF-8 plain text", () => {
+	it.each([
+		["GBK", "b5dad2bbd5c20d0ac3bbc7aed0decab2c3b4cfc9a3bf", "第一章\n没钱修什么仙？", "gb18030"],
+		["GB18030 four-byte characters", "c0a9d5b9d7d6b7fba3ba95328236", "扩展字符：𠀀", "gb18030"],
+		["UTF-8", Buffer.from("第一章\r\n正文😀").toString("hex"), "第一章\n正文😀", "utf-8"],
+		["UTF-8 BOM", Buffer.from("\uFEFF第一章").toString("hex"), "第一章", "utf-8"],
+		["UTF-16 LE BOM", "fffe2c7b004ee07a", "第一章", "utf-16le"],
+		["UTF-16 BE BOM", "feff7b2c4e007ae0", "第一章", "utf-16be"],
+	])("imports %s and retains encoding through metadata validation", (_label, hex, expected, encoding) => {
+		const bytes = Buffer.from(hex, "hex");
+		const parsed = parseBookSource({ fileName: "story.txt", bytes });
+		expect(parsed.text).toBe(expected);
+		expect(parsed.metadata.sourceEncoding).toBe(encoding);
+		expect(parsed.metadata.sourceByteLength).toBe(bytes.length);
+		expect(requireBookSourceMetadataV1(parsed.metadata)).toMatchObject(parsed.metadata);
+	});
+
+	it.each([
+		[0xff, 0xfe, 0xfd],
+		[0xef, 0xbb, 0xbf, 0xa1, 0xba],
+		[0x81],
+		[0xff, 0xff],
+	])("rejects invalid bytes without replacement characters or ignoring BOM: %j", (...values) => {
 		expectBookSourceParseError(
 			() =>
 			parseBookSource({
 				fileName: "legacy.txt",
-				bytes: new Uint8Array([0xff, 0xfe, 0xfd]),
+				bytes: new Uint8Array(values),
 			}),
-			"book_source_invalid_utf8",
+			"book_source_invalid_text_encoding",
 		);
+	});
+
+	it("rejects mismatched source format and encoding", () => {
+		const parsed = parseBookSource({ fileName: "story.txt", bytes: strToU8("正文") });
+		for (const sourceEncoding of ["package-xml", "unknown"]) {
+			expectBookSourceParseError(
+				() => requireBookSourceMetadataV1({ ...parsed.metadata, sourceEncoding }),
+				"book_source_metadata_invalid",
+			);
+		}
 	});
 
 	it("fails explicitly when DOCX has no document.xml", () => {

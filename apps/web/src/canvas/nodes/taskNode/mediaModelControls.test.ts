@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ModelOption } from '../../../config/models'
 import {
   DEFAULT_IMAGE_ASPECT_RATIO,
+  reconcileImageModelSettings,
   buildImageBillingSpecKeyForOption,
   formatImageQualityOptionLabel,
   formatImageResolutionOptionLabel,
@@ -67,6 +68,27 @@ describe('mediaModelControls', () => {
       imageResolution: '2K',
       imageQuality: 'high',
     })).toBeNull()
+  })
+
+  it('uses published resolution-only prices even when a previous model left quality selected', () => {
+    const modelOption: ModelOption = {
+      value: 'gpt-image-2-b', label: 'image model',
+      pricing: { cost: 30, enabled: true, specCosts: [
+        { specKey: 'image:1k', cost: 30, enabled: true },
+      ] },
+    }
+    expect(buildImageBillingSpecKeyForOption({ modelOption, aspect: '16:9', imageSize: '1K', imageResolution: '', imageQuality: 'low' })).toBe('image:1k')
+    expect(buildImageBillingSpecKeyForOption({ modelOption, aspect: '16:9', imageSize: '4K', imageResolution: '', imageQuality: 'low' })).toBeNull()
+  })
+
+  it('clears unsupported model settings and retains only current catalog values', () => {
+    const config = {
+      aspectRatioOptions: [{value: '16:9', label: '16:9'}],
+      imageSizeOptions: [{value: '1K', label: '1K'}],
+      resolutionOptions: [], qualityOptions: [], controls: [],
+    }
+    expect(reconcileImageModelSettings(config, {aspect: '16:9', imageSize: '4K', imageResolution: '2048', imageQuality: 'high'})).toEqual({aspect: '16:9', imageSize: '1K', imageResolution: '', resolution: '', imageQuality: ''})
+    expect(reconcileImageModelSettings({...config, qualityOptions: [{value: 'low', label: 'low'}], defaultQuality: 'low'}, {aspect: '16:9', imageSize: '1K', imageResolution: '', imageQuality: 'high'}).imageQuality).toBe('low')
   })
 
   it('derives video orientation from explicit aspect before the stored orientation', () => {

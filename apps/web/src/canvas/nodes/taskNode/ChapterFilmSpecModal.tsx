@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react'
-import { Modal, Button, Group, Stack, SegmentedControl, Text, Textarea, NumberInput } from '@mantine/core'
+import { Modal, Button, Group, Stack, SegmentedControl, Text, Textarea, NumberInput, Switch } from '@mantine/core'
 
 // 「本章成片」只收集本章独有的交付范围。
-// 视频模型、比例和分辨率统一继承 AI 对话的生成偏好；这里不得维护第二套规格选择。
+// 媒体规格由服务端按本轮显式输入、账号偏好和已装配工作流冻结。
 // - 改编合同由用户显式选择：忠实原文，或保留主线锚点的创意扩写。
-// - 生成调度：一键成片固定为 clip 独立并发，镜间连续性由结构化状态接力承担。
+// - 生成调度与依赖属于已装配的工作流。
 // - 备注：自定义要求，原样拼进派发指令交给小T
 
 export type ChapterFilmSpec = {
@@ -12,6 +12,7 @@ export type ChapterFilmSpec = {
   targetDurationSeconds?: number
   adaptationMode: 'faithful' | 'creative'
   notes: string
+  onlyVideoNodes?: boolean
 }
 
 export const DEFAULT_CHAPTER_FILM_SPEC: ChapterFilmSpec = {
@@ -66,7 +67,10 @@ export function ChapterFilmSpecModal({ opened, onConfirm, onCancel }: Props) {
     DEFAULT_CHAPTER_FILM_SPEC.adaptationMode,
   )
   const [targetDurationSeconds, setTargetDurationSeconds] = useState<number | string>(60)
+  const [onlyVideoNodes, setOnlyVideoNodes] = useState(false)
   const [notes, setNotes] = useState('')
+  const duration = typeof targetDurationSeconds === 'number' ? targetDurationSeconds : Number(targetDurationSeconds)
+  const durationValid = Number.isInteger(duration) && duration >= 1 && duration <= 86400
 
   useEffect(() => {
     if (opened) {
@@ -75,6 +79,7 @@ export function ChapterFilmSpecModal({ opened, onConfirm, onCancel }: Props) {
       setAdaptationMode(last?.adaptationMode ?? DEFAULT_CHAPTER_FILM_SPEC.adaptationMode)
       setTargetDurationSeconds(last?.targetDurationSeconds ?? 60)
       setNotes('')
+      setOnlyVideoNodes(false)
     }
   }, [opened])
 
@@ -84,10 +89,16 @@ export function ChapterFilmSpecModal({ opened, onConfirm, onCancel }: Props) {
       opened={opened}
       onClose={onCancel}
       title="本章成片"
-      size="sm"
+      size="md"
       centered
     >
       <Stack gap="sm">
+        <div className="chapter-film-spec-modal__div" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--mantine-color-dark-6)' }}>
+          <Text className="chapter-film-spec-modal__text" size="sm" fw={600}>{onlyVideoNodes ? '从当前章节到视频节点' : '从当前章节到最终视频'}</Text>
+          <Text className="chapter-film-spec-modal__text" size="xs" c="dimmed" mt={4}>
+            选择本次范围与改编方式。启动后可在画布查看实际执行步骤、生成结果与异常原因。
+          </Text>
+        </div>
         <div className="chapter-film-spec-scope">
           <Text size="sm" fw={500} mb={4}>
             交付范围
@@ -100,13 +111,13 @@ export function ChapterFilmSpecModal({ opened, onConfirm, onCancel }: Props) {
             onChange={(value) => setDeliveryScope(value as ChapterFilmSpec['deliveryScope'])}
             data={[
               { value: 'full_chapter', label: '整章成片' },
-              { value: 'opening_duration', label: '指定时长' },
+              { value: 'opening_duration', label: '开头片段' },
             ]}
           />
           <Text size="xs" c={deliveryScope === 'opening_duration' ? 'blue.4' : 'dimmed'} mt={4}>
             {deliveryScope === 'opening_duration'
-              ? '本次只生产并合成当前章节开头指定时长；不会读取或交付历史整章成片。'
-              : '生产当前章节的完整沉浸式成片；整章没有 90 秒上限，实际时长由本章完整叙事与合法分段总时长决定。'}
+              ? (onlyVideoNodes ? '从本章开头开始，为指定时长准备视频节点与完整提示词。' : '从本章开头开始，生成指定时长的片段并合成为一条视频。')
+              : '以本章完整原文为来源，具体分段与本次生产上限由已装配工作流冻结。'}
           </Text>
           {deliveryScope === 'opening_duration' ? (
             <NumberInput
@@ -119,10 +130,14 @@ export function ChapterFilmSpecModal({ opened, onConfirm, onCancel }: Props) {
               allowNegative={false}
               value={targetDurationSeconds}
               onChange={setTargetDurationSeconds}
+              error={durationValid ? undefined : '请输入 1–86400 之间的整数秒数'}
               mt="xs"
             />
           ) : null}
         </div>
+        <Switch className="chapter-film-spec-modal__switch" label="只生成视频节点" checked={onlyVideoNodes}
+          onChange={(event) => setOnlyVideoNodes(event.currentTarget.checked)}
+          description="准备参考资产并填充视频提示词后完成；视频由你在节点上手动生成。" />
         <div className="chapter-film-spec-adaptation">
           <Text size="sm" fw={500} mb={4}>
             改编方式
@@ -145,12 +160,12 @@ export function ChapterFilmSpecModal({ opened, onConfirm, onCancel }: Props) {
           </Text>
         </div>
         <Text className="chapter-film-spec-generation-preferences" size="xs" c="dimmed">
-          视频模型、比例与分辨率继承 AI 对话里的“生成偏好”；时长与分段由完整原文、对白容量和模型合法窗口共同决定。
+          模型、比例与分辨率由服务端结合本次明确要求、账号生成偏好和工作流配置冻结；不支持的规格会显示具体原因。
         </Text>
         <Text className="chapter-film-spec-faithful-source" size="xs" c="dimmed">
           {adaptationMode === 'creative'
             ? '创意模式仍会保留原文台词与主线锚点作为底稿；新增内容由小T在同一改编链内生成并记录，不会静默覆盖原文或既有资产。'
-            : '忠实模式保留原文台词与主线锚点；动作、神态和画面描述只用于视觉生成，整章模式不得因片段数删除任何原文内容。'}
+            : '忠实模式保留来源事实、台词与主线锚点；动作、神态和画面描述用于视觉生成。'}
         </Text>
         <div>
           <Text size="sm" fw={500} mb={4}>
@@ -168,7 +183,7 @@ export function ChapterFilmSpecModal({ opened, onConfirm, onCancel }: Props) {
           />
         </div>
         <Text size="xs" c="dimmed">
-          本次只保存当前章节的交付范围；生成规格始终来自当前 AI 对话偏好和实时模型目录。
+          交付目标：{deliveryScope === 'opening_duration' && durationValid ? `${duration} 秒开头片段` : '当前章节成片'} · {onlyVideoNodes ? '视频节点与完整提示词，不自动生成视频。' : '最终合成视频。'}已生成素材会保留在项目中。
         </Text>
         <Group justify="flex-end" gap="xs" mt={4}>
           <Button variant="default" size="xs" onClick={onCancel}>
@@ -176,20 +191,21 @@ export function ChapterFilmSpecModal({ opened, onConfirm, onCancel }: Props) {
           </Button>
           <Button
             size="xs"
+            disabled={deliveryScope === 'opening_duration' && !durationValid}
             onClick={() => {
-              const duration = typeof targetDurationSeconds === 'number' ? targetDurationSeconds : Number(targetDurationSeconds)
-              if (deliveryScope === 'opening_duration' && (!Number.isInteger(duration) || duration <= 0)) return
+              if (deliveryScope === 'opening_duration' && !durationValid) return
               const spec: ChapterFilmSpec = {
                 deliveryScope,
                 adaptationMode,
                 ...(deliveryScope === 'opening_duration' ? { targetDurationSeconds: duration } : {}),
                 notes: notes.trim(),
+                onlyVideoNodes,
               }
               saveLastFilmSpec(spec)
               onConfirm(spec)
             }}
           >
-            开始成片
+            {onlyVideoNodes ? '生成视频节点' : '开始成片'}
           </Button>
         </Group>
       </Stack>

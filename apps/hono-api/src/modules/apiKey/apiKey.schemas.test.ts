@@ -7,6 +7,10 @@ import {
 } from "./apiKey.schemas";
 
 describe("AgentsChatRequestSchema", () => {
+	it("preserves supported reasoning settings and rejects invalid effort", () => {
+		expect(AgentsChatRequestSchema.parse({ prompt: "test", reasoningEffort: "high" }).reasoningEffort).toBe("high");
+		expect(AgentsChatRequestSchema.safeParse({ prompt: "test", reasoningEffort: "invalid" }).success).toBe(false);
+	});
 	it("preserves the requested workflow execution variant as structured chat context", () => {
 		const parsed = AgentsChatRequestSchema.parse({
 			prompt: "完成当前章节的完整成片",

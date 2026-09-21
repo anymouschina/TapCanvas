@@ -1,4 +1,5 @@
 import React from 'react'
+import { useUIStore } from '../../../../ui/uiStore'
 import { ActionIcon, Text } from '@mantine/core'
 import { IconBrain, IconBulb, IconPhoto } from '@tabler/icons-react'
 import type { PromptMediaKind } from '../../../../api/promptLibrary'
@@ -59,7 +60,7 @@ function buildChipHtml(entry: ChipEntry, sourceToken = entry.username): string {
     : `<span class="task-node-prompt__chip-thumb task-node-prompt__chip-thumb--placeholder">@</span>`
   const displayName = entry.displayName?.trim() || entry.username
   return (
-    `<span class="task-node-prompt__chip" contenteditable="false" data-mention="${escAttr(sourceToken)}">` +
+    `<span class="task-node-prompt__chip" contenteditable="false" data-mention="${escAttr(sourceToken)}" title="${escAttr(displayName)}"${entry.avatarUrl ? ' role="button" tabindex="0" aria-label="查看图片：' + escAttr(displayName) + '"' : ''}>` +
     img +
     `<span class="task-node-prompt__chip-text">@${escHtml(displayName)}</span>` +
     `</span>`
@@ -611,7 +612,24 @@ function PromptSection({
     }, 120)
   }, [commitEditorValue, readOnly, setMentionFilter, setMentionOpen])
 
+  const openReferencePreview = React.useCallback((target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false
+    const chip = target.closest<HTMLElement>('[data-mention]')
+    if (!chip || !editorRef.current?.contains(chip)) return false
+    const token = chip.dataset.mention
+    if (!token) return false
+    const entry = buildPromptMentionAliasMap(getChipEntries()).get(normalizePromptMentionAlias(token))
+    if (!entry?.avatarUrl) return false
+    useUIStore.getState().openPreview({ url: entry.avatarUrl, kind: 'image', name: entry.displayName || entry.username })
+    return true
+  }, [getChipEntries])
+
   const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((e.key === 'Enter' || e.key === ' ') && !e.nativeEvent.isComposing && openReferencePreview(e.target)) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     if (readOnly) return
     // IMEs use Enter/Space/Backspace to edit or confirm their composition. Those
     // keys must remain entirely native; treating a candidate-confirming Enter as
@@ -729,7 +747,7 @@ function PromptSection({
     }
 
   }, [
-    readOnly, mentionOpen, mentionItems, activeMention, applyMention,
+    readOnly, mentionOpen, mentionItems, activeMention, applyMention, openReferencePreview,
     setMentionFilter, setMentionOpen, mentionMetaRef,
     setPrompt, onUpdateNodeData,
   ])
@@ -853,6 +871,12 @@ function PromptSection({
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
           onFocus={handleFocus}
+          onClick={(event) => {
+            if (openReferencePreview(event.target)) {
+              event.preventDefault()
+              event.stopPropagation()
+            }
+          }}
           onKeyDown={handleKeyDown}
           onBlur={handleBlur}
           onSelect={handleSelect}

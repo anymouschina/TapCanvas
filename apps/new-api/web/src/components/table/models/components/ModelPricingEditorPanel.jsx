@@ -44,6 +44,8 @@ import {
   SPEC_SOURCE_SYSTEM_DEFAULT,
 } from '../utils/modelPricingPolicy';
 
+import UpstreamPricingPanel from './UpstreamPricingPanel';
+
 const { Text } = Typography;
 
 const emptySpecRow = () => ({
@@ -70,6 +72,7 @@ const numericOrNull = (rawValue, fieldLabel, required = false) => {
 };
 
 const ModelPricingEditorPanel = ({ model, onSaved, t }) => {
+  const [policy, setPolicy] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -79,6 +82,7 @@ const ModelPricingEditorPanel = ({ model, onSaved, t }) => {
     if (!model?.id || model?.name_rule !== 0) return;
     setLoading(true);
     setLoadError('');
+    setPolicy(null);
     setFormState(createEmptyModelPricingFormState());
     try {
       const response = await API.get(`/api/models/${model.id}/pricing`);
@@ -86,6 +90,7 @@ const ModelPricingEditorPanel = ({ model, onSaved, t }) => {
         throw new Error(response?.data?.message || t('加载定价失败'));
       }
       setFormState(modelPricingPolicyToFormState(response.data.data));
+      setPolicy(response.data.data);
     } catch (requestError) {
       setLoadError(
         requestError?.response?.data?.message ||
@@ -237,9 +242,7 @@ const ModelPricingEditorPanel = ({ model, onSaved, t }) => {
         fixed_price: perRequest
           ? numericOrNull(formState.fixedPrice, t('按次价格'), true)
           : null,
-        fixed_price_currency: perRequest
-          ? formState.fixedPriceCurrency
-          : null,
+        fixed_price_currency: perRequest ? formState.fixedPriceCurrency : null,
         input_price_usd_per_million: perToken
           ? numericOrNull(formState.inputPrice, t('输入价格'), true)
           : null,
@@ -272,6 +275,7 @@ const ModelPricingEditorPanel = ({ model, onSaved, t }) => {
         throw new Error(response?.data?.message || t('保存定价失败'));
       }
       setFormState(modelPricingPolicyToFormState(response.data.data));
+      setPolicy(response.data.data);
       showSuccess(t('模型定价已更新'));
       onSaved?.(response.data.data);
     } catch (requestError) {
@@ -305,6 +309,19 @@ const ModelPricingEditorPanel = ({ model, onSaved, t }) => {
         type='danger'
         closeIcon={null}
         description={loadError}
+      />
+    );
+  }
+
+  if (policy?.upstream && !loading && !loadError) {
+    return (
+      <UpstreamPricingPanel
+        className='model-upstream-pricing'
+        policy={policy}
+        modelId={model.id}
+        onSaved={onSaved}
+        reload={load}
+        t={t}
       />
     );
   }

@@ -93,6 +93,9 @@ describe('LibTV media node parity', () => {
         kind="video"
         referenceActive
         markerActive
+        effectActive
+        charactersActive
+        cameraMovementActive
         onReference={vi.fn()}
         onMarker={vi.fn()}
         onEffect={onEffect}
@@ -112,6 +115,9 @@ describe('LibTV media node parity', () => {
     ])
     expect(screen.getByRole('button', { name: '参考' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '标记' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '特效' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '角色库' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '运镜' })).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: '特效' }))
     expect(onEffect).toHaveBeenCalledTimes(1)

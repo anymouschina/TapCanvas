@@ -511,6 +511,7 @@ export const ApiKeyBillingOptionsResponseSchema = z.object({
 export type ApiKeyBillingOptionDto = z.infer<typeof ApiKeyBillingOptionSchema>;
 
 const AgentsChatRequestSchemaBase = z.object({
+	reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
 	vendor: z.string().optional().openapi({
 		description:
 			"兼容旧字段；当前公共任务链路固定请求 new-api，聊天能力由 agents bridge 自主处理。",

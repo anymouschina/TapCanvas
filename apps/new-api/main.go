@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"log"
@@ -329,6 +330,10 @@ func InitResources() error {
 	// only after this process exits successfully.
 	if *common.MigrateOnly {
 		return nil
+	}
+
+	if err := model.SyncConfiguredUpstreamCatalog(context.Background()); err != nil {
+		return fmt.Errorf("failed to synchronize upstream catalog: %w", err)
 	}
 
 	// Pricing is a runtime catalog, not a schema prerequisite. Historical

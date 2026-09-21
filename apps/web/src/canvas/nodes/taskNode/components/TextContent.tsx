@@ -2,6 +2,7 @@ import React from 'react'
 import { PanelCard } from '../../../../ui/PanelCard'
 
 type TextContentProps = {
+  html: string
   selected: boolean
   textEditorFocused: boolean
   textBackgroundTint: string
@@ -56,6 +57,7 @@ const textContentBodyStyle = (
 })
 
 function TextContent({
+  html,
   selected,
   textEditorFocused,
   textBackgroundTint,
@@ -71,6 +73,14 @@ function TextContent({
   readOnly = false,
 }: TextContentProps) {
   const editable = selected && !readOnly
+
+  // The lazy editor can mount after its parent's effects have already run.
+  // Own DOM synchronization here so the first painted editor contains its text.
+  React.useLayoutEffect(() => {
+    const editor = editorRef.current
+    if (!editor || document.activeElement === editor) return
+    if (editor.innerHTML !== html) editor.innerHTML = html
+  }, [editorRef, html, textEditorFocused])
 
   const editorClassName = [
     'tc-task-node__text-editor-input',

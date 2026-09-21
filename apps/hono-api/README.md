@@ -10,6 +10,15 @@ BeatSheet 的 `beats[].exitState` 是 `storyEvents` 最后一项 `exitState` 的
 
 ## 开发
 
+### 独立本地数据库（TapCanvas / TapCanvasPro）
+
+本地 TapCanvas 使用 `apps/hono-api/.env` 的 `tapcanvas_dsh_local` 数据库、Redis DB 1 和独立 `DSH_HOME`；TapCanvasPro 保留原 `tapcanvas` 数据库及 Redis DB 0。项目文件仍在各自仓库的 `project-data/`，不跨仓库挂载。`DATABASE_URL_DOCKER` / `POSTGRES_DB` 与本地库名一致，Compose 的队列连接读取 `REDIS_URL_DOCKER`，避免容器启动时回到 DB 0。
+
+使用 `pnpm dev:isolated` 启动本地 Bridge、API、异步图片/continuation/Workflow IR worker 与严格 5175 端口 Web。PostgreSQL、Redis 必须先运行，匹配当前源码的 new-api 二进制须构建到 `.data/local-stack/new-api` 并完成 schema 与官方 patches 初始化；启动器只复用同仓库进程，不迁移、清空数据库或复制项目。日志和 PID 位于 `.data/local-stack/`。本次空库由当前 Prisma schema 初始化，补建 pgvector 知识表并逐项建立历史迁移基线；`db:pg:migrate` 已验证无待执行迁移。没有导入旧账号、项目、媒体任务或工作流执行，启动时仅建立系统管理员、内置工作流和系统目录。TapCanvas 模型网关独立运行在 4456，使用 `tapcanvas_dsh_gateway` 和 Redis DB 2；TapCanvasPro 的 4455 网关与原数据库保持不变。启动器同时启动独立网关。首次检查使用原生 fetch `cache: no-store`，避免自定义 Cache-Control 请求头触发未获许可的跨域预检。
+
+更换本地 JWT 签名后需重新登录。环境文件及备份包含凭据，不应提交。
+
+
 ```bash
 cp .env.example .env
 pnpm prisma:generate
@@ -22,6 +31,7 @@ pnpm dev
 
 社区版能力边界：
 
+- 默认管理员首次创建时，在同一事务中建立个人积分账户并通过统一积分批次/账本发放 100000 积分；已有账号启动时不重复赠送、不重置余额。
 - 默认管理员仅在新数据库首次初始化时创建，账号为 `admin`，密码为 `123456`；部署到共享网络或公网前必须通过环境变量修改密码。
 - 认证不提供短信链路：短信发送、短信验证码登录和手机号绑定路由已删除；账号密码、邮箱、GitHub 及已关联账号的微信扫码链路按部署配置启用。未关联账号的微信身份会显式拒绝，不会回退到手机绑定。
 - 在线支付、订单、支付回调和自动订阅购买链路已删除；兑换码、管理员额度分配、模型用量计量和管理员手动订阅分配继续保留。
@@ -180,6 +190,21 @@ docker-compose exec api dreamina version
 如果备份或 schema 安全检查失败，容器启动会被阻止。
 
 ## AI 对话架构（当前）
+
+- 节点与对话同步 TapCanvasPro：章节正文在懒加载编辑器挂载时同步；文本附件支持 TXT/Markdown/DOC/DOCX；图片节点按模型目录提交参数并使用同一规格计算报价；视频展示提交时的参考素材顺序。生成偏好启用状态与保存队列以服务端结果为准，章节成片提交前等待偏好保存并复核来源作用域。
+- 对话模型与思考设置在发送前等待真实目录加载，继续沿用当前项目的目录顺序选择策略；`reasoningEffort` 经公开请求 schema、task extras、Bridge 传入当前 Harness。当前 Harness 不支持请求级 `serviceTier`，界面禁用优先服务，历史启用状态要求显式关闭；不显示已生效的假象。节点快捷入口统一投递主对话，不引入 Pro 的旧 intent lifecycle 执行链。
+
+- 能力版本更新采用新版替换旧装配：Agent 配置同步 TapCanvasPro 的更新检查交互，展示工作流保存时间与初次装载时间；更新检查沿用原 `scope`，管理员可从已添加列表更新系统工作流。确认后在同一个 Serializable 事务中替换 attachment 的版本、descriptor/hash、检查报告与使用关系，实际执行只消费新装配版本；不把继续执行旧作者图当作消除 stale 的办法。历史版本和已产出资产保留。检查后作者图再次变化仍 CAS 失败，要求重新检查。
+- 能力关系支持显式 `replace_existing` / `coexist`。更新检查可能不再列出已经停用的被替换能力，因此未被本次新决策覆盖、且未成为新工作流依赖的原替换关系必须保留在 attachment 中，确保系统工作流对其他用户仍是已确认主能力。最新的并列决策覆盖旧替换关系，并释放该工作流自身写入的停用偏好；不可替换基础能力和必需 Skill 不允许被替换。配置读取不自动发布新版本。系统工作流启动发布只校验固定身份和版本引用完整性；允许已通过装配事务更新的版本继续生效，禁止在重启时要求恢复初始装配。
+
+
+Bridge 保留远程工具的 execution 与 operationExecutions 元数据，仅声明 sideEffect=none 的确定性读取不锁定意图契约；写入或副作用未知的调用必须先冻结意图，否则返回 user_intent_required 且不发送远程请求，允许主代理在同轮修正后重试。原子结构化工作流动作继续使用已受理的 outputContract。
+
+Harness 非完成退出保留真实 `turn/end.reason.error`：上游错误使用 `deepseek_harness_provider_error`，原始错误消息进入 completion rationale、runOutcome message 和持久状态摘要；只有没有具体错误事实时才使用 `deepseek_harness_turn_incomplete`。额度不足不会被伪装成用户取消或自动换模型重试。
+
+对话模型目录加载成功后，Web 按目录标识（value、modelKey、modelAlias 及目录声明的别名）匹配已保存模型；无法匹配或未保存时，按用户指定策略选择当前可执行文本模型目录的第一项，并同步选择器和本地偏好。发送使用同一解析结果，不等待偏好持久化后才生效。目录为空或加载失败仍显式阻止发送；请求执行失败不触发自动换模型重试。
+
+画布任务提交、结果轮询和提示词修订使用当前登录 Cookie 会话，不使用本地保存的 Public API Key；未登录明确报错。外部 API Key 接口仍验证对应数据库中的密钥，不跨环境复制账号或凭据。
 
 本次从 TapCanvas-pro 同步章节参考图与设计板的生产合同：独立资产逐项提交或同轮并发；单个 `completionBoundary="submission"` 仅证明该节点已受理，不能证明整章交付，也不代表图片已经生成。Agent 核对完整清单，保留已受理节点与 taskId，按实际视觉依赖等待真实 URL。设计板入口明确要求图片，只有用户明确只要占位时才只创建节点。目标仓库保留 DSH Harness 单一路径；源仓库的 `core/agent-loop`、TaskStore、Skill 候选回执与专用交付审查器已无对应模块，其修复不复制为第二套运行时。此同步不表示 DSH 已完成真实批量生图验收。
 
@@ -2895,3 +2920,7 @@ verifier 充当完成证据。其
 - 可审查 SQL：`sql/releases/20260908_one_click_video_nodes_v1.sql`。该文件由同一发布函数导出，测试要求逐字一致。常规部署由 API 启动执行；手工发布可在管理员初始化之后用 `psql -v ON_ERROR_STOP=1 -f sql/releases/20260908_one_click_video_nodes_v1.sql`。此文件包含完整 PostgreSQL DO 事务块，不通过按分号切分的 `db:pg:seed-patches` 执行。若尚无系统问候项目，应在同一数据库会话中显式 `SET tapcanvas.workflow_owner_id = '<实际管理员ID>'` 后执行；不得猜测用户身份。
 - 原有18节点私有成片工作流不被覆盖或改绑。新版本以“一键成片v1”独立发布，系统作用域让已有用户和新用户均能使用；用户已有禁用偏好不被重置。
 - 这是节点准备工作流，验收以创建节点快照为准，不宣称已生成视频。相同来源节点、字长和偏移产生稳定ID；重复请求遇到已有节点显式冲突，不覆盖已有prompt或视频资产。
+
+### 本地鲁班目录启动同步
+
+设置 `NEW_API_UPSTREAM_CATALOG_CHANNEL_ID=1` 后，本地启动器与 Compose 将其传入 new-api 的 `UPSTREAM_CATALOG_CHANNEL_ID`。正常启动在监听 HTTP 前读取该渠道 base URL 的 `/api/models/list?enabled=true` 和 `/api/pricing`，完整校验后在同一事务同步模型参数、规格价格、文本倍率与渠道能力。仅 schema 初始化不联网。同步失败则启动失败，不回退旧快照；`UpstreamCatalogSyncReceipt` 保存来源、时间和价格版本。渠道密钥、余额、使用记录及资产不复制。运行中不定时同步；上游变更在下一次网关启动时生效。

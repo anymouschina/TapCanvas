@@ -53,8 +53,20 @@ test("release publishes all-users data atomically, repeats without overwrites an
   sql("UPDATE flows SET name = 'administrator edited canvas' WHERE id = '00000000-0000-4000-8000-000000000112'");
   sql(configuredRelease);
   assert.equal(sql("SELECT name FROM flows"), "administrator edited canvas");
+  // Explicitly updated attachments survive startup without being pinned back.
+  sql(`INSERT INTO flow_versions SELECT 'new-inspected-version', flow_id, name, data, user_id, created_at FROM flow_versions;
+    UPDATE agent_capability_attachments SET source_version_id = 'new-inspected-version', conflict_report_revision = 2,
+      descriptor_json = jsonb_set(descriptor_json::jsonb, '{sourceVersionId}', '"new-inspected-version"')::text,
+      descriptor_sha256 = 'new-descriptor-hash',
+      conflict_report_json = jsonb_set(conflict_report_json::jsonb, '{descriptorSha256}', '"new-descriptor-hash"')::text;`);
+  const updated = sql("SELECT row_to_json(a) FROM agent_capability_attachments a");
+  sql(configuredRelease);
+  assert.equal(sql("SELECT row_to_json(a) FROM agent_capability_attachments a"), updated);
+  sql("UPDATE agent_capability_attachments SET source_version_id = 'missing-version'");
+  assert.throws(() => sql(configuredRelease), /system attachment identity or version mismatch/);
+  sql("UPDATE agent_capability_attachments SET source_version_id = 'new-inspected-version'");
   sql("UPDATE flow_versions SET data = '{}' WHERE id = '00000000-0000-4000-8000-000000000113'");
   assert.throws(() => sql(configuredRelease), /immutable workflow version mismatch/);
-  assert.equal(sql("SELECT data FROM flow_versions"), "{}");
-  assert.equal(sql("SELECT row_to_json(a) FROM agent_capability_attachments a"), before);
+  assert.equal(sql("SELECT data FROM flow_versions WHERE id = '00000000-0000-4000-8000-000000000113'"), "{}");
+  assert.equal(sql("SELECT row_to_json(a) FROM agent_capability_attachments a"), updated);
 });

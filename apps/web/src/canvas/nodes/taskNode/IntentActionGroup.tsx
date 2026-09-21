@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Group, Tooltip, ActionIcon, Text, Button } from '@mantine/core'
 import { IconMovie } from '@tabler/icons-react'
 import { toast } from '../../../ui/toast'
@@ -12,12 +12,13 @@ import { ChapterFilmSpecModal, type ChapterFilmSpec } from './ChapterFilmSpecMod
 import { useChatCommandStore } from '../../../ui/chat/chatCommandStore'
 import { resolveTextNodePlainText, type TextNodeDisplaySource } from './textNodeContent'
 import { API_BASE } from '../../../api/server'
+import { loadGenerationPrefs } from '../../../config/generationPrefs'
 import {
 	buildChapterFilmExecutionToolPolicy,
   buildChapterFilmSpecDirective,
   buildPlainTextFilmChatText,
   CHAPTER_FILM_CHAT_DISPLAY_TEXT,
-  CHAPTER_FILM_CHAT_TEXT,
+  buildChapterFilmChatText,
   TEXT_NODE_FILM_CHAT_DISPLAY_TEXT,
 } from '../../filmChatCommand'
 import { VIDEO_PRODUCTION_WORKFLOW_KEY } from '@tapcanvas/video-orchestrator-protocol'
@@ -92,6 +93,17 @@ function mergeShotPlaceholderVariantParams(
 }
 
 export function IntentActionGroup(props: Props) {
+  const filmSubmissionPending = useRef(false)
+  const [filmPreparing, setFilmPreparing] = useState(false)
+  const chatPreparing = useChatCommandStore((state) => Boolean(state.pending) || state.busy)
+  const mounted = useRef(true)
+  const currentNodeId = useRef(props.nodeId)
+  currentNodeId.current = props.nodeId
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
   const [pendingConfig, setPendingConfig] = useState<PendingConfig | null>(null)
   const [filmSpecOpened, setFilmSpecOpened] = useState(false)
 
@@ -139,6 +151,7 @@ export function IntentActionGroup(props: Props) {
   }
 
   async function handleFilmSpecConfirm(spec: ChapterFilmSpec) {
+    if (filmSubmissionPending.current) return
     setFilmSpecOpened(false)
     // 章级交付范围落 chapters.film_spec；忠实原文是单一生产合同，生成规格不在这里重复持久化。
     const specChapter = resolveContext()
@@ -146,6 +159,8 @@ export function IntentActionGroup(props: Props) {
       toast('无法确认当前章节作用域，未派发成片任务', 'error')
       return
     }
+    filmSubmissionPending.current = true
+    setFilmPreparing(true)
     try {
       const response = await fetch(
         `${API_BASE}/chapters/${encodeURIComponent(specChapter.chapterId)}/film-spec`,
@@ -161,13 +176,24 @@ export function IntentActionGroup(props: Props) {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`)
       }
+      // Complete pending preference writes before the server snapshots a new execution.
+      await loadGenerationPrefs(true)
     } catch (error) {
-      toast(`成片规格保存失败，未派发成片任务：${String((error as Error).message || error)}`, 'error')
+      toast(`成片参数准备失败，未派发成片任务：${String((error as Error).message || error)}`, 'error')
+      return
+    } finally {
+      filmSubmissionPending.current = false
+      if (mounted.current) setFilmPreparing(false)
+    }
+    if (!mounted.current || currentNodeId.current !== props.nodeId) return
+    const currentChapter = resolveContext()
+    if (currentChapter?.chapterId !== specChapter.chapterId || !useRFStore.getState().nodes.some(node => node.id === props.nodeId)) {
+      toast('章节或来源节点已变化，未派发原章节的成片任务', 'info')
       return
     }
     useChatCommandStore.getState().dispatchSend({
-      text: CHAPTER_FILM_CHAT_TEXT + buildChapterFilmSpecDirective(spec),
-      displayText: CHAPTER_FILM_CHAT_DISPLAY_TEXT,
+      text: buildChapterFilmChatText(spec) + buildChapterFilmSpecDirective(spec),
+      displayText: spec.onlyVideoNodes ? '生成本章视频节点（不自动生成视频）' : CHAPTER_FILM_CHAT_DISPLAY_TEXT,
       requiredSkills: ['tapcanvas-video-workflow'],
 		executionToolPolicy: buildChapterFilmExecutionToolPolicy(),
 		canvasNodeId: props.nodeId,
@@ -176,8 +202,8 @@ export function IntentActionGroup(props: Props) {
 		requestedWorkflowExecutionVariant: 'full_video',
     })
     toast(
-      `已派发给小T：本章成片 · ${spec.adaptationMode === 'creative' ? '创意改编' : '忠实原文'} · 生成规格继承 AI 对话偏好${spec.notes ? ' · 含备注' : ''}（进度看右侧对话面板）`,
-      'success',
+      `正在准备本章成片请求 · ${spec.adaptationMode === 'creative' ? '创意改编' : '忠实原文'} · 受理时读取最新启用偏好${spec.notes ? ' · 含备注' : ''}（进度看右侧对话面板）`,
+      'info',
     )
   }
 
@@ -260,6 +286,8 @@ export function IntentActionGroup(props: Props) {
             gradient={{ from: 'indigo', to: 'grape', deg: 110 }}
             leftSection={<IconMovie size={13} />}
             styles={{ root: { fontWeight: 600 } }}
+            loading={filmPreparing}
+            disabled={chatPreparing}
             onClick={handleMakeVideoClick}
           >
             {isChapterScriptNode ? '本章做成视频' : '做成视频'}

@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { describe, expect, it, vi } from 'vitest'
 import { GenerationSettingsPopover } from './GenerationSettingsPopover'
+import { formatAspectOptionLabel } from './aspectRatioLabel'
 
 function renderVideoSettings() {
   const onAspectChange = vi.fn()
@@ -68,6 +69,44 @@ function renderVideoSettings() {
 }
 
 describe('GenerationSettingsPopover', () => {
+  it('presents pixel sizes as standard aspect ratios without changing their values', () => {
+    expect(formatAspectOptionLabel('1280x720')).toBe('16:9')
+    expect(formatAspectOptionLabel('720x1280')).toBe('9:16')
+    expect(formatAspectOptionLabel('1024x768')).toBe('4:3')
+    expect(formatAspectOptionLabel('768x1024')).toBe('3:4')
+    expect(formatAspectOptionLabel('768x768')).toBe('1:1')
+    expect(formatAspectOptionLabel('1344x576')).toBe('21:9')
+    expect(formatAspectOptionLabel('adaptive')).toBe('adaptive')
+  })
+
+  it('uses the ratio label for dimension-backed aspect buttons', async () => {
+    const onAspectChange = vi.fn()
+    render(
+      <MantineProvider>
+        <GenerationSettingsPopover
+          kind="video"
+          summary="16:9 · 768P · 4s · 1个"
+          aspectValue="1280x720"
+          sections={[{
+            key: 'aspect',
+            label: '比例',
+            value: '1280x720',
+            options: [
+              { value: '1280x720', label: '1280x720' },
+              { value: '720x1280', label: '720x1280' },
+            ],
+            layout: 'aspect',
+            onChange: onAspectChange,
+          }]}
+          quantity={{ value: 1, options: [1], unit: '个', onChange: vi.fn() }}
+        />
+      </MantineProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '打开视频生成参数' }))
+    expect(await screen.findByRole('button', { name: '16:9' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '9:16' })).toBeInTheDocument()
+  })
+
   it('anchors the panel to the trigger and clamps it inside the viewport', async () => {
     renderVideoSettings()
     const trigger = screen.getByRole('button', { name: '打开视频生成参数' })
@@ -145,4 +184,22 @@ describe('GenerationSettingsPopover', () => {
 
     expect(screen.queryByRole('dialog', { name: '视频生成参数' })).not.toBeInTheDocument()
   })
+})
+
+it('places the preference switch between aspect and size and shows save errors', () => {
+  const onChange = vi.fn()
+  render(<GenerationSettingsPopover kind="image" summary="16:9 · 2K" aspectValue="16:9"
+    sections={[
+      { key: 'aspect', label: '比例', value: '16:9', options: [{ value: '16:9', label: '16:9' }], layout: 'aspect', onChange: vi.fn() },
+      { key: 'size', label: '尺寸', value: '2K', options: [{ value: '2K', label: '2K' }], onChange: vi.fn() },
+    ]} quantity={{ value: 1, options: [1, 2, 4], unit: '张', onChange: vi.fn() }}
+    preference={{ checked: false, saving: false, error: '保存失败', onChange }} />)
+  fireEvent.click(screen.getByRole('button', { name: '打开图片生成参数' }))
+  const control = screen.getByRole('switch', { name: '设为偏好' })
+  expect(control).not.toBeChecked()
+  fireEvent.click(control)
+  expect(onChange).toHaveBeenCalledWith(true)
+  expect(screen.getByRole('alert')).toHaveTextContent('保存失败')
+  const regions = screen.getByRole('dialog', { name: '图片生成参数' }).querySelectorAll('section')
+  expect(Array.from(regions).map((region) => region.getAttribute('aria-label'))).toEqual(['比例', '模型与规格偏好', '尺寸', '生成数量'])
 })

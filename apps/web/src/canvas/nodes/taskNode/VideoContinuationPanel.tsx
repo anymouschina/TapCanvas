@@ -1,7 +1,7 @@
 import React from 'react'
 import { NodeToolbar, Position } from '@xyflow/react'
-import { ActionIcon, Button, Group, RangeSlider, Select, Stack, Text, Textarea } from '@mantine/core'
-import { IconCheck, IconPlayerPlay, IconX } from '@tabler/icons-react'
+import { ActionIcon, Alert, Button, Group, RangeSlider, Select, Stack, Text, Textarea } from '@mantine/core'
+import { IconAlertTriangle, IconCheck, IconPlayerPlay, IconX } from '@tabler/icons-react'
 
 export type VideoContinuationSubmit = {
   prompt: string
@@ -20,7 +20,7 @@ type VideoContinuationPanelProps = {
   /** 模型可执行的续写输出时长；由实时模型目录提供。 */
   continuationDurationOptions?: number[]
   onClose: () => void
-  onSubmit: (value: VideoContinuationSubmit) => void
+  onSubmit: (value: VideoContinuationSubmit) => Promise<void> | void
 }
 
 const DEFAULT_MAX_SOURCE_SECONDS = 15
@@ -56,6 +56,8 @@ export function VideoContinuationPanel({
   const [duration, setDuration] = React.useState(String(normalizedDurationOptions[0]))
   // 节点上的 videoDuration 可能只是生成参数（例如默认 15 秒），不能覆盖媒体自身 metadata。
   const [loadedDuration, setLoadedDuration] = React.useState<number | null>(null)
+  const [submitting, setSubmitting] = React.useState(false)
+  const [submitError, setSubmitError] = React.useState<string | null>(null)
   const videoRef = React.useRef<HTMLVideoElement>(null)
   const effectiveDuration = Math.max(0, loadedDuration ?? sourceDurationSeconds ?? 0)
   const maxReferenceSeconds = Math.max(MIN_SOURCE_SECONDS, Number.isFinite(referenceMaxSeconds) ? referenceMaxSeconds : DEFAULT_MAX_SOURCE_SECONDS)
@@ -66,6 +68,8 @@ export function VideoContinuationPanel({
     if (!opened) return
     setLoadedDuration(null)
     setDuration(String(normalizedDurationOptions[0]))
+    setSubmitting(false)
+    setSubmitError(null)
   }, [normalizedDurationOptions, opened, sourceVideoUrl])
 
   React.useEffect(() => {
@@ -144,8 +148,13 @@ export function VideoContinuationPanel({
           autosize
           minRows={2}
           maxRows={4}
-          disabled={readOnly}
+          disabled={readOnly || submitting}
         />
+        {submitError ? (
+          <Alert color="red" icon={<IconAlertTriangle className="video-continuation-panel__icon-alert-triangle" size={16} />} title="续写提交失败">
+            {submitError}
+          </Alert>
+        ) : null}
         <Group gap={8} align="end" wrap="nowrap">
           <Select
             label="续写时长"
@@ -155,7 +164,7 @@ export function VideoContinuationPanel({
             w={120}
             size="xs"
             allowDeselect={false}
-            disabled={readOnly}
+            disabled={readOnly || submitting}
           />
           <Button
             className="tc-video-continuation-toolbar__preview-start"
@@ -167,20 +176,29 @@ export function VideoContinuationPanel({
               videoRef.current.currentTime = sourceRange[0]
               void videoRef.current.play()
             }}
-            disabled={!sourceVideoUrl}
+            disabled={!sourceVideoUrl || submitting}
           >
             预览片段
           </Button>
           <Button
             size="xs"
             leftSection={<IconCheck size={14} />}
-            disabled={readOnly || !prompt.trim() || !selectionValid}
-            onClick={() => onSubmit({
-              prompt: prompt.trim(),
-              durationSeconds: Number(duration),
-              sourceRange: { start: sourceRange[0], end: sourceRange[1] },
-              sourceDurationSeconds: effectiveDuration,
-            })}
+            disabled={readOnly || submitting || !prompt.trim() || !selectionValid}
+            loading={submitting}
+            onClick={() => {
+              setSubmitting(true)
+              setSubmitError(null)
+              Promise.resolve(onSubmit({
+                prompt: prompt.trim(),
+                durationSeconds: Number(duration),
+                sourceRange: { start: sourceRange[0], end: sourceRange[1] },
+                sourceDurationSeconds: effectiveDuration,
+              }))
+                .catch((error: unknown) => {
+                  setSubmitError(error instanceof Error ? error.message : '智能续写提交失败')
+                })
+                .finally(() => setSubmitting(false))
+            }}
           >
             确认续写
           </Button>

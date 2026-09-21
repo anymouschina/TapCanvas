@@ -1,5 +1,6 @@
 import * as React from 'react'
-import { Button, Group, Modal, NumberInput, SegmentedControl, Select, Stack, Text } from '@mantine/core'
+import { Alert, Button, Group, Modal, NumberInput, SegmentedControl, Select, Stack, Text } from '@mantine/core'
+import { IconAlertTriangle } from '@tabler/icons-react'
 
 export type EnhanceParams = {
   tool_version: 'standard' | 'professional'
@@ -12,7 +13,7 @@ export type EnhanceParams = {
 type ResolutionMode = 'preset' | 'limit'
 
 type Props = {
-  onRun: (p: EnhanceParams) => void
+  onRun: (p: EnhanceParams) => Promise<void> | void
   onClose: () => void
 }
 
@@ -23,6 +24,8 @@ export function VideoEnhancePanel({ onRun, onClose }: Props) {
   const [resolution, setResolution] = React.useState<'720p' | '1080p' | '4k'>('1080p')
   const [resolutionLimit, setResolutionLimit] = React.useState<number>(1080)
   const [fps, setFps] = React.useState<number | undefined>(undefined)
+  const [submitting, setSubmitting] = React.useState(false)
+  const [submitError, setSubmitError] = React.useState<string | null>(null)
 
   const handleRun = () => {
     const p: EnhanceParams = {
@@ -37,7 +40,13 @@ export function VideoEnhancePanel({ onRun, onClose }: Props) {
     if (fps !== undefined && fps > 0) {
       p.fps = fps
     }
-    onRun(p)
+    setSubmitting(true)
+    setSubmitError(null)
+    Promise.resolve(onRun(p))
+      .catch((error: unknown) => {
+        setSubmitError(error instanceof Error ? error.message : '视频画质增强提交失败')
+      })
+      .finally(() => setSubmitting(false))
   }
 
   return (
@@ -89,6 +98,7 @@ export function VideoEnhancePanel({ onRun, onClose }: Props) {
               { value: 'standard', label: '标准' },
               { value: 'professional', label: '专业' },
             ]}
+            disabled={submitting}
             styles={{ root: { background: 'rgba(255,255,255,0.08)' } }}
           />
         </div>
@@ -109,6 +119,7 @@ export function VideoEnhancePanel({ onRun, onClose }: Props) {
               { value: 'ugc', label: 'UGC 视频' },
               { value: 'old_film', label: '老电影' },
             ]}
+            disabled={submitting}
             styles={{
               input: { background: 'rgba(255,255,255,0.08)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' },
             }}
@@ -128,6 +139,7 @@ export function VideoEnhancePanel({ onRun, onClose }: Props) {
               { value: 'preset', label: '预设档位' },
               { value: 'limit', label: '短边像素' },
             ]}
+            disabled={submitting}
             styles={{ root: { background: 'rgba(255,255,255,0.08)' } }}
           />
         </div>
@@ -142,6 +154,7 @@ export function VideoEnhancePanel({ onRun, onClose }: Props) {
               { value: '1080p', label: '1080p' },
               { value: '4k', label: '4K' },
             ]}
+            disabled={submitting}
             styles={{ root: { background: 'rgba(255,255,255,0.08)' } }}
           />
         ) : (
@@ -153,6 +166,7 @@ export function VideoEnhancePanel({ onRun, onClose }: Props) {
             min={64}
             max={2160}
             step={1}
+            disabled={submitting}
             styles={{
               input: { background: 'rgba(255,255,255,0.08)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' },
               label: { color: 'rgba(255,255,255,0.6)', fontSize: 11 },
@@ -170,17 +184,24 @@ export function VideoEnhancePanel({ onRun, onClose }: Props) {
           min={1}
           max={120}
           step={1}
+          disabled={submitting}
           styles={{
             input: { background: 'rgba(255,255,255,0.08)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' },
             label: { color: 'rgba(255,255,255,0.6)', fontSize: 11 },
           }}
         />
 
+        {submitError ? (
+          <Alert color="red" icon={<IconAlertTriangle className="video-enhance-panel__icon-alert-triangle" size={16} />} title="画质增强提交失败">
+            {submitError}
+          </Alert>
+        ) : null}
+
         <Group justify="flex-end" gap={8} mt={4}>
-          <Button variant="subtle" color="gray" size="xs" onClick={onClose}>
+          <Button className="video-enhance-panel__button" variant="subtle" color="gray" size="xs" onClick={onClose} disabled={submitting}>
             取消
           </Button>
-          <Button size="xs" onClick={handleRun}>
+          <Button className="video-enhance-panel__button" size="xs" onClick={handleRun} loading={submitting} disabled={submitting}>
             开始增强
           </Button>
         </Group>

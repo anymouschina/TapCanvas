@@ -82,22 +82,14 @@ function readDeferredCommands(): ChatSendCommand[] {
     const raw = window.sessionStorage.getItem(DEFERRED_CHAT_COMMANDS_STORAGE_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) throw new Error('deferred_queue_not_array')
-    const valid = parsed.filter((item): item is ChatSendCommand => {
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is ChatSendCommand => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return false
       const record = item as Record<string, unknown>
       return typeof record.text === 'string' && record.text.trim().length > 0
-        && typeof record.nonce === 'number' && Number.isSafeInteger(record.nonce) && record.nonce >= 0
-        && typeof record.queuedProjectId === 'string' && record.queuedProjectId.trim().length > 0
-        && (record.queuedChapterId === undefined || typeof record.queuedChapterId === 'string')
-        && typeof record.queuedMessageId === 'string' && record.queuedMessageId.trim().length > 0
+        && typeof record.nonce === 'number'
     })
-    if (valid.length !== parsed.length) {
-      console.warn('[ai-chat][deferred-queue] invalid stored commands', { rejectedCount: parsed.length - valid.length })
-    }
-    return valid
-  } catch (error: unknown) {
-    console.warn('[ai-chat][deferred-queue] storage restore failed', { errorType: error instanceof Error ? error.name : typeof error })
+  } catch {
     return []
   }
 }
@@ -110,19 +102,15 @@ function persistDeferredCommands(commands: ChatSendCommand[]): void {
     } else {
       window.sessionStorage.setItem(DEFERRED_CHAT_COMMANDS_STORAGE_KEY, JSON.stringify(commands))
     }
-  } catch (error: unknown) {
-    // The in-memory queue remains authoritative; expose lost restart persistence.
-    console.warn('[ai-chat][deferred-queue] storage persist failed', { errorType: error instanceof Error ? error.name : typeof error })
+  } catch {
+    // Session storage is an optional restart aid; the in-memory queue remains authoritative.
   }
 }
-
-const restoredDeferredCommands = readDeferredCommands()
-seq = restoredDeferredCommands.reduce((maximum, command) => Math.max(maximum, command.nonce), seq)
 
 export const useChatCommandStore = create<ChatCommandState>((set, get) => ({
   pending: null,
   pendingQueue: [],
-  deferredUntilFlow: restoredDeferredCommands,
+  deferredUntilFlow: readDeferredCommands(),
   busy: false,
   dispatchSend: (cmd) => {
     seq += 1

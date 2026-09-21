@@ -9,7 +9,7 @@
 // - **不截断**：整章小说几万字也照单全收（禁丢信息点）；长度提示交 UI 层，这里只负责取全文。
 
 /** 受支持的文本文件扩展名（与 <input accept> 同源，避免两处漂移）。 */
-export const SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.markdown', '.docx'] as const
+export const SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.md', '.markdown', '.doc', '.docx'] as const
 export const SUPPORTED_TEXT_ACCEPT = SUPPORTED_TEXT_EXTENSIONS.join(',')
 
 const DOCX_EXT = '.docx'
@@ -22,7 +22,7 @@ function fileExtension(name: string): string {
 
 /**
  * 是否当作「文本输入」收下。只认扩展名白名单：
- * - 老式 .doc 明确不收——mammoth 只吃 OOXML(docx)，收了必在解析期失败，不如入口就挡住；
+ * - doc / docx 分别使用二进制 Word 与 OOXML 解析器；
  * - pdf/图片/视频不收（图片走参考图管线）。
  */
 export function isSupportedTextFile(file: File | null | undefined): boolean {
@@ -66,7 +66,12 @@ function stripBom(s: string): string {
  * txt/md 走编码嗅探解码。
  */
 export async function extractTextFromFile(file: File): Promise<string> {
+  if (!isSupportedTextFile(file)) throw new Error('不支持的文本文件格式')
   const buffer = await file.arrayBuffer()
+  if (fileExtension(file.name) === '.doc') {
+    const { extractLegacyWordText } = await import('./legacyWordText')
+    return extractLegacyWordText(buffer)
+  }
   if (fileExtension(file.name) === DOCX_EXT) {
     // 懒加载：只有真导入 docx 才拉 mammoth（~200KB），不拖累首屏。
     // 引主入口而非 mammoth.browser.js：package.json 的 browser 字段会把 unzip/files 换成浏览器实现。

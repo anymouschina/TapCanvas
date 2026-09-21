@@ -8717,6 +8717,28 @@ body {
   min-width: 0;
 }
 
+.tc-video-marker-toolbar__saved {
+  display: grid;
+  gap: var(--tc-space-2, 8px);
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.tc-video-marker-toolbar__saved-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--tc-space-2, 8px);
+  min-height: 40px;
+  padding: var(--tc-space-2, 8px) var(--tc-space-3, 12px);
+  border-radius: var(--tc-radius-field, 6px);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tc-video-marker-toolbar__saved-copy {
+  min-width: 0;
+}
+
 .tc-video-marker-toolbar__error {
   margin: 0;
 }
@@ -14485,6 +14507,17 @@ body.tc-director-console-open .tc-ai-chat {
   font-size: 13px;
 }
 
+.tc-ai-artifact__structured-body {
+  max-height: min(60vh, 720px);
+  overflow: auto;
+  margin: 0;
+  padding: 10px 0 0;
+  color: rgba(196, 200, 210, 0.9);
+  font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ⑥ 角色介入评估卡 */
 .tc-ai-card--role-note {
   --tc-role-accent: #7c8190;
@@ -17975,6 +18008,21 @@ body.tc-director-console-open .tc-ai-chat {
   line-height: 1.4;
 }
 
+.task-node-prompt__chip[role="button"] {
+  cursor: zoom-in;
+}
+
+.task-node-prompt__chip[role="button"]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.task-node-prompt__chip-text {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 :root[data-mantine-color-scheme="light"] .task-node-prompt__chip {
   background: rgba(122, 129, 140, 0.1);
   border-color: rgba(122, 129, 140, 0.22);
@@ -19356,6 +19404,14 @@ body.tc-director-console-open .tc-ai-chat {
   padding: 12px;
   color: rgba(255, 255, 255, 0.62);
   pointer-events: none;
+}
+
+.tc-task-node__overview-identity--video > svg {
+  flex-shrink: 0;
+}
+
+.tc-task-node__overview-identity--video > .tc-task-node__overview-title {
+  max-width: min(12ch, 60%);
 }
 
 .tc-task-node__rename-slot {
@@ -21240,6 +21296,17 @@ body.tc-director-console-open .tc-ai-chat {
 
 .segment-remake-config-control select:focus-visible {
   border-color: rgba(255, 255, 255, 0.42);
+}
+
+.segment-remake-submit-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 107, 107, 0.24);
+  border-radius: 8px;
+  color: rgba(255, 168, 168, 0.96);
+  background: rgba(176, 35, 35, 0.12);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .segment-remake-floating-editor .react-flow__node-toolbar {

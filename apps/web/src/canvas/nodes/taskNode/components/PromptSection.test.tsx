@@ -5,6 +5,7 @@ import { fireEvent, render } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { describe, expect, it, vi } from 'vitest'
 import { PromptSection } from './PromptSection'
+import { useUIStore } from '../../../../ui/uiStore'
 
 if (!window.matchMedia) {
   window.matchMedia = ((query: string) => ({
@@ -53,6 +54,36 @@ function getEditor(container: HTMLElement): HTMLDivElement {
 }
 
 describe('PromptSection IME editing', () => {
+  for (const target of ['.task-node-prompt__chip-text', '.task-node-prompt__chip-thumb']) {
+    it(`opens the bound image from ${target} without rewriting the prompt`, () => {
+      const open = vi.spyOn(useUIStore.getState(), 'openPreview').mockImplementation(() => {})
+      const props = createProps({ prompt: '@图2', mentionItems: [{
+        username: '图2', display_name: '公交车厢', source: 'asset', profile_picture_url: 'https://example.com/bus.png',
+      }] })
+      const view = renderPromptSection(props)
+      fireEvent.click(view.container.querySelector(target)!)
+      expect(open).toHaveBeenCalledWith({ url: 'https://example.com/bus.png', kind: 'image', name: '公交车厢' })
+      expect(props.setPrompt).not.toHaveBeenCalled()
+      expect(props.onUpdateNodeData).not.toHaveBeenCalled()
+      expect(getEditor(view.container).querySelector('[data-mention]')?.getAttribute('data-mention')).toBe('图2')
+      open.mockRestore()
+      view.unmount()
+    })
+  }
+
+  it('opens a reference with Enter in a read-only prompt', () => {
+    const open = vi.spyOn(useUIStore.getState(), 'openPreview').mockImplementation(() => {})
+    const view = renderPromptSection(createProps({ readOnly: true, prompt: '@room', mentionItems: [{
+      username: 'room', display_name: '教室', source: 'asset', profile_picture_url: 'https://example.com/room.png',
+    }] }))
+    const chip = view.container.querySelector('[data-mention]')!
+    expect(chip.getAttribute('role')).toBe('button')
+    fireEvent.keyDown(chip, { key: 'Enter' })
+    expect(open).toHaveBeenCalledWith({ url: 'https://example.com/room.png', kind: 'image', name: '教室' })
+    open.mockRestore()
+    view.unmount()
+  })
+
   it('keeps the material-library action visible in the compact media toolbar', () => {
     const onPickFromLibrary = vi.fn()
     const { getByTitle } = renderPromptSection(createProps({
@@ -79,6 +110,22 @@ describe('PromptSection IME editing', () => {
 
     expect(editor.getAttribute('data-placeholder')).toBe('在这里输入提示词...')
     expect(container.querySelector('.task-node-prompt__suggestions')).toBeNull()
+  })
+
+  it('displays submitted numbered references by name without changing their stored tokens', () => {
+    const setPrompt = vi.fn()
+    const { container } = renderPromptSection(createProps({
+      prompt: '@图1 坐在 @图2', setPrompt,
+      mentionItems: [
+        { username: '图1', display_name: '张羽', source: 'character', profile_picture_url: 'https://example.com/hero' },
+        { username: '图2', display_name: '教室', source: 'asset', profile_picture_url: 'https://example.com/room' },
+      ],
+    }))
+    const editor = getEditor(container)
+    expect(editor.textContent).toBe('@张羽 坐在 @教室')
+    expect(Array.from(editor.querySelectorAll('[data-mention]')).map(el => el.getAttribute('data-mention'))).toEqual(['图1', '图2'])
+    fireEvent.input(editor)
+    expect(setPrompt).toHaveBeenLastCalledWith('@图1 坐在 @图2')
   })
 
   it('restores a persisted asset token as a chip on editor remount', () => {

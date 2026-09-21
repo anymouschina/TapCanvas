@@ -364,6 +364,7 @@ function buildResponse(input: {
     turnContext: input.request.turnContext,
     text: input.text,
     harnessCompleted: completed,
+    termination,
     deliveryReport: input.deliveryReport,
     remoteExecutions: input.remoteExecutions,
     structuredSubmission: input.structuredSubmission,

@@ -6,6 +6,8 @@
 
 本次从 TapCanvas-pro 同步章节参考图与设计板的生产合同：独立资产逐项提交或同轮并发；单个 `completionBoundary="submission"` 仅证明该节点已受理，不能证明整章交付，也不代表图片已经生成。Agent 核对完整清单，保留已受理节点与 taskId，按实际视觉依赖等待真实 URL。设计板入口明确要求图片，只有用户明确只要占位时才只创建节点。目标仓库保留 DSH Harness 单一路径；源仓库的 `core/agent-loop`、TaskStore、Skill 候选回执与专用交付审查器已无对应模块，其修复不复制为第二套运行时。此同步不表示 DSH 已完成真实批量生图验收。
 
+节点快捷动作继续进入同一主对话链。Web 的思考程度设置通过公开请求 `reasoningEffort` 传入 Bridge，并用于当前 Harness 请求；后续续执行继承已冻结执行合同。当前引擎未实现请求级 `serviceTier` 覆盖，Web 不允许启用优先服务，不能把该设置显示为已执行。
+
 ## 安装
 
 在仓库根目录执行：
@@ -192,3 +194,7 @@ SHA-256。后续远程调用自动附带顶层机器字段 `userIntentContract` 
 供应商断流的物理中断只将当前执行标为 `suspended`，逻辑任务仍 active、交付 pending；
 仅 `chat_turn_user_interrupt` 表示用户取消。没有真实 checkpoint 时不声称自动可恢复；暂停不伪造恢复 checkpoint 或可恢复声明，
 也不重新提交媒体任务。HTTP 完成/失败回调绑定原 turn 身份，不能覆盖已中断快照或后续回合。
+
+Harness 非完成退出保留真实 `turn/end.reason.error`：上游错误使用 `deepseek_harness_provider_error`，原始错误消息进入 completion rationale、runOutcome message 和持久状态摘要；只有没有具体错误事实时才使用 `deepseek_harness_turn_incomplete`。额度不足不会被伪装成用户取消或自动换模型重试。
+
+Bridge 保留远程工具的 execution 与 operationExecutions 元数据，仅声明 sideEffect=none 的确定性读取不锁定意图契约；写入或副作用未知的调用必须先冻结意图，否则返回 user_intent_required 且不发送远程请求，允许主代理在同轮修正后重试。原子结构化工作流动作继续使用已受理的 outputContract。

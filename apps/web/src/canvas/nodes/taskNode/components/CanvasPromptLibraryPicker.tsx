@@ -256,7 +256,7 @@ export function CanvasPromptLibraryPicker({ mediaType, currentPrompt = '', onPro
             <ScrollArea className="canvas-prompt-library-modal__results" type="hover" viewportRef={scrollViewportRef} viewportProps={{ 'data-testid': 'canvas-prompt-library-scroll-viewport', onScroll: (event) => {
               const viewport = event.currentTarget
               if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 240) loadNextPage()
-            } }}>
+            } } as React.ComponentPropsWithRef<'div'>}>
               {loading ? (
                 <Group className="canvas-prompt-library-modal__state" justify="center" gap="xs">
                   <Loader className="canvas-prompt-library-modal__loader" size="xs" />

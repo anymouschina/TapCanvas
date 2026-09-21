@@ -356,17 +356,17 @@ export function WorkflowStageContent(props: WorkflowStageContentProps): React.JS
               </ActionIcon>
             </Tooltip>
           ) : null}
-          <Menu className="workflow-stage-content__menu" withinPortal position="bottom-end" shadow="md">
-            <Menu.Target className="workflow-stage-content__menu-target">
+          <Menu withinPortal position="bottom-end" shadow="md">
+            <Menu.Target>
               <ActionIcon className="workflow-stage-content__action nodrag nopan" variant="subtle" size="sm" aria-label="更多节点操作">
-                <IconDots className="workflow-stage-content__icondots" size={15} aria-hidden="true" />
+                <IconDots className="workflow-stage-content__icon-dots" size={15} aria-hidden="true" />
               </ActionIcon>
             </Menu.Target>
-            <Menu.Dropdown className="workflow-stage-content__menu-dropdown">
-              <Menu.Label className="workflow-stage-content__menu-label">节点操作</Menu.Label>
-              <Menu.Item className="workflow-stage-content__menu-item" onClick={() => openInspector('configuration')}>查看配置与输入</Menu.Item>
-              {!isRuntimeReference ? <Menu.Item className="workflow-stage-content__menu-item" onClick={() => openInspector('history')}>查看执行历史</Menu.Item> : null}
-              {!isRuntimeReference && itemRuns.length > 0 ? <Menu.Item className="workflow-stage-content__menu-item" onClick={() => useRFStore.getState().updateNodeData(props.nodeId, { workflowRuntimeExpanded: !runtimeExpanded })}>{runtimeExpanded ? '收起逐项运行' : '展开逐项运行'}</Menu.Item> : null}
+            <Menu.Dropdown>
+              <Menu.Label>节点操作</Menu.Label>
+              <Menu.Item onClick={() => openInspector('configuration')}>查看配置与输入</Menu.Item>
+              {!isRuntimeReference ? <Menu.Item onClick={() => openInspector('history')}>查看执行历史</Menu.Item> : null}
+              {!isRuntimeReference && itemRuns.length > 0 ? <Menu.Item onClick={() => useRFStore.getState().updateNodeData(props.nodeId, { workflowRuntimeExpanded: !runtimeExpanded })}>{runtimeExpanded ? '收起逐项运行' : '展开逐项运行'}</Menu.Item> : null}
             </Menu.Dropdown>
           </Menu>
         </div>

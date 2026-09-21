@@ -164,6 +164,22 @@ export function buildChatInspirationQuickActions(
 
   actions.push(
     {
+      key: 'one-click-remake-text-to-video',
+      group: 'project',
+      label: t('一键复刻（文生视频）'),
+      description: input.currentProjectId
+        ? t('复用已跑通的一键成片工作流，从当前项目文本生成 1 条 15 秒原创视频')
+        : t('选择项目后，复用已跑通的一键成片工作流生成 1 条 15 秒原创视频'),
+      prompt: [
+        '请使用当前已装配且已验证可运行的一键成片 Workflow IR，完成一次“一键复刻 · 文生视频”。',
+        '本次交付范围固定为 1 条 15 秒真实视频 clip：以当前项目文本（或本轮明确提供的原创文本）为唯一故事来源，人物与场景可以重新生成。',
+        '严格禁止把原视频、参考视频、视频 URL 或原视频下载文件作为任何接口输入；不要调用裸视频生成工具、普通工作流或另起并行复刻链。',
+        '先读取当前项目上下文与实时 equipped workflow 输入契约，再只调用契约声明的 tapcanvas_equipped_workflow_run；模型、画幅、分辨率与资产引用必须来自实时目录和本轮明确事实，不得猜测或静默降级。',
+        '只有真实视频 URL 已持久化并通过交付验证才算完成；保留全部执行、资产和失败证据。',
+      ].join('\n'),
+      disabled: !input.currentProjectId,
+    },
+    {
       key: 'single-video-sop',
       group: 'project',
       label: t('根据上传文本快捷创作单个视频'),

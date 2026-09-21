@@ -1694,6 +1694,9 @@ describe("async continuation delivery lock", () => {
 });
 
 describe("public agents chat model propagation", () => {
+	it("forwards explicit reasoning effort into the bridge request", () => {
+		expect(buildTaskRequest({ prompt: "test", modelKey: "gpt-5.6-terra", reasoningEffort: "high" }).extras?.reasoningEffort).toBe("high");
+	});
 	it("fails explicitly instead of falling back to the agents-cli configured model", () => {
 		expect(() => buildTaskRequest({ prompt: "不要替我选择模型" })).toThrowError(
 			"小T 主对话缺少当前选择的语言模型",

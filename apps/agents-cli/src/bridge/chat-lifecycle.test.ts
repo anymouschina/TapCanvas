@@ -127,3 +127,21 @@ test('provider physical interruption suspends without logical cancellation or in
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('persists upstream failure details in the user-visible status summary', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'tapcanvas-provider-failure-'));
+  try {
+    const store = new HarnessChatLifecycleStore(root);
+    const lease = await store.begin(request());
+    const { HarnessEventProjector } = await import('./event-projector.js');
+    await store.complete('user-1', lease.sessionId, {
+      response: { trace: { runOutcome: { status: 'failed', reason: 'deepseek_harness_provider_error', message: '403: token quota is not enough' } } },
+      text: '', completed: false, projector: new HarnessEventProjector(lease.sessionId, () => {}),
+    }, lease.turnId);
+    const status = await new HarnessChatLifecycleStore(root).status('user-1', lease.sessionId);
+    assert.equal(status.turn?.state, 'failed');
+    assert.match(String(status.turn?.lastConfirmedSummary), /403: token quota is not enough/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

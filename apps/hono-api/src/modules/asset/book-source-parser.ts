@@ -4,6 +4,7 @@ import { DOMParser } from "@xmldom/xmldom";
 import { unzipSync, type UnzipFileInfo } from "fflate";
 
 import { sha256Hex } from "./book-content-hash";
+import { decodeBookText, isBookTextEncoding, type BookTextEncoding } from "./book-text-decoder";
 
 const MAX_ARCHIVE_ENTRIES = 4_096;
 const MAX_SELECTED_ARCHIVE_BYTES = 160 * 1024 * 1024;
@@ -71,7 +72,7 @@ export type BookSourceMetadataV1 = {
 	sourceByteLength: number;
 	sourceSha256: string;
 	sourceTextSha256: string;
-	sourceEncoding: "utf-8" | "package-xml";
+	sourceEncoding: BookTextEncoding | "package-xml";
 	extractedDocumentCount: number;
 	storedPath?: string;
 };
@@ -94,6 +95,7 @@ export type BookSourceParseErrorCode =
 	| "book_source_epub_spine_empty"
 	| "book_source_epub_spine_item_missing"
 	| "book_source_invalid_utf8"
+	| "book_source_invalid_text_encoding"
 	| "book_source_metadata_invalid"
 	| "book_source_size_mismatch"
 	| "book_source_unsupported_type"
@@ -539,10 +541,20 @@ export function parseBookSource(input: {
 	let format: BookSourceFormat;
 	let text: string;
 	let extractedDocumentCount: number;
+	let sourceEncoding: BookSourceMetadataV1["sourceEncoding"] = "package-xml";
 	if (extension === ".txt" || extension === ".text" || extension === ".md" || extension === ".markdown") {
 		format = "plain_text";
+		const decoded = decodeBookText(input.bytes);
+		if (!decoded.ok) {
+			throw new BookSourceParseError(
+				"book_source_invalid_text_encoding",
+				`${originalFileName} 无法按支持的文本编码完整解码；支持 UTF-8、GBK/GB18030 和带 BOM 的 UTF-16，请检查文件是否损坏或转换为 UTF-8`,
+				{ label: originalFileName, attempts: decoded.attempts },
+			);
+		}
+		sourceEncoding = decoded.encoding;
 		text = ensureNonEmptyText(
-			decodeUtf8(input.bytes, originalFileName),
+			decoded.text,
 			"book_source_empty",
 			"书籍源文件没有可导入的正文",
 		);
@@ -575,7 +587,7 @@ export function parseBookSource(input: {
 			sourceByteLength: input.bytes.byteLength,
 			sourceSha256: sha256Hex(input.bytes),
 			sourceTextSha256: sha256Hex(text),
-			sourceEncoding: format === "plain_text" ? "utf-8" : "package-xml",
+			sourceEncoding,
 			extractedDocumentCount,
 		},
 	};
@@ -610,7 +622,15 @@ export function requireBookSourceMetadataV1(value: unknown): BookSourceMetadataV
 			{ format },
 		);
 	}
-	const expectedEncoding = format === "plain_text" ? "utf-8" : "package-xml";
+	const sourceEncoding = value.sourceEncoding;
+	if ((!isBookTextEncoding(sourceEncoding) && sourceEncoding !== "package-xml") ||
+		(format === "plain_text" ? sourceEncoding === "package-xml" : sourceEncoding !== "package-xml")) {
+		throw new BookSourceParseError(
+			"book_source_metadata_invalid",
+			"书籍来源元数据包含无效编码",
+			{ format, sourceEncoding },
+		);
+	}
 	const originalFileName =
 		typeof value.originalFileName === "string" ? value.originalFileName.trim() : "";
 	const storedPath = typeof value.storedPath === "string" ? value.storedPath.trim() : "";
@@ -629,7 +649,6 @@ export function requireBookSourceMetadataV1(value: unknown): BookSourceMetadataV
 	}
 	if (!sourceSha256) invalidFields.push("sourceSha256");
 	if (!sourceTextSha256) invalidFields.push("sourceTextSha256");
-	if (value.sourceEncoding !== expectedEncoding) invalidFields.push("sourceEncoding");
 	if (!Number.isInteger(extractedDocumentCount) || extractedDocumentCount <= 0) {
 		invalidFields.push("extractedDocumentCount");
 	}
@@ -649,7 +668,7 @@ export function requireBookSourceMetadataV1(value: unknown): BookSourceMetadataV
 		sourceByteLength,
 		sourceSha256,
 		sourceTextSha256,
-		sourceEncoding: expectedEncoding,
+		sourceEncoding,
 		extractedDocumentCount,
 		storedPath: storedPath || undefined,
 	};

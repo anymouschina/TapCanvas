@@ -8,7 +8,7 @@ import { LibTvImageToolbarIcon } from './LibTvImageToolbarIcon'
 export type ToolbarMenuItem = {
   key: string
   label: string
-  onClick: () => void
+  onClick?: () => void
   icon?: React.ReactNode
   loading?: boolean
   disabled?: boolean
@@ -19,7 +19,7 @@ export type ToolbarAction = {
   key: string
   label: string
   icon: JSX.Element
-  onClick: () => void
+  onClick?: () => void
   active?: boolean
   loading?: boolean
   disabled?: boolean
@@ -27,6 +27,22 @@ export type ToolbarAction = {
   badge?: React.ReactNode
   menuItems?: ToolbarMenuItem[]
   tooltip?: string
+  /** Pure viewport/preview actions that remain safe in a read-only canvas. */
+  readOnlySafe?: boolean
+}
+
+export function resolveToolbarReadOnlyActions(
+  actions: readonly ToolbarAction[],
+  readOnly: boolean,
+): ToolbarAction[] {
+  if (!readOnly) return [...actions]
+  return actions.map((action) => action.readOnlySafe
+    ? action
+    : {
+        ...action,
+        disabled: true,
+        menuItems: action.menuItems?.map((item) => ({ ...item, disabled: true })),
+      })
 }
 
 type TopToolbarProps = {
@@ -106,7 +122,7 @@ function MenuWithSubItems({ d, toolbarActionIconStyles, btnRadius, trigger, libt
     closeTimer.current = setTimeout(() => setOpenedSubKey(null), 150)
   }
 
-  const isActionDisabled = Boolean(d.disabled || d.loading)
+  const isActionDisabled = Boolean(d.disabled || d.loading || (!d.onClick && !d.menuItems?.length))
 
   const libtvMenuWidth = d.key === 'portrait-texture'
     ? 180
@@ -146,7 +162,7 @@ function MenuWithSubItems({ d, toolbarActionIconStyles, btnRadius, trigger, libt
           onClick={libtvImageMode
             ? () => {
                 if (isActionDisabled) return
-                d.onClick()
+                d.onClick?.()
               }
             : undefined}
           style={d.active ? { background: 'rgba(122,129,140,0.14)', borderRadius: btnRadius } : undefined}
@@ -196,7 +212,7 @@ function MenuWithSubItems({ d, toolbarActionIconStyles, btnRadius, trigger, libt
               key={item.key}
               className={libtvImageMode ? 'tc-libtv-image-menu__item' : undefined}
               data-menu-item-key={item.key}
-              disabled={item.disabled || item.loading}
+              disabled={item.disabled || item.loading || !item.onClick}
               leftSection={
                 item.loading
                   ? <Loader size={12} />
@@ -204,7 +220,7 @@ function MenuWithSubItems({ d, toolbarActionIconStyles, btnRadius, trigger, libt
                     ? <span style={{ display: 'flex', alignItems: 'center' }}>{item.icon}</span>
                     : undefined
               }
-              onClick={item.disabled || item.loading ? undefined : item.onClick}
+              onClick={item.disabled || item.loading || !item.onClick ? undefined : item.onClick}
             >
               {item.label}
             </Menu.Item>
@@ -390,9 +406,9 @@ function TopToolbar({
                   aria-label={d.label}
                   data-tooltip={libtvImageMode ? d.tooltip ?? d.label : undefined}
                   styles={toolbarActionIconStyles}
-                  disabled={Boolean(d.disabled || d.loading)}
+                  disabled={Boolean(d.disabled || d.loading || !d.onClick)}
                   onClick={() => {
-                    if (d.disabled || d.loading) return
+                    if (d.disabled || d.loading || !d.onClick) return
                     d.onClick()
                   }}
                   loading={d.loading}

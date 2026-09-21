@@ -13,6 +13,10 @@ type LibTvMediaQuickActionsProps = {
   disabled?: boolean
   referenceActive?: boolean
   markerActive?: boolean
+  styleActive?: boolean
+  effectActive?: boolean
+  charactersActive?: boolean
+  cameraMovementActive?: boolean
   onReference: () => void
   onMarker: () => void
   onStyle?: () => void
@@ -27,6 +31,10 @@ export function LibTvMediaQuickActions({
   disabled = false,
   referenceActive = false,
   markerActive = false,
+  styleActive = false,
+  effectActive = false,
+  charactersActive = false,
+  cameraMovementActive = false,
   onReference,
   onMarker,
   onStyle,
@@ -39,15 +47,15 @@ export function LibTvMediaQuickActions({
     ? [
         { key: 'reference', label: '参考', Icon: IconPhoto, onClick: onReference, active: referenceActive },
         { key: 'marker', label: '标记', Icon: IconFocusCentered, onClick: onMarker, active: markerActive },
-        { key: 'style', label: '风格', Icon: IconSparkles, onClick: onStyle, active: false },
+        { key: 'style', label: '风格', Icon: IconSparkles, onClick: onStyle, active: styleActive },
         { key: 'focus', label: '聚焦', Icon: IconFocus2, onClick: onFocus, active: false, allowWhenDisabled: true },
       ]
     : [
         { key: 'marker', label: '标记', Icon: IconFocusCentered, onClick: onMarker, active: markerActive },
         { key: 'reference', label: '参考', Icon: IconPhoto, onClick: onReference, active: referenceActive },
-        { key: 'effect', label: '特效', Icon: IconSparkles, onClick: onEffect, active: false },
-        { key: 'characters', label: '角色库', Icon: IconUser, onClick: onCharacters, active: false },
-        { key: 'camera', label: '运镜', Icon: IconCamera, onClick: onCameraMovement, active: false },
+        { key: 'effect', label: '特效', Icon: IconSparkles, onClick: onEffect, active: effectActive },
+        { key: 'characters', label: '角色库', Icon: IconUser, onClick: onCharacters, active: charactersActive },
+        { key: 'camera', label: '运镜', Icon: IconCamera, onClick: onCameraMovement, active: cameraMovementActive },
         { key: 'focus', label: '聚焦', Icon: IconFocus2, onClick: onFocus, active: false, allowWhenDisabled: true },
       ]
 

@@ -105,4 +105,31 @@ describe('VideoContinuationPanel', () => {
       sourceDurationSeconds: 196,
     })
   })
+
+  it('prevents duplicate submissions and surfaces preparation failures', async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error('续写前置片段上传失败'))
+    render(
+      <MantineProvider>
+        <VideoContinuationPanel
+          opened
+          readOnly={false}
+          sourceVideoUrl="https://assets.example.com/source.mp4"
+          sourceDurationSeconds={10}
+          onClose={vi.fn()}
+          onSubmit={onSubmit}
+        />
+      </MantineProvider>,
+    )
+
+    fireEvent.change(screen.getByPlaceholderText('请输入需要续写的内容'), {
+      target: { value: '人物继续穿过庭院' },
+    })
+    const submit = screen.getByRole('button', { name: '确认续写' })
+    fireEvent.click(submit)
+    fireEvent.click(submit)
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('续写前置片段上传失败')).toBeVisible()
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认续写' })).toBeEnabled())
+  })
 })

@@ -1,4 +1,5 @@
 import React from 'react'
+import { AsyncLoadingFeedback } from '../../../../ui/AsyncLoadingFeedback'
 import { IconMovie } from '@tabler/icons-react'
 import { ManagedImage } from '../../../../domain/resource-runtime/components/ManagedImage'
 import { useRetainedVideoPlayback } from './useRetainedVideoPlayback'
@@ -116,7 +117,7 @@ export function SkeletonVideoFrame({
       ) : null}
 
       {hovering ? (
-        <React.Suspense fallback={null}>
+        <React.Suspense fallback={<AsyncLoadingFeedback />}>
           <SkeletonVideoHoverControls videoRef={videoRef} nodeId={nodeId} onManualPlayback={handleManualPlayback} />
         </React.Suspense>
       ) : null}

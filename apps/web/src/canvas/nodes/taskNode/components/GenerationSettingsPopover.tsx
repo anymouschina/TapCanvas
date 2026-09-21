@@ -2,6 +2,9 @@ import React from 'react'
 import { createPortal } from 'react-dom'
 import { IconChevronUp } from '@tabler/icons-react'
 import './GenerationSettingsPopover.css'
+import { GenerationPreferenceSwitch, type GenerationPreferenceSetting } from './GenerationPreferenceSwitch'
+import { formatAspectOptionLabel } from './aspectRatioLabel'
+import { ImageAdvancedSettings, type ImageAdvancedSetting } from './ImageAdvancedSettings'
 
 export type GenerationSettingOption = {
   value: string
@@ -27,7 +30,7 @@ export type GenerationDurationSetting = {
 export type GenerationQuantitySetting = {
   value: number
   options: ReadonlyArray<number>
-  unit: '个' | '张'
+  unit: '个' | '张' | '组'
   onChange: (value: number) => void
 }
 
@@ -38,12 +41,14 @@ export type GenerationAudioSetting = {
 
 export type GenerationSettingsPopoverProps = {
   kind: 'image' | 'video'
+  preference?: GenerationPreferenceSetting
   summary: string
   aspectValue: string
   sections: ReadonlyArray<GenerationSettingSection>
   duration?: GenerationDurationSetting | null
   audio?: GenerationAudioSetting | null
   quantity: GenerationQuantitySetting
+  advanced?: ImageAdvancedSetting | null
   disabled?: boolean
 }
 
@@ -146,8 +151,10 @@ function OptionSection({ section }: { section: GenerationSettingSection }): JSX.
               aria-pressed={selected}
               onClick={() => section.onChange(option.value)}
             >
-              {isAspect ? <AspectIcon value={option.label.includes(':') ? option.label : option.value} /> : null}
-              <span className="tc-generation-settings__option-label">{option.label}</span>
+              {isAspect ? <AspectIcon value={option.value} /> : null}
+              <span className="tc-generation-settings__option-label">
+                {isAspect ? formatAspectOptionLabel(option.value, option.label) : option.label}
+              </span>
             </button>
           )
         })}
@@ -285,6 +292,8 @@ export function GenerationSettingsPopover({
   duration,
   audio,
   quantity,
+  advanced,
+  preference,
   disabled = false,
 }: GenerationSettingsPopoverProps): JSX.Element {
   const [opened, setOpened] = React.useState(false)
@@ -383,10 +392,13 @@ export function GenerationSettingsPopover({
           }}
         >
           <div className="tc-generation-settings__content" style={{ maxHeight: anchor.maxHeight }}>
-            {sections.map((section) => <OptionSection section={section} key={section.key} />)}
+            {sections.filter((section) => section.layout === 'aspect').map((section) => <OptionSection section={section} key={section.key} />)}
+            {preference ? <GenerationPreferenceSwitch setting={preference} /> : null}
+            {sections.filter((section) => section.layout !== 'aspect').map((section) => <OptionSection section={section} key={section.key} />)}
             {kind === 'video' && duration ? <DurationSection setting={duration} /> : null}
             {kind === 'video' && audio ? <AudioSection setting={audio} /> : null}
             <QuantitySection setting={quantity} />
+            {advanced ? <ImageAdvancedSettings setting={advanced} /> : null}
           </div>
         </div>,
         document.body,

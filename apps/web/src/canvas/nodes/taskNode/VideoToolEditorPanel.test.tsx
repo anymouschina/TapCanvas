@@ -46,6 +46,19 @@ beforeAll(() => {
 afterEach(cleanup)
 
 describe('VideoToolEditorPanel', () => {
+  it('runs local separation even when the unrelated model catalog failed', async () => {
+    const onSeparate = vi.fn().mockResolvedValue(undefined)
+    render(<MantineProvider><VideoToolEditorPanel
+      opened mode="separation" videoUrl="https://assets.test/source.mp4"
+      readOnly={false} onClose={vi.fn()} onUnavailable={vi.fn()}
+      onSeparate={onSeparate} editModelLoading editModelError="catalog unavailable"
+    /></MantineProvider>)
+    const submit = screen.getByRole('button', { name: '开始分离' })
+    expect(submit).toBeEnabled()
+    fireEvent.click(submit)
+    await waitFor(() => expect(onSeparate).toHaveBeenCalledWith('both'))
+  })
+
   it('collects a real user rectangle before exposing subtitle removal execution', async () => {
     const onUnavailable = vi.fn()
     const { container } = render(

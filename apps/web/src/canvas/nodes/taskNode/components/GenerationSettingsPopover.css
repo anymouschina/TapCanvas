@@ -254,3 +254,14 @@
   display: inline-flex;
   min-width: 0;
 }
+
+.tc-generation-settings__preference { padding: 8px 0; }
+.tc-generation-settings__preference-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 14px; color: var(--tc-color-text-primary, #eef0f4); cursor: pointer; }
+.tc-generation-settings__preference-row input { appearance: none; width: 32px; height: 18px; margin: 0; border-radius: 12px; background: #45474d; cursor: pointer; transition: background 150ms; }
+.tc-generation-settings__preference-row input::before { content: ''; display: block; width: 14px; height: 14px; margin: 2px; border-radius: 50%; background: #fff; transition: transform 150ms; }
+.tc-generation-settings__preference-row input:checked { background: var(--mantine-color-blue-6, #228be6); }
+.tc-generation-settings__preference-row input:checked::before { transform: translateX(14px); }
+.tc-generation-settings__preference-row input:focus-visible { outline: 2px solid #74c0fc; outline-offset: 3px; }
+.tc-generation-settings__preference-row input:disabled { opacity: .5; cursor: wait; }
+.tc-generation-settings__preference-description { margin: 6px 0 0; color: var(--tc-color-text-secondary, #a9afb9); font-size: 11px; line-height: 1.5; }
+.tc-generation-settings__preference-error { margin: 6px 0 0; color: #ff8787; font-size: 12px; }

@@ -50,3 +50,28 @@ test('MCP forwards the private frozen contract as machine fields and keeps it lo
   assert.match(JSON.stringify(rejected), /cannot change after execution/);
   assert.deepEqual(gateway.userIntentContract(token), frozen);
 });
+
+test('reads permit intent authoring while premature mutations are blocked without locking repairs', async context => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  const dispatched: string[] = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as JsonObject;
+    dispatched.push(String(body.toolName));
+    return new Response('{}');
+  };
+  const gateway = new RequestMcpGateway();
+  const token = gateway.register([
+    { name: 'read', description: 'Read', parameters: {}, execution: { sideEffect: 'none' } },
+    { name: 'write', description: 'Write', parameters: {}, execution: { sideEffect: 'local_mutation' } },
+  ], [], { endpoint: 'https://api.test/execute' });
+  const call = (name: string, args: JsonObject) => gateway.handle(token, `Bearer ${token}`, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+  await call('read', {});
+  const blocked = await call('write', {});
+  assert.match(JSON.stringify(blocked.body), /user_intent_required/);
+  assert.deepEqual(dispatched, ['read']);
+  await call('record_user_intent', { contract: contract() });
+  assert.ok(gateway.userIntentContract(token));
+  await call('write', {});
+  assert.deepEqual(dispatched, ['read', 'write']);
+});

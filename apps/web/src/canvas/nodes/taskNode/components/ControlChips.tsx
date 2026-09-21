@@ -244,7 +244,6 @@ function ControlChips({
       {generationSettings ? (
         <GenerationSettingsPopover
           {...generationSettings}
-          disabled={generationSettings.disabled || isRunning}
         />
       ) : null}
       {!generationSettings && mappedControls.map((control) =>

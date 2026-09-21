@@ -8,6 +8,9 @@ export type VideoModelDurationOption = {
   value: number
   label: string
   priceLabel?: string
+  maxReferenceImages?: number
+  maxReferenceVideos?: number
+  maxReferenceAudios?: number
 }
 
 export type VideoModelSizeOption = {
@@ -80,6 +83,7 @@ export type ImageModelCatalogConfig = {
   resolutionOptions: ImageModelResolutionOption[]
   qualityOptions: ImageModelResolutionOption[]
   controls: ImageModelControlConfig[]
+  maxReferenceImages?: number
   supportsReferenceImages?: boolean
   supportsTextToImage?: boolean
   supportsImageToImage?: boolean
@@ -147,6 +151,12 @@ function asTrimmedString(value: unknown): string {
 function asPositiveNumber(value: unknown): number | null {
   const num = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
   if (!Number.isFinite(num) || num <= 0) return null
+  return num
+}
+
+function asNonNegativeInteger(value: unknown): number | null {
+  const num = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  if (!Number.isInteger(num) || num < 0) return null
   return num
 }
 
@@ -359,10 +369,16 @@ function parseDurationOption(value: unknown): VideoModelDurationOption | null {
   if (duration == null) return null
   const label = asTrimmedString(value.label) || `${Math.trunc(duration)}s`
   const priceLabel = asTrimmedString(value.priceLabel ?? value.price)
+  const maxReferenceImages = asNonNegativeInteger(value.maxReferenceImages)
+  const maxReferenceVideos = asNonNegativeInteger(value.maxReferenceVideos)
+  const maxReferenceAudios = asNonNegativeInteger(value.maxReferenceAudios)
   return {
     value: Math.trunc(duration),
     label,
     ...(priceLabel ? { priceLabel } : {}),
+    ...(maxReferenceImages != null ? { maxReferenceImages } : {}),
+    ...(maxReferenceVideos != null ? { maxReferenceVideos } : {}),
+    ...(maxReferenceAudios != null ? { maxReferenceAudios } : {}),
   }
 }
 
@@ -643,6 +659,7 @@ export function parseImageModelCatalogConfig(meta: unknown): ImageModelCatalogCo
   )
   const defaultQuality = normalizeCompactString(root.defaultQuality ?? root.quality)
   const controls = parseImageControlConfigs(root)
+  const maxReferenceImages = asNonNegativeInteger(root.maxReferenceImages)
   const supportsReferenceImages = asOptionalBoolean(root.supportsReferenceImages)
   const supportsTextToImage = asOptionalBoolean(root.supportsTextToImage)
   const supportsImageToImage = asOptionalBoolean(root.supportsImageToImage)
@@ -658,7 +675,8 @@ export function parseImageModelCatalogConfig(meta: unknown): ImageModelCatalogCo
     !defaultQuality &&
     typeof supportsReferenceImages === 'undefined' &&
     typeof supportsTextToImage === 'undefined' &&
-    typeof supportsImageToImage === 'undefined'
+    typeof supportsImageToImage === 'undefined' &&
+    maxReferenceImages == null
   ) {
     return null
   }
@@ -672,6 +690,7 @@ export function parseImageModelCatalogConfig(meta: unknown): ImageModelCatalogCo
     resolutionOptions,
     qualityOptions,
     controls,
+    ...(maxReferenceImages != null ? { maxReferenceImages } : {}),
     ...(typeof supportsReferenceImages === 'boolean' ? { supportsReferenceImages } : {}),
     ...(typeof supportsTextToImage === 'boolean' ? { supportsTextToImage } : {}),
     ...(typeof supportsImageToImage === 'boolean' ? { supportsImageToImage } : {}),
@@ -734,10 +753,10 @@ export function parseVideoModelCatalogConfig(meta: unknown): VideoModelCatalogCo
       : normalizeOrientation(defaultOrientationRaw)
   const controls = parseVideoControlConfigs(root)
 
-  const maxReferenceImages = asPositiveNumber(root.maxReferenceImages)
-  const maxReferenceVideos = asPositiveNumber(root.maxReferenceVideos)
-  const maxReferenceAudios = asPositiveNumber(root.maxReferenceAudios)
-  const maxReferenceMedia = asPositiveNumber(root.maxReferenceMedia)
+  const maxReferenceImages = asNonNegativeInteger(root.maxReferenceImages)
+  const maxReferenceVideos = asNonNegativeInteger(root.maxReferenceVideos)
+  const maxReferenceAudios = asNonNegativeInteger(root.maxReferenceAudios)
+  const maxReferenceMedia = asNonNegativeInteger(root.maxReferenceMedia)
   const maxReferenceVideoDurationSeconds = asPositiveNumber(root.maxReferenceVideoDurationSeconds)
   const maxReferenceAudioDurationSeconds = asPositiveNumber(root.maxReferenceAudioDurationSeconds)
   const maxVideoExtensionDurationSeconds = asPositiveNumber(root.maxVideoExtensionDurationSeconds)
@@ -1085,6 +1104,7 @@ export function constrainImageModelCatalogConfigByPricing(
     resolutionOptions,
     qualityOptions,
     controls: base.controls.filter((control) => control.binding !== 'quality' || qualityOptions.length > 0),
+    ...(base.maxReferenceImages != null ? { maxReferenceImages: base.maxReferenceImages } : {}),
     ...(typeof base.supportsReferenceImages === 'boolean' ? { supportsReferenceImages: base.supportsReferenceImages } : {}),
     ...(typeof base.supportsTextToImage === 'boolean' ? { supportsTextToImage: base.supportsTextToImage } : {}),
     ...(typeof base.supportsImageToImage === 'boolean' ? { supportsImageToImage: base.supportsImageToImage } : {}),

@@ -1,6 +1,7 @@
 import React from 'react'
-import { Button, Group, NumberInput, Text, TextInput } from '@mantine/core'
+import { ActionIcon, Button, Group, NumberInput, Text, TextInput } from '@mantine/core'
 import { NodeToolbar, Position } from '@xyflow/react'
+import { IconTrash } from '@tabler/icons-react'
 import { validateVideoMarkerRange } from '../videoMarkers'
 
 export type VideoMarkerDraft = {
@@ -13,9 +14,15 @@ type VideoMarkerToolbarProps = {
   opened: boolean
   currentTimeSeconds: number
   durationSeconds: number | null
-  markerCount: number
+  markers: ReadonlyArray<{
+    id: string
+    startSeconds: number
+    endSeconds: number
+    note: string
+  }>
   saving: boolean
   onClose: () => void
+  onRemove: (markerId: string) => void
   onSave: (draft: VideoMarkerDraft) => void
 }
 
@@ -23,9 +30,10 @@ export function VideoMarkerToolbar({
   opened,
   currentTimeSeconds,
   durationSeconds,
-  markerCount,
+  markers,
   saving,
   onClose,
+  onRemove,
   onSave,
 }: VideoMarkerToolbarProps): JSX.Element {
   const [draft, setDraft] = React.useState<VideoMarkerDraft>({
@@ -57,9 +65,31 @@ export function VideoMarkerToolbar({
         <Group className="tc-video-marker-toolbar__header" justify="space-between" gap={12} wrap="nowrap">
           <Text className="tc-video-marker-toolbar__title" size="sm" fw={650}>视频标记</Text>
           <Text className="tc-video-marker-toolbar__meta" size="xs" c="dimmed">
-            当前 {currentTimeSeconds.toFixed(2)}s · 已保存 {markerCount}
+            当前 {currentTimeSeconds.toFixed(2)}s · 已保存 {markers.length}
           </Text>
         </Group>
+        {markers.length > 0 ? (
+          <div className="tc-video-marker-toolbar__saved" aria-label="已保存视频标记">
+            {markers.map((marker, index) => (
+              <div className="tc-video-marker-toolbar__saved-item" key={marker.id}>
+                <div className="tc-video-marker-toolbar__saved-copy">
+                  <Text className="video-marker-toolbar__text" size="xs" fw={600}>标记 {index + 1} · {marker.startSeconds.toFixed(2)}–{marker.endSeconds.toFixed(2)}s</Text>
+                  {marker.note ? <Text className="video-marker-toolbar__text" size="xs" c="dimmed" lineClamp={1}>{marker.note}</Text> : null}
+                </div>
+                <ActionIcon className="video-marker-toolbar__action-icon"
+                  size="sm"
+                  variant="subtle"
+                  color="gray"
+                  aria-label={`删除标记 ${index + 1}`}
+                  disabled={saving}
+                  onClick={() => onRemove(marker.id)}
+                >
+                  <IconTrash className="video-marker-toolbar__icon-trash" size={14} />
+                </ActionIcon>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <Group className="tc-video-marker-toolbar__range" gap={8} grow wrap="nowrap">
           <NumberInput
             className="tc-video-marker-toolbar__number"

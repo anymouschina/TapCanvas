@@ -8,13 +8,20 @@ import {
 } from "./bootstrap-admin";
 import { verifyPasswordRecord } from "./password";
 
+vi.mock("../team/team-credit-batch.service", () => ({
+	grantTeamCreditsInTransaction: vi.fn().mockResolvedValue({ granted: true, ledgerEntryId: "grant" }),
+}));
+import { grantTeamCreditsInTransaction } from "../team/team-credit-batch.service";
+
 function createPrismaMock() {
-	return {
+	const tx = {
+		teams: { create: vi.fn() },
 		users: {
 			findMany: vi.fn(),
 			create: vi.fn(),
 		},
 	};
+	return { ...tx, $transaction: vi.fn(async (operation: (transaction: typeof tx) => Promise<void>) => operation(tx)) };
 }
 
 describe("bootstrap administrator", () => {
@@ -31,6 +38,11 @@ describe("bootstrap administrator", () => {
 		await expect(ensureBootstrapAdmin(prisma as unknown as PrismaClient)).resolves.toBe("tapcanvas_admin");
 
 		expect(prisma.users.create).toHaveBeenCalledOnce();
+		expect(prisma.teams.create).toHaveBeenCalledOnce();
+		expect(grantTeamCreditsInTransaction).toHaveBeenCalledWith(
+			expect.objectContaining({ users: prisma.users, teams: prisma.teams }),
+			expect.objectContaining({ amount: 100000, teamId: "personal_tapcanvas_admin", sourceType: "bootstrap_admin" }),
+		);
 		const data = prisma.users.create.mock.calls[0]?.[0]?.data;
 		expect(data).toMatchObject({
 			id: "tapcanvas_admin",
@@ -56,6 +68,7 @@ describe("bootstrap administrator", () => {
 		}]);
 		await expect(ensureBootstrapAdmin(prisma as unknown as PrismaClient)).resolves.toBe("existing-admin");
 		expect(prisma.users.create).not.toHaveBeenCalled();
+		expect(prisma.$transaction).not.toHaveBeenCalled();
 	});
 
 	it("fails explicitly when an existing administrator has no password", async () => {
@@ -72,5 +85,6 @@ describe("bootstrap administrator", () => {
 		await expect(ensureBootstrapAdmin(prisma as unknown as PrismaClient))
 			.rejects.toThrow("passwordless");
 		expect(prisma.users.create).not.toHaveBeenCalled();
+		expect(prisma.$transaction).not.toHaveBeenCalled();
 	});
 });

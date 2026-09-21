@@ -1,40 +1,17 @@
-// Persists last-used model & config per node kind so new nodes get sensible defaults.
-const STORAGE_KEY = 'tc_node_model_prefs'
+import { getCachedGenerationPrefs } from '../config/generationPrefs'
+import type { UserGenerationPrefsDto } from '../api/server'
 
-export type NodeModelPrefs = {
-  imageModel?: string
-  imageSize?: string
-  videoModel?: string
-  videoResolution?: string
-  videoAspect?: string
-}
-
-function read(): NodeModelPrefs {
-  if (typeof window === 'undefined') return {}
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return parsed as NodeModelPrefs
-  } catch {
-    return {}
-  }
-}
-
-export function readNodeModelPrefs(): NodeModelPrefs {
-  return read()
-}
-
-export function saveNodeModelPrefs(patch: Partial<NodeModelPrefs>): void {
-  if (typeof window === 'undefined') return
-  try {
-    const next: NodeModelPrefs = { ...read(), ...patch }
-    for (const k of Object.keys(next) as (keyof NodeModelPrefs)[]) {
-      if (!next[k]) delete next[k]
-    }
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  } catch {
-    // ignore
+/** Only explicitly enabled account preferences initialize new nodes. */
+export function readNodeModelPrefs(): UserGenerationPrefsDto {
+  const prefs = getCachedGenerationPrefs()
+  return {
+    ...(prefs?.imagePreferenceEnabled ? {
+      imageModel: prefs.imageModel, imageSize: prefs.imageSize, imageQuality: prefs.imageQuality,
+      imageAspect: prefs.imageAspect, imageResolution: prefs.imageResolution, imageCount: prefs.imageCount,
+    } : {}),
+    ...(prefs?.videoPreferenceEnabled ? {
+      videoModel: prefs.videoModel, videoResolution: prefs.videoResolution, videoAspect: prefs.videoAspect,
+      videoDuration: prefs.videoDuration, videoCount: prefs.videoCount, videoGenerateAudio: prefs.videoGenerateAudio,
+    } : {}),
   }
 }

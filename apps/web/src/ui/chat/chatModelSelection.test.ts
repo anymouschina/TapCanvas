@@ -11,6 +11,11 @@ import {
 } from './chatModelSelection'
 
 describe('chat model selection', () => {
+  it('does not invent a saved selection before the dynamic catalog loads', () => {
+    expect(readStoredChatModelValue(null)).toBeNull()
+    expect(() => requireSelectedChatModelRequest([], null)).toThrow('尚未选择语言模型')
+  })
+
   it('uses the exact catalog request model for the main turn and its auxiliary language calls', () => {
     const option: ModelOption = {
       value: 'GPT-5.6 Terra',

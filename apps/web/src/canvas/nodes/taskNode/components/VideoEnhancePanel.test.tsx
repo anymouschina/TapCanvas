@@ -1,10 +1,42 @@
+// @vitest-environment jsdom
+import '@testing-library/jest-dom/vitest'
 import { describe, expect, it, vi } from 'vitest'
-import { render, fireEvent, screen } from '@testing-library/react'
+import { render, fireEvent, screen, waitFor, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
+import { afterEach, beforeAll } from 'vitest'
 import { VideoEnhancePanel } from './VideoEnhancePanel'
 import type { EnhanceParams } from './VideoEnhancePanel'
 
-const renderP = (props: { onRun: (p: EnhanceParams) => void; onClose: () => void }) =>
+beforeAll(() => {
+  if (typeof globalThis.ResizeObserver !== 'function') {
+    class ResizeObserverMock implements ResizeObserver {
+      observe = vi.fn()
+      unobserve = vi.fn()
+      disconnect = vi.fn()
+    }
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      value: ResizeObserverMock,
+    })
+  }
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true),
+    }),
+  })
+})
+
+afterEach(cleanup)
+
+const renderP = (props: { onRun: (p: EnhanceParams) => Promise<void> | void; onClose: () => void }) =>
   render(
     <MantineProvider>
       <VideoEnhancePanel {...props} />
@@ -35,5 +67,18 @@ describe('VideoEnhancePanel', () => {
     expect(arg.resolution_limit).toBeDefined()
     expect(typeof arg.resolution_limit).toBe('number')
     expect(arg.resolution).toBeUndefined()
+  })
+
+  it('执行中防止重复提交，并在模型能力不可用时保留面板显示错误', async () => {
+    const onRun = vi.fn().mockRejectedValue(new Error('视频增强模型未启用'))
+    renderP({ onRun, onClose: vi.fn() })
+
+    const submit = screen.getByRole('button', { name: '开始增强' })
+    fireEvent.click(submit)
+    fireEvent.click(submit)
+
+    expect(onRun).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('视频增强模型未启用')).toBeVisible()
+    await waitFor(() => expect(screen.getByRole('button', { name: '开始增强' })).toBeEnabled())
   })
 })

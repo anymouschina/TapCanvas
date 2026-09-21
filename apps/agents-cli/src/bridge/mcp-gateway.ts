@@ -1,3 +1,4 @@
+import { isReadOnlyRemoteTool } from './remote-tool-effects.js';
 import { responseSourceEvidence, bindResponseSources } from "./response-source-evidence.js";
 import { USER_INTENT_TOOL, USER_INTENT_TOOL_NAME, freezeHarnessUserIntent } from "./user-intent.js";
 import { ARTIFACT_REPORT_PARAMETERS, DELIVERY_EVIDENCE_TOOL, deliveryEvidenceCatalog, inspectArtifactDeliveryReport } from "./artifact-delivery-report.js";
@@ -274,7 +275,13 @@ async function executeRemoteTool(
   if (runtime.config.apiKey) headers["x-api-key"] = runtime.config.apiKey;
 
   const wireName = definition.wireName ?? name;
-  if (name !== SCHEMA_LOADER_TOOL.name) runtime.intentMutationLocked = true;
+  const mutates = name !== SCHEMA_LOADER_TOOL.name && !isReadOnlyRemoteTool(definition, args);
+  if (mutates && !runtime.frozenContract && !runtime.outputContract) {
+    const outputText = 'user_intent_required: Call record_user_intent with a valid contract before this mutation, then retry the tool. No remote request was dispatched.';
+    appendExecution(runtime, { name, args, startedAt, startedAtMs, status: 'failed', outputText });
+    return { content: [{ type: 'text', text: outputText }], isError: true };
+  }
+  if (mutates) runtime.intentMutationLocked = true;
   let response: Response;
   try {
     response = await fetch(runtime.config.endpoint, {

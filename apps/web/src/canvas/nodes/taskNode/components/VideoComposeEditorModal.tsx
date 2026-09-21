@@ -1,5 +1,6 @@
+import { resolveComposeFrame, type ComposeAspect } from './composeFrameLayout'
 import React from 'react'
-import { Modal, Box, Group, ActionIcon, Text, Button, Stack, Progress, Loader, Divider, Slider } from '@mantine/core'
+import { Modal, Box, Group, ActionIcon, Text, Button, Stack, Progress, Loader, Divider, Slider, Select } from '@mantine/core'
 import {
   IconX, IconPlayerPlay, IconPlayerPause, IconScissors,
   IconArrowBackUp, IconArrowForwardUp,
@@ -126,6 +127,10 @@ export function VideoComposeEditorModal({
   const editClipsRef = React.useRef<EditableClip[]>([])
 
   const [editClips, setEditClips] = React.useState<EditableClip[]>([])
+  const [outputAspect, setOutputAspect] = React.useState<ComposeAspect>('auto')
+  const outputFrame = React.useMemo(() => editClips.some(ec => usedDur(ec) > 0)
+    ? resolveComposeFrame(editClips.map(ec => ({ width: ec.clip.meta.width, height: ec.clip.meta.height, duration: usedDur(ec) })), outputAspect)
+    : { width: 960, height: 540 }, [editClips, outputAspect])
   const [loading, setLoading] = React.useState(false)
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [currentUs, setCurrentUs] = React.useState(0)
@@ -431,7 +436,7 @@ export function VideoComposeEditorModal({
       })
       .catch(() => {})
       .finally(() => { renderingRef.current = false })
-  }, [currentUs, editClips])
+  }, [currentUs, editClips, outputFrame])
 
   // 字幕文本/字号变化：只重合成（干净帧 + overlay），零解码（OCR 2026-07-14：此前字幕词变
   // 进解码 effect deps，播放中每次换词都整帧 decode 一次）。
@@ -814,6 +819,7 @@ export function VideoComposeEditorModal({
       trimEnd: ec.trimEnd,
     }))
     const blob = await compose(sources, {
+      outputAspect,
       audioTracks: upstreamAudioTracks,
       subtitles: timelineSubtitles.length > 0
         ? {
@@ -913,7 +919,7 @@ export function VideoComposeEditorModal({
           ) : loadError ? (
             <Text size="sm" c="red">{loadError}</Text>
           ) : (
-            <canvas ref={canvasRef} width={960} height={540} style={{ maxWidth: '100%', maxHeight: '100%', display: 'block', background: '#000', borderRadius: 4 }} />
+            <canvas className="video-compose-editor-modal__canvas" ref={canvasRef} width={Math.round(outputFrame.width * Math.min(1, 960 / Math.max(outputFrame.width, outputFrame.height)))} height={Math.round(outputFrame.height * Math.min(1, 960 / Math.max(outputFrame.width, outputFrame.height)))} style={{ maxWidth: '100%', maxHeight: '100%', display: 'block', background: '#000', borderRadius: 4 }} />
           )}
           {/* 隐藏音频元素：跟随播放头放当前片段原声（canvas 预览本身无声） */}
           <audio ref={audioRef} crossOrigin="anonymous" preload="none" style={{ display: 'none' }} />
@@ -993,6 +999,9 @@ export function VideoComposeEditorModal({
                 <IconArrowsMaximize size={14} />
               </ActionIcon>
               <Divider orientation="vertical" mx={4} />
+              <Select size="xs" w={190} aria-label="成片画幅" value={outputAspect} allowDeselect={false}
+                data={[{ value: 'auto', label: '画幅：自动（按时长）' }, { value: '16:9', label: '画幅：横屏 16:9' }, { value: '9:16', label: '画幅：竖屏 9:16' }, { value: '1:1', label: '画幅：方形 1:1' }]}
+                onChange={value => { if (value === 'auto' || value === '16:9' || value === '9:16' || value === '1:1') setOutputAspect(value) }} />
               <Button size="xs" leftSection={<IconScissors size={12} />} onClick={() => void handleCompose()} disabled={upstreamVideos.length < 2 || composing || loading}>
                 合成视频
               </Button>

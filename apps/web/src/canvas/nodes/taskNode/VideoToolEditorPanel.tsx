@@ -262,7 +262,7 @@ export function VideoToolEditorPanel({
               size="xs"
               variant="default"
               leftSection={mode === 'separation' ? <IconScissors size={13} /> : <IconCheck size={13} />}
-              disabled={readOnly || submitting || editModelLoading || Boolean(editModelError) || (selectionRequired && rects.length === 0)}
+              disabled={readOnly || submitting || (mode !== 'separation' && (editModelLoading || Boolean(editModelError))) || (selectionRequired && rects.length === 0)}
               loading={submitting}
               onClick={() => {
                 if (mode !== 'separation' && canSubmitEdit && onEditSubmit) {

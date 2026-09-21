@@ -30,8 +30,8 @@ describe('isSupportedTextFile — 认哪些文件当文本输入', () => {
     expect(isSupportedTextFile(fileOf('a.pdf', 'application/pdf'))).toBe(false)
   })
 
-  it('老式 .doc 不收（mammoth 只吃 docx，收了必失败）', () => {
-    expect(isSupportedTextFile(fileOf('旧稿.doc', 'application/msword'))).toBe(false)
+  it('支持老式 .doc', () => {
+    expect(isSupportedTextFile(fileOf('旧稿.doc', 'application/msword'))).toBe(true)
   })
 
   it('accept 串覆盖所有受支持类型', () => {

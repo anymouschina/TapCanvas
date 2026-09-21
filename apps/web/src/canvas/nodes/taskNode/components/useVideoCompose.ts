@@ -2,12 +2,14 @@ import React from 'react'
 import {
   composeVideosToBlob,
   type ComposeAudioTrack,
+  type ComposeOptions,
   type ComposePhase,
   type ComposeSubtitlesInput,
   type ComposeVideoSource,
 } from './composeVideosCore'
 
 export type { ComposeVideoSource } from './composeVideosCore'
+export type VideoComposeHookOptions = Pick<ComposeOptions, 'outputAspect' | 'audioTracks' | 'subtitles'>
 
 const INITIAL_PHASE: ComposePhase = 'preparing'
 
@@ -26,7 +28,7 @@ export function useVideoCompose() {
 
   const compose = React.useCallback(async (
     videos: ComposeVideoSource[],
-    options?: { audioTracks?: ComposeAudioTrack[]; subtitles?: ComposeSubtitlesInput },
+    options?: VideoComposeHookOptions,
   ): Promise<Blob | null> => {
     if (videos.length < 1) {
       setError('至少需要 1 个可用视频才能开始剪辑')
@@ -47,6 +49,7 @@ export function useVideoCompose() {
         signal: abortCtrl.signal,
         onProgress: (p) => setProgress(p),
         onPhase: setPhase,
+        outputAspect: options?.outputAspect,
         audioTracks: options?.audioTracks,
         subtitles: options?.subtitles,
       })

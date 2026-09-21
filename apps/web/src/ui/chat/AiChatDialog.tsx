@@ -1,8 +1,11 @@
+import { chatModelSettingsPayload, selectedModelCapabilities } from './chatModelCapabilities'
+import { ChatModelControl } from './ChatModelControl'
+import { useChatModelSettings } from './useChatModelSettings'
 import React from 'react'
-import { ActionIcon, Badge, Button, Group, Menu, Modal, Paper, Popover, ScrollArea, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core'
+import { AsyncDialogLoading } from '../AsyncLoadingFeedback'
+import { ActionIcon, Badge, Button, Group, Menu, Modal, Paper, ScrollArea, Stack, Text, Textarea, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconArrowsMaximize, IconArrowsMinimize, IconBook2, IconChevronDown, IconChevronLeft, IconChevronRight, IconFileText, IconHistory, IconMapPin, IconMessageCircle, IconMessagePlus, IconMicrophone, IconMicrophoneOff, IconPaperclip, IconPhoto, IconPhotoCog, IconPlayerStop, IconRefresh, IconSend2, IconSparkles, IconTerminal2, IconTrash, IconUpload, IconUsersGroup, IconX } from '@tabler/icons-react'
-import { GenerationPrefsModal } from './GenerationPrefsModal'
+import { IconArrowsMaximize, IconArrowsMinimize, IconBook2, IconChevronDown, IconChevronLeft, IconChevronRight, IconFileText, IconHistory, IconMapPin, IconMessageCircle, IconMessagePlus, IconMicrophone, IconMicrophoneOff, IconPhoto, IconPlayerStop, IconRefresh, IconSend2, IconSparkles, IconTerminal2, IconTrash, IconUpload, IconX } from '@tabler/icons-react'
 import { SkillPickerPopover } from './SkillPickerPopover'
 import {
   PendingUserInputChoices,
@@ -146,7 +149,7 @@ import {
 import { buildChatInspirationQuickActions, type ChatQuickActionPreset } from './quickActions'
 import { shouldAttachSelectedCanvasAssets } from './chatRequestAssetScope'
 import { useChatCommandStore, type ChatSendCommand, type GenerationProposalContext } from './chatCommandStore'
-import { XIAOT_ROLE, TEAM_ROLES, getTeamRole, teamRoleAvatar, teamRoleName, type TeamRole } from './teamRoster'
+import { XIAOT_ROLE, getTeamRole, teamRoleAvatar, teamRoleName, type TeamRole } from './teamRoster'
 import { getProjectRoleSkillAssignments, useProjectRoleSkillConfigStore } from './roleSkillConfigStore'
 import { chapterOverrideToChatContext } from '../../projects/chapterCreative'
 import { useVoiceInput } from './useVoiceInput'
@@ -197,6 +200,8 @@ import {
   type ChatSkillReference,
 } from './chatSkillReference'
 import {
+  loadSelectedChatModel,
+  resolveAvailableChatModelOption,
   persistChatModelValue,
   readStoredChatModelValue,
   resolveSelectedChatModelRequest,
@@ -2021,23 +2026,6 @@ function buildImplicitChatRequest(input: {
   }
 }
 
-type AttachMenuTargetProps = React.ComponentPropsWithoutRef<typeof ActionIcon> & {
-  tooltip: string
-}
-
-const AttachMenuTarget = React.forwardRef<HTMLButtonElement, AttachMenuTargetProps>(function AttachMenuTarget(
-  { tooltip, ...props },
-  ref,
-): JSX.Element {
-  return (
-    <Tooltip className="tc-ai-chat__tooltip" label={tooltip} withArrow>
-      <ActionIcon ref={ref} className="tc-ai-chat__attach" variant="subtle" aria-label="参考图" {...props}>
-        <IconPaperclip className="tc-ai-chat__attach-icon" size={16} />
-      </ActionIcon>
-    </Tooltip>
-  )
-})
-
 function ReferenceImagesStrip({
   urls,
   onClear,
@@ -2840,33 +2828,21 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
   )
   React.useEffect(() => {
     if (chatModelOptions.length === 0) return
-    if (selectedChatModelValue) return
-    const firstValue = typeof chatModelOptions[0]?.value === 'string' ? chatModelOptions[0].value.trim() : ''
-    if (firstValue) selectChatModel(firstValue)
+    const defaultOption = resolveAvailableChatModelOption(chatModelOptions, selectedChatModelValue)
+    if (defaultOption && defaultOption.value !== selectedChatModelValue) selectChatModel(defaultOption.value)
   }, [chatModelOptions, selectChatModel, selectedChatModelValue])
+  const { settings: chatModelSettings, setSettings: setChatModelSettings } = useChatModelSettings()
+  const chatModelSettingsRef = React.useRef(chatModelSettings)
+  chatModelSettingsRef.current = chatModelSettings
   const selectedChatModelRequest = React.useMemo(
     () => resolveSelectedChatModelRequest(selectedChatModelOption),
     [selectedChatModelOption],
   )
-  // 智能团手动指派：手动选中某个子 agent → 本轮/后续发送强制由该角色干活（覆盖小T自动委派）。
-  // null = 自动（默认）。持久化到 localStorage，跨会话保留用户偏好。
-  const [forcedAgentRole, setForcedAgentRole] = React.useState<string | null>(() => {
-    try { return localStorage.getItem('tapcanvas-chat-forced-role') || null } catch { return null }
-  })
-  const [rosterOpened, setRosterOpened] = React.useState(false)
-  const [genPrefsOpened, setGenPrefsOpened] = React.useState(false)
   // 预热全局生成偏好缓存；具体模型仍必须通过实时系统模型目录验证。
   React.useEffect(() => {
     void loadGenerationPrefs().catch((error: unknown) => {
       console.error('[generation-preferences] preload failed', error)
     })
-  }, [])
-  const selectForcedRole = React.useCallback((roleId: string | null) => {
-    setForcedAgentRole(roleId)
-    try {
-      if (roleId) localStorage.setItem('tapcanvas-chat-forced-role', roleId)
-      else localStorage.removeItem('tapcanvas-chat-forced-role')
-    } catch { /* ignore */ }
   }, [])
   const [messages, setMessages] = React.useState<ChatMessage[]>(() => [])
   const pendingUserInputAnswerRef = React.useRef<{
@@ -3218,25 +3194,6 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
   React.useEffect(() => {
     chatSessionBaseKeyRef.current = chatSessionBaseKey
   }, [chatSessionBaseKey])
-  // 对话模型目录状态的实时镜像：send 是稳定回调，闭包里的 chatModelsLoading 可能还是
-  // 目录加载完成前的旧值（首页挂起 prompt 经 setTimeout 触发），直接检查会误报
-  // 「仍在加载」/「未选择模型」；程序化发送等待目录就绪后必须用实时值构建请求。
-  const chatModelsLoadingRef = React.useRef(chatModelsLoading)
-  React.useEffect(() => {
-    chatModelsLoadingRef.current = chatModelsLoading
-  }, [chatModelsLoading])
-  const chatModelsErrorRef = React.useRef(chatModelsError)
-  React.useEffect(() => {
-    chatModelsErrorRef.current = chatModelsError
-  }, [chatModelsError])
-  const selectedChatModelOptionRef = React.useRef(selectedChatModelOption)
-  React.useEffect(() => {
-    selectedChatModelOptionRef.current = selectedChatModelOption
-  }, [selectedChatModelOption])
-  const selectedChatModelRequestRef = React.useRef(selectedChatModelRequest)
-  React.useEffect(() => {
-    selectedChatModelRequestRef.current = selectedChatModelRequest
-  }, [selectedChatModelRequest])
   const selectedChatModelValueRef = React.useRef(selectedChatModelValue)
   React.useEffect(() => {
     selectedChatModelValueRef.current = selectedChatModelValue
@@ -4570,6 +4527,7 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
         sessionKey,
         queueMode,
         ...toAgentsChatModelPayload(selectedChatModelRequest),
+        ...chatModelSettingsPayload(selectedChatModelRequest.model, chatModelSettingsRef.current),
         ...(options?.generationProposal ? { chatContext: { generationProposal: options.generationProposal } } : {}),
       })
       setMessages((prev) => [...prev, {
@@ -4765,48 +4723,37 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
     const explicitDisplayText = String(options?.displayText ?? '').trim()
     const displayText = explicitDisplayText || explicitText || implicitSendRequest?.displayText || ''
     if (!requestText) return
-    // 对话模型目录就绪等待（与身份等待同一模式）：send 是稳定回调，闭包里的
-    // chatModelsLoading 可能还是目录加载完成前的旧值（首页挂起 prompt 经
-    // setTimeout 触发），直接检查会误报「仍在加载」；程序化发送在这里等待目录
-    // 就绪（上限 5s），而不是失败丢消息。目录加载失败仍如实报错，不兜底。
+    let sendChatModelOption = selectedChatModelOption
+    let sendChatModelRequest = selectedChatModelRequest
     if (shouldAwaitReadiness) {
-      const modelCatalogDeadline = Date.now() + 5_000
-      while (chatModelsLoadingRef.current && Date.now() < modelCatalogDeadline) {
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 80))
+      try {
+        const selection = await loadSelectedChatModel(selectedChatModelValueRef.current)
+        selectChatModel(selection.option.value)
+        sendChatModelOption = selection.option
+        sendChatModelRequest = selection.request
+      } catch (error: unknown) {
+        console.error('[ai-chat] model admission failed', {
+          origin: submissionOrigin,
+          selectedModel: selectedChatModelValueRef.current,
+          message: error instanceof Error ? error.message : String(error),
+        })
+        toast(error instanceof Error ? error.message : String(error), 'error')
+        return
+      }
+    } else {
+      if (chatModelsError) {
+        toast(`对话模型目录加载失败：${chatModelsError.message}`, 'error')
+        return
+      }
+      if (chatModelsLoading) {
+        toast('对话模型目录仍在加载，请等待加载完成后重试。', 'error')
+        return
       }
     }
-    const sendChatModelsError = submissionOrigin === 'composer'
-      ? chatModelsError
-      : chatModelsErrorRef.current
-    const sendChatModelsLoading = submissionOrigin === 'composer'
-      ? chatModelsLoading
-      : chatModelsLoadingRef.current
-    if (sendChatModelsError) {
-      toast(`对话模型目录加载失败：${sendChatModelsError.message}`, 'error')
-      return
-    }
-    if (sendChatModelsLoading) {
-      toast('对话模型目录仍在加载，请等待加载完成后重试。', 'error')
-      return
-    }
-    const sendChatModelOption = submissionOrigin === 'composer'
-      ? selectedChatModelOption
-      : selectedChatModelOptionRef.current
-    const sendChatModelRequest = submissionOrigin === 'composer'
-      ? selectedChatModelRequest
-      : selectedChatModelRequestRef.current
     if (!sendChatModelOption || !sendChatModelRequest) {
-      const unavailableModel = String(
-        submissionOrigin === 'composer'
-          ? selectedChatModelValue
-          : selectedChatModelValueRef.current,
-      ).trim()
-      toast(
-        unavailableModel
-          ? `对话模型 ${unavailableModel} 当前不可用，请从系统模型目录重新选择。`
-          : '未选择可用对话模型，请先从系统模型目录选择。',
-        'error',
-      )
+      toast(selectedChatModelValue
+        ? `对话模型 ${selectedChatModelValue} 当前不可用，请从系统模型目录重新选择。`
+        : '未选择可用对话模型，请先从系统模型目录选择。', 'error')
       return
     }
     if (currentProjectId) {
@@ -5168,14 +5115,12 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
           })()
         : undefined
       const workflowForcedAgentRole = String(options?.forcedAgentRole || '').trim()
-      const uiForcedAgentRole = forcedAgentRole && getTeamRole(forcedAgentRole)?.assignable
-        ? forcedAgentRole
-        : ''
       const requestPayload: AgentsChatRequestDto = {
         vendor: 'agents',
         prompt: promptPayload,
         clientPendingId: pendingId,
         ...toAgentsChatModelPayload(sendChatModelRequest),
+        ...chatModelSettingsPayload(sendChatModelRequest.model, chatModelSettingsRef.current),
         ...(displayText && displayText !== requestText ? { displayPrompt: displayText } : {}),
         ...(requestSessionKey ? { sessionKey: requestSessionKey } : {}),
         ...(resetSession ? { resetSession: true } : {}),
@@ -5254,8 +5199,8 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
             : {}),
         },
         mode: requestExecution.mode,
-        ...((workflowForcedAgentRole || uiForcedAgentRole)
-          ? { forcedAgentRole: workflowForcedAgentRole || uiForcedAgentRole }
+        ...((workflowForcedAgentRole)
+          ? { forcedAgentRole: workflowForcedAgentRole }
           : {}),
         ...(options?.allowedSubagentTypes?.length
           ? { allowedSubagentTypes: [...options.allowedSubagentTypes] }
@@ -6201,7 +6146,7 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
         void refreshChatTurnStatus()
       }
     }
-  }, [activeSkill, agentSkills, aiChatWatchAssetsEnabled, animateAssistantReply, chatModelsError, chatModelsLoading, chatSessionBaseKey, chatSessionLane, chatTurnChecking, chatTurnSnapshot, chatTurnStatusError, completeLiveChatRun, creativePhase, currentChapterCreativeOverride, currentFlowId, currentProjectId, currentProjectName, currentTurnActive, directorChatScopeNodeId, draft, effectiveChatSessionKey, enqueueRunningMessage, failLiveChatRun, forcedAgentRole, implicitSendRequest, messages, mode, recordLiveChatRunEvent, recoveredActiveTurn, refreshChatTurnStatus, replicateTargetImage, selectedCanvasNodeContext, selectedChatModelOption, selectedChatModelRequest, selectedChatModelValue, sending, startLiveChatRun])
+  }, [activeSkill, agentSkills, aiChatWatchAssetsEnabled, animateAssistantReply, chatModelsError, chatModelsLoading, chatSessionBaseKey, chatSessionLane, chatTurnChecking, chatTurnSnapshot, chatTurnStatusError, completeLiveChatRun, creativePhase, currentChapterCreativeOverride, currentFlowId, currentProjectId, currentProjectName, currentTurnActive, directorChatScopeNodeId, draft, effectiveChatSessionKey, enqueueRunningMessage, failLiveChatRun, implicitSendRequest, messages, mode, recordLiveChatRunEvent, recoveredActiveTurn, refreshChatTurnStatus, replicateTargetImage, selectedCanvasNodeContext, selectedChatModelOption, selectedChatModelRequest, selectedChatModelValue, sending, startLiveChatRun])
 
   const submitToSelectedTarget = React.useCallback(async () => {
     if (codexDispatch.target === 'agents') {
@@ -6280,8 +6225,13 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
         (cmd.queuedProjectId && cmd.queuedProjectId !== sessionScopeProjectId)
         || (cmd.queuedChapterId && cmd.queuedChapterId !== sessionScopeChapterId)
       ) {
+        submissionPreparingRef.current = false
         toast('请求所属项目或章节已切换，未向当前对话发送原画布任务。', 'error')
         return
+      }
+      if (!cmd.queuedMessageId) {
+        submissionPreparingRef.current = true
+        setSubmissionPreparing(true)
       }
       if (cmd.freshConversation) {
         // This effect is declared before the UI callback that backs the
@@ -6359,15 +6309,17 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
           : {}),
         attachCanvasContext: cmd.attachCanvasContext ?? true,
       }).finally(() => {
+        if (!cmd.queuedMessageId) {
+          submissionPreparingRef.current = false
+          setSubmissionPreparing(false)
+        }
         if (cmd.queuedMessageId && deferredFlowDispatchingNonceRef.current === cmd.nonce) {
           deferredFlowDispatchingNonceRef.current = null
         }
       })
       freshConversationBaseKeyRef.current = null
     }
-    let consumingCommand = false
     const consumeAndRun = () => {
-      if (consumingCommand) return
       const commandStore = useChatCommandStore.getState()
       const pending = commandStore.pending
       // One dialog owns one live SSE renderer. Keep an explicitly fresh task
@@ -6377,14 +6329,10 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
       // 中断确认期间不消费画布命令：send() 的 currentTurnActive 含 interruptingChatTurn，
       // 此刻消费会把它静默排进「正在被取消的回合」的 follow_up 队列（#6）。
       // 中断落定后本 effect 重跑（deps 含 interruptingChatTurn）再消费执行。
-      if (interruptingChatTurn) return
+      if (interruptingChatTurn || (submissionPreparingRef.current && !sending)) return
       if (pending) {
-        // consume() promotes the next queued command and synchronously
-        // notifies subscribers. Prevent nested consumption from reversing FIFO.
-        consumingCommand = true
-        const command = commandStore.consume()
-        consumingCommand = false
-        run(command)
+        submissionPreparingRef.current = true
+        run(commandStore.consume())
         return
       }
       const flowReady = Boolean(sessionScopeChapterId || sessionScopeFlowId || !sessionScopeProjectId)
@@ -6402,12 +6350,12 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
       if (s.pending || (s.deferredUntilFlow.length > 0 && (sessionScopeChapterId || sessionScopeFlowId || !sessionScopeProjectId))) consumeAndRun()
     })
     return unsub
-  }, [clearCreationSession, interruptingChatTurn, invalidateChatTurnRecovery, revokeCurrentTurnForConversationReset, send, sending, sessionScopeChapterId, sessionScopeFlowId, sessionScopeProjectId])
+  }, [clearCreationSession, interruptingChatTurn, invalidateChatTurnRecovery, revokeCurrentTurnForConversationReset, send, sending, submissionPreparing, sessionScopeChapterId, sessionScopeFlowId, sessionScopeProjectId])
 
   // 把「回合在飞」状态同步给选项卡等对话外组件（DataCardViews 据此提示"点选后排队发送"）。
   React.useEffect(() => {
-    useChatCommandStore.getState().setBusy(currentTurnActive)
-  }, [currentTurnActive])
+    useChatCommandStore.getState().setBusy(currentTurnActive || submissionPreparing)
+  }, [currentTurnActive, submissionPreparing])
 
   // 写 base：有项目作用域时只写该作用域的槽位（旋转不传染其他项目/章节）；
   // 无作用域（首页）回落到全局遗留单值。
@@ -6971,66 +6919,6 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
     referenceImages.length > 0 ? 'tc-ai-chat__composer-shell--with-refs' : '',
   ].filter(Boolean).join(' ')
 
-  const attachMenu = (
-    <Menu className="tc-ai-chat__attach-menu" position="top-start" zIndex={10050}>
-      <Menu.Target>
-        <AttachMenuTarget tooltip={$('添加参考图或文本文件（可直接拖进输入框）')} />
-      </Menu.Target>
-      <Menu.Dropdown className="tc-ai-chat__attach-dropdown">
-        <Menu.Label className="tc-ai-chat__attach-label">{$('文本')}</Menu.Label>
-        <Menu.Item
-          className="tc-ai-chat__attach-item"
-          leftSection={<IconFileText className="tc-ai-chat__attach-item-icon" size={16} />}
-          onClick={() => textFileInputRef.current?.click()}
-          disabled={currentTurnActive || importingText}
-        >
-          {$('上传文本（txt/md/docx）')}
-        </Menu.Item>
-        <Menu.Divider className="tc-ai-chat__attach-divider" />
-        <Menu.Label className="tc-ai-chat__attach-label">{$('参考图')}</Menu.Label>
-        <Menu.Item
-          className="tc-ai-chat__attach-item"
-          leftSection={<IconPhoto className="tc-ai-chat__attach-item-icon" size={16} />}
-          onClick={() => void addSelectedCanvasImagesAsReferences()}
-          disabled={currentTurnActive || refsLoading}
-        >
-          {$('使用画布选中图片')}
-        </Menu.Item>
-        <Menu.Item
-          className="tc-ai-chat__attach-item"
-          leftSection={<IconUpload className="tc-ai-chat__attach-item-icon" size={16} />}
-          onClick={() => fileInputRef.current?.click()}
-          disabled={currentTurnActive || refsLoading}
-        >
-          {$('上传参考图')}
-        </Menu.Item>
-        <Menu.Divider className="tc-ai-chat__attach-divider" />
-        <Menu.Item
-          className="tc-ai-chat__attach-item"
-          leftSection={<IconTrash className="tc-ai-chat__attach-item-icon" size={16} />}
-          onClick={clearReferenceImages}
-          disabled={currentTurnActive || refsLoading || referenceImages.length === 0}
-        >
-          {$('清空参考图')}
-        </Menu.Item>
-      </Menu.Dropdown>
-    </Menu>
-  )
-
-  // 全局生成偏好：生图模型/视频模型/规格，弹窗设置，服务端持久化（小T 上下文注入生效）。
-  const generationPrefsControl = (
-    <Tooltip className="tc-ai-chat__tooltip" label={$('生成偏好（生图/视频模型与规格）')} withArrow>
-      <ActionIcon
-        className="tc-ai-chat__attach"
-        variant="subtle"
-        aria-label="生成偏好"
-        onClick={() => setGenPrefsOpened(true)}
-      >
-        <IconPhotoCog className="tc-ai-chat__attach-icon" size={16} />
-      </ActionIcon>
-    </Tooltip>
-  )
-
   const skillLibraryControl = (
     <SkillPickerPopover
       selectionMode="single"
@@ -7069,76 +6957,6 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
     </Tooltip>
   )
 
-  // 智能团花名册 + 手动指派：查看小T与四个子 agent，可手动选「本轮由谁干活」。
-  const forcedRole = getTeamRole(forcedAgentRole)
-  const teamRosterControl = (
-    <Popover
-      opened={rosterOpened}
-      onChange={setRosterOpened}
-      position="top-start"
-      width={300}
-      withArrow
-      shadow="md"
-      zIndex={10050}
-    >
-      <Popover.Target>
-        <Tooltip className="tc-ai-chat__tooltip" label={$('智能团')} withArrow>
-          <ActionIcon
-            className={`tc-ai-chat__team-btn${forcedRole?.assignable ? ' tc-ai-chat__team-btn--active' : ''}`}
-            variant="subtle"
-            aria-label="智能团"
-            onClick={() => setRosterOpened((v) => !v)}
-          >
-            {forcedRole?.assignable ? (
-              <img className="tc-ai-chat__team-btn-avatar" src={forcedRole.avatar} alt={forcedRole.name} />
-            ) : (
-              <IconUsersGroup size={18} />
-            )}
-          </ActionIcon>
-        </Tooltip>
-      </Popover.Target>
-      <Popover.Dropdown className="tc-ai-chat__roster">
-        <div className="tc-ai-chat__roster-head">
-          <img className="tc-ai-chat__roster-lead-avatar" src={XIAOT_ROLE.avatar} alt={XIAOT_ROLE.name} />
-          <div className="tc-ai-chat__roster-lead-meta">
-            <Text className="tc-ai-chat__roster-lead-name" fw={600} size="sm">{XIAOT_ROLE.name}</Text>
-            <Text className="tc-ai-chat__roster-lead-desc" size="xs" c="dimmed">{XIAOT_ROLE.description}</Text>
-          </div>
-        </div>
-        <Text className="tc-ai-chat__roster-section" size="xs" c="dimmed">{$('本轮由谁干活')}</Text>
-        <button
-          type="button"
-          className={`tc-ai-chat__roster-item${!forcedRole?.assignable ? ' tc-ai-chat__roster-item--selected' : ''}`}
-          onClick={() => { selectForcedRole(null); setRosterOpened(false) }}
-        >
-          <span className="tc-ai-chat__roster-auto-icon"><IconSparkles size={18} /></span>
-          <span className="tc-ai-chat__roster-item-meta">
-            <span className="tc-ai-chat__roster-item-name">{$('自动（小T 智能委派）')}</span>
-            <span className="tc-ai-chat__roster-item-desc">{$('由小T按 SOP 自动分配最合适的角色')}</span>
-          </span>
-        </button>
-        {TEAM_ROLES.map((role: TeamRole) => {
-          const selected = forcedAgentRole === role.id
-          return (
-            <button
-              key={role.id}
-              type="button"
-              className={`tc-ai-chat__roster-item${selected ? ' tc-ai-chat__roster-item--selected' : ''}`}
-              style={selected ? { borderColor: role.accent } : undefined}
-              onClick={() => { selectForcedRole(selected ? null : role.id); setRosterOpened(false) }}
-            >
-              <img className="tc-ai-chat__roster-item-avatar" src={role.avatar} alt={role.name} style={{ borderColor: role.accent }} />
-              <span className="tc-ai-chat__roster-item-meta">
-                <span className="tc-ai-chat__roster-item-name">{role.name}</span>
-                <span className="tc-ai-chat__roster-item-desc">{role.description}</span>
-              </span>
-            </button>
-          )
-        })}
-      </Popover.Dropdown>
-    </Popover>
-  )
-
   const selectedChatModelUnavailable = Boolean(
     selectedChatModelValue && !selectedChatModelOption && !chatModelsLoading && !chatModelsError,
   )
@@ -7162,26 +6980,18 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
         : $('无可用模型')
   const chatModelControl = (
     <div className="tc-ai-chat__model-control">
+      {chatModelsLoading ? <Text className="ai-chat-dialog__text" size="xs" role="status">正在加载对话模型…</Text> : null}
+      {chatModelsError ? <Text className="ai-chat-dialog__text" size="xs" c="red" role="alert">模型加载失败：{chatModelsError.message}</Text> : null}
       <Tooltip className="tc-ai-chat__tooltip" label={chatModelControlLabel} withArrow>
-        <Select
-          className="tc-ai-chat__model-select"
-          classNames={{
-            input: 'tc-ai-chat__model-select-input',
-            dropdown: 'tc-ai-chat__model-select-dropdown',
-            option: 'tc-ai-chat__model-select-option',
-          }}
-          data={chatModelSelectData}
-          value={selectedChatModelOption ? selectedChatModelValue : null}
-          onChange={selectChatModel}
+        <ChatModelControl
+          options={chatModelSelectData}
+          value={selectedChatModelOption?.value ?? null}
+          onModelChange={selectChatModel}
           placeholder={chatModelPlaceholder}
-          size="xs"
-          variant="unstyled"
-          allowDeselect={false}
-          searchable
+          capabilities={selectedModelCapabilities(selectedChatModelOption)}
+          settings={chatModelSettings}
+          onSettingsChange={setChatModelSettings}
           disabled={currentTurnActive || chatModelsLoading || chatModelSelectData.length === 0}
-          rightSection={<IconChevronDown className="tc-ai-chat__model-select-chevron" size={14} />}
-          rightSectionPointerEvents="none"
-          comboboxProps={{ zIndex: 10050 }}
         />
       </Tooltip>
       {chatModelsError ? (
@@ -7233,10 +7043,9 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
         multiple
         onChange={onPickTextFiles}
       />
-      <GenerationPrefsModal opened={genPrefsOpened} onClose={() => setGenPrefsOpened(false)} />
       {skillLibraryOpen ? (
         <AppErrorBoundary title="技能库加载失败" onDismiss={() => setSkillLibraryOpen(false)}>
-          <React.Suspense fallback={<div className="tc-skill-library-loading" aria-label="技能库加载中" />}>
+          <React.Suspense fallback={<AsyncDialogLoading onClose={() => setSkillLibraryOpen(false)} />}>
             <SkillLibraryDialog
               opened
               onClose={() => setSkillLibraryOpen(false)}
@@ -7349,11 +7158,10 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
                         <div className="tc-ai-chat__composer-tools">
                           {codexDispatch.target === 'agents' ? (
                             <div className="tc-ai-chat__agents-tools">
-                              {attachMenu}
+
                               {skillLibraryControl}
-                              {generationPrefsControl}
                               {voiceInputControl}
-                              {teamRosterControl}
+
                               {chatModelControl}
                               {creativePhase === 'writing' ? (
                                 <Button className="tc-ai-chat__restart-prep" size="xs" variant="subtle" color="dimmed" px={6} onClick={restartPrep} disabled={currentTurnActive}>
@@ -7589,7 +7397,7 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
                               key={action.key}
                               type="button"
                               className="tc-ai-chat__starter-chip"
-                              disabled={currentTurnActive}
+                              disabled={currentTurnActive || action.disabled === true}
                               onClick={() => void runQuickPreset(action)}
                             >
                               {action.label}
@@ -7714,11 +7522,10 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
                   <div className="tc-ai-chat__composer-tools">
                     {codexDispatch.target === 'agents' ? (
                       <div className="tc-ai-chat__agents-tools">
-                        {attachMenu}
+
                         {skillLibraryControl}
-                        {generationPrefsControl}
                         {voiceInputControl}
-                        {teamRosterControl}
+
                         {chatModelControl}
                       </div>
                     ) : null}

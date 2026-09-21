@@ -1,3 +1,6 @@
+import { imageModelParameterExtras } from '../config/imageModelParameters'
+import { compileImageGenerationExtras } from '../config/imageGenerationContract'
+import { buildImageBillingSpecKeyForOption } from '../canvas/nodes/taskNode/mediaModelControls'
 import type { Edge, Node } from '@xyflow/react'
 import {
   createImageOperationState,
@@ -25,9 +28,9 @@ import {
   listProjectRoleCardAssets,
   listMaterialAssets,
   listServerAssets,
-  runPublicTask,
+  runPublicTaskWithAuth,
   uploadServerAssetFile,
-  fetchPublicTaskResult,
+  fetchPublicTaskResultWithAuth,
   upsertProjectBookRoleCard,
   upsertProjectBookSemanticAsset,
   upsertProjectBookVisualRef,
@@ -153,8 +156,8 @@ import {
 
 configureTaskHub({
   fetch: async (taskId, kind, prompt) => {
-    const { apiKey } = requirePublicApiRuntime()
-    const res = await fetchPublicTaskResult(apiKey, {
+    requireCanvasAuthRuntime()
+    const res = await fetchPublicTaskResultWithAuth({
       taskId: taskId.trim(),
       taskKind: kind,
       prompt,
@@ -207,29 +210,27 @@ function readTrimmedRunnerText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function normalizeImageBillingSpecSegment(value: unknown): string {
-  const raw = readTrimmedRunnerText(value).toLowerCase()
-  if (!raw) return ''
-  return raw.replace(/:/g, '_').replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
-}
-
-function buildImageBillingSpecKey(input: {
+async function buildImageBillingSpecKey(input: {
   modelKey: string
   aspectRatio: string
   imageSize?: string
   resolution?: string
   quality?: string
-}): string | null {
-  const resolution =
-    normalizeImageBillingSpecSegment(input.resolution) ||
-    normalizeImageBillingSpecSegment(input.imageSize)
-  if (!resolution) return null
-  const modelKey = input.modelKey.trim().toLowerCase()
-  const quality = normalizeImageBillingSpecSegment(input.quality)
-	if (modelKey.includes('gpt-image-2')) {
-		return `image:${resolution}:${quality || 'low'}`
+}): Promise<string | null> {
+  const options = await preloadModelOptions('image')
+  const option = findModelOptionByIdentifier(options, input.modelKey)
+  if (!option) throw new Error(`图片模型 ${input.modelKey} 不在当前可用模型目录中`)
+  const specKey = buildImageBillingSpecKeyForOption({
+    modelOption: option,
+    aspect: input.aspectRatio,
+    imageSize: input.imageSize || '',
+    imageResolution: input.resolution || '',
+    imageQuality: input.quality,
+  })
+  if (!specKey && option.pricing?.specCosts.some((spec) => spec.enabled)) {
+    throw new Error(`图片模型 ${input.modelKey} 当前参数没有匹配的上游定价规格`)
   }
-  return null
+  return specKey
 }
 
 export function buildCharacterBiblePromptHint(data: unknown): string {
@@ -1377,17 +1378,16 @@ function isRunTokenActive(getState: Getter, id: string, runToken: string): boole
   return readNodeRunToken(getState, id) === runToken
 }
 
-function requirePublicApiRuntime(): { apiKey: string; vendorCandidates?: string[] } {
-  const ui = useUIStore.getState() as any
-  const apiKey = typeof ui?.publicApiKey === 'string' ? ui.publicApiKey.trim() : ''
-	if (!apiKey && !hasAuthSession()) {
+function requireCanvasAuthRuntime(): { vendorCandidates?: string[] } {
+  const ui = useUIStore.getState()
+  if (!hasAuthSession()) {
     throw new Error('未登录：请先登录后再试')
   }
-  const candidates = Array.isArray(ui?.publicVendorCandidates) ? ui.publicVendorCandidates : []
+  const candidates = ui.publicVendorCandidates
   const vendorCandidates = candidates
-    .map((v: any) => (typeof v === 'string' ? v.trim() : ''))
+    .map((v: string) => v.trim())
     .filter(Boolean)
-  return { apiKey, ...(vendorCandidates.length ? { vendorCandidates } : {}) }
+  return vendorCandidates.length ? { vendorCandidates } : {}
 }
 
 const TASK_LOG_REQUEST_MAX_CHARS = 12000
@@ -1504,9 +1504,9 @@ async function runTaskByVendor(vendor: string, request: TaskRequestDto): Promise
   if (!normalizedVendor) {
     throw new Error('vendor is required')
   }
-  const { apiKey, vendorCandidates } = requirePublicApiRuntime()
+  const { vendorCandidates } = requireCanvasAuthRuntime()
   const contextualRequest = withCanvasGenerationContext(request, useUIStore.getState())
-  const res = await runPublicTask(apiKey, {
+  const res = await runPublicTaskWithAuth({
     vendor: normalizedVendor,
     ...(normalizedVendor === 'auto' && vendorCandidates ? { vendorCandidates } : {}),
     request: contextualRequest,
@@ -1554,7 +1554,7 @@ function beginPendingRequestProgress(
 }
 
 async function runTaskByVendorWithPendingProgress(
-  ctx: Pick<RunnerContext, 'id' | 'setNodeStatus' | 'isCanceled'>,
+  ctx: Pick<RunnerContext, 'id' | 'data' | 'setNodeStatus' | 'isCanceled'>,
   options: {
     vendor: string
     request: TaskRequestDto
@@ -1573,7 +1573,18 @@ async function runTaskByVendorWithPendingProgress(
     stepMs: options.stepMs,
   })
   try {
-    const result = await runTaskByVendor(options.vendor, options.request)
+    const request = options.request
+    let submittedRequest = request
+    if (request.kind === 'text_to_image' || request.kind === 'image_edit') {
+      const modelIdentifier = String(request.extras?.modelKey || request.extras?.modelAlias || '').trim()
+      const modelOption = findModelOptionByIdentifier(await preloadModelOptions('image'), modelIdentifier)
+      if (!modelOption) throw new Error(`当前图片模型不在可用目录中：${modelIdentifier}`)
+      submittedRequest = { ...request, extras: compileImageGenerationExtras({
+        quality: readTrimmedRunnerText(ctx.data.imageQuality), ...request.extras,
+        ...imageModelParameterExtras(ctx.data, modelIdentifier),
+      }, modelOption) }
+    }
+    const result = await runTaskByVendor(options.vendor, submittedRequest)
     return {
       result,
       requestProgress: stopProgress(),
@@ -1594,7 +1605,7 @@ async function runChatByVendor(vendor: string, payload: {
   if (!normalizedVendor) {
     throw new Error('vendor is required')
   }
-  const { vendorCandidates } = requirePublicApiRuntime()
+  const { vendorCandidates } = requireCanvasAuthRuntime()
   const res = await agentsChat({
     vendor: normalizedVendor,
     ...(normalizedVendor === 'auto' && vendorCandidates ? { vendorCandidates } : {}),
@@ -1641,8 +1652,8 @@ async function fetchTaskResult(
   taskKind?: TaskKind,
   prompt?: string | null,
 ): Promise<TaskResultDto> {
-  const { apiKey } = requirePublicApiRuntime()
-  const res = await fetchPublicTaskResult(apiKey, {
+  requireCanvasAuthRuntime()
+  const res = await fetchPublicTaskResultWithAuth({
     taskId: taskId.trim(),
     ...(taskKind ? { taskKind } : {}),
     ...(typeof prompt === 'string' ? { prompt } : {}),
@@ -4325,7 +4336,7 @@ async function runStoryboardImageTask(ctx: RunnerContext) {
       referenceImages,
       enabled: wantsImageEdit && !mergedRoleReferenceSheet,
     })
-    const imageBillingSpecKey = buildImageBillingSpecKey({
+    const imageBillingSpecKey = await buildImageBillingSpecKey({
       modelKey: selectedModel,
       aspectRatio: gridLayout.sheetAspectRatio,
       imageSize: imageSizeSetting,
@@ -4779,7 +4790,7 @@ async function runSingleFissionGrid(input: {
   ctx.setNodeStatus(id, 'running', { progress: progressBase })
   ctx.appendLog(id, `[${nowLabel()}] 生成裂变网格（${gridIdx + 1}/${desiredGrids}）…`)
 
-  const imageBillingSpecKey = buildImageBillingSpecKey({
+  const imageBillingSpecKey = await buildImageBillingSpecKey({
     modelKey: selectedModel,
     aspectRatio: settings.resolvedAspect,
     imageSize: imageSizeSetting,
@@ -5111,7 +5122,7 @@ async function runStoryboardEditorTask(ctx: RunnerContext) {
         `[${nowLabel()}] 生成 ${cell.executionLabel}（${index + 1}/${executableCells.length}，${cellAspect}）…`,
       )
 
-      const imageBillingSpecKey = buildImageBillingSpecKey({
+      const imageBillingSpecKey = await buildImageBillingSpecKey({
         modelKey: selectedModel,
         aspectRatio: cellAspect,
         imageSize: imageSizeSetting,
@@ -5716,7 +5727,7 @@ async function runGenericTask(ctx: RunnerContext) {
       )
 
       const imageBillingSpecKey = isImageTask
-        ? buildImageBillingSpecKey({
+        ? await buildImageBillingSpecKey({
             modelKey: selectedModel,
             aspectRatio,
             imageSize: imageSizeSetting,

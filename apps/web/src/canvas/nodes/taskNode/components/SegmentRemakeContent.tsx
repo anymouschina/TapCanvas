@@ -11,24 +11,28 @@ import {
 } from '@tabler/icons-react'
 import { NodeToolbar, Position } from '@xyflow/react'
 import { captureFramesAtTimes } from '../../../../utils/videoFrameExtractor'
-
-export type SegmentRemakeRange = {
-  start: number
-  end: number
-}
+import {
+  MAX_SEGMENT_REMAKE_RANGES,
+  normalizeSegmentRemakeRanges,
+  type SegmentRemakeRange,
+} from '../segmentRemakeContract'
 
 type SegmentRemakeContentProps = {
   videoUrl: string
   videoDuration: number
   videoTitle?: string | null
   initialRanges?: SegmentRemakeRange[]
+  onRangesChange?: (ranges: SegmentRemakeRange[]) => void
   prompt: string
   onPromptChange: (value: string) => void
   onConfirm: (ranges: SegmentRemakeRange[], prompt: string) => Promise<void> | void
   onReference: () => void
   onCharacterLibrary: () => void
   onFullscreen: () => void
-  quickActions?: () => React.ReactNode
+  quickActions?: (context: {
+    markerActive: boolean
+    onMarker: () => void
+  }) => React.ReactNode
   modelValue?: string | null
   modelOptions?: Array<{ value: string; label: string }>
   onModelChange?: (value: string) => void
@@ -45,7 +49,7 @@ type TimelineFrame = {
   objectUrl: string
 }
 
-const MAX_RANGES = 5
+const EMPTY_RANGES: SegmentRemakeRange[] = []
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
@@ -69,7 +73,8 @@ export function SegmentRemakeContent({
   videoUrl,
   videoDuration,
   videoTitle,
-  initialRanges = [],
+  initialRanges = EMPTY_RANGES,
+  onRangesChange,
   prompt,
   onPromptChange,
   onConfirm,
@@ -91,20 +96,31 @@ export function SegmentRemakeContent({
   const videoRef = React.useRef<HTMLVideoElement>(null)
   const promptEditorRef = React.useRef<HTMLDivElement>(null)
   const [currentTime, setCurrentTime] = React.useState(0)
-  const [ranges, setRanges] = React.useState<SegmentRemakeRange[]>(() => initialRanges.slice(0, MAX_RANGES))
+  const [ranges, setRanges] = React.useState<SegmentRemakeRange[]>(() => initialRanges.slice(0, MAX_SEGMENT_REMAKE_RANGES))
   const [draftRange, setDraftRange] = React.useState<SegmentRemakeRange | null>(null)
   const dragStartRef = React.useRef<number | null>(null)
   const [frames, setFrames] = React.useState<TimelineFrame[]>([])
   const [framesState, setFramesState] = React.useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [submitting, setSubmitting] = React.useState(false)
+  const [submitError, setSubmitError] = React.useState<string | null>(null)
 
   const duration = Math.max(0, Number.isFinite(videoDuration) ? videoDuration : 0)
   const [mediaDuration, setMediaDuration] = React.useState(duration)
   const effectiveDuration = mediaDuration > 0 ? mediaDuration : duration
 
+  const commitRanges = React.useCallback((nextRanges: readonly SegmentRemakeRange[]) => {
+    const normalized = normalizeSegmentRemakeRanges(nextRanges, effectiveDuration)
+    setRanges(normalized)
+    onRangesChange?.(normalized)
+  }, [effectiveDuration, onRangesChange])
+
   React.useEffect(() => {
     setMediaDuration(duration)
   }, [duration])
+
+  React.useEffect(() => {
+    setRanges(normalizeSegmentRemakeRanges(initialRanges, effectiveDuration))
+  }, [effectiveDuration, initialRanges])
 
   React.useEffect(() => {
     const editor = promptEditorRef.current
@@ -152,11 +168,11 @@ export function SegmentRemakeContent({
   }
 
   const handleMark = () => {
-    if (readOnly || effectiveDuration <= 0 || ranges.length >= MAX_RANGES) return
+    if (readOnly || effectiveDuration <= 0 || ranges.length >= MAX_SEGMENT_REMAKE_RANGES) return
     const start = clampTime(currentTime, effectiveDuration)
     const end = clampTime(Math.min(effectiveDuration, start + Math.max(0.5, Math.min(2.5, effectiveDuration / 5))), effectiveDuration)
     if (end <= start) return
-    setRanges((previous) => [...previous, { start, end }])
+    commitRanges([...ranges, { start, end }])
   }
 
   const readTimelineTime = (event: React.PointerEvent<HTMLDivElement>): number => {
@@ -167,7 +183,7 @@ export function SegmentRemakeContent({
   }
 
   const handleTimelinePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (readOnly || effectiveDuration <= 0 || ranges.length >= MAX_RANGES) return
+    if (readOnly || effectiveDuration <= 0 || ranges.length >= MAX_SEGMENT_REMAKE_RANGES) return
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
     const start = readTimelineTime(event)
@@ -191,7 +207,7 @@ export function SegmentRemakeContent({
     dragStartRef.current = null
     setDraftRange((draft) => {
       if (draft && draft.end - draft.start >= 0.1) {
-        setRanges((previous) => [...previous, draft].slice(0, MAX_RANGES))
+        commitRanges([...ranges, draft])
       }
       return null
     })
@@ -199,14 +215,17 @@ export function SegmentRemakeContent({
 
   const handleRemoveRange = (index: number) => {
     if (readOnly) return
-    setRanges((previous) => previous.filter((_, rangeIndex) => rangeIndex !== index))
+    commitRanges(ranges.filter((_, rangeIndex) => rangeIndex !== index))
   }
 
   const handleSubmit = async () => {
     if (readOnly || submitting || !videoUrl) return
     setSubmitting(true)
+    setSubmitError(null)
     try {
       await onConfirm(ranges, prompt)
+    } catch (error: unknown) {
+      setSubmitError(error instanceof Error ? error.message : '片段重拍提交失败')
     } finally {
       setSubmitting(false)
     }
@@ -245,7 +264,6 @@ export function SegmentRemakeContent({
         <button type="button" aria-label="全屏编辑" onClick={handleFullscreen} className="nodrag nopan" style={{ position: 'absolute', top: 10, right: 10, zIndex: 4, width: 34, height: 34, border: 0, borderRadius: 8, background: 'rgba(20,20,20,.72)', color: '#fff', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
           <IconMaximize size={17} />
         </button>
-        <div aria-hidden="true" className="nodrag nopan" style={{ position: 'absolute', inset: '0 0 80px', zIndex: 3, cursor: readOnly ? 'default' : 'grab' }} />
       </div>
 
       <NodeToolbar position={Position.Bottom} align="center" offset={12} className="segment-remake-floating-editor nodrag nopan">
@@ -273,12 +291,12 @@ export function SegmentRemakeContent({
         </div>
             <input data-segment-remake-playhead="true" aria-label="回放进度" className="nodrag nopan" type="range" min={0} max={effectiveDuration || 1} step={0.01} value={currentTime} onChange={handlePlayheadChange} style={{ width: '100%', height: 8, margin: '-1px 0 0', accentColor: '#fff' }} />
           </div>
-          <span style={{ flexShrink: 0, fontSize: 12, color: 'rgba(255,255,255,.62)', fontVariantNumeric: 'tabular-nums' }}>{ranges.length}/{MAX_RANGES} 个片段</span>
+          <span className="segment-remake-content__span" style={{ flexShrink: 0, fontSize: 12, color: 'rgba(255,255,255,.62)', fontVariantNumeric: 'tabular-nums' }}>{ranges.length}/{MAX_SEGMENT_REMAKE_RANGES} 个片段</span>
         </div>
 
         {quickActions ? (
           <div className="segment-remake-secondary-tabs" aria-label="视频二级能力">
-            {quickActions()}
+            {quickActions({ markerActive: ranges.length > 0, onMarker: handleMark })}
           </div>
         ) : null}
 
@@ -323,14 +341,16 @@ export function SegmentRemakeContent({
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <button type="button" onClick={onReference} disabled={readOnly} className="nodrag nopan" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, border: 0, borderRadius: 999, padding: '4px 8px', background: 'rgba(255,255,255,.06)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: 1.3 }}><IconPlus size={14} /> 参考</button>
-        <button type="button" onClick={handleMark} disabled={readOnly || ranges.length >= MAX_RANGES} className="nodrag nopan" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, border: 0, borderRadius: 999, padding: '4px 8px', background: 'rgba(255,255,255,.06)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: 1.3, opacity: ranges.length >= MAX_RANGES ? .45 : 1 }}><IconTag size={14} /> 标记片段</button>
+        <button type="button" onClick={handleMark} disabled={readOnly || ranges.length >= MAX_SEGMENT_REMAKE_RANGES} className="nodrag nopan" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, border: 0, borderRadius: 999, padding: '4px 8px', background: 'rgba(255,255,255,.06)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: 1.3, opacity: ranges.length >= MAX_SEGMENT_REMAKE_RANGES ? .45 : 1 }}><IconTag className="segment-remake-content__icon-tag" size={14} /> 标记片段</button>
         <button type="button" onClick={onCharacterLibrary} disabled={readOnly} className="nodrag nopan" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, border: 0, borderRadius: 999, padding: '4px 8px', background: 'rgba(255,255,255,.06)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: 1.3 }}><IconUsers size={14} /> 角色库</button>
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'rgba(255,255,255,.45)' }}>最长 5 个片段</span>
       </div>
 
+      {submitError ? <div role="alert" className="segment-remake-submit-error">{submitError}</div> : null}
+
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <button type="button" onClick={() => { setRanges([]); setCurrentTime(0); if (videoRef.current) videoRef.current.currentTime = 0 }} disabled={readOnly || submitting} aria-label="重置片段" className="nodrag nopan" style={{ marginLeft: 'auto', width: 30, height: 30, border: 0, borderRadius: 7, background: 'rgba(255,255,255,.08)', color: '#fff', display: 'grid', placeItems: 'center', cursor: 'pointer' }}><IconRefresh size={15} /></button>
-        <button type="button" onClick={() => { void handleSubmit() }} disabled={readOnly || submitting} aria-label="确认片段重拍" className="nodrag nopan" style={{ width: 38, height: 34, border: 0, borderRadius: 9, background: '#fff', color: '#151515', display: 'grid', placeItems: 'center', cursor: 'pointer', opacity: submitting ? .65 : 1 }}><IconCheck size={19} /></button>
+        <button type="button" onClick={() => { commitRanges([]); setCurrentTime(0); if (videoRef.current) videoRef.current.currentTime = 0 }} disabled={readOnly || submitting} aria-label="重置片段" className="nodrag nopan" style={{ marginLeft: 'auto', width: 30, height: 30, border: 0, borderRadius: 7, background: 'rgba(255,255,255,.08)', color: '#fff', display: 'grid', placeItems: 'center', cursor: 'pointer' }}><IconRefresh className="segment-remake-content__icon-refresh" size={15} /></button>
+        <button type="button" onClick={() => { void handleSubmit() }} disabled={readOnly || submitting} aria-label="确认片段重拍" title={submitting ? '正在准备参考片段…' : '确认片段重拍'} className="nodrag nopan" style={{ width: 38, height: 34, border: 0, borderRadius: 9, background: '#fff', color: '#151515', display: 'grid', placeItems: 'center', cursor: submitting ? 'wait' : 'pointer', opacity: submitting ? .65 : 1 }}><IconCheck className="segment-remake-content__icon-check" size={19} /></button>
       </div>
         </div>
       </NodeToolbar>

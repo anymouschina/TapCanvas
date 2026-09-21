@@ -38,7 +38,7 @@ describe("assetRouter book upload integration", () => {
 		await cleanupBookUploadTestRepo(repoRoot);
 	});
 
-	it("preserves raw bytes, builds verifiable evidence, and reuses the finalized job", async () => {
+	it.each(["utf-8", "gb18030"])("imports %s, preserves raw bytes, builds verifiable evidence, and reuses the finalized job", async (encoding) => {
 		const app = createBookUploadTestApp();
 		const rawText = [
 			"第一章 雨夜",
@@ -47,7 +47,9 @@ describe("assetRouter book upload integration", () => {
 			"第二章 密室",
 			"银钥匙藏在旧钟背后，只有林舟知道。",
 		].join("\n");
-		const sourceBytes = new TextEncoder().encode(rawText);
+		const sourceBytes = encoding === "utf-8"
+			? new TextEncoder().encode(rawText)
+			: new Uint8Array(Buffer.from("b5dad2bbd5c220d3ead2b90ac1d6d6dbcdc6bfaac3c5a3acb3b1caaab5c4b7e7b4b5c3f0c1cbb5c6a1a30a0ab5dab6fed5c220c3dccad20ad2f8d4bfb3d7b2d8d4dabec9d6d3b1b3baf3a3acd6bbd3d0c1d6d6dbd6aab5c0a1a3", "hex"));
 		const started = await startUpload({
 			app,
 			title: "雨夜密室",
@@ -151,6 +153,7 @@ describe("assetRouter book upload integration", () => {
 			sourceByteLength: sourceBytes.byteLength,
 			sourceSha256: sha256Hex(sourceBytes),
 			sourceTextSha256: sha256Hex(rawText),
+			sourceEncoding: encoding,
 		});
 		expect(persistedIndex.evidenceIndex).toMatchObject({
 			schemaVersion: "book-evidence-index/v1",
@@ -228,7 +231,7 @@ describe("assetRouter book upload integration", () => {
 			id: finishPayload.job.id,
 			status: "failed",
 			error: {
-				code: "BOOK_SOURCE_INVALID_UTF8",
+				code: "BOOK_SOURCE_INVALID_TEXT_ENCODING",
 			},
 		});
 		await waitForPathMissing(buildUploadSourcePath(repoRoot, started.uploadId));
@@ -245,7 +248,7 @@ describe("assetRouter book upload integration", () => {
 				id: finishPayload.job.id,
 				status: "failed",
 				error: {
-					code: "BOOK_SOURCE_INVALID_UTF8",
+					code: "BOOK_SOURCE_INVALID_TEXT_ENCODING",
 				},
 			},
 		});

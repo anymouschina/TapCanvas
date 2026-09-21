@@ -139,3 +139,15 @@ test("rejects a response that differs from the terminal workflow output", () => 
   assert.equal(closure.succeeded, false);
   assert.equal(closure.runOutcome.reason, "delivery_verification_missing");
 });
+
+test('preserves the upstream failure message instead of reporting an unexplained incomplete turn', () => {
+  const message = '403: {"code":"pre_consume_token_quota_failed","message":"token quota is not enough"}';
+  const closure = buildHarnessDeliveryClosure({
+    turnContext: { logicalTaskId: 'failed-provider-turn' }, text: '', harnessCompleted: false,
+    termination: { kind: 'error', error: { code: 'AUTH', message } },
+  });
+  assert.equal(closure.succeeded, false);
+  assert.equal(closure.runOutcome.reason, 'deepseek_harness_provider_error');
+  assert.equal(closure.runOutcome.message, message);
+  assert.equal(closure.completion.rationale, message);
+});

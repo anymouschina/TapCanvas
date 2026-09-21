@@ -27,6 +27,7 @@ test("parses direct and deferred TapCanvas tool surfaces without exposing secret
     remoteTools: [{
       name: "tapcanvas_flow_get",
       description: "Read the current flow",
+      execution: { sideEffect: "none" },
       parameters: { type: "object", properties: {} },
     }],
     remoteToolCatalog: [{
@@ -35,11 +36,16 @@ test("parses direct and deferred TapCanvas tool surfaces without exposing secret
       schemaDeferred: true,
       requiredScope: ["project", "canvas"],
       capability: "paid_media_generation",
+      execution: { sideEffect: "paid_generation" },
+      operationExecutions: [{ selector: { field: "operation", value: "inspect" }, execution: { sideEffect: "none" } }],
     }],
     remoteToolConfig: { endpoint: "https://api.example/agents/tools/execute" },
   });
 
   assert.equal(request.remoteTools.length, 1);
+  assert.equal(request.remoteTools[0]?.execution?.sideEffect, "none");
+  assert.equal(request.remoteToolCatalog[0]?.execution?.sideEffect, "paid_generation");
+  assert.equal(request.remoteToolCatalog[0]?.operationExecutions?.length, 1);
   assert.equal(request.remoteToolCatalog.length, 1);
   assert.equal(request.remoteToolCatalog[0]?.schemaDeferred, true);
   assert.deepEqual(request.turnContext, {

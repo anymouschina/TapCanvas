@@ -58,6 +58,12 @@ export function VideoNodePreview({
       ) : (
         <MediaEmptyState kind="video" overview={overview} onAction={onEmptyAction} />
       )}
+      {!src && poster && (
+        <span className="video-node-preview__span" style={{ position: 'absolute', left: 8, bottom: 8, padding: '4px 8px', borderRadius: 6,
+          background: 'rgba(0,0,0,0.72)', color: '#fff', fontSize: 12, pointerEvents: 'none' }}>
+          参考图预览 · 尚无视频结果
+        </span>
+      )}
     </div>
   )
 }

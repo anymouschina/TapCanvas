@@ -7,10 +7,10 @@ import { ManagedImage } from '../../../../domain/resource-runtime'
 import { useUIStore } from '../../../../ui/uiStore'
 
 type UpstreamReferenceStripProps = {
+  submissionRecord?: React.ReactNode
   targetNodeId: string
   items: OrderedUpstreamReferenceItem[]
   onRemove: (edgeId: string) => void
-  onDeleteSourceNode: (sourceNodeId: string) => void
   onReorder: (draggedEdgeId: string, targetEdgeId: string) => void
   onToggleCanvasReferencePicker: () => void
   canvasReferencePickerActive: boolean
@@ -170,10 +170,10 @@ function VideoReferenceCard({
 }
 
 function UpstreamReferenceStrip({
+  submissionRecord,
   targetNodeId,
   items,
   onRemove,
-  onDeleteSourceNode,
   onReorder,
   onToggleCanvasReferencePicker,
   canvasReferencePickerActive,
@@ -185,10 +185,11 @@ function UpstreamReferenceStrip({
     <div className="tc-task-node__upstream-reference-strip">
       <div className="tc-task-node__upstream-reference-strip-header">
         <Text className="tc-task-node__upstream-reference-strip-title" size="xs" fw={600}>
-          上游参考
+          参考
         </Text>
         <Text className="tc-task-node__upstream-reference-strip-meta" size="xs" c="dimmed">
-          {canvasReferencePickerActive ? '点击画布图片直接连接' : '拖动调整顺序'}
+          {canvasReferencePickerActive ? '点击画布图片直接连接' : null}
+          {submissionRecord}
         </Text>
       </div>
       <div className="tc-task-node__upstream-reference-strip-list">

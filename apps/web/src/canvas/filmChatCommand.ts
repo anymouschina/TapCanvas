@@ -26,7 +26,13 @@ export function buildChapterFilmExecutionToolPolicy(): {
 // Only carry the user's goal and explicit scope. The agents runtime and loaded
 // workflow skill own evidence planning, tool selection, and production steps.
 export const CHAPTER_FILM_CHAT_TEXT =
-  '完成用户刚刚发起的当前章节一键成片任务。用户在这个入口明确要求的交付范围只有：使用当前已装备的一键成片工作流生成最终版完整成片（executionScope=media_delivery，executionVariant=full_video），并把真实成片写回当前章节画布；首视频、中间片段、提示词包或文字说明都不是最终交付。媒体模型、画幅、分辨率、总时长、Clip 数量和逐段时长只允许来自本轮用户明确确认的章级交付字段或已装备 Workflow IR 的权威配置；这个前端入口不得用账号偏好、历史 run、旧成片或本地默认值替用户补写按次覆盖。状态与完成声明只依据真实执行、供应商任务、资产 URL 和最终真实成片 URL。'
+  '完成用户刚刚发起的当前章节一键成片任务。用户在这个入口明确要求的交付范围只有：使用当前已装备的一键成片工作流生成最终版完整成片（executionScope=media_delivery，executionVariant=full_video），并把真实成片写回当前章节画布；首视频、中间片段、提示词包或文字说明都不是最终交付。本轮明确指定的参数优先；未指定的媒体参数由服务端在新执行受理时读取用户当前启用的生成偏好，再读取已装备 Workflow IR 配置，记录实际参数及来源。账号偏好的单段时长不是整章总时长。新建任务不得继承历史 run 的冻结合同；已受理请求保留原参数和产物，用户操作引起的修订须追溯到新版本并避免重复提交。状态与完成声明只依据真实执行、供应商任务、资产 URL 和最终真实成片 URL。'
+
+export function buildChapterFilmChatText(spec: ChapterFilmSpec): string {
+  return spec.onlyVideoNodes
+    ? '使用当前已装备的一键成片工作流为本章准备参考资产、创建视频节点并填充完整视频提示词。用户已开启 onlyVideoNodes=true；交付为可手动生成的视频节点，禁止自动提交视频生成与视频合成。'
+    : CHAPTER_FILM_CHAT_TEXT
+}
 
 export function buildChapterFilmSpecDirective(spec: ChapterFilmSpec): string {
   const adaptationInstruction = spec.adaptationMode === 'creative'

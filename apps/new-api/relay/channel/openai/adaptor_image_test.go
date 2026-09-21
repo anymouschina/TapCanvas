@@ -322,3 +322,22 @@ func TestConvertNonGaiscGenerationDoesNotRewriteTransportAliases(t *testing.T) {
 	require.Equal(t, relayconstant.RelayModeImagesGenerations, info.RelayMode)
 	require.Equal(t, "/v1/images/generations", info.RequestURLPath)
 }
+
+func TestImageSizeTransportPreservesUpstreamAspectRatio(t *testing.T) {
+	for _, name := range []string{"gpt-image-2", "gpt-image-2-b"} {
+		for _, mode := range []int{relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits} {
+			info := newImageRelayInfo(constant.ChannelTypeLluban, mode)
+			info.ProtocolOptions = map[string]string{"image_size_transport": "passthrough"}
+			request := dto.ImageRequest{Model: name, Prompt: "test", Size: "16:9", Extra: map[string]json.RawMessage{"imageSize": json.RawMessage(`"1K"`)}}
+			if mode == relayconstant.RelayModeImagesEdits {
+				request.Images = []dto.ImageURLReference{{ImageURL: "https://example.com/one.png"}}
+			}
+			converted, err := (&Adaptor{}).ConvertImageRequest(newImageEditJSONTestContext(), info, request)
+			require.NoError(t, err)
+			result, ok := converted.(dto.ImageRequest)
+			require.True(t, ok)
+			require.Equal(t, "16:9", result.Size)
+			require.Equal(t, request.Extra["imageSize"], result.Extra["imageSize"])
+		}
+	}
+}

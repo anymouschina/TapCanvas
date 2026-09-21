@@ -473,6 +473,13 @@ describe('SkeletonVideoFrame', () => {
 })
 
 describe('VideoNodePreview', () => {
+  it('labels an input poster as a reference until a real video exists', () => {
+    const { container, rerender } = render(<VideoNodePreview src="" poster="https://example.com/reference.png" label="Clip" overview />)
+    expect(container.textContent).toContain('参考图预览 · 尚无视频结果')
+    rerender(<VideoNodePreview src={videoUrl('complete')} poster="https://example.com/reference.png" label="Clip" overview />)
+    expect(container.textContent).not.toContain('尚无视频结果')
+  })
+
   it('renders no video element in overview mode even when the clip is complete', () => {
     const { container } = render(
       <VideoNodePreview

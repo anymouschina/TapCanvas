@@ -241,7 +241,7 @@ services:
       # Use an in-network DSN for containers. Do not reuse host-localhost DSN here.
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
       PG_BACKUP_DIR: /app/backups
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379}
       AUTH_PHONE_OTP_TRACE: "1"
       AGENTS_BRIDGE_AUTOSTART: "0"
       # 经 nginx 反代访问 bridge 多副本（直连 agents-bridge:8799 会被 undici keep-alive 钉死在单副本）
@@ -374,7 +374,7 @@ services:
       NODE_ENV: development
       # .env 的 DATABASE_URL 面向宿主机，容器内必须显式使用 Compose 服务名。
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379}
       NODE_OPTIONS: "--max-old-space-size=768"
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -573,6 +573,7 @@ services:
       GLOBAL_WEB_RATE_LIMIT_ENABLE: ${NEW_API_GLOBAL_WEB_RATE_LIMIT_ENABLE:-false}
       CRITICAL_RATE_LIMIT_ENABLE: ${NEW_API_CRITICAL_RATE_LIMIT_ENABLE:-false}
       SEARCH_RATE_LIMIT_ENABLE: ${NEW_API_SEARCH_RATE_LIMIT_ENABLE:-false}
+      UPSTREAM_CATALOG_CHANNEL_ID: ${NEW_API_UPSTREAM_CATALOG_CHANNEL_ID:-}
       NODE_NAME: ${NEW_API_NODE_NAME:-new-api-node-1}
       # 图片生成（gpt-image-2 等）可能耗时超过 5 分钟，需显式延长 upstream HTTP 超时
       RELAY_TIMEOUT: ${NEW_API_RELAY_TIMEOUT:-1200}
@@ -684,7 +685,7 @@ services:
     env_file:
       - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
     environment:
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379}
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
       AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
       TAPCANVAS_API_INTERNAL_BASE: http://api:8788
@@ -762,7 +763,7 @@ services:
     environment:
       NODE_ENV: development
       NODE_OPTIONS: "--max-old-space-size=3500"
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379}
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
       AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
       AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}
@@ -828,7 +829,7 @@ services:
       - ${TAPCANVAS_ENV_FILE:-./apps/hono-api/.env}
     environment:
       NODE_ENV: development
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379}
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-tapcanvas}:${POSTGRES_PASSWORD:-tapcanvas}@postgres:5432/${POSTGRES_DB:-tapcanvas}?schema=public}
       AGENTS_BRIDGE_BASE_URL: http://agents-bridge-lb:8799
       AGENTS_BRIDGE_REPLICA_DNS_HOST: ${AGENTS_BRIDGE_REPLICA_DNS_HOST-agents-bridge}

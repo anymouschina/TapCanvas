@@ -44,6 +44,7 @@ scope.onmessage = async (e: MessageEvent<ComposeWorkerInbound>) => {
       onProgress: (p) => post({ type: 'progress', value: p }),
       audioTracks: msg.audioTracks,
       subtitles: msg.subtitles,
+      outputAspect: msg.outputAspect,
     })
     post({ type: 'done', blob })
   } catch (err) {

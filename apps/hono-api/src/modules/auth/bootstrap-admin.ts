@@ -1,8 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
+import { grantTeamCreditsInTransaction } from "../team/team-credit-batch.service";
 import { createPasswordRecord } from "./password";
 
 export const DEFAULT_TAPCANVAS_ADMIN_USERNAME = "admin";
 export const DEFAULT_TAPCANVAS_ADMIN_PASSWORD = "123456";
+export const DEFAULT_TAPCANVAS_ADMIN_CREDITS = 100_000;
 
 type BootstrapAdminCredentials = {
 	username: string;
@@ -72,20 +74,45 @@ export async function ensureBootstrapAdmin(
 
 	const { hash, salt } = await createPasswordRecord(credentials.password);
 	const nowIso = new Date().toISOString();
-	await prisma.users.create({
-		data: {
-			id: "tapcanvas_admin",
-			login: credentials.username,
-			name: "TapCanvas Admin",
-			password_hash: hash,
-			password_salt: salt,
-			password_updated_at: nowIso,
-			role: "admin",
-			disabled: 0,
-			guest: 0,
-			created_at: nowIso,
-			updated_at: nowIso,
-		},
+	await prisma.$transaction(async (tx) => {
+		await tx.users.create({
+			data: {
+				id: "tapcanvas_admin",
+				login: credentials.username,
+				name: "TapCanvas Admin",
+				password_hash: hash,
+				password_salt: salt,
+				password_updated_at: nowIso,
+				role: "admin",
+				disabled: 0,
+				guest: 0,
+				created_at: nowIso,
+				updated_at: nowIso,
+			},
+		});
+		const teamId = "personal_tapcanvas_admin";
+		await tx.teams.create({
+			data: {
+				id: teamId,
+				name: `${credentials.username} 的个人账户`,
+				credits: 0,
+				credits_frozen: 0,
+				max_members: 1,
+				created_at: nowIso,
+				updated_at: nowIso,
+			},
+		});
+		await grantTeamCreditsInTransaction(tx, {
+			teamId,
+			amount: DEFAULT_TAPCANVAS_ADMIN_CREDITS,
+			entryType: "topup",
+			taskId: "bootstrap-admin-initial-credits",
+			sourceType: "bootstrap_admin",
+			sourceKey: "tapcanvas_admin",
+			actorUserId: "tapcanvas_admin",
+			note: "管理员账号首次创建赠送积分",
+			nowIso,
+		});
 	});
 	return "tapcanvas_admin";
 }

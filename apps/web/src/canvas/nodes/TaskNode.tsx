@@ -1,3 +1,5 @@
+import { reconcileImageModelSettings } from './taskNode/mediaModelControls'
+import { useNodeGenerationPreference } from './taskNode/useNodeGenerationPreference'
 import React from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -53,7 +55,7 @@ import {
   listProjectRoleCardAssets,
   listServerAssets,
   recoverUploadedServerAssetFile,
-  runPublicTask,
+  runPublicTaskWithAuth,
   runTaskByVendor,
   runVisionTask,
   llmChat,
@@ -64,7 +66,6 @@ import {
   upsertCanvasIndexRef,
   type PromptSampleDto,
   type ServerAssetDto,
-  type UserGenerationPrefsDto,
 } from '../../api/server'
 import { type ModelOption, type NodeKind } from '../../config/models'
 import {
@@ -135,7 +136,12 @@ import { createMaskEditSourcePng } from './taskNode/maskEditAssets'
 import { parseGridSplitSelectedCells, sortGridSplitCells, type GridSplitCell } from './taskNode/gridSplitCells'
 import { isTapCanvasHostedUploadUrl } from './taskNode/hostedUploadUrl'
 import { TaskNodeHandles } from './taskNode/components/TaskNodeHandles'
-import { TopToolbar, type ToolbarMenuItem } from './taskNode/components/TopToolbar'
+import {
+  resolveToolbarReadOnlyActions,
+  TopToolbar,
+  type ToolbarAction,
+  type ToolbarMenuItem,
+} from './taskNode/components/TopToolbar'
 import { LibTvImageToolbarIcon } from './taskNode/components/LibTvImageToolbarIcon'
 import { CAMERA_BODIES, type CinematicCameraValue } from './taskNode/cameraControlContract'
 import {
@@ -161,6 +167,8 @@ import {
   type CharacterFissionDraft,
 } from './taskNode/characterFissionContract'
 import { buildMediaGenerationSettings } from './taskNode/mediaGenerationSettings'
+import { readImageParameterSpecs, readImageParameterValues, updateImageParameterValues, imageQuantityUnit } from '../../config/imageModelParameters'
+import { formatAspectOptionLabel } from './taskNode/components/aspectRatioLabel'
 import { StatusBanner } from './taskNode/components/StatusBanner'
 import { GenerationOverlay } from './taskNode/components/GenerationOverlay'
 import type { Image3DParams } from './taskNode/components/Image3DPanel'
@@ -172,7 +180,11 @@ import { readVideoClipIndex, readVideoClipRunId } from '../videoClipCanvasFacts'
 import { requestVideoClipAgentAction } from '../videoClipAgentAction'
 import { readWorkflowCanvasPorts, workflowPortHandleId } from '../workflowCanvasPorts'
 import { buildWorkflowAgentReferenceHandles } from '../workflowAgentReferenceHandles'
-import type { SegmentRemakeRange } from './taskNode/components/SegmentRemakeContent'
+import {
+  createSegmentRemakeDraftFromMarkers,
+  normalizeSegmentRemakeRanges,
+  type SegmentRemakeRange,
+} from './taskNode/segmentRemakeContract'
 import type { MediaEmptyAction } from './taskNode/components/MediaEmptyState'
 import { consumeMediaEmptyAction } from './taskNode/mediaEmptyActionRuntime'
 import {
@@ -196,8 +208,12 @@ import type { ComposeVideoSource } from './taskNode/components/useVideoCompose'
 import { buildComposeInitialPatch, buildComposeUrlSwapPatch } from './taskNode/components/composeWriteback'
 import { INTENT_ACTIONS } from './taskNode/intentActions'
 import { dispatchIntent } from '../dispatchIntent'
-import { readNodeModelPrefs, saveNodeModelPrefs } from '../nodeModelPrefs'
-import { DEFAULT_GENERATION_PREFS, updateRecentGenerationPrefs } from '../../config/generationPrefs'
+import { readNodeModelPrefs } from '../nodeModelPrefs'
+import { DEFAULT_GENERATION_PREFS } from '../../config/generationPrefs'
+import {
+  resolveCompleteImageGenerationPrefs,
+  resolveCompleteVideoGenerationPrefs,
+} from '../../config/generationPrefsSelection'
 import { resolveIntentChapterContext } from './taskNode/intentChapterContext'
 import type { ChapterCanvasIntent } from '@tapcanvas/chapter-canvas-intents'
 import { REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
@@ -206,7 +222,7 @@ import {
 } from '../../runner/assetReference'
 import { runNodeDagToTarget } from '../../runner/dag'
 import { isModerationFailure } from '../../runner/taskErrorClassifier'
-import { collectUpstreamComposeAudioTracks } from '../../runner/collectUpstreamComposeSources'
+import { collectUpstreamComposeAudioTracks, collectUpstreamComposeSources } from '../../runner/collectUpstreamComposeSources'
 import {
   AUDIO_EMOTION_OPTIONS,
   AUDIO_LYRICS_MODE_OPTIONS,
@@ -304,6 +320,9 @@ import {
   ImagePresetConfirmPortal,
   PanoramicConfirmPortal,
 } from './taskNode/components/TaskNodeConfirmPortals'
+import { buildSubmissionMentionRefs } from './taskNode/submissionReferences'
+import { VideoSubmissionInput } from './taskNode/components/VideoSubmissionInput'
+import { UpstreamReferenceStrip } from './taskNode/components/UpstreamReferenceStrip'
 import {
   LazyCharacterFissionEditorPortal,
   LazyCameraControlPanel,
@@ -362,17 +381,7 @@ type HeaderMetaBadge = {
   variant?: 'light' | 'outline' | 'filled'
 }
 
-type ToolbarMetaAction = {
-  key: string
-  label: string
-  icon: JSX.Element
-  onClick: () => void
-  active?: boolean
-  loading?: boolean
-  disabled?: boolean
-  showLabel?: boolean
-  badge?: React.ReactNode
-}
+type ToolbarMetaAction = ToolbarAction
 
 // 打光 / 调整角度统一走 gemini-3.1-flash-image-preview：它支持参考图编辑，
 // 且使用仅由分辨率决定的 image:{resolution} 计费规格。
@@ -929,6 +938,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const isWorkflowPresetSelectorNode = (data as Record<string, unknown>)?.workflowPresetSelectorVersion === 2
   const draftByAgent = Boolean((data as any)?.draftByAgent)
   const coreKind = getTaskNodeCoreType(kind)
+  const isImageNode = coreKind === 'image'
   const isCharacterReferenceNode = coreKind === 'image'
     && String((data as Record<string, unknown>)?.referenceType || '').trim().toLowerCase() === 'character'
   const productionMeta = React.useMemo(
@@ -1048,7 +1058,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   // Read directly from getState() instead; the values are guaranteed identical across renders.
   const updateNodeLabel = useRFStore.getState().updateNodeLabel
   const { currentProject, viewOnly } = useCanvasRenderContext()
-  const nodeReadOnly = viewOnly || (data as { readOnly?: unknown } | undefined)?.readOnly === true
+  const nodeReadOnly = viewOnly || (data?.preset !== 'chapter-info' && data?.readOnly === true)
   const canvasReferencePicker = useUIStore(s => s.canvasReferencePicker)
   const openCanvasReferencePicker = useUIStore.getState().openCanvasReferencePicker
   const closeCanvasReferencePicker = useUIStore.getState().closeCanvasReferencePicker
@@ -1144,9 +1154,15 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const [imageResolution, setImageResolution] = React.useState<string>(
     normalizeImageResolutionSetting((data as any)?.imageResolution ?? (data as any)?.resolution ?? ''),
   )
-  const [imageQuality, setImageQuality] = React.useState<string>(
-    normalizeImageQualitySetting((data as Record<string, unknown>)?.imageQuality),
-  )
+  const storedImageQuality = normalizeImageQualitySetting((data as Record<string, unknown>)?.imageQuality)
+  const [imageQuality, setImageQuality] = React.useState<string>(() => {
+    const prefs = readNodeModelPrefs()
+    const nodeData = data as Record<string, unknown>
+    const selectedModel = nodeData.modelAlias || nodeData.imageModel
+    const preferredQuality = !selectedModel || selectedModel === prefs.imageModel
+      ? prefs.imageQuality : undefined
+    return normalizeImageQualitySetting(nodeData.imageQuality ?? preferredQuality)
+  })
   const [imageEditSize, setImageEditSize] = React.useState<string>(() =>
     kind === 'imageEdit'
       ? normalizeImageEditSize((data as Record<string, unknown>)?.imageEditSize ?? (data as Record<string, unknown>)?.size)
@@ -1177,75 +1193,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         if (!isVideoComposeNode || isOrchestratedVideoClip) return lastResult
         if (isCanvasNodeDragActive()) return upstreamVideosDuringDragRef.current
         if (s.nodes === lastNodes && s.edges === lastEdges) return lastResult
-        const incoming = s.edges.filter((e) => e.target === id)
-        const results: ComposeVideoSource[] = []
-        for (const edge of incoming) {
-          const srcNode = s.nodes.find((n) => n.id === edge.source)
-          if (!srcNode) continue
-          const srcData: any = srcNode.data || {}
-          const srcSchema = getTaskNodeSchema(srcData?.kind)
-          if (srcSchema.category !== 'video') continue
-          const vr = Array.isArray(srcData.videoResults) ? srcData.videoResults : []
-          const idx = typeof srcData.videoPrimaryIndex === 'number' ? srcData.videoPrimaryIndex : 0
-          const primary = vr[idx] || vr[0]
-          const url: string | undefined = primary?.url || srcData.videoUrl
-          if (url) {
-            results.push({
-              url,
-              title: primary?.title || (srcData.label as string | undefined) || undefined,
-              thumbnailUrl: (primary?.thumbnailUrl as string | undefined) || undefined,
-              durationSec: typeof primary?.duration === 'number'
-                ? primary.duration
-                : typeof srcData.videoDuration === 'number' ? srcData.videoDuration : undefined,
-              dialoguePrompt: typeof srcData.prompt === 'string' && srcData.prompt.trim() ? srcData.prompt : undefined,
-            })
-          }
-        }
-        // 【cut 模式无连线兜底】整片成片节点与 N 段 clip 常只靠 clipRunId 关联、无 edge（用户要的「不依赖
-        // 前端 DAG」）。边收不到 clip 时，按本成片节点的 clipRunId 收齐同 run 的 video 节点、按 clipIndex 排序，
-        // 让用户点「合成视频」时收得到源（根治：run=concatenated 但成片节点 clips_ready 无 videoUrl 的回写缺口）。
-        if (results.length < 2) {
-          const selfNode = s.nodes.find((n) => n.id === id)
-          const runId = (selfNode?.data as any)?.clipRunId
-          if (runId) {
-            const byRun: ComposeVideoSource[] = []
-            s.nodes
-              .filter((n) => {
-                const d: any = n.data || {}
-                return (
-                  n.id !== id &&
-                  d.clipRunId === runId &&
-                  typeof d.clipIndex === 'number' &&
-                  getTaskNodeSchema(d?.kind).category === 'video'
-                )
-              })
-              .sort((a, b) => ((a.data as any)?.clipIndex ?? 0) - ((b.data as any)?.clipIndex ?? 0))
-              .forEach((n) => {
-                const d: any = n.data || {}
-                const vr = Array.isArray(d.videoResults) ? d.videoResults : []
-                const idx = typeof d.videoPrimaryIndex === 'number' ? d.videoPrimaryIndex : 0
-                const primary = vr[idx] || vr[0]
-                const url: string | undefined = primary?.url || d.videoUrl
-                if (url) {
-                  byRun.push({
-                    url,
-                    title: primary?.title || (d.label as string | undefined) || undefined,
-                    thumbnailUrl: (primary?.thumbnailUrl as string | undefined) || undefined,
-                    durationSec: typeof primary?.duration === 'number'
-                      ? primary.duration
-                      : typeof d.videoDuration === 'number' ? d.videoDuration : undefined,
-                    dialoguePrompt: typeof d.prompt === 'string' && d.prompt.trim() ? d.prompt : undefined,
-                  })
-                }
-              })
-            if (byRun.length > results.length) {
-              lastNodes = s.nodes
-              lastEdges = s.edges
-              lastResult = byRun
-              return lastResult
-            }
-          }
-        }
+        const results = collectUpstreamComposeSources(id, s.nodes, s.edges)
         lastNodes = s.nodes
         lastEdges = s.edges
         lastResult = results
@@ -1660,6 +1608,8 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const hasPrimaryVideo = Boolean(videoResults[videoPrimaryIndex]?.url || videoUrl)
   const [videoMarkerOpen, setVideoMarkerOpen] = React.useState(false)
   const [videoMarkerSaving, setVideoMarkerSaving] = React.useState(false)
+  const [videoFrameCaptureMode, setVideoFrameCaptureMode] = React.useState<'first' | 'last' | 'current' | null>(null)
+  const videoFrameCaptureBusyRef = React.useRef(false)
   const [videoMarkerPlayback, setVideoMarkerPlayback] = React.useState<{
     currentTime: number
     duration: number | null
@@ -2157,11 +2107,12 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   )
 
   const styleImages: string[] = React.useMemo(() => {
+    if (!isImageNode) return []
     if (projectImageSettings.styleImages.length) return projectImageSettings.styleImages
     // 兼容旧画布：节点级数据作为 fallback
     const s = (data as Record<string, unknown>)?.styleImages
     return Array.isArray(s) ? (s as unknown[]).map((v) => String(v || '').trim()).filter(Boolean) : []
-  }, [projectImageSettings.styleImages, data])
+  }, [isImageNode, projectImageSettings.styleImages, data])
 
   const imageCinematicCamera: CinematicCameraValue | null = React.useMemo(() => {
     if (projectImageSettings.imageCinematicCamera) return projectImageSettings.imageCinematicCamera
@@ -2309,6 +2260,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   )
   React.useEffect(() => {
     if (viewOnly || isAudioNode) return
+    if (isVideoNode && (status === 'running' || status === 'queued')) return
     const firstOption = resolveDefaultCatalogModelOption({
       currentValue: activeModelKey,
       options: modelMenuOptions,
@@ -2339,6 +2291,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     modelListError,
     modelListLoading,
     modelMenuOptions,
+    status,
     updateNodeData,
     viewOnly,
   ])
@@ -2558,6 +2511,10 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       .map((option) => ({ ...option, config: parseVideoModelCatalogConfig(option.meta) }))
       .filter((option) => option.config?.supportsVideoEditing === true)
   }, [videoActionModelList])
+  const videoEnhanceModelOption = React.useMemo(
+    () => findModelOptionByIdentifier(videoActionModelList, 'volc-enhance-video'),
+    [videoActionModelList],
+  )
   const videoSubjectRemovalModelOptions = React.useMemo(
     () => videoEditModelOptions
       .filter((option) => option.config?.supportsVideoSubjectRemoval === true)
@@ -2923,27 +2880,27 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     if (isVideoNode || !imageModelConfig) return
 
     const patch: Record<string, unknown> = {}
-    const nextAspect = pickImageAspectValue(imageModelConfig, aspect)
-    if (nextAspect && nextAspect !== aspect) {
+    const nextAspect = pickImageAspectValue(imageModelConfig, aspect) ?? ''
+    if (nextAspect !== aspect) {
       setAspect(nextAspect)
       patch.aspect = nextAspect
     }
 
-    const nextImageSize = pickImageSizeValue(imageModelConfig, imageSize)
-    if (nextImageSize && nextImageSize !== imageSize) {
+    const nextImageSize = pickImageSizeValue(imageModelConfig, imageSize) ?? ''
+    if (nextImageSize !== imageSize) {
       setImageSize(nextImageSize)
       patch.imageSize = nextImageSize
     }
 
-    const nextImageResolution = pickImageResolutionValue(imageModelConfig, imageResolution)
-    if (nextImageResolution && nextImageResolution !== imageResolution) {
+    const nextImageResolution = pickImageResolutionValue(imageModelConfig, imageResolution) ?? ''
+    if (nextImageResolution !== imageResolution) {
       setImageResolution(nextImageResolution)
       patch.imageResolution = nextImageResolution
       patch.resolution = nextImageResolution
     }
 
-    const nextImageQuality = pickImageQualityValue(imageModelConfig, imageQuality)
-    if (nextImageQuality && nextImageQuality !== imageQuality) {
+    const nextImageQuality = pickImageQualityValue(imageModelConfig, imageQuality) ?? ''
+    if (nextImageQuality !== imageQuality || nextImageQuality !== storedImageQuality) {
       setImageQuality(nextImageQuality)
       patch.imageQuality = nextImageQuality
     }
@@ -2951,7 +2908,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     if (Object.keys(patch).length) {
       updateNodeData(id, patch)
     }
-  }, [aspect, id, imageModelConfig, imageQuality, imageResolution, imageSize, isVideoNode, updateNodeData])
+  }, [aspect, id, imageModelConfig, imageQuality, imageResolution, imageSize, isVideoNode, storedImageQuality, updateNodeData])
 
   React.useEffect(() => {
     if (!isVideoNode) return
@@ -3031,7 +2988,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       ? selectedConfiguredDurationOption?.label || `${videoDuration}s`
       : `${sampleCount}x`
   const summaryVideoSize = isVideoNode
-    ? selectedConfiguredSizeOption?.label || videoSize || aspect
+    ? formatAspectOptionLabel(videoSize || aspect, selectedConfiguredSizeOption?.label || videoSize || aspect)
     : selectedConfiguredImageAspectOption?.label || aspect
   const summaryVideoResolution = React.useMemo(() => {
     if (!isVideoNode) return ''
@@ -3165,14 +3122,19 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }
   }, [durationOptions, hasDuration, id, isVideoNode, updateNodeData, videoDuration])
 
-  const persistRecentGenerationPrefs = React.useCallback((patch: UserGenerationPrefsDto) => {
-    saveNodeModelPrefs(patch)
-    void updateRecentGenerationPrefs(patch).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error)
-      toast(`账号生成偏好保存失败：${message}`, 'error')
-    })
-  }, [])
-
+  const preferenceSelection = React.useMemo(() => isVideoNode
+    ? resolveCompleteVideoGenerationPrefs({
+        options: modelMenuOptions, videoModel, videoResolution, videoSize, videoAspect: aspect,
+        videoDuration, videoCount: runCount, videoGenerateAudio,
+      })
+    : resolveCompleteImageGenerationPrefs({
+        options: modelMenuOptions, imageModel, imageSize, imageResolution, imageQuality,
+        imageAspect: aspect, imageCount: runCount,
+      }), [isVideoNode, modelMenuOptions, videoModel, videoResolution, videoSize, aspect,
+        videoDuration, runCount, videoGenerateAudio, imageModel, imageSize, imageResolution, imageQuality])
+  const { setting: generationPreference, markEdited: markGenerationPreferenceEdited } = useNodeGenerationPreference(
+    id, isVideoNode ? 'video' : 'image', preferenceSelection,
+  )
   const handleToolbarModelChange = React.useCallback((value: string) => {
     const selectedValue = String(value || '').trim()
     if (!selectedValue) return
@@ -3181,23 +3143,36 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       toast(`模型 ${selectedValue} 不在当前系统模型目录中`, 'error')
       return
     }
+    const modelAlias = getModelOptionRequestAlias(modelMenuOptions, option.value)
     if (isVideoNode) {
       setVideoModel(selectedValue)
-      updateNodeData(id, { videoModel: selectedValue, videoModelVendor: option.vendor || null })
-      persistRecentGenerationPrefs({ videoModel: selectedValue })
+      updateNodeData(id, { videoModel: selectedValue, videoModelVendor: option.vendor || null, modelAlias, modelKey: undefined })
+      markGenerationPreferenceEdited()
       return
     }
     if (coreKind === 'image' || kind === 'imageEdit') {
+      const config = constrainImageModelCatalogConfigByPricing(parseImageModelCatalogConfig(option.meta), option.pricing)
+      if (!config) {
+        toast(`模型 ${selectedValue} 缺少参数目录，无法切换`, 'error')
+        return
+      }
+      const settings = reconcileImageModelSettings(config, { aspect, imageSize, imageResolution, imageQuality })
+      const specKey = buildImageBillingSpecKeyForOption({ modelOption: option, ...settings })
       setImageModel(selectedValue)
-      updateNodeData(id, { imageModel: selectedValue, imageModelVendor: null })
-      persistRecentGenerationPrefs({ imageModel: selectedValue })
+      setAspect(settings.aspect)
+      setImageSize(settings.imageSize)
+      setImageResolution(settings.imageResolution)
+      setImageQuality(settings.imageQuality)
+      updateNodeData(id, { imageModel: selectedValue, imageModelVendor: null, modelAlias, modelKey: undefined, ...settings, specKey: specKey || '', billingSpecKey: specKey || '' })
+      markGenerationPreferenceEdited()
       return
     }
     setModelKey(selectedValue)
     updateNodeData(id, { geminiModel: selectedValue, modelVendor: option.vendor || null })
-  }, [coreKind, id, isVideoNode, kind, modelMenuOptions, persistRecentGenerationPrefs, updateNodeData])
+  }, [coreKind, id, isVideoNode, kind, modelMenuOptions, markGenerationPreferenceEdited, updateNodeData])
 
   const handleToolbarDurationChange = React.useCallback((num: number) => {
+    markGenerationPreferenceEdited()
     const nextSpecKey = buildVideoBillingSpecKey(effectiveVideoResolution, num)
     setVideoDuration(num)
     updateNodeData(id, {
@@ -3206,16 +3181,19 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       videoSpecKey: nextSpecKey || null,
       specKey: nextSpecKey || null,
     })
-  }, [effectiveVideoResolution, id, updateNodeData])
+  }, [effectiveVideoResolution, id, updateNodeData, markGenerationPreferenceEdited])
 
   const handleToolbarSizeChange = React.useCallback((value: string) => {
+    markGenerationPreferenceEdited()
     if (isVideoNode) {
       const normalizedSize = value.trim().replace(/\s+/g, '')
       const matchedOption =
         videoModelConfig?.sizeOptions.find((option) => option.value === normalizedSize) || null
       const nextSpecKey = buildVideoBillingSpecKey(effectiveVideoResolution, videoDuration)
       const sizeParts = normalizedSize.split(':')
-      const declaredAspect = matchedOption?.aspectRatio || (sizeParts.length === 2 ? normalizedSize : '')
+      const declaredAspect =
+        matchedOption?.aspectRatio
+        || (sizeParts.length === 2 ? normalizedSize : formatAspectOptionLabel(normalizedSize, ''))
       const nextAspect = declaredAspect ? normalizeImageAspect(declaredAspect) : aspect
       const nextOrientation = resolveVideoOrientationValue({
         currentOrientation: matchedOption?.orientation ?? orientationRef.current,
@@ -3234,7 +3212,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       })
       if (declaredAspect) {
         setAspect(nextAspect)
-        persistRecentGenerationPrefs({ videoAspect: nextAspect })
+        markGenerationPreferenceEdited()
       }
       orientationRef.current = nextOrientation
       setOrientation(nextOrientation)
@@ -3267,7 +3245,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     if (aspectTransitionTimerRef.current) clearTimeout(aspectTransitionTimerRef.current)
     setIsAspectTransitioning(true)
     aspectTransitionTimerRef.current = setTimeout(() => setIsAspectTransitioning(false), 320)
-  }, [aspect, data, effectiveVideoResolution, hasPrimaryImage, id, isVideoNode, persistRecentGenerationPrefs, updateNodeData, videoDuration, videoModelConfig])
+  }, [aspect, data, effectiveVideoResolution, hasPrimaryImage, id, isVideoNode, markGenerationPreferenceEdited, updateNodeData, videoDuration, videoModelConfig])
 
   const handleToolbarVideoResolutionChange = React.useCallback((value: string) => {
     const normalizedResolution = normalizeVideoResolution(value)
@@ -3278,8 +3256,8 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       videoSpecKey: nextSpecKey || null,
       specKey: nextSpecKey || null,
     })
-    if (normalizedResolution) persistRecentGenerationPrefs({ videoResolution: normalizedResolution })
-  }, [id, persistRecentGenerationPrefs, updateNodeData, videoDuration])
+    if (normalizedResolution) markGenerationPreferenceEdited()
+  }, [id, markGenerationPreferenceEdited, updateNodeData, videoDuration])
 
   const handleToolbarOrientationChange = React.useCallback((value: Orientation) => {
     const normalized = normalizeOrientation(value)
@@ -3302,9 +3280,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     if (matchedOption?.aspectRatio) {
       const nextAspect = normalizeImageAspect(matchedOption.aspectRatio)
       setAspect(nextAspect)
-      persistRecentGenerationPrefs({ videoAspect: nextAspect })
+      markGenerationPreferenceEdited()
     }
-  }, [effectiveVideoResolution, id, persistRecentGenerationPrefs, updateNodeData, videoDuration, videoModelConfig, videoSize])
+  }, [effectiveVideoResolution, id, markGenerationPreferenceEdited, updateNodeData, videoDuration, videoModelConfig, videoSize])
 
   // kling-v3-omni「参考视频用途」：feature=动作迁移（上游参考视频只供动作/运镜/风格，
   // 新主体来自参考图）、base=底片重绘/续演（默认）。写入 data.videoReferType，
@@ -3484,7 +3462,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
             // 不同步会让切换分辨率时积分不变。
             setImageResolution(value)
             updateNodeData(id, { imageSize: value, imageResolution: value, resolution: value })
-            persistRecentGenerationPrefs({ imageSize: value })
+            markGenerationPreferenceEdited()
           },
         }]
       }
@@ -3502,7 +3480,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
             // 同步 imageSize 让 catalog 默认值算出的 specKey 与 toolbar 显示对齐。
             setImageSize(value)
             updateNodeData(id, { imageResolution: value, resolution: value, imageSize: value })
-            persistRecentGenerationPrefs({ imageSize: value })
+            markGenerationPreferenceEdited()
           },
         }]
       }
@@ -3518,6 +3496,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           onChange: (value: string) => {
             setImageQuality(value)
             updateNodeData(id, { imageQuality: value })
+            markGenerationPreferenceEdited()
           },
         }]
       }
@@ -3538,7 +3517,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     imageSize,
     imageSizeMatchesResolutionOptions,
     isVideoNode,
-    persistRecentGenerationPrefs,
+    markGenerationPreferenceEdited,
     selectedConfiguredImageResolutionOption,
     selectedConfiguredImageSizeOption,
     selectedImageSizeConstraint,
@@ -3574,7 +3553,18 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
 
   const mediaGenerationSettings = React.useMemo(() => {
     if (isVideoComposeNode || isAudioNode || !(isVideoNode || coreKind === 'image')) return null
+    const parameterModelKey = selectedImageModelOption?.modelKey || selectedImageModelOption?.value || ''
+    const parameterSpecs = readImageParameterSpecs(selectedImageModelMeta)
     return buildMediaGenerationSettings({
+      preference: generationPreference,
+      imageQuantityUnit: imageQuantityUnit(selectedImageModelMeta),
+      advanced: !isVideoNode && parameterSpecs.length > 0 ? {
+        specs: parameterSpecs,
+        values: readImageParameterValues(data, parameterModelKey),
+        onChange: (key, value) => {
+          updateNodeData(id, { imageModelParameters: updateImageParameterValues(data, parameterModelKey, key, value) })
+        },
+      } : null,
       kind: isVideoNode ? 'video' : 'image',
       aspect,
       videoSize,
@@ -3598,6 +3588,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         ? {
             value: videoGenerateAudio,
             onChange: (value: boolean) => {
+              markGenerationPreferenceEdited()
               setVideoGenerateAudio(value)
               updateNodeData(id, { videoGenerateAudio: value })
             },
@@ -3610,11 +3601,14 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       summaryDuration,
       quantity: runCount,
       onQuantityChange: (value: number) => {
+        markGenerationPreferenceEdited()
         setRunCount(value)
         updateNodeData(id, { runCount: value })
       },
     })
   }, [
+    generationPreference,
+    markGenerationPreferenceEdited,
     aspect,
     configuredSizeOptions,
     coreKind,
@@ -3632,6 +3626,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     isVideoNode,
     mappedImageControls,
     mappedVideoControls,
+    data,
+    selectedImageModelMeta,
+    selectedImageModelOption,
     orientation,
     runCount,
     selectedConfiguredImageAspectOption,
@@ -3794,15 +3791,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   ])
 
   const runNode = () => {
-    if (isOrchestratedVideoClip) {
-      requestVideoClipAgentAction({
-        nodeId: id,
-        action: 'resume_clip',
-        runId: readVideoClipRunId(data),
-        clipIndex: readVideoClipIndex(data),
-      })
-      return
-    }
+    useRFStore.getState().appendLog(id, `[${new Date().toISOString()}] manual_generation_requested kind=${kind}`)
     if (isPlainTextNode) {
       updateNodeData(id, { prompt })
       return
@@ -3829,7 +3818,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       void useRFStore.getState().runNodeBranchClones(id, runCount)
       return
     }
-    runSelected()
+    void runNodeDagToTarget(id, useRFStore.getState, useRFStore.setState, { concurrency: 1 }).catch((error: unknown) => {
+      toast(error instanceof Error ? error.message : '节点执行失败', 'error')
+    })
   }
 
   const handleImageUpload = React.useCallback(async (files: File[]) => {
@@ -4080,8 +4071,6 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     setVideoUploading(false)
   }, [isVideoNode, viewOnly, id, updateNodeData, videoResults])
 
-  const isImageNode = coreKind === 'image'
-
   // ─── Image → 3D ───────────────────────────────────────────────────────────
   const [show3dPanel, setShow3dPanel] = React.useState(false)
   const sleep3d = React.useCallback((ms: number) => new Promise<void>((r) => setTimeout(r, ms)), [])
@@ -4139,19 +4128,30 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         throw new Error('3D 生成超时（超过 15 分钟），请稍后重试')
       }
       if (result.status === 'failed') throw new Error('3D 生成失败')
-      const url = result.assets?.find((a) => a.url)?.url
+      const modelAsset = result.assets?.find((a) => a.url)
+      const url = modelAsset?.url
       if (!url) throw new Error('未返回 3D 模型 URL')
-      setNodeStatus(targetId, 'success', { progress: 100, model3dStatus: 'success', model3dUrl: url, model3dView: true })
+      setNodeStatus(targetId, 'success', { progress: 100, model3dStatus: 'success', model3dUrl: url, model3dView: true, ...(modelAsset?.assetId ? { serverAssetId: modelAsset.assetId } : {}) })
       notifyAssetRefresh()
     } catch (e) {
       setNodeStatus(targetId, 'error', { model3dStatus: 'error', lastError: e instanceof Error ? e.message : '3D 生成失败' })
     }
-  }, [addNode, id, primaryImageUrl, legacyImageUrl, setNodeStatus, updateNodeData, sleep3d])
+  }, [addNode, currentProject?.id, id, primaryImageUrl, legacyImageUrl, setNodeStatus, updateNodeData, sleep3d])
 
   // ─── Video → Enhance ──────────────────────────────────────────────────────
   const [showEnhancePanel, setShowEnhancePanel] = React.useState(false)
   const handleRunEnhance = React.useCallback(async (p: EnhanceParams) => {
-    setShowEnhancePanel(false)
+    if (videoActionModelListLoading) {
+      throw new Error('视频增强模型目录仍在加载，请稍后重试')
+    }
+    if (videoActionModelListError) {
+      throw new Error(`视频增强模型目录加载失败：${videoActionModelListError.message}`)
+    }
+    if (!videoEnhanceModelOption) {
+      throw new Error('视频增强模型未启用，无法执行画质增强')
+    }
+    const enhanceModelKey = getModelOptionRequestAlias(videoActionModelList, videoEnhanceModelOption.value)
+      || videoEnhanceModelOption.value
     const sourceData = data as Record<string, unknown>
     const vr = Array.isArray(sourceData.videoResults)
       ? sourceData.videoResults.filter((entry): entry is Record<string, unknown> => (
@@ -4160,10 +4160,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       : []
     const pidx = typeof sourceData.videoPrimaryIndex === 'number' ? sourceData.videoPrimaryIndex : 0
     const srcUrl = String(vr[pidx]?.url || sourceData.videoUrl || vr[0]?.url || '').trim()
-    if (!srcUrl) {
-      toast('当前节点没有可增强的视频', 'error')
-      return
-    }
+    if (!/^https?:\/\//i.test(srcUrl)) throw new Error('当前节点没有可增强的真实视频 URL')
     const sourceNode = useRFStore.getState().nodes.find((node) => node.id === id)
     const sourceWidth = sourceNode?.measured?.width ?? sourceNode?.width ?? 520
     const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
@@ -4181,10 +4178,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     })
     const afterAdd = useRFStore.getState()
     const outputNode = afterAdd.nodes.find((node) => !beforeIds.has(node.id))
-    if (!outputNode) {
-      toast('画质增强占位节点创建失败', 'error')
-      return
-    }
+    if (!outputNode) throw new Error('画质增强占位节点创建失败')
     afterAdd.onNodesChange([{
       id: outputNode.id,
       type: 'position' as const,
@@ -4196,13 +4190,14 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     }])
     afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: outputNode.id, targetHandle: 'in-video' })
     afterAdd.clearPendingFocusNodeId()
+    setShowEnhancePanel(false)
     setNodeStatus(outputNode.id, 'running', { progress: 5 })
 
     const startTime = Date.now()
     try {
       const specKey = computeEnhanceSpecKey(p)
       const extras: Record<string, unknown> = {
-        modelKey: 'volc-enhance-video',
+        modelKey: enhanceModelKey,
         video_url: srcUrl,
         specKey,
         tool_version: p.tool_version,
@@ -4232,11 +4227,14 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       if (result.status === 'failed') throw new Error('画质增强失败')
       const url = result.assets?.find((asset) => typeof asset.url === 'string' && asset.url.trim())?.url?.trim()
       if (!url) throw new Error('未返回增强视频 URL')
+      const enhancedAsset = result.assets?.find((asset) => typeof asset.url === 'string' && asset.url.trim())
+      const persistedEnhancedUrl = enhancedAsset?.url?.trim() ?? ''
       updateNodeData(outputNode.id, {
-        videoUrl: url,
-        videoResults: [{ url, title: '画质增强', duration: sourceData.videoDuration }],
+        videoUrl: persistedEnhancedUrl,
+        videoResults: [{ url: persistedEnhancedUrl, title: '画质增强', duration: sourceData.videoDuration }],
         videoPrimaryIndex: 0,
         videoDuration: sourceData.videoDuration,
+        ...(enhancedAsset?.assetId ? { serverAssetId: enhancedAsset.assetId } : {}),
       })
       setNodeStatus(outputNode.id, 'success', { progress: 100 })
       notifyAssetRefresh()
@@ -4246,7 +4244,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       setNodeStatus(outputNode.id, 'error', { lastError: message })
       toast(message, 'error')
     }
-  }, [addNode, data, id, setNodeStatus, updateNodeData])
+  }, [addNode, currentProject?.id, data, id, setNodeStatus, updateNodeData, videoActionModelList, videoActionModelListError, videoActionModelListLoading, videoEnhanceModelOption])
 
   const handleVideoEditSubmit = React.useCallback(async (input: {
     mode: Exclude<VideoToolEditorMode, 'separation'>
@@ -4374,11 +4372,15 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       if (result.status === 'failed') throw new Error('视频编辑失败，请查看任务详情')
       const url = result.assets?.find((asset) => typeof asset.url === 'string' && asset.url.trim())?.url?.trim()
       if (!url) throw new Error('视频编辑完成但未返回视频 URL')
+      const editedAsset = result.assets?.find((asset) => typeof asset.url === 'string' && asset.url.trim())
+      const persistedUrl = editedAsset?.url?.trim() ?? ''
+      if (!persistedUrl) throw new Error('视频编辑完成但未返回可访问的托管视频链接')
       updateNodeData(outputNode.id, {
-        videoUrl: url,
-        videoResults: [{ url, title: input.mode === 'subject' ? '主体消除' : '去字幕', duration: sourceData.videoDuration }],
+        videoUrl: persistedUrl,
+        videoResults: [{ url: persistedUrl, title: input.mode === 'subject' ? '主体消除' : '去字幕', duration: sourceData.videoDuration }],
         videoPrimaryIndex: 0,
         videoDuration: sourceData.videoDuration,
+        ...(editedAsset?.assetId ? { serverAssetId: editedAsset.assetId } : {}),
       })
       setNodeStatus(outputNode.id, 'success', { progress: 100 })
       notifyAssetRefresh()
@@ -4389,7 +4391,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       toast(message, 'error')
       throw error
     }
-  }, [addNode, data, id, setNodeStatus, updateNodeData, videoSubjectRemovalModelOptions, videoSubtitleRemovalModelOptions])
+  }, [addNode, currentProject?.id, data, id, setNodeStatus, updateNodeData, videoSubjectRemovalModelOptions, videoSubtitleRemovalModelOptions])
 
   const cameraChipLabel = React.useMemo(() => {
     if (!imageCinematicCamera?.enabled || !imageCinematicCamera?.cameraKey) return '摄影机控制'
@@ -4657,6 +4659,19 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       .map((item) => JSON.parse(item) as OrderedUpstreamReferenceItem)
   }, [serializedUpstreamReferenceItems])
   const canvasReferencePickerActive = canvasReferencePicker?.targetNodeId === id
+  const handleRemoveUpstreamReference = React.useCallback((edgeId: string) => {
+    useRFStore.getState().onEdgesChange([{ id: edgeId, type: 'remove' }])
+  }, [])
+  const handleReorderUpstreamReference = React.useCallback((draggedEdgeId: string, targetEdgeId: string) => {
+    const state = useRFStore.getState()
+    const items = collectOrderedUpstreamReferenceItems(state.nodes, state.edges, id)
+    const sourceIndex = items.findIndex((item) => item.edgeId === draggedEdgeId)
+    const targetIndex = items.findIndex((item) => item.edgeId === targetEdgeId)
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return
+    const [movedItem] = items.splice(sourceIndex, 1)
+    items.splice(targetIndex, 0, movedItem)
+    updateNodeData(id, { upstreamReferenceOrder: items.map((item) => item.sourceNodeId) })
+  }, [id, updateNodeData])
   const handleToggleCanvasReferencePicker = React.useCallback(() => {
     if (canvasReferencePickerActive) {
       closeCanvasReferencePicker()
@@ -4746,6 +4761,16 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       setVideoMarkerSaving(false)
     }
   }, [currentProject?.id, id, updateNodeData, videoMarkerPlayback.duration, videoMarkerSaving, videoMarkers, videoPrimaryIndex, videoResults, videoUrl])
+  const handleRemoveVideoMarker = React.useCallback((markerId: string) => {
+    const nextMarkers = videoMarkers.filter((marker) => marker.id !== markerId)
+    const activeMarkerId = String((data as Record<string, unknown>).activeVideoMarkerId || '').trim()
+    updateNodeData(id, {
+      videoMarkers: nextMarkers,
+      ...(activeMarkerId === markerId
+        ? { activeVideoMarkerId: nextMarkers[nextMarkers.length - 1]?.id ?? null }
+        : {}),
+    })
+  }, [data, id, updateNodeData, videoMarkers])
   const handleSelectMediaPromptLibraryItem = React.useCallback((item: { prompt: string }) => {
     const addition = item.prompt.trim()
     if (!addition) return
@@ -4982,7 +5007,11 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
 
   const handleGeneratePanoramic = React.useCallback(async () => {
     const sourceUrl = primaryImageUrl
-    if (!sourceUrl || panoramicGenerating) return
+    if (panoramicGenerating) return
+    if (!sourceUrl) {
+      toast('当前节点没有可生成全景图的真实图片资产', 'error')
+      return
+    }
     const selectedPanoramicModel = resolveImageEditModelForAction()
     if (!selectedPanoramicModel) return
     setPanoramicGenerating(true)
@@ -5057,6 +5086,8 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       }
       const firstImage = assets.find((a: any) => a?.type === 'image' && a?.url)
       if (firstImage?.url) {
+        const persistedImageUrl = String(firstImage.url).trim()
+        if (!/^https?:\/\//i.test(persistedImageUrl)) throw new Error('全景图结果不是可访问的托管链接')
         useRFStore.setState((s: any) => ({
           nodes: s.nodes.map((n: any) =>
             n.id === newNodeId
@@ -5064,8 +5095,9 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
                   ...n,
                   data: {
                     ...n.data,
-                    imageUrl: firstImage.url,
-                    imageResults: [{ url: firstImage.url, title: '720°全景图' }],
+                    imageUrl: persistedImageUrl,
+                    imageResults: [{ url: persistedImageUrl, title: '720°全景图' }],
+                    ...(typeof firstImage.assetId === 'string' && firstImage.assetId ? { serverAssetId: firstImage.assetId } : {}),
                     imagePrimaryIndex: 0,
                     status: 'success',
                     isPanoramic: true,
@@ -5075,7 +5107,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
                       progress: 100,
                       startedAt: imageOperationSpec.createdAt,
                       finishedAt: new Date().toISOString(),
-                      resultAssets: [{ role: 'result' as const, url: firstImage.url }],
+                      resultAssets: [{ role: 'result' as const, url: persistedImageUrl }],
                     },
                     imageOperationRevision: imageOperationSpec.sourceRevision + 1,
                   },
@@ -5223,19 +5255,134 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   }, [handleToolbarDurationChange, openVeoModal, resolvedVideoVendor, videoModelConfig])
 
   const handleSegmentRemakeConfirm = React.useCallback(async (ranges: SegmentRemakeRange[], nextPrompt: string) => {
+    if (isOrchestratedVideoClip) {
+      updateNodeData(id, {
+        prompt: nextPrompt,
+        segmentRemakeRanges: ranges,
+        segmentRemakeSubmittedAt: new Date().toISOString(),
+      })
+      requestVideoClipAgentAction({
+        nodeId: id,
+        action: 'revise_clip',
+        runId: readVideoClipRunId(data),
+        clipIndex: readVideoClipIndex(data),
+      })
+      return
+    }
+
+    const nodeRecord = data as Record<string, unknown>
+    const sourceVideoUrl = String(
+      nodeRecord.segmentRemakeSourceVideoUrl
+      || nodeRecord.sourceVideoUrl
+      || videoResults[0]?.url
+      || videoUrl
+      || '',
+    ).trim()
+    if (!/^https?:\/\//i.test(sourceVideoUrl)) {
+      throw new Error('片段重拍需要已上传的真实源视频 URL')
+    }
+
+    const selectedModel = findModelOptionByIdentifier(modelMenuOptions, videoModel)
+    if (!selectedModel) throw new Error('当前重拍模型不可用，请重新选择')
+    const selectedModelConfig = constrainVideoModelCatalogConfigByPricing(
+      parseVideoModelCatalogConfig(selectedModel.meta),
+      selectedModel.pricing,
+    )
+    if (
+      selectedModelConfig?.supportsReferenceVideos !== true
+      && selectedModelConfig?.supportsVideoEditing !== true
+    ) {
+      throw new Error(`模型“${getTaskNodeModelDisplayLabel(selectedModel)}”未发布参考视频或视频编辑能力，不能执行片段重拍`)
+    }
+
+    const persistedSourceDuration = Number(nodeRecord.segmentRemakeSourceDurationSeconds)
+    const sourceDuration = Number.isFinite(persistedSourceDuration) && persistedSourceDuration > 0
+      ? persistedSourceDuration
+      : activeVideoDuration ?? Number(nodeRecord.videoDuration)
+    if (!Number.isFinite(sourceDuration) || sourceDuration <= 0) {
+      throw new Error('源视频时长尚未加载，无法确定重拍片段')
+    }
+    const normalizedRanges = normalizeSegmentRemakeRanges(ranges, sourceDuration)
+    const referenceDurationSeconds = normalizedRanges.length > 0
+      ? normalizedRanges.reduce((total, range) => total + range.end - range.start, 0)
+      : sourceDuration
+    const maximumReferenceDuration = selectedModelConfig.maxReferenceVideoDurationSeconds
+    if (
+      typeof maximumReferenceDuration === 'number'
+      && referenceDurationSeconds > maximumReferenceDuration
+    ) {
+      throw new Error(`所选模型最多接收 ${maximumReferenceDuration} 秒参考视频；当前片段合计 ${referenceDurationSeconds.toFixed(1)} 秒`)
+    }
+
+    const rangeSignature = JSON.stringify({ sourceVideoUrl, ranges: normalizedRanges })
+    const previousSignature = typeof nodeRecord.segmentRemakeReferenceSignature === 'string'
+      ? nodeRecord.segmentRemakeReferenceSignature
+      : ''
+    const previousReferenceUrl = typeof nodeRecord.segmentRemakeReferenceVideoUrl === 'string'
+      ? nodeRecord.segmentRemakeReferenceVideoUrl.trim()
+      : ''
+    let referenceVideoUrl = normalizedRanges.length === 0 ? sourceVideoUrl : previousReferenceUrl
+    let referenceAssetId = typeof nodeRecord.segmentRemakeReferenceAssetId === 'string'
+      ? nodeRecord.segmentRemakeReferenceAssetId
+      : null
+
+    if (normalizedRanges.length > 0 && (previousSignature !== rangeSignature || !/^https?:\/\//i.test(referenceVideoUrl))) {
+      const { sliceVideoRanges } = await import('../../utils/ffmpegTrim')
+      const clippedVideo = await sliceVideoRanges(sourceVideoUrl, normalizedRanges)
+      const extension = clippedVideo.type === 'video/webm' ? 'webm' : 'mp4'
+      const file = new File([clippedVideo], `segment-remake-reference.${extension}`, { type: clippedVideo.type })
+      const uploaded = await uploadServerAssetFile(file, '片段重拍参考视频', {
+        ownerNodeId: id,
+        projectId: currentProject?.id,
+        taskKind: 'segment_remake_reference',
+      })
+      referenceVideoUrl = typeof uploaded.data?.url === 'string' ? uploaded.data.url.trim() : ''
+      if (!/^https?:\/\//i.test(referenceVideoUrl)) {
+        throw new Error('片段重拍参考视频上传完成，但未返回真实资产 URL')
+      }
+      referenceAssetId = uploaded.id
+    }
+
+    const requestModelKey = getModelOptionRequestAlias(modelMenuOptions, selectedModel.value) || selectedModel.value
+    const featurePatch = buildFeaturePatch(nextPrompt)
     updateNodeData(id, {
+      ...featurePatch,
       prompt: nextPrompt,
-      segmentRemakeRanges: ranges,
+      videoModel: requestModelKey,
+      segmentRemakeRanges: normalizedRanges,
+      segmentRemakeReferenceVideoUrl: referenceVideoUrl,
+      segmentRemakeReferenceDurationSeconds: referenceDurationSeconds,
+      segmentRemakeReferenceSignature: rangeSignature,
+      segmentRemakeReferenceAssetId: referenceAssetId,
       segmentRemakeSubmittedAt: new Date().toISOString(),
-      status: 'queued',
+      referenceVideoDurationSeconds: referenceDurationSeconds,
+      ...buildVideoDurationPatch(referenceDurationSeconds),
+      status: 'idle',
+      progress: 0,
+      lastError: null,
     })
-    requestVideoClipAgentAction({
-      nodeId: id,
-      action: 'revise_clip',
-      runId: readVideoClipRunId(data),
-      clipIndex: readVideoClipIndex(data),
-    })
-  }, [data, id, updateNodeData])
+
+    toast(normalizedRanges.length > 0 ? '已提交选中片段重拍' : '已提交整段视频重拍', 'success')
+    if (runCount > 1) {
+      void useRFStore.getState().runNodeBranchClones(id, runCount)
+      return
+    }
+    void runSelected()
+  }, [
+    activeVideoDuration,
+    buildFeaturePatch,
+    currentProject?.id,
+    data,
+    id,
+    isOrchestratedVideoClip,
+    modelMenuOptions,
+    runCount,
+    runSelected,
+    updateNodeData,
+    videoModel,
+    videoResults,
+    videoUrl,
+  ])
 
   const segmentRemakeRanges = React.useMemo<SegmentRemakeRange[]>(() => {
     const raw = (data as Record<string, unknown>).segmentRemakeRanges
@@ -5255,24 +5402,28 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
 	    : isSegmentRemakeNode
 	      ? (
 	        <LazySegmentRemakeContent
-	          videoUrl={videoResults[videoPrimaryIndex]?.url || videoUrl || ''}
-          videoDuration={activeVideoDuration ?? (Number((data as Record<string, unknown>).videoDuration) || 0)}
+	          videoUrl={String((data as Record<string, unknown>).segmentRemakeSourceVideoUrl || (data as Record<string, unknown>).sourceVideoUrl || videoResults[0]?.url || videoUrl || '')}
+          videoDuration={Number((data as Record<string, unknown>).segmentRemakeSourceDurationSeconds) || activeVideoDuration || Number((data as Record<string, unknown>).videoDuration) || 0}
           videoTitle={videoTitle}
           initialRanges={segmentRemakeRanges}
+	          onRangesChange={(ranges) => updateNodeData(id, { segmentRemakeRanges: ranges })}
 	          prompt={prompt}
 	          onPromptChange={(value) => { setPrompt(value); updateNodeData(id, { prompt: value }) }}
 	          onConfirm={handleSegmentRemakeConfirm}
-          onReference={() => setVideoExpanded(true)}
+          onReference={handleToggleCanvasReferencePicker}
           onCharacterLibrary={() => setCharacterLibraryOpen(true)}
           onFullscreen={() => setVideoExpanded(true)}
-          quickActions={() => (
+          quickActions={({ markerActive, onMarker }) => (
             <LazyLibTvMediaQuickActions
               kind="video"
               disabled={nodeReadOnly || isRunning}
               referenceActive={canvasReferencePickerActive}
-              markerActive={videoMarkers.length > 0 || videoMarkerOpen}
+              markerActive={markerActive}
+              effectActive={mediaPromptLibraryKind === 'effect'}
+              charactersActive={characterLibraryOpen}
+              cameraMovementActive={mediaPromptLibraryKind === 'camera'}
               onReference={handleToggleCanvasReferencePicker}
-              onMarker={handleOpenMediaMarker}
+              onMarker={onMarker}
               onEffect={() => setMediaPromptLibraryKind('effect')}
               onCharacters={() => setCharacterLibraryOpen(true)}
               onCameraMovement={() => setMediaPromptLibraryKind('camera')}
@@ -5286,7 +5437,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
           resolutionOptions={configuredVideoResolutionOptions}
           onResolutionChange={handleToolbarVideoResolutionChange}
           runCount={runCount}
-          onRunCountChange={(value) => updateNodeData(id, { runCount: value })}
+          onRunCountChange={(value) => { setRunCount(value); updateNodeData(id, { runCount: value }) }}
           readOnly={nodeReadOnly}
         />
       )
@@ -5512,7 +5663,10 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   }, [rotatePrevAngle])
 
   const handleRotatePrevConfirm = React.useCallback(async () => {
-    if (!primaryImageUrl) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可旋转的真实图片资产', 'error')
+      return
+    }
     setRotateSaving(true)
     try {
       // Prefer the already-downloaded resource from ManagedImage cache (blob: / ImageBitmap)
@@ -6350,6 +6504,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
       : {}
     return buildPersistedPromptAssetMentionRefs(id, nodeData.assetInputs)
   }, [data, id])
+  const submissionMentionRefs = React.useMemo(() => buildSubmissionMentionRefs(id, (data as Record<string, unknown>).workflowVideoSubmissionInput), [id, data])
   const mentionSuggestionOptions = React.useMemo(() => {
     const byUsername = new Map<string, CharacterRef>()
       const push = (item: {
@@ -6398,6 +6553,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
         isConnected: item.isConnected === true,
       })
     }
+    submissionMentionRefs.forEach(push)
     connectedCharacterOptions.forEach((opt) => push({
       nodeId: opt.value,
       username: opt.username,
@@ -6442,6 +6598,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     projectImageSettings.lockedStyle,
     persistedAssetInputMentionRefs,
     upstreamReferenceMentionRefs,
+    submissionMentionRefs,
   ])
   const handleSmartGenerateVideoPrompt = React.useCallback(async () => {
     if (viewOnly || !isVideoNode) return
@@ -6487,14 +6644,13 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
     try {
       setVideoPromptGenerationLoading(true)
       const ui = useUIStore.getState()
-      const apiKey = (ui.publicApiKey || '').trim()
-      if (!apiKey && !hasAuthSession()) {
+      if (!hasAuthSession()) {
         toast('请先登录后再试', 'error')
         return
       }
       const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
       const promptRefineModelKey = resolvePromptRefineModelKey()
-      const taskRes = await runPublicTask(apiKey, {
+      const taskRes = await runPublicTaskWithAuth({
         vendor: 'auto',
         ...(vendorCandidates.length ? { vendorCandidates } : {}),
         request: {
@@ -6577,13 +6733,12 @@ const rewritePromptWithCharacters = React.useCallback(
     const systemPrompt =
       '你是一个提示词修订助手。只在上下文能确认人物身份时替换角色引用；不得补写原文未出现的角色，不得修改对白或剧情事实。只输出修改后的脚本文本，并确保每个 @username 前后至少保留一个空格。'
     const ui = useUIStore.getState()
-    const apiKey = (ui.publicApiKey || '').trim()
-    if (!apiKey && !hasAuthSession()) {
+    if (!hasAuthSession()) {
       throw new Error('未登录：请先登录后再试')
     }
     const vendorCandidates = Array.isArray(ui.publicVendorCandidates) ? ui.publicVendorCandidates : []
     const persist = ui.assetPersistenceEnabled
-    const taskRes = await runPublicTask(apiKey, {
+    const taskRes = await runPublicTaskWithAuth({
       vendor: 'auto',
       ...(vendorCandidates.length ? { vendorCandidates } : {}),
       request: {
@@ -6855,7 +7010,11 @@ const rewritePromptWithCharacters = React.useCallback(
 
   // 极速抠图：原图直接走像素级分割（remove.bg/ONNX），输出透明 PNG。
   const handleFastCutout = React.useCallback(() => {
-    if (!primaryImageUrl || extractLoading) return
+    if (extractLoading) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可抠图的真实图片资产', 'error')
+      return
+    }
     setExtractLoading(true)
     const imageOperationSpec = createImageOperationForSource({
       kind: 'cutout',
@@ -6880,7 +7039,11 @@ const rewritePromptWithCharacters = React.useCallback(
 
   // 智能抠图：先 Gemini 把背景换成纯色（提纯主体），再像素级分割，边缘更干净。
   const handleSmartCutout = React.useCallback(() => {
-    if (!primaryImageUrl || smartCutoutLoading) return
+    if (smartCutoutLoading) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可智能抠图的真实图片资产', 'error')
+      return
+    }
     setSmartCutoutLoading(true)
     const clean = spawnImageNode({
       label: '智能抠图·提纯',
@@ -6904,7 +7067,11 @@ const rewritePromptWithCharacters = React.useCallback(
   // 一键分层：调用真实 RGBA 分层模型。每个返回图层都由服务端先托管到 OSS，
   // 再落成可独立移动、编辑和连线的图片节点；普通重绘模型不允许冒充图层分离。
   const handleLayerSplit = React.useCallback(async () => {
-    if (!primaryImageUrl || layerLoading) return
+    if (layerLoading) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可分层的真实图片资产', 'error')
+      return
+    }
     setLayerLoading(true)
     try {
       const { runImageLayerSplit } = await import('./taskNode/imageLayerActions')
@@ -6933,7 +7100,11 @@ const rewritePromptWithCharacters = React.useCallback(
 
   // 一键去噪：以当前图为参考图，用固定去噪/增强提示词生成新节点（复用 spawnImageNode 链路）
   const handleDenoise = React.useCallback((mode: 'clean' | 'enhance') => {
-    if (!primaryImageUrl || denoiseLoading) return
+    if (denoiseLoading) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可增强的真实图片资产', 'error')
+      return
+    }
     setDenoiseLoading(true)
     const editableModel = String(imageModel || '').trim() || undefined
     const label = mode === 'enhance' ? '8K 增强' : '去噪'
@@ -6948,7 +7119,10 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [denoiseLoading, imageModel, primaryImageUrl, spawnImageNode])
 
   const handleCreateRotatePreview = React.useCallback(() => {
-    if (!primaryImageUrl) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可旋转的真实图片资产', 'error')
+      return
+    }
     setHdPanelOpen(false)
     setExpandPanelOpen(false)
     const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
@@ -6986,7 +7160,10 @@ const rewritePromptWithCharacters = React.useCallback(
 
   const handleCreateVideoAnalysis = React.useCallback(() => {
     const url = videoResults[videoPrimaryIndex]?.url || videoUrl
-    if (!url) return
+    if (!/^https?:\/\//i.test(url || '')) {
+      toast('当前节点没有可分析的真实视频 URL', 'error')
+      return
+    }
     const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
     addNode('taskNode', '逐帧拉片', {
       kind: 'videoAnalysis',
@@ -7020,8 +7197,11 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [activeVideoDuration, addNode, id, nodeWidth, videoPrimaryIndex, videoResults, videoUrl])
 
   const handleCreateSmartVideoEdit = React.useCallback(() => {
-    const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl
-    if (!sourceUrl) return
+    const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
+    if (!/^https?:\/\//i.test(sourceUrl || '')) {
+      toast('当前节点没有可剪辑的真实视频 URL', 'error')
+      return
+    }
     const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
     addNode('taskNode', '智能剪辑', {
       kind: 'videoCompose',
@@ -7055,10 +7235,22 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [addNode, id, nodeWidth, videoPrimaryIndex, videoResults, videoUrl])
 
   const handleCreateSegmentRemake = React.useCallback(() => {
-    const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl
-    if (!sourceUrl) return
+    const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
+    if (!/^https?:\/\//i.test(sourceUrl || '')) {
+      toast('当前节点没有可重拍的真实视频 URL', 'error')
+      return
+    }
     const beforeIds = new Set(useRFStore.getState().nodes.map((node) => node.id))
     const sourceData = data as Record<string, unknown>
+    const persistedSourceDuration = Number(sourceData.videoDuration)
+    const sourceDuration = activeVideoDuration
+      ?? (Number.isFinite(persistedSourceDuration) && persistedSourceDuration > 0 ? persistedSourceDuration : undefined)
+    const markerDraft = createSegmentRemakeDraftFromMarkers({
+      markers: videoMarkers,
+      sourceVideoUrl: sourceUrl,
+      duration: sourceDuration ?? 0,
+      referenceImageLimit: referenceImageLimitRef.current,
+    })
     addNode('taskNode', `${String(sourceData.label || '当前视频')}-片段重拍`, {
       kind: 'video',
       nodeWidth: 610,
@@ -7067,16 +7259,21 @@ const rewritePromptWithCharacters = React.useCallback(
       sourceVideoNodeId: id,
       sourcePrevVideoNodeId: id,
       sourceVideoUrl: sourceUrl,
+      segmentRemakeSourceVideoUrl: sourceUrl,
+      segmentRemakeSourceDurationSeconds: sourceDuration,
       videoUrl: sourceUrl,
       videoResults: [{
         url: sourceUrl,
         title: typeof sourceData.videoTitle === 'string' ? sourceData.videoTitle : String(sourceData.label || '源视频'),
-        duration: activeVideoDuration ?? undefined,
+        duration: sourceDuration,
       }],
       videoPrimaryIndex: 0,
-      videoDuration: activeVideoDuration ?? undefined,
-      segmentRemakeRanges: [],
-      prompt: '',
+      videoDuration: sourceDuration,
+      segmentRemakeRanges: markerDraft.ranges,
+      segmentRemakeMarkerIds: markerDraft.markerIds,
+      referenceImages: markerDraft.referenceImages,
+      assetInputs: markerDraft.referenceImages.map((url) => ({ url, role: 'reference' })),
+      prompt: markerDraft.prompt,
       status: 'idle',
     })
     const afterAdd = useRFStore.getState()
@@ -7096,17 +7293,22 @@ const rewritePromptWithCharacters = React.useCallback(
     ])
     afterAdd.onConnect({ source: id, sourceHandle: 'out-video', target: newNode.id, targetHandle: 'in-video' })
     afterAdd.clearPendingFocusNodeId()
-    toast('已创建片段重拍节点，可标记 5 个片段后确认', 'success')
-  }, [activeVideoDuration, addNode, data, id, nodeWidth, videoPrimaryIndex, videoResults, videoUrl])
+    toast(
+      markerDraft.markerIds.length > 0
+        ? `已创建片段重拍节点，并带入 ${markerDraft.markerIds.length} 个视频标记`
+        : '已创建片段重拍节点，可标记 5 个片段后确认',
+      'success',
+    )
+  }, [activeVideoDuration, addNode, data, id, nodeWidth, videoMarkers, videoPrimaryIndex, videoResults, videoUrl])
 
   const handleCreateVideoContinuation = React.useCallback(async (input: VideoContinuationSubmit) => {
     const sourceUrl = videoResults[videoPrimaryIndex]?.url || videoUrl
-    if (!sourceUrl || !input.prompt.trim()) return
+    if (!/^https?:\/\//i.test(sourceUrl || '')) throw new Error('当前节点没有可续写的真实视频 URL')
+    if (!input.prompt.trim()) throw new Error('请输入需要续写的内容')
 
     const selectedDuration = input.sourceRange.end - input.sourceRange.start
     if (!Number.isFinite(selectedDuration) || selectedDuration <= 0) {
-      toast('续写前置片段时长无效', 'error')
-      return
+      throw new Error('续写前置片段时长无效')
     }
 
     let continuationUrl = sourceUrl
@@ -7119,6 +7321,7 @@ const rewritePromptWithCharacters = React.useCallback(
 
     try {
       if (isPartialSelection) {
+        if (!sourceUrl) throw new Error('续写前置片段失败：缺少视频源链接')
         const { sliceVideo } = await import('../../utils/ffmpegTrim')
         const clip = await sliceVideo(sourceUrl, input.sourceRange.start, input.sourceRange.end)
         const extension = sourceUrl.split('?')[0].split('.').pop()?.toLowerCase() || 'mp4'
@@ -7174,8 +7377,10 @@ const rewritePromptWithCharacters = React.useCallback(
         toast(error instanceof Error ? `智能续写失败：${error.message}` : '智能续写失败', 'error')
       })
       toast('已创建智能续写节点并开始生成', 'success')
-    } catch (error) {
-      toast(error instanceof Error ? `智能续写前置片段处理失败：${error.message}` : '智能续写前置片段处理失败', 'error')
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '智能续写前置片段处理失败'
+      toast(`智能续写前置片段处理失败：${message}`, 'error')
+      throw new Error(message)
     }
   }, [activeVideoDuration, addNode, data, id, nodeWidth, runNodeDagToTarget, videoPrimaryIndex, videoResults, videoUrl])
 
@@ -7487,7 +7692,7 @@ const rewritePromptWithCharacters = React.useCallback(
       // 球形模式下 uniqueDefs 为空，操作全在 toolbarMetaActions
       if (isPanoramic && panoramicSphereMode) return []
 
-      const tools: { key: string; label: string; icon: JSX.Element; onClick: () => void; loading?: boolean; disabled?: boolean; showLabel?: boolean; badge?: React.ReactNode; menuItems?: ToolbarMenuItem[]; active?: boolean; tooltip?: string }[] = []
+      const tools: ToolbarAction[] = []
 
       if (!isPanoramic && (kind === 'image' || kind === 'imageEdit') && hasImageResults) {
         const gridSplitMenuItems: ToolbarMenuItem[] = [
@@ -7503,7 +7708,6 @@ const rewritePromptWithCharacters = React.useCallback(
           {
             key: 'custom',
             label: '自定义',
-            onClick: () => {},
             subMenuContent: (
               <LazyGridCustomPicker
                 isDarkUi={isDarkUi}
@@ -7539,7 +7743,6 @@ const rewritePromptWithCharacters = React.useCallback(
           { key: 'denoise-clean', label: '精简去噪 · 保构图', icon: <IconSparkles size={14} />, onClick: () => handleDenoise('clean') },
           { key: 'denoise-8k', label: '8K 极致增强', icon: <IconSparkles size={14} />, onClick: () => handleDenoise('enhance') },
           { key: 'smart-cutout', label: '智能抠图', icon: <IconScissors size={14} />, onClick: handleSmartCutout },
-          { key: 'save-to-library', label: '保存到素材库', icon: <IconFolderPlus size={14} />, onClick: () => setSaveToLibraryOpen(true) },
         )
         const nineGridMenuItems: ToolbarMenuItem[] = LIBTV_IMAGE_NINE_GRID_PRESET_KEYS.flatMap((presetKey) => {
           const preset = findLibTvImagePreset(presetKey)
@@ -7751,7 +7954,6 @@ const rewritePromptWithCharacters = React.useCallback(
             key: 'more',
             label: '更多',
             icon: <IconDots size={18} />,
-            onClick: () => {},
             menuItems: moreMenuItems,
           },
         )
@@ -7798,13 +8000,14 @@ const rewritePromptWithCharacters = React.useCallback(
               label: '文本创作',
               icon: <IconMovie size={18} />,
               showLabel: true,
-              onClick: () => {},
               menuItems: imageIntentDefs.map((a) => {
                 const Icon = a.icon
                 return {
                   key: a.key,
                   label: a.label,
                   icon: <Icon size={14} />,
+                  // Allow concurrent dispatches from different source nodes —
+                  // only disable if THIS exact intent is already running from THIS node.
                   onClick: () => {
                     const chapterContext = resolveCtx()
                     if (!chapterContext) {
@@ -7829,7 +8032,6 @@ const rewritePromptWithCharacters = React.useCallback(
             showLabel: true,
             icon: <IconSparkles size={18} />,
             loading: denoiseLoading,
-            onClick: () => {},
             menuItems: [
               { key: 'denoise-clean', label: '精简去噪 · 保构图', onClick: () => handleDenoise('clean') },
               { key: 'denoise-8k',    label: '8K 极致增强',      onClick: () => handleDenoise('enhance') },
@@ -7842,7 +8044,6 @@ const rewritePromptWithCharacters = React.useCallback(
             label: '宫格切分',
             showLabel: true,
             icon: <IconBorderAll size={18} />,
-            onClick: () => {},
             menuItems: [
               { key: '2x2', label: '4宫格 (2×2)', onClick: () => { setGridSplitRows(2); setGridSplitCols(2); setGridSplitOpen(true) } },
               { key: '3x3', label: '9宫格 (3×3)', onClick: () => { setGridSplitRows(3); setGridSplitCols(3); setGridSplitOpen(true) } },
@@ -7851,7 +8052,6 @@ const rewritePromptWithCharacters = React.useCallback(
               {
                 key: 'custom',
                 label: '自定义',
-                onClick: () => {},
                 subMenuContent: (
                   <LazyGridCustomPicker
                     isDarkUi={isDarkUi}
@@ -7873,7 +8073,6 @@ const rewritePromptWithCharacters = React.useCallback(
             label: '裁剪',
             showLabel: true,
             icon: <IconCrop size={18} />,
-            onClick: () => {},
             menuItems: [
               { key: 'hd',      label: '高清',  onClick: () => { setHdPanelOpen(o => !o); setExpandPanelOpen(false) } },
               { key: 'expand',  label: '扩图',  onClick: () => { setExpandPanelOpen(o => !o); setHdPanelOpen(false) } },
@@ -7889,7 +8088,6 @@ const rewritePromptWithCharacters = React.useCallback(
             showLabel: true,
             icon: <IconScissors size={18} />,
             loading: extractLoading || smartCutoutLoading || layerLoading,
-            onClick: () => {},
             menuItems: [
               { key: 'fast-cutout',  label: '极速抠图', onClick: handleFastCutout },
               { key: 'smart-cutout', label: '智能抠图', onClick: handleSmartCutout },
@@ -7957,6 +8155,7 @@ const rewritePromptWithCharacters = React.useCallback(
             label: '片段重拍',
             showLabel: true,
             icon: <IconRepeat size={16} />,
+            active: videoContinuationOpen,
             onClick: handleCreateSegmentRemake,
             menuItems: [
               {
@@ -8000,6 +8199,7 @@ const rewritePromptWithCharacters = React.useCallback(
             label: '智能去字幕',
             showLabel: true,
             icon: <IconSubtitlesOff size={16} />,
+            active: videoToolEditorMode === 'subtitle' || videoToolEditorMode === 'subtitle-auto',
             onClick: () => setVideoToolEditorMode('subtitle'),
             menuItems: [
               {
@@ -8021,6 +8221,7 @@ const rewritePromptWithCharacters = React.useCallback(
             label: '音视频分离',
             showLabel: true,
             icon: <IconArrowsSplit size={16} />,
+            active: videoToolEditorMode === 'separation',
             onClick: () => setVideoToolEditorMode('separation'),
             menuItems: [
               {
@@ -8036,6 +8237,7 @@ const rewritePromptWithCharacters = React.useCallback(
             label: '主体消除',
             showLabel: true,
             icon: <IconUserOff size={16} />,
+            active: videoToolEditorMode === 'subject',
             onClick: () => setVideoToolEditorMode('subject'),
             menuItems: [
               {
@@ -8051,24 +8253,32 @@ const rewritePromptWithCharacters = React.useCallback(
             label: '截取首帧',
             showLabel: true,
             icon: <IconScreenshot size={16} />,
+            loading: videoFrameCaptureMode !== null,
+            disabled: videoFrameCaptureMode !== null,
             onClick: () => { void handleCaptureVideoFirstFrame() },
             menuItems: [
               {
                 key: 'capture-first-frame',
                 label: '截取首帧',
                 icon: <IconScreenshot size={14} />,
+                loading: videoFrameCaptureMode === 'first',
+                disabled: videoFrameCaptureMode !== null,
                 onClick: () => { void handleCaptureVideoFrame('first') },
               },
               {
                 key: 'capture-last-frame',
                 label: '截取尾帧',
                 icon: <IconScreenshot size={14} />,
+                loading: videoFrameCaptureMode === 'last',
+                disabled: videoFrameCaptureMode !== null,
                 onClick: () => { void handleCaptureVideoFrame('last') },
               },
               {
                 key: 'capture-current-frame',
                 label: '截取当前帧',
                 icon: <IconScreenshot size={14} />,
+                loading: videoFrameCaptureMode === 'current',
+                disabled: videoFrameCaptureMode !== null,
                 onClick: () => { void handleCaptureVideoFrame('current') },
               },
             ] as ToolbarMenuItem[],
@@ -8160,6 +8370,9 @@ const rewritePromptWithCharacters = React.useCallback(
     setTrimOpen,
     inheritUpstreamConnections,
     setSaveToLibraryOpen,
+    videoFrameCaptureMode,
+    videoContinuationOpen,
+    videoToolEditorMode,
   ])
 
   type VeoCandidateImage = { url: string; label: string; sourceType: 'image' | 'video' }
@@ -8462,12 +8675,15 @@ const rewritePromptWithCharacters = React.useCallback(
   // 参考页的“截取首帧/尾帧/当前帧”都是确定性的本地媒体动作：从真实视频
   // URL 读取目标帧，上传到托管资产后在源节点右侧落一个可复用图片节点。
   const handleCaptureVideoFrame = React.useCallback(async (mode: 'first' | 'last' | 'current' = 'first') => {
+    if (videoFrameCaptureBusyRef.current) return
     const sourceUrl = (videoResults[videoPrimaryIndex]?.url || videoUrl || '').trim()
-    if (!sourceUrl) {
-      toast('当前没有可截取的真实视频资产', 'error')
+    if (!/^https?:\/\//i.test(sourceUrl)) {
+      toast('当前没有可截取的真实视频 URL', 'error')
       return
     }
     let frameObjectUrl: string | null = null
+    videoFrameCaptureBusyRef.current = true
+    setVideoFrameCaptureMode(mode)
     try {
       const playback = readRetainedVideoPlaybackSnapshot(buildRetainedVideoSurfaceKey(id, sourceUrl))
       const currentTime = playback?.currentTime ?? videoMarkerPlayback.currentTime
@@ -8500,6 +8716,8 @@ const rewritePromptWithCharacters = React.useCallback(
       toast(error instanceof Error ? error.message : '截取视频帧失败', 'error')
     } finally {
       if (frameObjectUrl) URL.revokeObjectURL(frameObjectUrl)
+      videoFrameCaptureBusyRef.current = false
+      setVideoFrameCaptureMode(null)
     }
   }, [activeVideoDuration, addConnectedHostedImageNode, currentProject?.id, id, videoMarkerPlayback.currentTime, videoPrimaryIndex, videoResults, videoUrl])
 
@@ -8513,7 +8731,10 @@ const rewritePromptWithCharacters = React.useCallback(
   const handleGridSplitCreate = React.useCallback(async (
     cells: GridSplitCell[],
   ) => {
-    if (!primaryImageUrl) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可切分的真实图片资产', 'error')
+      return
+    }
     const rows = gridSplitRows
     const cols = gridSplitCols
     const orderedCells = sortGridSplitCells(cells)
@@ -8616,7 +8837,10 @@ const rewritePromptWithCharacters = React.useCallback(
     cells: GridSplitCell[],
     scale: number,
   ) => {
-    if (!primaryImageUrl) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可高清切分的真实图片资产', 'error')
+      return
+    }
     const rows = gridSplitRows
     const cols = gridSplitCols
     const orderedCells = sortGridSplitCells(cells)
@@ -8741,7 +8965,10 @@ const rewritePromptWithCharacters = React.useCallback(
 
   // ─── 图片编辑器 callbacks ──────────────────────────────────────────────────
   const handleCropConfirm = React.useCallback(async (blob: Blob, cropW: number, cropH: number) => {
-    if (!primaryImageUrl) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可裁剪的真实图片资产', 'error')
+      return
+    }
     try {
       const hosted = await uploadEditedImageBlob({ blob, label: '裁剪', filePrefix: 'crop' })
       const imageOperationSpec = createImageOperationForSource({
@@ -8763,7 +8990,10 @@ const rewritePromptWithCharacters = React.useCallback(
 
   const handleTrimConfirm = React.useCallback(async (blob: Blob, startTime: number, endTime: number) => {
     const activeVideoUrl = videoResults[videoPrimaryIndex]?.url || videoUrl || ''
-    if (!activeVideoUrl) return
+    if (!/^https?:\/\//i.test(activeVideoUrl)) {
+      toast('当前节点没有可剪辑的真实视频 URL', 'error')
+      return
+    }
     const duration = endTime - startTime
     const label = `剪辑 ${duration.toFixed(1)}s`
     const beforeIds = new Set(useRFStore.getState().nodes.map((n) => n.id))
@@ -8821,10 +9051,13 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [addNode, id, nodeWidth, setNodeStatus, updateNodeData, videoResults, videoPrimaryIndex, videoUrl])
 
   const handleMaskConfirm = React.useCallback(async (maskBlob: Blob, prompt: string) => {
-    setMaskMode(null)
-    if (!primaryImageUrl) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可编辑的真实图片资产', 'error')
+      return
+    }
     const editableModel = resolveImageEditModelForAction('gpt-image-2')
     if (!editableModel) return
+    setMaskMode(null)
     const operationKind: ImageOperationKind = maskMode === 'erase' ? 'erase' : 'inpaint'
     let hostedSource: HostedEditedImageAsset
     let hostedMask: HostedEditedImageAsset
@@ -8985,8 +9218,8 @@ const rewritePromptWithCharacters = React.useCallback(
 
   const handleAnnotateSave = React.useCallback(async (blob: Blob) => {
     try {
-      const hosted = await uploadEditedImageBlob({ blob, label: '标注', filePrefix: 'annotate' })
       if (!primaryImageUrl) throw new Error('当前节点没有可标注的真实图片资产')
+      const hosted = await uploadEditedImageBlob({ blob, label: '标注', filePrefix: 'annotate' })
       const imageOperationSpec = createImageOperationForSource({
         kind: 'annotate',
         execution: 'local-transform',
@@ -9005,7 +9238,11 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [addConnectedHostedImageNode, data, id, primaryImageUrl, uploadEditedImageBlob])
 
   const handleHdApply = React.useCallback((scale: 2 | 4) => {
-    if (!primaryImageUrl || hdLoading) return
+    if (hdLoading) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可高清增强的真实图片资产', 'error')
+      return
+    }
     const editableModel = resolveImageEditModelForAction('gpt-image-2')
     if (!editableModel) return
     setHdLoading(true)
@@ -9042,7 +9279,11 @@ const rewritePromptWithCharacters = React.useCallback(
     })
     const afterAdd = useRFStore.getState()
     const newNode = afterAdd.nodes.find(n => !beforeIds.has(n.id))
-    if (!newNode) { setHdLoading(false); return }
+    if (!newNode) {
+      setHdLoading(false)
+      toast('高清结果节点创建失败', 'error')
+      return
+    }
     const sourceNode = afterAdd.nodes.find(n => n.id === id)
     afterAdd.onNodesChange([{
       id: newNode.id, type: 'position' as const,
@@ -9189,7 +9430,11 @@ const rewritePromptWithCharacters = React.useCallback(
   }, [addNode, basePoseImage, data, emotionLoading, emotionSelection, id, nodeWidth, primaryImageUrl, resolveImageEditModelForAction, uploadEditedImageBlob])
 
   const handleExpandApply = React.useCallback(async (scale: number) => {
-    if (!primaryImageUrl || expandLoading) return
+    if (expandLoading) return
+    if (!primaryImageUrl) {
+      toast('当前节点没有可扩图的真实图片资产', 'error')
+      return
+    }
     const editableModel = resolveImageEditModelForAction('gpt-image-2')
     if (!editableModel) return
     setExpandLoading(true)
@@ -9289,14 +9534,24 @@ const rewritePromptWithCharacters = React.useCallback(
     return badges
   }, [productionMeta.approvalStatus, productionMeta.productionLayer])
   const toolbarMetaActions: ToolbarMetaAction[] = [
+    ...(isImageNode && hasImageResults && primaryImageUrl
+      ? [
+          {
+            key: 'save-to-library-visible',
+            label: '保存到素材库',
+            icon: <IconFolderPlus className="task-node__icon-folder-plus" size={16} />,
+            onClick: () => setSaveToLibraryOpen(true),
+          },
+        ] satisfies ToolbarMetaAction[]
+      : []),
     ...(isPanoramic && panoramicSphereMode
       ? [
-          { key: 'pano-exit', label: '退出球形', icon: <IconArrowNarrowLeft size={18} />, onClick: () => setPanoramicSphereMode(false) },
+          { key: 'pano-exit', label: '退出球形', icon: <IconArrowNarrowLeft className="task-node__icon-arrow-narrow-left" size={18} />, onClick: () => setPanoramicSphereMode(false), readOnlySafe: true },
           { key: 'pano-screenshot', label: '截图', icon: <IconScreenshot size={16} />, onClick: handlePanoramicScreenshot },
           { key: 'pano-4view', label: '4视角', icon: <IconFocusCentered size={16} />, onClick: () => handlePanoramicMultiView(4) },
           { key: 'pano-12view', label: '12视角', icon: <IconLayoutGrid size={16} />, onClick: () => handlePanoramicMultiView(12) },
           { key: 'pano-grid', label: panoramicGridVisible ? '隐藏网格' : '显示网格', icon: <IconGrid3x3 size={16} />, active: panoramicGridVisible, onClick: () => updateNodeData(id, { panoramicGridVisible: !panoramicGridVisible }) },
-          { key: 'pano-fullscreen', label: '全屏预览', icon: <IconMaximize size={16} />, onClick: () => setPanoramicFullscreenOpen(true) },
+          { key: 'pano-fullscreen', label: '全屏预览', icon: <IconMaximize className="task-node__icon-maximize" size={16} />, onClick: () => setPanoramicFullscreenOpen(true), readOnlySafe: true },
           { key: 'pano-reset', label: '重置视角', icon: <IconRefresh size={16} />, onClick: () => updateNodeData(id, { panoramicCamera: PANORAMIC_DEFAULT_CAMERA }) },
         ] satisfies ToolbarMetaAction[]
       : []),
@@ -9315,7 +9570,8 @@ const rewritePromptWithCharacters = React.useCallback(
       : []),
   ]
 
-  const visibleDefs = uniqueDefs
+  const visibleDefs = resolveToolbarReadOnlyActions(uniqueDefs, nodeReadOnly)
+  const visibleToolbarMetaActions = resolveToolbarReadOnlyActions(toolbarMetaActions, nodeReadOnly)
 
   // 暗色主题用科技灰，与左侧资产抽屉（.asset-manager-drawer）背景渐变完全一致，
   // 让节点卡片从近黑画布背景中区分出来。
@@ -9389,15 +9645,11 @@ const rewritePromptWithCharacters = React.useCallback(
   React.useEffect(() => {
     const rawHtml = rawTextHtml
     const el = textEditorRef.current
-    if (!el) return
-    if (document.activeElement === el) return
+    if (el && document.activeElement === el) return
     if (textComposingRef.current) return
     if (rawHtml) {
       if (rawHtml !== textHtml) {
         setTextHtml(rawHtml)
-      }
-      if (el.innerHTML !== rawHtml) {
-        el.innerHTML = rawHtml
       }
       return
     }
@@ -9412,7 +9664,6 @@ const rewritePromptWithCharacters = React.useCallback(
 
     if (!plainNormalized) {
       if (textHtml) setTextHtml('')
-      if (el.innerHTML) el.innerHTML = ''
       return
     }
 
@@ -9423,10 +9674,6 @@ const rewritePromptWithCharacters = React.useCallback(
 
     if (nextHtml !== textHtml) {
       setTextHtml(nextHtml)
-    }
-
-    if (el.innerHTML !== nextHtml) {
-      el.innerHTML = nextHtml
     }
   }, [rawTextHtml, textNodePlainText, textHtml])
   React.useEffect(() => {
@@ -9522,8 +9769,14 @@ const rewritePromptWithCharacters = React.useCallback(
     setTextHtml(html)
     setPrompt(plain)
     if (opts?.persist === false) return
-    updateNodeData(id, { prompt: plain, textHtml: html })
-  }, [id, updateNodeData])
+    const title = typeof data?.chapterTitle === 'string' ? data.chapterTitle : ''
+    const prefix = `【${title}】\n\n`
+    const chapterText = title && plain.startsWith(prefix) ? plain.slice(prefix.length) : plain
+    updateNodeData(id, {
+      prompt: plain, textHtml: html,
+      ...(data?.preset === 'chapter-info' ? { chapterText, content: chapterText } : {}),
+    })
+  }, [id, updateNodeData, data?.preset, data?.chapterTitle])
   const runRichCommand = React.useCallback((command: string, value?: string) => {
     const el = textEditorRef.current
     if (!el) return
@@ -10286,7 +10539,7 @@ const rewritePromptWithCharacters = React.useCallback(
         toolbarActionIconStyles={toolbarActionIconStyles}
         inlineDividerColor={inlineDividerColor}
         visibleDefs={visibleDefs}
-        extraActions={toolbarMetaActions}
+        extraActions={visibleToolbarMetaActions}
         toolbarOffset={isImageNode ? 0 : undefined}
         hideUtilButtons={isPanoramic}
         utilitiesAtEnd={isImageNode || isVideoNode}
@@ -10618,6 +10871,7 @@ const rewritePromptWithCharacters = React.useCallback(
       )}
       {isPlainTextNode && (
         <LazyTextContent
+          html={textHtml}
           selected={isSingleSelectionActive}
           textEditorFocused={textEditorFocused}
           textBackgroundTint={textBackgroundTint}
@@ -10768,8 +11022,12 @@ const rewritePromptWithCharacters = React.useCallback(
                   <LazyLibTvMediaQuickActions
                     kind={isVideoNode ? 'video' : 'image'}
                     disabled={nodeReadOnly || isRunning}
-                    referenceActive={canvasReferencePickerActive}
+                    referenceActive={canvasReferencePickerActive || upstreamReferenceItems.length > 0}
                     markerActive={isVideoNode ? videoMarkers.length > 0 || videoMarkerOpen : annotateOpen}
+                    styleActive={isImageNode ? styleImagePickerOpen || styleImages.length > 0 : false}
+                    effectActive={isVideoNode && mediaPromptLibraryKind === 'effect'}
+                    charactersActive={isVideoNode && (characterLibraryOpen || Boolean((data as Record<string, unknown>).roleName))}
+                    cameraMovementActive={isVideoNode && mediaPromptLibraryKind === 'camera'}
                     onReference={handleToggleCanvasReferencePicker}
                     onMarker={handleOpenMediaMarker}
                     onStyle={isImageNode ? () => setStyleImagePickerOpen(true) : undefined}
@@ -10779,6 +11037,19 @@ const rewritePromptWithCharacters = React.useCallback(
                     onFocus={handleFocusNode}
                   />
                 ) : null}
+
+                {showUpstreamReferenceStrip && (upstreamReferenceItems.length > 0 || canvasReferencePickerActive || (isVideoNode && (data as Record<string, unknown>).workflowVideoSubmissionInput)) ? (
+                  <UpstreamReferenceStrip
+                    targetNodeId={id}
+                    submissionRecord={isVideoNode ? <VideoSubmissionInput value={(data as Record<string, unknown>).workflowVideoSubmissionInput} /> : null}
+                    items={upstreamReferenceItems}
+                    onRemove={handleRemoveUpstreamReference}
+                    onReorder={handleReorderUpstreamReference}
+                    onToggleCanvasReferencePicker={handleToggleCanvasReferencePicker}
+                    canvasReferencePickerActive={canvasReferencePickerActive}
+                  />
+                ) : null}
+
 
                 {isPortraitTextureNode ? (
                   <LazyPortraitTextureControls
@@ -10903,7 +11174,6 @@ const rewritePromptWithCharacters = React.useCallback(
           onCancel={() => setPendingIntentConfig(null)}
           onConfirm={({ imageModel, imageSize }) => {
             if (!pendingIntentConfig) return
-            persistRecentGenerationPrefs({ imageModel, imageSize })
             void dispatchIntent(pendingIntentConfig.intent, id, {
               chapterContext: pendingIntentConfig.chapterContext,
               generationConfig: { imageModel, imageSize },
@@ -10987,9 +11257,10 @@ const rewritePromptWithCharacters = React.useCallback(
           opened
           currentTimeSeconds={videoMarkerPlayback.currentTime}
           durationSeconds={videoMarkerPlayback.duration}
-          markerCount={videoMarkers.length}
+          markers={videoMarkers}
           saving={videoMarkerSaving}
           onClose={() => setVideoMarkerOpen(false)}
+          onRemove={handleRemoveVideoMarker}
           onSave={(draft) => { void handleSaveVideoMarker(draft) }}
         />
       ) : null}
@@ -11094,4 +11365,8 @@ const rewritePromptWithCharacters = React.useCallback(
 // Default export is the HEAVY interactive body, loaded as a lazy chunk by TaskNodeCard (the eager
 // node-type entry registered with React Flow). Only TaskNodeCard should reference it, via
 // React.lazy(() => import('./TaskNode')); importing it directly pulls in the full ~10k-line editor.
-export default React.memo(TaskNodeInner, areTaskNodePropsEqual)
+function TaskNodeWithPreference(props: NodeProps<TaskNodeType>): JSX.Element {
+  const signature = (props.data as Record<string, unknown>).generationPreferenceSignature
+  return <TaskNodeInner key={typeof signature === 'string' ? signature : props.id} {...props} />
+}
+export default React.memo(TaskNodeWithPreference, areTaskNodePropsEqual)

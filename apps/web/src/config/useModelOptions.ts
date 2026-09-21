@@ -347,23 +347,31 @@ export function resolveExecutableImageModelFromOptions(
 export type ModelOptionsRequest = {
   enabled?: boolean
   includeActionModels?: boolean
+  /**
+   * Bypass the browser-side catalog TTL once and refresh the executable
+   * runtime directory. This is used by account-level preference editors so
+   * a model enabled since the last page load is not shown as unavailable.
+   */
+  fresh?: boolean
 }
 
 async function getCatalogModelOptions(kind?: NodeKind, request?: ModelOptionsRequest): Promise<ModelOption[]> {
   const catalogKind = resolveCatalogKind(kind)
   const includeActionModels = request?.includeActionModels === true
   const cacheKey = `${catalogKind}:${includeActionModels ? 'actions' : 'generation'}`
+  const forceRefresh = request?.fresh === true
   const cached = catalogOptionsCache.get(cacheKey)
-  if (cached && Date.now() < cached.expiresAt) return cached.options
+  if (!forceRefresh && cached && Date.now() < cached.expiresAt) return cached.options
   if (cached) catalogOptionsCache.delete(cacheKey)
   const inflight = catalogPromiseCache.get(cacheKey)
-  if (inflight) return inflight
+  if (!forceRefresh && inflight) return inflight
   const promise = (async () => {
     try {
       const rows = await requestModelCatalogWithRetry(() =>
         listNewApiModels({
           kind: catalogKind,
           enabled: true,
+          fresh: forceRefresh,
           selectable: true,
           includeActionModels,
         }),
@@ -443,6 +451,7 @@ export function useModelOptionsState(kind?: NodeKind, opts?: ModelOptionsRequest
       try {
         const catalogOptions = await preloadModelOptions(kind, {
           includeActionModels: opts?.includeActionModels,
+          fresh: opts?.fresh,
         })
         if (!canceled) {
           setOptions(catalogOptions)
@@ -460,7 +469,7 @@ export function useModelOptionsState(kind?: NodeKind, opts?: ModelOptionsRequest
     return () => {
       canceled = true
     }
-  }, [kind, refreshSeq, enabled, opts?.includeActionModels])
+  }, [kind, refreshSeq, enabled, opts?.includeActionModels, opts?.fresh])
 
   return { options, loading, error, retry }
 }

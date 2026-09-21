@@ -77,7 +77,14 @@ BEGIN
   INSERT INTO agent_capability_attachments (id, user_id, capability_kind, source_id, source_version_id, descriptor_json, descriptor_sha256, conflict_report_json, route_decisions_json, conflict_report_revision, scope, created_at, updated_at)
   VALUES (${attachmentId}, workflow_owner, 'workflow', ${flowId}, ${versionId}, ${descriptorJson}, ${sqlText(descriptorSha256)}, ${reportJson}, '[]', 1, 'all_users', ${releaseTime}, ${releaseTime})
   ON CONFLICT (id) DO NOTHING;
-  IF NOT EXISTS (SELECT 1 FROM agent_capability_attachments WHERE id = ${attachmentId} AND user_id = workflow_owner AND capability_kind = 'workflow' AND source_id = ${flowId} AND source_version_id = ${versionId} AND scope = 'all_users' AND descriptor_sha256 = ${sqlText(descriptorSha256)} AND descriptor_json = ${descriptorJson}) THEN
+  IF NOT EXISTS (SELECT 1 FROM agent_capability_attachments WHERE id = ${attachmentId} AND user_id = workflow_owner AND capability_kind = 'workflow' AND source_id = ${flowId} AND scope = 'all_users' AND (
+    (source_version_id = ${versionId} AND descriptor_sha256 = ${sqlText(descriptorSha256)} AND descriptor_json = ${descriptorJson})
+    OR (conflict_report_revision > 1
+      AND descriptor_json::jsonb ->> 'sourceId' = ${flowId}
+      AND descriptor_json::jsonb ->> 'sourceVersionId' = source_version_id
+      AND conflict_report_json::jsonb ->> 'descriptorSha256' = descriptor_sha256
+      AND EXISTS (SELECT 1 FROM flow_versions v WHERE v.id = source_version_id AND v.flow_id = ${flowId} AND v.user_id = workflow_owner))
+  )) THEN
     RAISE EXCEPTION 'one_click_v1: system attachment identity or version mismatch';
   END IF;
 END;

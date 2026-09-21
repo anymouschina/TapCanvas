@@ -339,6 +339,7 @@ export function buildTaskRequest(input: AgentsChatRequestDto): TaskRequestDto {
 		? input.assetInputs.map((item) => ({ ...item }))
 		: [];
 	const extras: Record<string, unknown> = {
+		...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
 		...(typeof input.clientPendingId === "string" && input.clientPendingId.trim()
 			? { clientPendingId: input.clientPendingId.trim() }
 			: {}),

@@ -79,7 +79,7 @@ function isAliyunObjectAttachmentUrl(rawUrl: string): boolean {
   }
 }
 
-function downloadBlob(blob: Blob, filename: string) {
+export function downloadBlob(blob: Blob, filename: string) {
   const objectUrl = URL.createObjectURL(blob)
   try {
     clickDownload(objectUrl, filename, '_self')

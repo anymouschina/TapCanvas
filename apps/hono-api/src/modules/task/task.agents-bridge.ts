@@ -8845,10 +8845,8 @@ export async function runAgentsBridgeChatTask(
 			code: "agents_max_output_tokens_invalid",
 		});
 	}
-	const reasoningEffortRaw = options?.directForcedAgentExecution === true
-		? (extras as Record<string, unknown>).reasoningEffort
-			?? continuationExecutionContractRecord?.reasoningEffort
-		: undefined;
+	const reasoningEffortRaw = (extras as Record<string, unknown>).reasoningEffort
+		?? continuationExecutionContractRecord?.reasoningEffort;
 	const reasoningEffort = reasoningEffortRaw === "none"
 		|| reasoningEffortRaw === "minimal"
 		|| reasoningEffortRaw === "low"
@@ -8859,8 +8857,7 @@ export async function runAgentsBridgeChatTask(
 		? reasoningEffortRaw
 		: undefined;
 	if (
-		options?.directForcedAgentExecution === true
-		&& reasoningEffortRaw !== undefined
+		reasoningEffortRaw !== undefined
 		&& reasoningEffort === undefined
 	) {
 		throw new AppError("reasoningEffort 必须是 none/minimal/low/medium/high/xhigh/max 之一", {

@@ -133,6 +133,7 @@ export async function runVideoSeparation({
   toast(plan.startedMessage, 'info')
 
   const failures: string[] = []
+  const completedOutputs: string[] = []
   try {
     if (videoPlaceholder) afterAdd.setNodeStatus(videoPlaceholder.id, 'running', { progress: 5 })
     if (audioPlaceholder) afterAdd.setNodeStatus(audioPlaceholder.id, 'running', { progress: 5 })
@@ -145,11 +146,11 @@ export async function runVideoSeparation({
 
     if (plan.needsVideo && videoPlaceholder) {
       try {
-        if (!result.silentVideo) throw new Error('源视频没有可导出的画面轨道')
+        if (!result.silentVideo) throw new Error(result.errors.video ?? '源视频没有可导出的画面轨道')
         const uploadedVideo = await uploadServerAssetFile(
           new File([result.silentVideo], `${sourceLabel}-无声.mp4`, { type: 'video/mp4' }),
           `${sourceLabel} · 无声视频`,
-          { ownerNodeId: nodeId, ...(projectId ? { projectId } : {}) },
+          { ownerNodeId: videoPlaceholder.id, ...(projectId ? { projectId } : {}) },
         )
         const silentVideoUrl = typeof uploadedVideo.data?.url === 'string'
           ? uploadedVideo.data.url.trim()
@@ -161,12 +162,14 @@ export async function runVideoSeparation({
             url: silentVideoUrl,
             title: `${sourceLabel} · 无声视频`,
             duration: sourceDuration,
+            assetId: uploadedVideo.id,
           }],
           videoPrimaryIndex: 0,
           videoDuration: sourceDuration,
           serverAssetId: uploadedVideo.id,
         })
         afterAdd.setNodeStatus(videoPlaceholder.id, 'success', { progress: 100 })
+        completedOutputs.push('无声视频')
         notifyAssetRefresh()
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : '无声视频上传失败'
@@ -177,11 +180,11 @@ export async function runVideoSeparation({
 
     if (plan.needsAudio && audioPlaceholder) {
       try {
-        if (!result.audio) throw new Error('源视频没有可导出的音频轨道')
+        if (!result.audio) throw new Error(result.errors.audio ?? '源视频没有可导出的音频轨道')
         const uploadedAudio = await uploadServerAssetFile(
           new File([result.audio], `${sourceLabel}-音轨.m4a`, { type: 'audio/mp4' }),
           `${sourceLabel} · 独立音轨`,
-          { ownerNodeId: nodeId, ...(projectId ? { projectId } : {}) },
+          { ownerNodeId: audioPlaceholder.id, ...(projectId ? { projectId } : {}) },
         )
         const audioUrl = typeof uploadedAudio.data?.url === 'string'
           ? uploadedAudio.data.url.trim()
@@ -199,6 +202,7 @@ export async function runVideoSeparation({
           serverAssetId: uploadedAudio.id,
         })
         afterAdd.setNodeStatus(audioPlaceholder.id, 'success', { progress: 100 })
+        completedOutputs.push('独立音轨')
         notifyAssetRefresh()
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : '独立音轨上传失败'
@@ -216,7 +220,9 @@ export async function runVideoSeparation({
       if (videoPlaceholder) afterAdd.setNodeStatus(videoPlaceholder.id, 'error', { lastError: message })
       if (audioPlaceholder) afterAdd.setNodeStatus(audioPlaceholder.id, 'error', { lastError: message })
     }
-    toast(`音视频分离失败：${message}`, 'error')
+    toast(completedOutputs.length > 0
+      ? `${completedOutputs.join('、')}已保存，其他输出失败：${message}`
+      : `音视频分离失败：${message}`, completedOutputs.length > 0 ? 'warning' : 'error')
     throw error
   }
 }

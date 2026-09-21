@@ -154,6 +154,7 @@ function terminalSnapshot(
   const submitted = runtime.completionBoundary === "submission" && runtime.executionOwner === "durable_executor";
   const reasonCode = nonEmptyString(runOutcome.reason)
     ?? (succeeded ? "delivery_verified" : "deepseek_harness_turn_failed");
+  const failureMessage = nonEmptyString(runOutcome.message);
   const terminalDelivery = isJsonObject(runtime.terminalDelivery)
     ? runtime.terminalDelivery
     : null;
@@ -189,7 +190,7 @@ function terminalSnapshot(
       durableTaskReferences: runtime.durableTaskReferences,
       lastConfirmedSummary: submitted ? "工作流提交交接完成；持久执行器继续生产，尚未确认成片交付" : pending ? "持久工作流已受理，等待真实交付证据" : succeeded
         ? "DeepSeek Harness 已完成并验证当前回合交付"
-        : `DeepSeek Harness 当前回合失败：${reasonCode}`,
+        : `DeepSeek Harness 当前回合失败：${failureMessage ?? reasonCode}`,
       finalResponse: succeeded && result.text.trim() ? result.text.trim() : null,
       terminalDelivery,
       recentEvents: [

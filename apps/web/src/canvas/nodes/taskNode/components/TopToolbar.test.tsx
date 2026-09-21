@@ -4,7 +4,13 @@ import '@testing-library/jest-dom/vitest'
 import { MantineProvider } from '@mantine/core'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { resolveToolbarViewportShiftX, resolveToolbarViewportShiftY, TopToolbar, type ToolbarMenuItem } from './TopToolbar'
+import {
+  resolveToolbarReadOnlyActions,
+  resolveToolbarViewportShiftX,
+  resolveToolbarViewportShiftY,
+  TopToolbar,
+  type ToolbarMenuItem,
+} from './TopToolbar'
 
 vi.mock('@xyflow/react', () => ({
   NodeToolbar: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -42,6 +48,29 @@ afterEach(cleanup)
 const menuItem = (key: string, label: string, onClick: () => void): ToolbarMenuItem => ({ key, label, onClick })
 
 describe('TopToolbar LibTV menu interaction', () => {
+  it('marks write actions and their menu items disabled in a read-only canvas', () => {
+    const resolved = resolveToolbarReadOnlyActions([
+      {
+        key: 'write',
+        label: '生成',
+        icon: <span />,
+        onClick: vi.fn(),
+        menuItems: [menuItem('child', '子动作', vi.fn())],
+      },
+      {
+        key: 'preview',
+        label: '预览',
+        icon: <span />,
+        onClick: vi.fn(),
+        readOnlySafe: true,
+      },
+    ], true)
+
+    expect(resolved[0]?.disabled).toBe(true)
+    expect(resolved[0]?.menuItems?.[0]?.disabled).toBe(true)
+    expect(resolved[1]?.disabled).not.toBe(true)
+  })
+
   it('keeps the wide image toolbar inside the viewport without moving an already visible toolbar', () => {
     expect(resolveToolbarViewportShiftX({ left: -111, width: 1148, viewportWidth: 1470 })).toBe(123)
     expect(resolveToolbarViewportShiftX({ left: 400, width: 1148, viewportWidth: 1470 })).toBe(-90)
@@ -89,6 +118,39 @@ describe('TopToolbar LibTV menu interaction', () => {
     await waitFor(() => expect(screen.getByRole('menuitem', { name: '智能续写' })).toBeVisible())
     fireEvent.click(screen.getByRole('menuitem', { name: '智能续写' }))
     expect(onContinue).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats a menu-only action as a real dropdown without an empty primary callback', async () => {
+    const onChild = vi.fn()
+    render(
+      <MantineProvider>
+        <TopToolbar
+          isVisible
+          hasContent
+          toolbarBackground="#222"
+          toolbarShadow="none"
+          toolbarActionIconStyles={{ root: {}, icon: {} }}
+          inlineDividerColor="#555"
+          libtvVideoMode
+          visibleDefs={[
+            {
+              key: 'menu-only',
+              label: '处理',
+              icon: <span aria-hidden="true">M</span>,
+              showLabel: true,
+              menuItems: [menuItem('child', '真实子动作', onChild)],
+            },
+          ]}
+          onPreview={vi.fn()}
+          onDownload={vi.fn()}
+        />
+      </MantineProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '处理' }))
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: '真实子动作' })).toBeVisible())
+    fireEvent.click(screen.getByRole('menuitem', { name: '真实子动作' }))
+    expect(onChild).toHaveBeenCalledTimes(1)
   })
 
   it('opens image capability menus on hover and dispatches the primary action on click', async () => {

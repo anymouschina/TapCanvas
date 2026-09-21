@@ -51,30 +51,32 @@ type ModelPricingRatios struct {
 // image/video ModelPrice values use CNY in this fork, while other kinds use
 // USD. Media spec prices remain final CNY selling prices.
 type ModelPricingPolicy struct {
-	ModelID                       int                 `json:"model_id"`
-	ModelName                     string              `json:"model_name"`
-	BillingMode                   string              `json:"billing_mode"`
-	FixedPrice                    *float64            `json:"fixed_price,omitempty"`
-	FixedPriceCurrency            string              `json:"fixed_price_currency"`
-	InputPriceUSDPerMillion       *float64            `json:"input_price_usd_per_million,omitempty"`
-	OutputPriceUSDPerMillion      *float64            `json:"output_price_usd_per_million,omitempty"`
-	CacheReadPriceUSDPerMillion   *float64            `json:"cache_read_price_usd_per_million,omitempty"`
-	CacheWritePriceUSDPerMillion  *float64            `json:"cache_write_price_usd_per_million,omitempty"`
-	ImageInputPriceUSDPerMillion  *float64            `json:"image_input_price_usd_per_million,omitempty"`
-	AudioInputPriceUSDPerMillion  *float64            `json:"audio_input_price_usd_per_million,omitempty"`
-	AudioOutputPriceUSDPerMillion *float64            `json:"audio_output_price_usd_per_million,omitempty"`
-	CompletionRatioLocked         bool                `json:"completion_ratio_locked"`
-	LockedCompletionRatio         *float64            `json:"locked_completion_ratio,omitempty"`
-	HasConflictingBasePricing     bool                `json:"has_conflicting_base_pricing"`
-	Ratios                        ModelPricingRatios  `json:"ratios"`
-	SpecPricing                   *ModelPricingConfig `json:"spec_pricing"`
-	SpecPricingSource             string              `json:"spec_pricing_source"`
+	Upstream                      *UpstreamModelPricing `json:"upstream,omitempty"`
+	ModelID                       int                   `json:"model_id"`
+	ModelName                     string                `json:"model_name"`
+	BillingMode                   string                `json:"billing_mode"`
+	FixedPrice                    *float64              `json:"fixed_price,omitempty"`
+	FixedPriceCurrency            string                `json:"fixed_price_currency"`
+	InputPriceUSDPerMillion       *float64              `json:"input_price_usd_per_million,omitempty"`
+	OutputPriceUSDPerMillion      *float64              `json:"output_price_usd_per_million,omitempty"`
+	CacheReadPriceUSDPerMillion   *float64              `json:"cache_read_price_usd_per_million,omitempty"`
+	CacheWritePriceUSDPerMillion  *float64              `json:"cache_write_price_usd_per_million,omitempty"`
+	ImageInputPriceUSDPerMillion  *float64              `json:"image_input_price_usd_per_million,omitempty"`
+	AudioInputPriceUSDPerMillion  *float64              `json:"audio_input_price_usd_per_million,omitempty"`
+	AudioOutputPriceUSDPerMillion *float64              `json:"audio_output_price_usd_per_million,omitempty"`
+	CompletionRatioLocked         bool                  `json:"completion_ratio_locked"`
+	LockedCompletionRatio         *float64              `json:"locked_completion_ratio,omitempty"`
+	HasConflictingBasePricing     bool                  `json:"has_conflicting_base_pricing"`
+	Ratios                        ModelPricingRatios    `json:"ratios"`
+	SpecPricing                   *ModelPricingConfig   `json:"spec_pricing"`
+	SpecPricingSource             string                `json:"spec_pricing_source"`
 }
 
 // ModelPricingPolicyUpdate is a full replacement. Optional derived token
 // prices are removed when nil; nil spec_pricing persists an explicit disabled
 // marker so a system-default media rule cannot silently reactivate.
 type ModelPricingPolicyUpdate struct {
+	SellingMultiplier             *float64
 	BillingMode                   string
 	FixedPrice                    *float64
 	FixedPriceCurrency            *string
@@ -324,7 +326,12 @@ func GetModelPricingPolicy(modelID int) (*ModelPricingPolicy, error) {
 	if meta.NameRule != NameRuleExact {
 		return nil, fmt.Errorf("规则模型不能直接配置定价，请编辑具体模型")
 	}
-	return buildModelPricingPolicy(meta, loadModelPricingOptionMaps())
+	policy, err := buildModelPricingPolicy(meta, loadModelPricingOptionMaps())
+	if err != nil {
+		return nil, err
+	}
+	policy.Upstream, err = loadUpstreamModelPricing(DB, meta.ModelName)
+	return policy, err
 }
 
 func clearModelPricingOptionValues(optionMaps modelPricingOptionMaps, modelName string) {
@@ -419,6 +426,9 @@ func applyModelPricingOptionMaps(serialized map[string]string) error {
 func replaceModelPricingOptionMapsLocked(optionMaps modelPricingOptionMaps) error {
 	var serialized map[string]string
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := validateUpstreamPricingOptionReplacement(tx, optionMaps); err != nil {
+			return err
+		}
 		var err error
 		serialized, err = persistModelPricingOptionMaps(tx, optionMaps)
 		return err
@@ -472,6 +482,20 @@ func UpdateModelPricingPolicy(modelID int, update ModelPricingPolicyUpdate) (*Mo
 	if modelID <= 0 {
 		return nil, fmt.Errorf("模型 ID 必须是正整数")
 	}
+	if update.SellingMultiplier != nil {
+		return updateUpstreamSellingMultiplier(modelID, *update.SellingMultiplier)
+	}
+	var meta Model
+	if err := DB.First(&meta, modelID).Error; err != nil {
+		return nil, err
+	}
+	source, err := loadUpstreamModelPricing(DB, meta.ModelName)
+	if err != nil {
+		return nil, err
+	}
+	if source != nil {
+		return nil, fmt.Errorf("上游同步模型请设置售价倍率，不能覆盖上游价格")
+	}
 	if err := validateModelPricingPolicyUpdate(update); err != nil {
 		return nil, err
 	}
@@ -482,7 +506,7 @@ func UpdateModelPricingPolicy(modelID int, update ModelPricingPolicyUpdate) (*Mo
 	optionMaps := loadModelPricingOptionMaps()
 	var updatedModel Model
 	var serialized map[string]string
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&updatedModel, modelID).Error; err != nil {
 			return err
 		}

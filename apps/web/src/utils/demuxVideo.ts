@@ -4,6 +4,7 @@ import { getFFmpeg } from './ffmpegCore'
 export type DemuxedVideo = {
   silentVideo: Blob | null
   audio: Blob | null
+  errors: Partial<Record<'video' | 'audio', string>>
 }
 
 export type DemuxOutputs = {
@@ -18,42 +19,58 @@ export type DemuxOutputs = {
 export async function demuxVideo(videoUrl: string, outputs: DemuxOutputs = { video: true, audio: true }): Promise<DemuxedVideo> {
   if (!outputs.video && !outputs.audio) throw new Error('至少选择一种分离输出')
   const ffmpeg = await getFFmpeg()
-  const sourceExtension = videoUrl.split('?')[0].split('.').pop()?.toLowerCase() || 'mp4'
-  const inputName = `demux-input-${Date.now()}.${sourceExtension}`
-  const silentName = `demux-silent-${Date.now()}.mp4`
-  const audioName = `demux-audio-${Date.now()}.m4a`
+  const operationId = crypto.randomUUID()
+  const inputName = `demux-input-${operationId}`
+  const silentName = `demux-silent-${operationId}.mp4`
+  const audioName = `demux-audio-${operationId}.m4a`
+  const result: DemuxedVideo = { silentVideo: null, audio: null, errors: {} }
+  const filesToClean = [inputName]
+
+  const exportTrack = async (track: 'video' | 'audio', name: string, args: string[], mimeType: string): Promise<Blob | null> => {
+    filesToClean.push(name)
+    try {
+      const exitCode = await ffmpeg.exec(args)
+      if (exitCode !== 0) throw new Error(`FFmpeg ${track === 'video' ? '画面' : '音频'}轨道导出失败（退出码 ${exitCode}）`)
+      const bytes = await ffmpeg.readFile(name)
+      if (typeof bytes === 'string' || bytes.byteLength === 0) throw new Error('轨道未返回有效的媒体文件')
+      return new Blob([new Uint8Array(bytes)], { type: mimeType })
+    } catch (error: unknown) {
+      result.errors[track] = error instanceof Error ? error.message : '轨道导出失败'
+      console.error('[media.demux.track_failed]', { operationId, track, message: result.errors[track] })
+      return null
+    }
+  }
 
   try {
     await ffmpeg.writeFile(inputName, await fetchFile(videoUrl))
     if (outputs.video) {
-      await ffmpeg.exec([
+      result.silentVideo = await exportTrack('video', silentName, [
         '-i', inputName,
         '-map', '0:v:0',
         '-c', 'copy',
         '-an',
         silentName,
-      ])
+      ], 'video/mp4')
     }
     if (outputs.audio) {
-      await ffmpeg.exec([
+      result.audio = await exportTrack('audio', audioName, [
         '-i', inputName,
         '-map', '0:a:0',
         '-vn',
         '-c:a', 'aac',
         '-b:a', '192k',
         audioName,
-      ])
+      ], 'audio/mp4')
     }
 
-    const silentBytes = outputs.video ? await ffmpeg.readFile(silentName) : null
-    const audioBytes = outputs.audio ? await ffmpeg.readFile(audioName) : null
-    return {
-      silentVideo: silentBytes === null ? null : new Blob([new Uint8Array(silentBytes as Uint8Array)], { type: 'video/mp4' }),
-      audio: audioBytes === null ? null : new Blob([new Uint8Array(audioBytes as Uint8Array)], { type: 'audio/mp4' }),
-    }
+    return result
   } finally {
-    await ffmpeg.deleteFile(inputName).catch(() => undefined)
-    await ffmpeg.deleteFile(silentName).catch(() => undefined)
-    await ffmpeg.deleteFile(audioName).catch(() => undefined)
+    for (const name of filesToClean) {
+      try {
+        await ffmpeg.deleteFile(name)
+      } catch (error: unknown) {
+        console.warn('[media.demux.cleanup_failed]', { operationId, name, message: error instanceof Error ? error.message : String(error) })
+      }
+    }
   }
 }

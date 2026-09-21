@@ -1,0 +1,6 @@
+.tc-image-advanced { display: grid; gap: 18px; padding-top: 8px; }
+.tc-image-advanced__text, .tc-image-advanced__heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 12px; }
+.tc-image-advanced__text input:not([type=checkbox]) { min-width: 0; width: 65%; padding: 8px 10px; border: 0; border-radius: 7px; background: var(--mantine-color-default-hover, #303030); color: inherit; }
+.tc-image-advanced__heading output { color: var(--mantine-color-dimmed, #999); font-variant-numeric: tabular-nums; }
+.tc-image-advanced__numeric { display: grid; gap: 9px; }
+.tc-image-advanced__numeric input { width: 100%; margin: 0; accent-color: #3899ec; }

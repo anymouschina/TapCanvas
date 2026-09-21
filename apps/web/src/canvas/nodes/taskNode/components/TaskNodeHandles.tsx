@@ -2,6 +2,7 @@ import React from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { getHandleTypeLabel } from '../../../utils/handleLabels'
 import { buildHandleStyle, getHandlePositionName, HANDLE_HORIZONTAL_OFFSET } from '../../taskNodeHelpers'
+import { useRefreshNodeHandles } from '../../../hooks/useRefreshNodeHandles'
 
 type HandleDef = { id: string; type: string; pos: Position; label?: string }
 
@@ -28,9 +29,16 @@ export function TaskNodeHandles({
   showWideHandles = true,
   handleOffsets,
 }: TaskNodeHandlesProps) {
-  if (!showHandles) return null
+  // LOD only changes affordance visibility. Edges still need these exact handle
+  // ids and measurable bounds at every zoom, including wide-handle connections.
+  const geometryKey = JSON.stringify({ targets, sources, layout: [...layout], showWideHandles, handleOffsets })
+  useRefreshNodeHandles(geometryKey)
   return (
-    <div className="tc-handle-layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+    <div
+      className="tc-handle-layer"
+      aria-hidden={!showHandles || undefined}
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none', visibility: showHandles ? undefined : 'hidden' }}
+    >
       {targets.map((h) => {
         const handleLabel = h.label ?? getHandleTypeLabel(h.type)
         const handlePositionName = getHandlePositionName(h.pos)

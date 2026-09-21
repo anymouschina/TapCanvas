@@ -1,3 +1,4 @@
+import { resolveComposeFrame, containComposeFrame, type ComposeAspect } from './composeFrameLayout'
 import { AudioClip, EmbedSubtitlesClip, MP4Clip, OffscreenSprite, Combinator } from '@webav/av-cliper'
 import { fetchClip } from './reliableClipFetch'
 import { SUBTITLE_FONT_RATIO, SUBTITLE_BOTTOM_OFFSET_RATIO, SUBTITLE_MIN_FONT_PX, type SubtitleFontSizeTier } from './subtitles/types'
@@ -48,6 +49,7 @@ export type ComposePhase =
   | 'encoding'
 
 export type ComposeOptions = {
+  outputAspect?: ComposeAspect
   signal?: AbortSignal
   onProgress?: (progress: number) => void
   onPhase?: (phase: ComposePhase) => void
@@ -57,6 +59,7 @@ export type ComposeOptions = {
 
 type WorkerStartMessage = {
   type: 'start'
+  outputAspect?: ComposeAspect
   sources: ComposeVideoSource[]
   audioTracks: PreparedAudioTrack[]
   subtitles?: ComposeSubtitlesInput
@@ -169,14 +172,21 @@ export async function composeVideosToBlobInline(
     throwIfAborted()
     options?.onPhase?.('parsing_media')
 
-    const first = clips[0] as MP4Clip
-    const { width, height } = first.meta
+    const resolvedClips = clips.map((clip, index) => {
+      if (!clip) throw new Error(`视频片段加载失败：${sources[index]?.title || sources[index]?.url || index}`)
+      return clip
+    })
+
+    const { width, height } = resolveComposeFrame(resolvedClips.map((clip, index) => ({
+      width: clip.meta.width, height: clip.meta.height,
+      duration: clip.meta.duration - (sources[index].trimStart ?? 0) - (sources[index].trimEnd ?? 0),
+    })), options?.outputAspect)
 
     let offset = 0
     const sprites: OffscreenSprite[] = []
 
     for (let i = 0; i < sources.length; i++) {
-      const clip = clips[i] as MP4Clip
+      const clip = resolvedClips[i]
       const src = sources[i]
       const trimStart = src.trimStart ?? 0
       const trimEnd = src.trimEnd ?? 0
@@ -193,8 +203,7 @@ export async function composeVideosToBlobInline(
 
       const spr = new OffscreenSprite(workClip)
       spr.time = { offset, duration: usedDuration }
-      spr.rect.w = width
-      spr.rect.h = height
+      Object.assign(spr.rect, containComposeFrame(clip.meta, { width, height }))
       offset += usedDuration
       sprites.push(spr)
     }
@@ -345,7 +354,7 @@ function composeInWorker(
       reject(new Error('视频合成 Worker 响应无法解析'))
     }
 
-    const start: WorkerStartMessage = { type: 'start', sources, audioTracks, subtitles: options?.subtitles }
+    const start: WorkerStartMessage = { type: 'start', sources, audioTracks, subtitles: options?.subtitles, outputAspect: options?.outputAspect }
     worker.postMessage(
       start,
       audioTracks.flatMap((t) => t.pcm.map((a) => a.buffer)),

@@ -1,3 +1,5 @@
+import { resolveCatalogImageBillingSpec } from '../../../config/imageBillingSpec'
+import { parseImageModelCatalogConfig } from '../../../config/modelCatalogMeta'
 import type { ModelOption } from '../../../config/models'
 import type {
   ImageModelCatalogConfig,
@@ -94,22 +96,24 @@ export function buildImageBillingSpecKeyForOption(input: {
   imageResolution: string
   imageQuality?: string
 }): string | null {
+  const config = parseImageModelCatalogConfig(input.modelOption?.meta)
+  if (config) {
+    return resolveCatalogImageBillingSpec({
+      config, resolution: input.imageResolution, imageSize: input.imageSize,
+      aspectRatio: input.aspect,
+      quality: config.qualityOptions.length ? input.imageQuality || config.defaultQuality : undefined,
+      specKeys: input.modelOption?.pricing?.specCosts.filter((row) => row.enabled).map((row) => row.specKey) ?? [],
+    })
+  }
   const resolution =
     normalizeImageBillingSpecSegment(input.imageResolution) ||
     normalizeImageBillingSpecSegment(input.imageSize)
   if (!resolution) return null
   const aspect = normalizeImageBillingSpecSegment(input.aspect)
   const quality = normalizeImageBillingSpecSegment(input.imageQuality)
-  const identifiers = [
-    input.modelOption?.value,
-    input.modelOption?.modelAlias,
-    input.modelOption?.modelKey,
-  ].map((value) => String(value || '').trim().toLowerCase())
-  const isOfficialGptImage2 = identifiers.includes('gpt-image-2-official')
   const candidates = [
     ...(quality ? [`image:${resolution}:${quality}`] : []),
-    ...(isOfficialGptImage2 && aspect && quality ? [`image:${aspect}:${resolution}:${quality}`] : []),
-    ...(isOfficialGptImage2 && aspect && !quality ? [`image:${aspect}:${resolution}:high`] : []),
+    ...(aspect && quality ? [`image:${aspect}:${resolution}:${quality}`] : []),
     ...(aspect && !quality ? [`image:${aspect}:${resolution}:auto`] : []),
     `image:${resolution}`,
   ]
@@ -161,6 +165,21 @@ export function pickImageQualityValue(config: ImageModelCatalogConfig | null, cu
     return allowed[0] ?? null
   }
   return config.defaultQuality || null
+}
+
+export function reconcileImageModelSettings(config: ImageModelCatalogConfig, current: {
+  aspect: string
+  imageSize: string
+  imageResolution: string
+  imageQuality: string
+}) {
+  return {
+    aspect: pickImageAspectValue(config, current.aspect) ?? '',
+    imageSize: pickImageSizeValue(config, current.imageSize) ?? '',
+    imageResolution: pickImageResolutionValue(config, current.imageResolution) ?? '',
+    resolution: pickImageResolutionValue(config, current.imageResolution) ?? '',
+    imageQuality: pickImageQualityValue(config, current.imageQuality) ?? '',
+  }
 }
 
 export function pickVideoDurationValue(config: VideoModelCatalogConfig | null, current: number): number | null {

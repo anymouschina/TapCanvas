@@ -3,6 +3,7 @@ import type {
   GenerationSettingSection,
   GenerationSettingsPopoverProps,
 } from './components/GenerationSettingsPopover'
+import type { ImageAdvancedSetting } from './components/ImageAdvancedSettings'
 
 export type MediaGenerationControlBinding =
   | 'durationSeconds'
@@ -24,6 +25,9 @@ export type MediaGenerationMappedControl = {
 }
 
 type BuildMediaGenerationSettingsInput = {
+  preference?: GenerationSettingsPopoverProps['preference']
+  advanced?: ImageAdvancedSetting | null
+  imageQuantityUnit?: '张' | '组'
   kind: 'image' | 'video'
   aspect: string
   videoSize: string
@@ -110,7 +114,7 @@ function buildSummary(
         ...sections
           .filter((section) => section.layout !== 'aspect')
           .map((section) => section.options.find((option) => option.value === section.value)?.label || section.value),
-        `${input.quantity}张`,
+        `${input.quantity}${input.imageQuantityUnit ?? '张'}`,
       ]
   return Array.from(new Set(parts.map((part) => part.trim()).filter(Boolean))).join(' · ')
 }
@@ -121,15 +125,21 @@ export function buildMediaGenerationSettings(
   const sections = buildSections(input)
   return {
     kind: input.kind,
+    preference: input.preference,
     summary: buildSummary(input, sections),
-    aspectValue: input.aspect,
+    // Video catalogs may expose pixel-backed sizes (for example 1280x720)
+    // while the node's aspect field is still carrying a previous ratio. Use
+    // the selected size for the trigger icon so the preview always matches
+    // the option shown in the popover.
+    aspectValue: input.kind === 'video' ? input.videoSize || input.aspect : input.aspect,
     sections,
+    advanced: input.kind === 'image' ? input.advanced : null,
     duration: input.kind === 'video' ? input.duration : null,
     audio: input.kind === 'video' ? input.audio ?? null : null,
     quantity: {
       value: input.quantity,
       options: Array.from(new Set([1, 2, 4, input.quantity])).sort((left, right) => left - right),
-      unit: input.kind === 'video' ? '个' : '张',
+      unit: input.kind === 'video' ? '个' : input.imageQuantityUnit ?? '张',
       onChange: input.onQuantityChange,
     },
   }

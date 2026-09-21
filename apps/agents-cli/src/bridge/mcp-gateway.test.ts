@@ -6,6 +6,7 @@ import { RequestMcpGateway } from "./mcp-gateway.js";
 const directTool = {
   name: "tapcanvas_flow_get",
   description: "Read a flow",
+  execution: { sideEffect: "none" },
   parameters: { type: "object", properties: {} },
 };
 
@@ -69,7 +70,7 @@ test("requires schema disclosure before a deferred tool can execute", async (con
   const gateway = new RequestMcpGateway();
   const token = gateway.register([], [deferredTool], {
     endpoint: "https://api.example/agents/tools/execute",
-  });
+  }, null, { contractHash: 'frozen-test-contract' });
   const call = (name: string, args: Record<string, unknown>) => gateway.handle(
     token,
     `Bearer ${token}`,

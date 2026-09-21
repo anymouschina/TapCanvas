@@ -46,6 +46,16 @@ describe('composeVideosToBlob worker lifecycle', () => {
     expect(blob.type).toBe('video/mp4')
   })
 
+  it('forwards the selected output aspect to the encoding worker', async () => {
+    const sent: unknown[] = []
+    class CapturingWorker extends SuccessfulComposeWorker {
+      override postMessage(message?: unknown): void { sent.push(message); super.postMessage() }
+    }
+    vi.stubGlobal('Worker', CapturingWorker)
+    await composeVideosToBlob([{ url: 'https://example.com/a.mp4' }, { url: 'https://example.com/b.mp4' }], { outputAspect: '16:9' })
+    expect(sent[0]).toMatchObject({ type: 'start', outputAspect: '16:9' })
+  })
+
   it('fails explicitly when the worker response cannot be deserialized', async () => {
     vi.stubGlobal('Worker', InvalidMessageComposeWorker)
 

@@ -28,7 +28,7 @@ import {
   type ProjectDirectorySnapshot,
   type SaveProjectDirectoryRequest,
 } from '@tapcanvas/project-directory-protocol'
-import type { User } from '../auth/store'
+import { hasAuthSession, type User } from '../auth/store'
 import { sanitizeFlowValueForPersistence } from '../canvas/utils/persistenceSanitizer'
 import { useUploadRuntimeStore } from '../domain/upload-runtime/store/uploadRuntimeStore'
 import type { StoryboardStructuredData } from '../storyboard/storyboardStructure'
@@ -933,6 +933,8 @@ export type AgentsChatGenerationProposal = {
 }
 
 export type AgentsChatRequestDto = {
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  serviceTier?: 'default' | 'priority'
   vendor?: string
   vendorCandidates?: string[]
   prompt: string
@@ -6752,7 +6754,7 @@ export type NewApiGatewayReadinessDto = z.infer<typeof NewApiGatewayReadinessSch
 export async function getNewApiGatewayReadiness(): Promise<NewApiGatewayReadinessDto> {
   const r = await apiFetch(`${API_BASE}/new-api-models/readiness`, withAuth({
     method: 'GET',
-    headers: { 'Cache-Control': 'no-cache' },
+    cache: 'no-store',
   }))
   if (!r.ok) {
     await throwApiError(r, `get new-api readiness failed: ${r.status}`)
@@ -6799,6 +6801,15 @@ export async function deleteModelCreditCost(modelKey: string, specKey?: string):
 
 // 用户全局生成偏好（AI 对话入口设置：生图模型/视频模型/规格）
 export type UserGenerationPrefsDto = {
+  imageQuality?: string
+  imagePreferenceEnabled?: boolean
+  videoPreferenceEnabled?: boolean
+  imageAspect?: string
+  imageResolution?: string
+  imageCount?: number
+  videoDuration?: number
+  videoCount?: number
+  videoGenerateAudio?: boolean
   imageModel?: string
   imageSize?: string
   videoModel?: string
@@ -8028,7 +8039,7 @@ export type ProjectBookIndexDto = {
     sourceByteLength: number
     sourceSha256: string
     sourceTextSha256: string
-    sourceEncoding: 'utf-8' | 'package-xml'
+    sourceEncoding: 'utf-8' | 'gb18030' | 'utf-16le' | 'utf-16be' | 'package-xml'
     extractedDocumentCount: number
     storedPath?: string
   }
@@ -10108,6 +10119,8 @@ export async function runTaskByVendor(vendor: string, request: TaskRequestDto): 
 }
 
 export async function runPublicTask(apiKey: string, payload: PublicRunTaskRequestDto): Promise<PublicRunTaskResponseDto> {
+  // Canvas uses its current cookie identity even if a legacy API key is stored.
+  if (hasAuthSession()) return runPublicTaskWithAuth(payload)
   const sanitizedPayload = sanitizePublicTaskPayload(payload)
   const drawPayload = toPublicDrawPayload(sanitizedPayload)
   const run = (endpoint: '/public/tasks' | '/public/draw', bodyPayload: PublicRunTaskRequestDto | PublicDrawRequestDto) => apiFetch(`${API_BASE}${endpoint}`, withPublicApiKey(apiKey, {

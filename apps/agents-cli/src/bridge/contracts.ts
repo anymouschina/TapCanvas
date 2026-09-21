@@ -6,6 +6,8 @@ export type RemoteToolDefinition = Readonly<{
   parameters: JsonObject;
   wireName?: string;
   schemaDeferred?: boolean;
+  execution?: JsonObject;
+  operationExecutions?: JsonObject[];
 }>;
 
 export type ExternalSkillReference = Readonly<{
@@ -109,6 +111,14 @@ function positiveInteger(value: unknown): number | undefined {
   return numberValue;
 }
 
+function executionMetadata(candidate: JsonObject): Pick<RemoteToolDefinition, 'execution' | 'operationExecutions'> {
+  return {
+    ...(isJsonObject(candidate.execution) ? { execution: candidate.execution } : {}),
+    ...(Array.isArray(candidate.operationExecutions)
+      ? { operationExecutions: candidate.operationExecutions.filter(isJsonObject) } : {}),
+  };
+}
+
 function normalizeRemoteTools(value: unknown): RemoteToolDefinition[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -124,7 +134,7 @@ function normalizeRemoteTools(value: unknown): RemoteToolDefinition[] {
         : undefined;
     if (!name || !description || !parameters || seen.has(name)) continue;
     seen.add(name);
-    tools.push({ name, description, parameters });
+    tools.push({ name, description, parameters, ...executionMetadata(candidate) });
   }
   return tools;
 }
@@ -155,6 +165,7 @@ function normalizeRemoteToolCatalog(value: unknown): RemoteToolDefinition[] {
       description: `${description} Call tapcanvas_get_tool_schema for this exact tool before invoking it.`,
       parameters: DEFERRED_PARAMETERS,
       schemaDeferred: true,
+      ...executionMetadata(candidate),
     });
   }
   return tools;

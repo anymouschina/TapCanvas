@@ -171,6 +171,10 @@ func UpdateOption(c *gin.Context) {
 		return
 	}
 	optionValue := normalizedValue
+	if strings.HasPrefix(option.Key, "UpstreamModelPricing:") || option.Key == "UpstreamCatalogSyncReceipt" {
+		common.ApiErrorMsg(c, "上游定价来源与同步回执只能由模型定价服务写入")
+		return
+	}
 	if _, isAtomicPricingOption := atomicModelPricingOptionKeySet[option.Key]; isAtomicPricingOption {
 		common.ApiErrorMsg(
 			c,

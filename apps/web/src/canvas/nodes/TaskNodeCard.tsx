@@ -340,7 +340,7 @@ export const TaskNodeSkeleton = React.forwardRef<HTMLDivElement, { id: string; d
     const statusPill: { text: string; bg: string; dot: boolean } | null = overview ? null :
       status === 'running' ? { text: kind === 'videoAnalysis' ? '分析中' : '生成中', bg: 'rgba(34,139,230,0.92)', dot: true }
       : status === 'queued' ? { text: '排队中', bg: 'rgba(120,120,130,0.92)', dot: true }
-      : status === 'error' ? { text: '失败', bg: 'rgba(224,49,49,0.92)', dot: false }
+      : (status === 'error' || status === 'failed') ? { text: '失败', bg: 'rgba(224,49,49,0.92)', dot: false }
       : null
 
     const focusMediaNode = () => {
@@ -514,7 +514,7 @@ export const TaskNodeSkeleton = React.forwardRef<HTMLDivElement, { id: string; d
                 style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }}
               />
             ) : (
-              <div className="tc-task-node__overview-identity">
+              <div className="tc-task-node__overview-identity tc-task-node__overview-identity--video" title={displayTitle}>
                 <SchemaIcon size={28} stroke={1.4} />
                 <span className="tc-task-node__overview-title">{displayTitle}</span>
               </div>
@@ -762,7 +762,7 @@ export const TaskNodeSkeleton = React.forwardRef<HTMLDivElement, { id: string; d
           defaultInputType={defaultInputType} defaultOutputType={defaultOutputType}
           wideHandleBase={wideHandleBase}
           showHandles={!overview}
-          showWideHandles={!overview && !isWorkflowNode}
+          showWideHandles={!isWorkflowNode}
           handleOffsets={isWorkflowNode
             ? {
                 horizontal: WORKFLOW_ICON_NODE_HANDLE_OFFSET,

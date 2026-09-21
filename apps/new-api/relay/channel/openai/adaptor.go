@@ -464,7 +464,11 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 			return nil, err
 		}
 	}
-	if strings.HasPrefix(request.Model, "gpt-image-2") {
+	sizeTransport := info.ProtocolOptions["image_size_transport"]
+	if sizeTransport != "" && sizeTransport != "passthrough" {
+		return nil, fmt.Errorf("unsupported image_size_transport %q", sizeTransport)
+	}
+	if sizeTransport != "passthrough" && strings.HasPrefix(request.Model, "gpt-image-2") {
 		var err error
 		request, err = dto.NormalizeGptImage2Size(request)
 		if err != nil {

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-		"dev": "vite",
+    "dev": "vite",
     "build": "vite build --mode production",
     "preview": "vite preview",
     "smoke:project-chapter-ui": "node ./scripts/project-chapter-ui-smoke.mjs",
@@ -22,6 +22,7 @@
     "@ai-sdk/react": "^2.0.97",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@file-viewer/doc": "3.0.3",
     "@hookform/resolvers": "^3.9.0",
     "@mantine/code-highlight": "^7.17.8",
     "@mantine/core": "^7.13.1",

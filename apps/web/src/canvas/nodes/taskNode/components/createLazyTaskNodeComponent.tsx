@@ -1,4 +1,5 @@
 import React from 'react'
+import { AsyncLoadingFeedback } from '../../../../ui/AsyncLoadingFeedback'
 
 /**
  * Loads a TaskNode feature behind a local Suspense boundary.
@@ -15,7 +16,7 @@ export function createLazyTaskNodeComponent<TProps extends object>(
   function AsyncTaskNodeComponent(props: TProps): React.JSX.Element {
     const lazyProps = props as React.JSX.IntrinsicAttributes & React.PropsWithRef<TProps>
     return (
-      <React.Suspense fallback={null}>
+      <React.Suspense fallback={<AsyncLoadingFeedback />}>
         <LazyComponent {...lazyProps} />
       </React.Suspense>
     )

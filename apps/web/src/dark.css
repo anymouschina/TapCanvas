@@ -135,9 +135,12 @@ button {
 
 :root[data-mantine-color-scheme="dark"] .mantine-Button-root,
 :root[data-mantine-color-scheme="dark"] .mantine-ActionIcon-root,
-:root[data-mantine-color-scheme="dark"] .mantine-Input-input,
 :root[data-mantine-color-scheme="dark"] .mantine-Pill-root {
   border-radius: 6px !important;
+}
+
+:root[data-mantine-color-scheme="dark"] .mantine-Input-input {
+  border-radius: var(--input-radius) !important;
 }
 
 :root[data-mantine-color-scheme="dark"] .mantine-Badge-root,

@@ -54,6 +54,7 @@ describe('buildMediaGenerationSettings', () => {
     })
 
     expect(settings.summary).toBe('16:9 · 720P · 5s · 1个')
+    expect(settings.aspectValue).toBe('1280x720')
     expect(settings.sections.map((section) => section.label)).toEqual(['比例', '清晰度'])
     expect(settings.duration?.value).toBe(5)
     expect(settings.audio?.value).toBe(true)
