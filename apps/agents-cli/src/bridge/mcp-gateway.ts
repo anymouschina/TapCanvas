@@ -1,3 +1,4 @@
+import { responseSourceEvidence, bindResponseSources } from "./response-source-evidence.js";
 import { USER_INTENT_TOOL, USER_INTENT_TOOL_NAME, freezeHarnessUserIntent } from "./user-intent.js";
 import { ARTIFACT_REPORT_PARAMETERS, DELIVERY_EVIDENCE_TOOL, deliveryEvidenceCatalog, inspectArtifactDeliveryReport } from "./artifact-delivery-report.js";
 import { STRUCTURED_OUTPUT_TOOL, structuredOutputTool, inspectStructuredSubmission, type StructuredSubmission } from "./structured-output.js";
@@ -27,6 +28,8 @@ export type HarnessDeliveryReport = Readonly<{
   requirementIds: readonly string[];
   successCriteria: readonly string[];
   rationale: string;
+  sourceEvidence?: readonly JsonObject[];
+  sourceEvidenceByRequirement?: Readonly<Record<string, string[]>>;
 }>;
 
 type McpRuntime = {
@@ -74,6 +77,8 @@ const DELIVERY_REPORT_TOOL: RemoteToolDefinition = {
           properties: {
             id: { type: "string", minLength: 1, maxLength: 120 },
             statement: { type: "string", minLength: 1, maxLength: 600 },
+            requiresToolEvidence: { type: "boolean", description: "Agent semantic judgment: true when this requirement asks to read a source or execute a tool before answering." },
+            sourceEvidenceIds: { type: "array", items: { type: "string" }, description: "Exact successful source evidence IDs from get_delivery_evidence; reuse settled receipts instead of repeating completed reads." },
           },
           required: ["id", "statement"],
         },
@@ -230,7 +235,7 @@ async function executeRemoteTool(
   }
 
   if (name === DELIVERY_EVIDENCE_TOOL.name) {
-    return { content: [{ type: 'text', text: JSON.stringify({ evidence: deliveryEvidenceCatalog(runtime.executions) }) }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ evidence: deliveryEvidenceCatalog(runtime.executions), sourceEvidence: responseSourceEvidence(runtime.executions) }) }] };
   }
   if (name === DELIVERY_REPORT_TOOL.name && isJsonObject(args.expectedDelivery)) {
     const inspected = inspectArtifactDeliveryReport({ args, frozenContract: runtime.frozenContract, executions: runtime.executions });
@@ -344,6 +349,7 @@ function executeDeliveryReport(
   startedAt: string,
   startedAtMs: number,
 ): JsonObject {
+  runtime.deliveryReport = null;
   const taskGoal = requiredText(args.taskGoal, 2_000);
   const requestedOutput = requiredText(args.requestedOutput, 2_000);
   const taskKind = requiredText(args.taskKind, 160);
@@ -381,6 +387,18 @@ function executeDeliveryReport(
     return { content: [{ type: "text", text: outputText }], isError: true };
   }
 
+  const boundSources = bindResponseSources(rawRequirements.filter(isJsonObject), runtime.executions);
+  if (boundSources.error) {
+    appendExecution(runtime, { name: DELIVERY_REPORT_TOOL.name, args, startedAt, startedAtMs, status: 'failed', outputText: boundSources.error });
+    return { content: [{ type: 'text', text: boundSources.error }], isError: true };
+  }
+  const frozenMust = runtime.frozenContract?.must;
+  if (Array.isArray(frozenMust) && (frozenMust.length !== requirements.length || frozenMust.some(item => !isJsonObject(item)
+    || !requirements.some(requirement => requirement.id === item.id && requirement.statement === item.statement)))) {
+    const outputText = 'Response self-check must preserve every frozen must requirement exactly.';
+    appendExecution(runtime, { name: DELIVERY_REPORT_TOOL.name, args, startedAt, startedAtMs, status: 'failed', outputText });
+    return { content: [{ type: 'text', text: outputText }], isError: true };
+  }
   const unsignedContract: JsonObject = {
     version: 2,
     referenceResolution: { mode: "new_task" },
@@ -405,7 +423,7 @@ function executeDeliveryReport(
   const contractHash = `sha256:${createHash("sha256")
     .update(JSON.stringify(unsignedContract), "utf8")
     .digest("hex")}`;
-  const expectedDelivery: JsonObject = { ...unsignedContract, contractHash };
+  const expectedDelivery: JsonObject = runtime.frozenContract ?? { ...unsignedContract, contractHash };
   const taskSummary: JsonObject = {
     taskGoal,
     requestedOutput,
@@ -419,6 +437,8 @@ function executeDeliveryReport(
   };
   const report: HarnessDeliveryReport = {
     expectedDelivery,
+    sourceEvidence: boundSources.evidence,
+    sourceEvidenceByRequirement: boundSources.byRequirement,
     taskSummary,
     requirementIds: requirements.map((requirement) => requirement.id),
     successCriteria: requirements.map((requirement) => requirement.statement),

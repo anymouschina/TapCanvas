@@ -183,6 +183,17 @@ describe('resolveRestoredBaseKey', () => {
     })).toBe('project:P:flow:F:lane:general:skill:default')
   })
 
+  it('does not mint a project-only chat session while the project Flow is still loading', () => {
+    expect(buildEffectiveChatSessionKey({
+      persistedBaseKey: 'canvas-legacy',
+      projectId: 'P',
+      flowId: null,
+      chapterId: null,
+      skillId: null,
+      lane: 'general',
+    })).toBe('')
+  })
+
   it('keeps skill changes inside the same project source', () => {
     const input = {
       persistedBaseKey: 'canvas-legacy',

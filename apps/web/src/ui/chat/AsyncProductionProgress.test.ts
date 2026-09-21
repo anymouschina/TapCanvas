@@ -220,6 +220,23 @@ describe('resolvePhysicalExecutionProgress', () => {
       failureMessage: '根工作流已失败',
     })).toEqual(activeArtifactView)
   })
+
+  it('keeps terminal artifact evidence visible when the parent turn settles first', () => {
+    const completedArtifactView = resolveAsyncArtifactProgress([{
+      toolCallId: 'tool-1',
+      nodeId: 'node-1',
+      assetType: 'image',
+      taskId: 'task-1',
+      runId: 'run-1',
+      status: 'succeeded',
+      failureReason: '',
+    }])
+    expect(resolvePhysicalExecutionProgress(completedArtifactView, {
+      liveRunStatus: 'succeeded',
+      hasActiveExecutionEvidence: false,
+      requiresAgentContinuation: false,
+    })).toEqual(completedArtifactView)
+  })
 })
 
 describe('resolveAsyncArtifactProgress', () => {

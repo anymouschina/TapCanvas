@@ -4,11 +4,30 @@ import {
   buildAgentContinuationSummary,
   buildToolProgressSummary,
   buildToolStepSummary,
+  presentTaskExecution,
   readPresentedToolName,
   resolvePresentedToolName,
 } from './toolStepPresentation'
 
 describe('tool step presentation', () => {
+  it('uses the logical verdict for success, waiting and failure headlines', () => {
+    expect(presentTaskExecution({ status: 'succeeded', active: true, totalCount: 7 }))
+      .toEqual({ label: '执行完成 · 7 次调用', state: 'completed' })
+    expect(presentTaskExecution({ status: 'waiting_external', active: false, totalCount: 7 }))
+      .toEqual({ label: '等待外部结果', state: 'active' })
+    expect(presentTaskExecution({ status: 'failed', active: false, totalCount: 7 }))
+      .toEqual({ label: '任务执行失败', state: 'failed' })
+  })
+
+  it('does not infer a task verdict from historical calls or a closed transport', () => {
+    expect(presentTaskExecution({ active: false, totalCount: 7 }))
+      .toEqual({ label: '执行记录 · 7 次调用', state: 'neutral' })
+    expect(presentTaskExecution({ status: 'active', active: false, totalCount: 7, stageLabel: '准备素材' }))
+      .toEqual({ label: '当前阶段 · 准备素材', state: 'active' })
+    expect(presentTaskExecution({ status: 'cancelled', active: false, totalCount: 7 }).state).toBe('neutral')
+    expect(presentTaskExecution({ status: 'waiting_input', active: false, totalCount: 7 }).label).toBe('等待你的回复')
+  })
+
   it('shows the concrete TapCanvas business tool behind tapcanvas_call_tool', () => {
     expect(resolvePresentedToolName('tapcanvas_call_tool', {
       name: 'tapcanvas_image_generate_to_canvas',

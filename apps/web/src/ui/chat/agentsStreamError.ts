@@ -22,6 +22,17 @@ function extractDetailsSummary(details: unknown): string {
   const record = details as Record<string, unknown>
   const reason = trimString(record.reason)
   const payloadPreview = trimString(record.payloadPreview)
+  const modelKey = trimString(record.modelKey)
+  const enabledVideoModelKeys = Array.isArray(record.enabledVideoModelKeys)
+    ? record.enabledVideoModelKeys.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : []
+  if (modelKey || enabledVideoModelKeys.length > 0) {
+    const modelFact = modelKey ? `模型键=${modelKey}` : ''
+    const availableFact = enabledVideoModelKeys.length > 0
+      ? `当前可执行视频模型=${enabledVideoModelKeys.join('、')}`
+      : '当前可执行视频模型=无'
+    return [modelFact, availableFact].filter(Boolean).join('；')
+  }
   if (reason && payloadPreview) return `${reason} | payload=${payloadPreview}`
   if (reason) return reason
   if (payloadPreview) return `payload=${payloadPreview}`

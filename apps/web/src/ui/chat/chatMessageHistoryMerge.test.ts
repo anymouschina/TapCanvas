@@ -12,6 +12,15 @@ type TestMessage = {
 }
 
 describe('chat history merge', () => {
+  it('keeps older local failure rows before a newer durable successful turn', () => {
+    const first: TestMessage = { id: 'first', role: 'user', content: '开始' }
+    const failed: TestMessage = { id: 'failed', role: 'assistant', content: '供应商失败' }
+    const latestUser: TestMessage = { id: 'latest-user', role: 'user', content: '核验' }
+    const latestReply: TestMessage = { id: 'latest-reply', role: 'assistant', content: '核验成功' }
+    const local = [first, failed, latestUser, latestReply]
+    expect(mergeLoadedHistoryWithLocalMessages([first, latestUser, latestReply], local)).toEqual(local)
+  })
+
   it('keeps first-turn model provenance from the structurally matching local message', () => {
     const history: TestMessage[] = [{
       id: 'turn-1-user',

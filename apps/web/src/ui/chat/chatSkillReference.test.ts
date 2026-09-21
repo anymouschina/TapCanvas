@@ -142,3 +142,8 @@ describe('chat Skill references', () => {
     expect(references.knowledge[references.knowledge.length - 1]).toBe('知识文档 39')
   })
 })
+
+it('identifies a requested skill section rather than implying a repeated full load', () => {
+  expect(resolveChatSkillToolLabel({ skill: 'director', sectionId: 'section-03', resource: 'references/camera.md' }, []))
+    .toBe('加载 director · references/camera.md · section-03')
+})

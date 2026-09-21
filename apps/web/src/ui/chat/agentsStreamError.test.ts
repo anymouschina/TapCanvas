@@ -31,4 +31,14 @@ describe('formatAgentsStreamErrorMessage', () => {
   it('缺 message 时回落到通用文案', () => {
     expect(formatAgentsStreamErrorMessage({} as Payload)).toBe('对话流失败')
   })
+
+  it('模型准入失败时外显真实模型键和当前可执行目录', () => {
+    const text = formatAgentsStreamErrorMessage({
+      message: '当前视频模型未启用或没有可执行的上游路由',
+      code: 'workflow_video_model_not_enabled',
+      details: { modelKey: 'doubao-seedance-2.5', enabledVideoModelKeys: ['veo-3.1'] },
+    } as Payload)
+    expect(text).toContain('模型键=doubao-seedance-2.5')
+    expect(text).toContain('当前可执行视频模型=veo-3.1')
+  })
 })

@@ -34,7 +34,7 @@ export function resolveDeferredToolSteps<T>(input: {
   deferred: readonly DeferredChatToolStep<T>[]
   terminalStatus: 'active' | 'waiting_input' | 'waiting_external' | 'succeeded' | 'failed' | 'cancelled'
 }): T[] {
-  if (input.terminalStatus !== 'failed') return [...input.visible]
+  if (input.terminalStatus === 'active' || input.terminalStatus === 'waiting_input' || input.terminalStatus === 'waiting_external') return [...input.visible]
   return [
     ...input.visible,
     ...input.deferred.map((item) => item.step),

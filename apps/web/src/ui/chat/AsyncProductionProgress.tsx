@@ -63,6 +63,11 @@ export function resolvePhysicalExecutionProgress(
   },
 ): AsyncProductionProgressView | null {
   if (!view) return null
+  // A terminal artifact view is stronger than the parent chat turn status:
+  // the canvas already contains immutable delivery evidence. A parent turn
+  // may legitimately settle before the late media reconcile, so it must not
+  // rewrite a completed/failed artifact into a misleading paused state.
+  if (view.tone === 'ready' || view.tone === 'failed') return view
   // A real active executor or persisted running/queued artifact remains the
   // strongest evidence for the production card. Without that evidence, the
   // root logical-task terminal state must close an older accepted placeholder

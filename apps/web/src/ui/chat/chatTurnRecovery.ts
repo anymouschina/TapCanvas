@@ -43,13 +43,13 @@ export function isRecoverableInactiveChatTurn(
   if (!snapshot || snapshot.activeTurn || !turn) return false
   if (hasDurableSuspendedTurn(snapshot)) {
     const attention = turn.attentionProjection?.status
-    return Boolean(turn.recoveryCheckpoint)
+    return (turn.recoveryAvailable === true || Boolean(turn.recoveryCheckpoint))
       || attention === 'run_now'
       || attention === 'repair'
       || attention === 'replan'
   }
   if (turn.logicalTaskState.status !== 'active') return false
-  return Boolean(turn.recoveryCheckpoint)
+  return (turn.recoveryAvailable === true || Boolean(turn.recoveryCheckpoint))
     || turn.attentionProjection?.status === 'run_now'
     || turn.attentionProjection?.status === 'repair'
     || turn.attentionProjection?.status === 'replan'
@@ -124,6 +124,9 @@ export function resolveRecoveredChatTurnTerminalText(turn: {
   if (turn.reasonCode === 'video_production_start_deadline_exceeded') {
     return '本轮执行失败：视频生产未在截止时间内取得供应商受理回执。已生成资产仍会保留。'
   }
+  if (turn.reasonCode === 'logical_task_no_progress_timeout') {
+    return '本轮异常流程已自动结束：超过 20 分钟没有新的持久进展。已生成资产仍会保留。'
+  }
   return String(turn.finalResponse || '').trim()
     || String(turn.lastConfirmedSummary || '').trim()
 }
@@ -139,21 +142,22 @@ export type RecoveredTerminalMessageProjection = {
 }
 
 /**
- * A page may first observe a durable turn after it has already failed. In that
+ * A page may first observe a durable turn after it has already settled. In that
  * case there is no previous in-memory progress bubble to patch. Materialize
  * the authoritative failure under the stable turn-derived assistant id so a
  * refresh cannot hide the terminal reason or recreate a spinner.
  */
-export function projectRecoveredFailedTurnMessage(
+export function projectRecoveredTerminalTurnMessage(
   messages: readonly RecoveredTerminalMessageProjection[],
   input: {
     turnId: string
+    status: "succeeded" | "failed" | "cancelled"
     summary: string
     startedAt: string
   },
 ): RecoveredTerminalMessageProjection[] {
   const ids = buildRecoveredChatMessageIds(input.turnId)
-  const content = String(input.summary || '').trim() || '当前任务已失败'
+  const content = String(input.summary || '').trim() || '当前回合已结束'
   const existingIndex = messages.findIndex((message) => message.id === ids.assistantMessageId)
   if (existingIndex < 0) {
     return [
@@ -164,8 +168,8 @@ export function projectRecoveredFailedTurnMessage(
         content,
         ts: input.startedAt,
         phase: 'final',
-        kind: 'error',
-        logicalTaskStatus: 'failed',
+        kind: terminalChatMessageKind(input.status),
+        logicalTaskStatus: input.status,
       },
     ]
   }
@@ -173,16 +177,16 @@ export function projectRecoveredFailedTurnMessage(
   if (
     existing.content === content
     && existing.phase === 'final'
-    && existing.kind === 'error'
-    && existing.logicalTaskStatus === 'failed'
+    && existing.kind === terminalChatMessageKind(input.status)
+    && existing.logicalTaskStatus === input.status
   ) return messages as RecoveredTerminalMessageProjection[]
   return messages.map((message, index) => index === existingIndex
     ? {
         ...message,
         content,
         phase: 'final',
-        kind: 'error',
-        logicalTaskStatus: 'failed',
+        kind: terminalChatMessageKind(input.status),
+        logicalTaskStatus: input.status,
       }
     : message)
 }
@@ -195,6 +199,14 @@ export function canStartVerifiedChatTurn(state: ChatTurnRecoveryState): boolean 
   // in-flight conflict that can be durably queued. We deliberately do not
   // invent an idle snapshot here.
   if (state.error !== null) return true
+  // A durable terminal failure/cancellation is an explicit lifecycle fact.
+  // It must release the composer even if the browser still reports the old
+  // physical turn as active while its terminal snapshot is settling.
+  const terminalStatus = state.snapshot?.turn?.logicalTaskState.status
+  if (
+    state.snapshot?.activeTurn === false
+    && (terminalStatus === 'failed' || terminalStatus === 'cancelled')
+  ) return true
   // Recovery is attempted before the hook exposes an inactive snapshot. If the
   // authoritative result still says activeTurn=false, the old checkpoint is
   // diagnostic evidence, not a permanent lock on future user messages.

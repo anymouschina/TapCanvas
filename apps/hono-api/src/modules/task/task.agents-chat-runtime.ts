@@ -542,7 +542,15 @@ export function parseAgentsChatTurnStatusSnapshot(
 				: null;
 		if (!terminalAuthority) throw new Error("invalid terminal authority");
 		const terminalDelivery = parseDurableTerminalDelivery(turn.terminalDelivery);
-		const state = projectPublicTurnState(logicalTaskState.status);
+		// The physical phase is authoritative for transport state. A handed-off
+		// provider interruption may keep the logical task active for recovery, but
+		// it is no longer a live running stream and must remain resumable.
+		const state = receivedPhase === "suspended"
+			&& logicalTaskState.status === "active"
+			? "suspended"
+			: logicalTaskState.status === "active" && !root.activeTurn
+				? "unknown"
+				: projectPublicTurnState(logicalTaskState.status);
 		const phase = receivedPhase;
 		const pendingQueueCount = turn.pendingQueueCount;
 		if (

@@ -333,10 +333,13 @@ export async function listPublicChatMessages(
 		db,
 		`SELECT * FROM public_chat_messages
      WHERE user_id = ? AND session_id = ?
-     ORDER BY created_at DESC
+     ORDER BY created_at DESC, CASE role WHEN 'assistant' THEN 1 ELSE 0 END DESC, id DESC
      LIMIT ?`,
 		[userId, sessionId, limit],
 	);
+	// A persisted turn shares one timestamp for its user and assistant rows.
+	// Select newest first (including the reply at a limit boundary), then expose
+	// chronological order with the user's request before its reply on ties.
 	return rows.reverse();
 }
 

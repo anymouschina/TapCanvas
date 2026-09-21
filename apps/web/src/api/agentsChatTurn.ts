@@ -33,9 +33,9 @@ export type AgentsChatPendingUserInput = {
 }
 
 export type AgentsChatPhysicalBudgetSuspension = {
-  reasonCode: 'root_physical_execution_budget_exhausted'
   physicalRunId: string
   progressRevision: number
+  reasonCode: 'root_physical_execution_budget_exhausted'
   progressSinceRunStart: number
   budgetKind: 'turns' | 'tool_calls' | 'tokens' | 'wall_time'
   observed: number
@@ -131,6 +131,7 @@ export type AgentsChatTurnStatusDto = {
     terminalAuthority?: 'user_delivery' | 'workflow_action'
     reasonCode: string | null
     suspension: AgentsChatPhysicalBudgetSuspension | null
+    recoveryAvailable?: boolean
     recoveryCheckpoint?: AgentsChatTurnRecoveryCheckpoint | null
     attentionProjection?: AgentsChatAttentionProjection | null
     lastConfirmedSummary: string
@@ -514,7 +515,9 @@ export function parseAgentsChatTurnStatusDto(
   // `state`, `terminalAuthority` and `terminalDelivery` remain observable
   // physical/delivery facts. They no longer arbitrate the user-level terminal:
   // every browser consumer receives the projection of logicalTaskState.
-  const state = projectPublicTurnState(logicalTaskState.status)
+  const state = logicalTaskState.status === 'active' && !root.activeTurn
+    ? 'unknown'
+    : projectPublicTurnState(logicalTaskState.status)
   const phase = receivedPhase
   const turnId = readRequiredString(turn, 'turnId')
   if (logicalTaskState.logicalTaskId !== turnId) {
@@ -572,6 +575,7 @@ export function parseAgentsChatTurnStatusDto(
       terminalAuthority,
       reasonCode,
       suspension,
+      recoveryAvailable: turn.recoveryAvailable === true,
       recoveryCheckpoint,
       attentionProjection,
       lastConfirmedSummary: readRequiredString(turn, 'lastConfirmedSummary'),

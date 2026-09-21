@@ -27,6 +27,7 @@ const SAFE_BRIDGE_REJECTION_CODES = new Set([
 const DURABLY_RESUMABLE_STREAM_CODES = new Set([
 	"agents_bridge_stream_interrupted",
 	"agents_bridge_stream_failed",
+	"provider_stream_interrupted",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

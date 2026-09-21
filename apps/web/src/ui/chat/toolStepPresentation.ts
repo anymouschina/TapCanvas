@@ -19,6 +19,27 @@ export function resolvePresentedToolName(toolName: unknown, input: unknown): str
 
 export type PresentedToolStatus = 'succeeded' | 'failed' | 'denied' | 'blocked'
 
+export type PresentedTaskStatus = 'active' | 'waiting_input' | 'waiting_external' | 'succeeded' | 'failed' | 'cancelled'
+
+/** Only the logical task verdict owns the headline; tool failures remain diagnostics. */
+export function presentTaskExecution(input: {
+  status?: PresentedTaskStatus
+  active: boolean
+  stageLabel?: string
+  totalCount: number
+}): { label: string; state: 'completed' | 'active' | 'failed' | 'neutral' } {
+  if (input.status === 'succeeded') return { label: `执行完成 · ${input.totalCount} 次调用`, state: 'completed' }
+  if (input.status === 'failed') return { label: '任务执行失败', state: 'failed' }
+  if (input.status === 'cancelled') return { label: '任务已取消', state: 'neutral' }
+  if (input.status === 'waiting_external') return { label: '等待外部结果', state: 'active' }
+  if (input.status === 'waiting_input') return { label: '等待你的回复', state: 'neutral' }
+  if (input.status === 'active' || input.active) return {
+    label: input.stageLabel ? `当前阶段 · ${input.stageLabel}` : '任务处理中',
+    state: 'active',
+  }
+  return { label: `执行记录 · ${input.totalCount} 次调用`, state: 'neutral' }
+}
+
 /**
  * A tool receipt is an action-level fact, not the terminal state of the chat
  * turn. Keep the top-level progress copy compatible with a still-running root

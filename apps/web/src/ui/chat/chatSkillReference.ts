@@ -64,7 +64,11 @@ export function resolveChatSkillToolLabel(
   const selected = availableSkills.find(
     (skill) => skill.id === identity || skill.key === identity || skill.name === identity,
   )
-  return `加载 ${selected?.name || identity}`
+  const args = nestedArgs ?? input
+  const section = typeof args?.sectionId === 'string' ? args.sectionId.trim() : ''
+  const resource = typeof args?.resource === 'string' ? args.resource.trim() : ''
+  const scope = [resource, section].filter(Boolean).join(' · ')
+  return `加载 ${selected?.name || identity}${scope ? ` · ${scope}` : ''}`
 }
 
 function readDocumentName(path: string): string {

@@ -6,8 +6,26 @@ import type {
 const PUBLIC_CHAT_STREAM_MARKER_KEY = "__tapcanvasPublicChatStream";
 const PUBLIC_CHAT_EVENT_ID_SEPARATOR = "#";
 
+/**
+ * Keep the first replay poll responsive, then back off when the journal has
+ * not advanced. A connected browser can otherwise issue four database reads
+ * per second for the entire lifetime of a long running provider task. The
+ * backoff is bounded so newly appended events remain responsive.
+ */
 export const PUBLIC_CHAT_REPLAY_POLL_INTERVAL_MS = 250;
+export const PUBLIC_CHAT_REPLAY_MAX_POLL_INTERVAL_MS = 2_000;
 export const PUBLIC_CHAT_REPLAY_PAGE_SIZE = 200;
+
+export function resolvePublicChatReplayPollIntervalMs(input: Readonly<{
+	previousIntervalMs: number;
+	advanced: boolean;
+}>): number {
+	if (input.advanced) return PUBLIC_CHAT_REPLAY_POLL_INTERVAL_MS;
+	const previous = Number.isFinite(input.previousIntervalMs)
+		? Math.max(PUBLIC_CHAT_REPLAY_POLL_INTERVAL_MS, Math.trunc(input.previousIntervalMs))
+		: PUBLIC_CHAT_REPLAY_POLL_INTERVAL_MS;
+	return Math.min(PUBLIC_CHAT_REPLAY_MAX_POLL_INTERVAL_MS, previous * 2);
+}
 
 export type PublicChatReplayableEventName =
 	| "initial"

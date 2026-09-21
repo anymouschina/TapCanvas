@@ -38,6 +38,8 @@ export function buildIntentChatCommand(
   return {
     displayText: goal,
     canvasNodeId: sourceNodeId,
+    queuedProjectId: context.projectId,
+    queuedChapterId: context.chapterId,
     attachCanvasContext: true,
     text: [
       goal,

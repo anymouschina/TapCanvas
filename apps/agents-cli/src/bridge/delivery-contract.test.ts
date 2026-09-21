@@ -22,6 +22,8 @@ test("binds a completed response-mode turn to the exact final response", () => {
       logicalTaskId: "turn-1",
       userIntentContract: responseContract,
     },
+    deliveryReport: { expectedDelivery: responseContract, taskSummary: {}, requirementIds: ['must:identity'],
+      successCriteria: ['说明助手身份'], rationale: 'Checked the response' },
     text: "我是小T。",
     harnessCompleted: true,
     exitedAt: "2026-08-31T04:00:00.000Z",

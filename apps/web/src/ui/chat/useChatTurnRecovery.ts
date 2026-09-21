@@ -6,6 +6,64 @@ import type { ChatTurnRecoveryState } from './chatTurnRecovery'
 
 const ACTIVE_TURN_POLL_INTERVAL_MS = 2_500
 const STATUS_ERROR_RETRY_INTERVAL_MS = 5_000
+const INTERRUPTED_TURN_STORAGE_PREFIX = 'tapcanvas-chat-interrupted-turn:'
+const INTERRUPTED_TURN_SUPPRESSION_TTL_MS = 10 * 60 * 1000
+
+type LocalTurnSuppression = {
+  turnId: string
+  expiresAt: number
+}
+
+function isTurnLocallySuppressed(sessionKey: string, turnId: string): boolean {
+  if (typeof sessionStorage === 'undefined') return false
+  try {
+    const storageKey = `${INTERRUPTED_TURN_STORAGE_PREFIX}${sessionKey}`
+    const raw = sessionStorage.getItem(storageKey)
+    if (!raw) return false
+    let value: unknown
+    try {
+      value = JSON.parse(raw)
+    } catch {
+      sessionStorage.removeItem(storageKey)
+      return false
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      sessionStorage.removeItem(storageKey)
+      return false
+    }
+    const suppression = value as Partial<LocalTurnSuppression>
+    // Records without a concrete identity or expiry belong to the pre-TTL
+    // format. Discard them so an old interruption cannot suppress recovery
+    // forever for this session.
+    if (
+      typeof suppression.turnId !== 'string'
+      || !suppression.turnId.trim()
+      || typeof suppression.expiresAt !== 'number'
+      || !Number.isFinite(suppression.expiresAt)
+    ) {
+      sessionStorage.removeItem(storageKey)
+      return false
+    }
+    if (suppression.expiresAt <= Date.now()) {
+      sessionStorage.removeItem(storageKey)
+      return false
+    }
+    return suppression.turnId === turnId
+  } catch {
+    return false
+  }
+}
+
+export function suppressChatTurnRecovery(sessionKey: string, turnId: string): void {
+  if (typeof sessionStorage === 'undefined') return
+  try {
+    const value: LocalTurnSuppression = {
+      turnId,
+      expiresAt: Date.now() + INTERRUPTED_TURN_SUPPRESSION_TTL_MS,
+    }
+    sessionStorage.setItem(`${INTERRUPTED_TURN_STORAGE_PREFIX}${sessionKey}`, JSON.stringify(value))
+  } catch { /* storage is optional */ }
+}
 
 export class ChatTurnResumeError extends Error {
   readonly code = 'chat_turn_resume_failed' as const
@@ -21,7 +79,7 @@ export function isChatTurnResumeError(error: Error | null): error is ChatTurnRes
 }
 
 export type ChatTurnRecovery = ChatTurnRecoveryState & {
-  refresh: () => Promise<AgentsChatTurnStatusDto | null>
+  refresh: (options?: { retryRecovery?: boolean }) => Promise<AgentsChatTurnStatusDto | null>
   /**
    * Synchronously revoke every in-flight status/recovery request owned by the
    * current conversation identity. Call this before rotating to a new
@@ -52,6 +110,8 @@ export function useChatTurnRecovery(
   } | null>(null)
   const orphanResumeAttemptsRef = React.useRef(new Set<string>())
   const orphanResumeErrorsRef = React.useRef(new Map<string, ChatTurnResumeError>())
+  const pendingResumeRequestsRef = React.useRef(new Set<string>())
+  const [recoveryRevision, setRecoveryRevision] = React.useState(0)
   const pendingResumeClaimsRef = React.useRef(new Map<string, string>())
   const [state, setState] = React.useState<ChatTurnRecoveryState>({
     snapshot: null,
@@ -65,6 +125,7 @@ export function useChatTurnRecovery(
     orphanResumeAttemptsRef.current.clear()
     orphanResumeErrorsRef.current.clear()
     pendingResumeClaimsRef.current.clear()
+    pendingResumeRequestsRef.current.clear()
     setState({ snapshot: null, checking: false, error: null })
   }, [])
 
@@ -84,7 +145,7 @@ export function useChatTurnRecovery(
     const requestToken = Symbol('chat-turn-status-query')
     const promise = (async (): Promise<AgentsChatTurnStatusDto | null> => {
       try {
-        let snapshot = await getAgentsChatTurnStatus({ sessionKey: normalizedSessionKey })
+        const snapshot = await getAgentsChatTurnStatus({ sessionKey: normalizedSessionKey })
         // A new conversation can be created while the old status request is in
         // flight. No recovery side effect is legal after its ownership version
         // has been revoked.
@@ -110,31 +171,33 @@ export function useChatTurnRecovery(
         if (
           autoResumeOrphan
           && orphanedTurn
+          && !isTurnLocallySuppressed(normalizedSessionKey, orphanedTurn.turnId)
           && !orphanResumeAttemptsRef.current.has(orphanedTurn.turnId)
+          && !pendingResumeRequestsRef.current.has(orphanedTurn.turnId)
         ) {
           orphanResumeAttemptsRef.current.add(orphanedTurn.turnId)
-          try {
-            if (requestVersionRef.current !== requestVersion) return null
-            const receipt = await resumeAgentsChatTurn({
-              sessionKey: normalizedSessionKey,
-              turnId: orphanedTurn.turnId,
+          const turnId = orphanedTurn.turnId
+          pendingResumeRequestsRef.current.add(turnId)
+          // Recovery is a mutation, status is an independent observation. A
+          // slow/lost resume response must never own the status query's lock.
+          void resumeAgentsChatTurn({ sessionKey: normalizedSessionKey, turnId })
+            .then((receipt) => {
+              if (requestVersionRef.current !== requestVersion) return
+              pendingResumeClaimsRef.current.set(turnId, receipt.continuationId)
             })
-            pendingResumeClaimsRef.current.set(orphanedTurn.turnId, receipt.continuationId)
-            if (requestVersionRef.current !== requestVersion) return null
-            snapshot = await getAgentsChatTurnStatus({ sessionKey: normalizedSessionKey })
-          } catch (error: unknown) {
-            const message = error instanceof Error
-              ? error.message
-              : '当前任务自动续跑失败'
-            orphanResumeErrorsRef.current.set(
-              orphanedTurn.turnId,
-              new ChatTurnResumeError(message),
-            )
-            // Keep the authoritative inactive snapshot. The UI never invents a
-            // successful recovery or a new task when no exact continuation exists.
-            // The attempt remains claimed so background polling cannot hammer the
-            // same rejected checkpoint. An explicit refresh may retry it once.
-          }
+            .catch((error: unknown) => {
+              if (requestVersionRef.current !== requestVersion) return
+              const message = error instanceof Error ? error.message : '当前任务自动续跑失败'
+              console.warn('[ai-chat][turn-recovery] resume failed', {
+                sessionKey: normalizedSessionKey, turnId, message,
+              })
+              orphanResumeErrorsRef.current.set(turnId, new ChatTurnResumeError(message))
+            })
+            .finally(() => {
+              if (requestVersionRef.current !== requestVersion) return
+              pendingResumeRequestsRef.current.delete(turnId)
+              setRecoveryRevision((revision) => revision + 1)
+            })
         }
         if (requestVersionRef.current !== requestVersion) return null
         const pendingTurnId = snapshot.turn?.turnId ?? null
@@ -151,7 +214,8 @@ export function useChatTurnRecovery(
         }
         const recoveryClaimPending = Boolean(
           pendingTurnId
-          && pendingResumeClaimsRef.current.has(pendingTurnId)
+          && (pendingResumeClaimsRef.current.has(pendingTurnId)
+            || pendingResumeRequestsRef.current.has(pendingTurnId))
           && !snapshot.activeTurn
           && isRecoverableInactiveChatTurn(snapshot),
         )
@@ -182,9 +246,11 @@ export function useChatTurnRecovery(
     return promise
   }, [autoResumeOrphan, enabled, normalizedSessionKey])
 
-  const refresh = React.useCallback(() => {
+  const refresh = React.useCallback((options?: { retryRecovery?: boolean }) => {
     const turnId = state.snapshot?.turn?.turnId
-    if (turnId && !pendingResumeClaimsRef.current.has(turnId)) {
+    if (options?.retryRecovery && turnId
+      && !pendingResumeClaimsRef.current.has(turnId)
+      && !pendingResumeRequestsRef.current.has(turnId)) {
       orphanResumeAttemptsRef.current.delete(turnId)
       orphanResumeErrorsRef.current.delete(turnId)
     }
@@ -195,6 +261,7 @@ export function useChatTurnRecovery(
     orphanResumeAttemptsRef.current.clear()
     orphanResumeErrorsRef.current.clear()
     pendingResumeClaimsRef.current.clear()
+    pendingResumeRequestsRef.current.clear()
     setState({
       snapshot: null,
       checking: enabled && Boolean(normalizedSessionKey),
@@ -205,6 +272,10 @@ export function useChatTurnRecovery(
       requestVersionRef.current += 1
     }
   }, [enabled, normalizedSessionKey, query])
+
+  React.useEffect(() => {
+    if (recoveryRevision > 0) void query(false)
+  }, [query, recoveryRevision])
 
   React.useEffect(() => {
     const shouldPoll = state.error !== null

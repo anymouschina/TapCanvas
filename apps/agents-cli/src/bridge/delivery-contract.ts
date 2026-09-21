@@ -1,3 +1,5 @@
+import { responseSourceEvidence } from "./response-source-evidence.js";
+import { isDeepStrictEqual } from "node:util";
 import { latestWorkflowReceipts, verifiedToolDelivery } from "./tool-delivery-evidence.js";
 import type { StructuredSubmission } from "./structured-output.js";
 import { createHash } from "node:crypto";
@@ -346,7 +348,14 @@ export function buildHarnessDeliveryClosure(input: {
   const frozenContract = readFrozenResponseContract(
     input.turnContext.userIntentContract ?? input.deliveryReport?.expectedDelivery,
   ) ?? readFrozenWorkflowResponseContract(input.remoteExecutions ?? [], input.text);
-  if (!frozenContract || !input.text.trim()) {
+  const reportMatches = input.deliveryReport && frozenContract
+    && isDeepStrictEqual(input.deliveryReport.expectedDelivery, frozenContract.value)
+    && frozenContract.requirementIds.every(id => input.deliveryReport?.requirementIds.includes(id));
+  const realSources = new Map(responseSourceEvidence(input.remoteExecutions ?? []).map(item => [item.evidenceId, item]));
+  const sourceEvidenceValid = (input.deliveryReport?.sourceEvidence ?? []).every(item =>
+    typeof item.evidenceId === 'string' && isDeepStrictEqual(realSources.get(item.evidenceId), item))
+    && Object.values(input.deliveryReport?.sourceEvidenceByRequirement ?? {}).every(ids => ids.every(id => realSources.has(id)));
+  if (!frozenContract || !input.text.trim() || (!frozenContract.workflowReceipt && !reportMatches) || !sourceEvidenceValid) {
     return failedClosure({
       turnContext: input.turnContext,
       reasonCode: "delivery_verification_missing",
@@ -370,6 +379,7 @@ export function buildHarnessDeliveryClosure(input: {
     ? "runtime-workflow-execution-receipt"
     : null;
   const deliveryEvidence: JsonObject[] = [
+    ...(input.deliveryReport?.sourceEvidence ?? []),
     ...(frozenContract.workflowReceipt ? [{
       evidenceId: workflowEvidenceId!,
       kind: "tool_call",
@@ -394,7 +404,9 @@ export function buildHarnessDeliveryClosure(input: {
     criteria: frozenContract.requirementIds.map((requirementId) => ({
       requirementId,
       status: "satisfied",
-      evidenceIds: criterionEvidenceIds,
+      evidenceIds: input.deliveryReport?.sourceEvidenceByRequirement?.[requirementId]?.length
+        ? input.deliveryReport.sourceEvidenceByRequirement[requirementId]
+        : criterionEvidenceIds,
       reason: workflowEvidenceId
         ? "The runtime verified a successful terminal workflow receipt and exact equality between its sole authored text output and the emitted final response."
         : "DeepSeek Harness completed the frozen response requirement and the runtime bound the emitted final response by SHA-256.",

@@ -48,16 +48,28 @@ export function mergeLoadedHistoryWithLocalMessages<T extends MergeableChatMessa
     if (id && !localIndexById.has(id)) localIndexById.set(id, index)
   })
 
-  const matchedLocalIndices = new Set<number>()
-  const mergedHistory = canonicalHistory.map((historyMessage) => {
-    const localIndex = localIndexById.get(String(historyMessage.id || '').trim())
-    if (localIndex === undefined) return historyMessage
-    matchedLocalIndices.add(localIndex)
-    return localMessages[localIndex]
-  })
-  const localOnlyMessages = localMessages.filter((_, index) => !matchedLocalIndices.has(index))
-
-  const merged = [...mergedHistory, ...localOnlyMessages]
+  // Anchor local-only rows to the next shared identity in local chronology.
+  // Appending every local-only row at the end moves older failures behind the
+  // latest successful reply whenever history omits those failed turns.
+  const beforeSharedId = new Map<string, T[]>()
+  let pendingLocal: T[] = []
+  for (const message of localMessages) {
+    const id = String(message.id || '').trim()
+    if (id && seenHistoryIds.has(id)) {
+      beforeSharedId.set(id, [...(beforeSharedId.get(id) ?? []), ...pendingLocal])
+      pendingLocal = []
+    } else {
+      pendingLocal.push(message)
+    }
+  }
+  const merged: T[] = []
+  for (const historyMessage of canonicalHistory) {
+    const id = String(historyMessage.id || '').trim()
+    merged.push(...(beforeSharedId.get(id) ?? []))
+    const localIndex = localIndexById.get(id)
+    merged.push(localIndex === undefined ? historyMessage : localMessages[localIndex])
+  }
+  merged.push(...pendingLocal)
   // 会话内重复用户气泡兜底（同 durable turn 的双投影）：
   // onOpen 重绑若因竞态未把本地临时 id（m_user_*）换成稳定 id（m_user_recovered_*），
   // 历史/广播的稳定副本会与本地临时副本并存 → UI 出现两条同文案用户气泡，刷新后

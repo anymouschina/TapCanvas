@@ -1,3 +1,4 @@
+import { isRetryableChatTransportError, readRetryAfterMilliseconds } from './agentsChatRetry'
 import type { Edge, Node } from '@xyflow/react'
 import type { PublicFlowAnchorBinding } from '@tapcanvas/flow-anchor-bindings'
 import type {
@@ -202,6 +203,7 @@ export async function fetchAssetDownloadBlob(url: string): Promise<Blob> {
 }
 
 type ApiRequestError = Error & {
+  retryAfterMs?: number
   status?: number
   code?: string
   details?: unknown
@@ -224,6 +226,8 @@ async function throwApiError(r: Response, fallbackMessage: string): Promise<neve
   }
   const err: ApiRequestError = new Error(msg)
   err.status = r.status
+  const retryAfterMs = readRetryAfterMilliseconds(r.headers.get('Retry-After'))
+  if (retryAfterMs !== null) err.retryAfterMs = retryAfterMs
   if (body && typeof body === 'object') {
     err.code = 'code' in body && typeof body.code === 'string' ? body.code : undefined
     err.details = 'details' in body ? body.details : undefined
@@ -1265,6 +1269,8 @@ export type AgentsChatResponseDto = {
     }
     /** Legacy diagnostic only. Lifecycle authority is logicalTaskState. */
     requestTerminal?: AgentRequestTerminalV1
+    /** Physical run projection used to distinguish a suspended result from a logical terminal. */
+    runOutcome?: { status?: string }
     logicalTaskState: AgentLogicalTaskStateV1
     runtime?: AgentsRuntimeTraceDto
     executionProvenance?: AgentExecutionProvenanceDto
@@ -1404,6 +1410,8 @@ export type AgentsChatAgentRoleStreamPayload = {
 }
 
 export type AgentsChatSkillStreamPayload = {
+  sectionId?: string | null
+  resource?: string | null
   toolCallId: string
   phase: 'started' | 'completed'
   status?: 'succeeded' | 'failed' | 'denied' | 'blocked'
@@ -1801,6 +1809,31 @@ export class AgentsChatReplayResyncRequiredError extends Error {
 const AGENTS_CHAT_TRANSPORT_IDLE_MS = 45_000
 const AGENTS_CHAT_ADMISSION_MAX_ATTEMPTS = 5
 
+/**
+ * A consumer callback is outside the transport's recovery boundary. If UI
+ * state application throws, replaying the same cursor would only re-deliver
+ * events and can create an infinite reconnect loop. Keep the original error
+ * available for the caller while tagging it for the stream pump.
+ */
+class AgentsChatStreamHandlerError extends Error {
+  readonly cause: unknown
+
+  constructor(cause: unknown) {
+    super('agents_chat_stream_handler_error')
+    this.name = 'AgentsChatStreamHandlerError'
+    this.cause = cause
+  }
+}
+
+function invokeAgentsChatHandler(callback: (() => void) | undefined): void {
+  if (!callback) return
+  try {
+    callback()
+  } catch (error: unknown) {
+    throw new AgentsChatStreamHandlerError(error)
+  }
+}
+
 function readAcceptedPublicTurnId(error: unknown): string | null {
   if (!error || typeof error !== 'object') return null
   const apiError = error as ApiRequestError
@@ -1810,17 +1843,6 @@ function readAcceptedPublicTurnId(error: unknown): string | null {
     ? details.publicTurnId.trim()
     : ''
   return publicTurnId || null
-}
-
-function isRetryableAgentsChatAdmissionError(error: unknown): boolean {
-  if (error instanceof Error && error.message.startsWith('agents_chat_stream_')) return false
-  if (!error || typeof error !== 'object') return true
-  const statusValue = Number((error as ApiRequestError).status)
-  if (!Number.isFinite(statusValue) || statusValue <= 0) return true
-  return statusValue === 408
-    || statusValue === 425
-    || statusValue === 429
-    || statusValue >= 500
 }
 
 function waitForAgentsChatRetry(signal: AbortSignal, milliseconds: number): Promise<void> {
@@ -1836,6 +1858,14 @@ function waitForAgentsChatRetry(signal: AbortSignal, milliseconds: number): Prom
     }
     signal.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+function createAgentsChatAbortError(signal: AbortSignal): Error {
+  const reason = signal.reason
+  if (reason instanceof Error) return reason
+  const error = new Error('agents_chat_stream_aborted')
+  error.name = 'AbortError'
+  return error
 }
 
 export type PublicVisionRequestDto = {
@@ -1882,6 +1912,7 @@ export async function agentsChatStream(
   let publicTurnId = ''
   try {
     for (let attempt = 1; attempt <= AGENTS_CHAT_ADMISSION_MAX_ATTEMPTS; attempt += 1) {
+      if (controller.signal.aborted) throw createAgentsChatAbortError(controller.signal)
       try {
         const response = await apiFetch(resolveAgentsChatEndpoint(payload), withAuth({
           method: 'POST',
@@ -1910,12 +1941,17 @@ export async function agentsChatStream(
         if (
           controller.signal.aborted
           || !String(payload.clientPendingId || '').trim()
-          || !isRetryableAgentsChatAdmissionError(error)
+          || !isRetryableChatTransportError(error)
           || attempt >= AGENTS_CHAT_ADMISSION_MAX_ATTEMPTS
         ) {
           throw error
         }
-        const backoffMs = Math.min(2_000, 250 * (2 ** (attempt - 1)))
+        const retryAfterMs = error && typeof error === 'object'
+          ? Number((error as ApiRequestError).retryAfterMs)
+          : Number.NaN
+        const backoffMs = Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+          ? retryAfterMs
+          : Math.min(2_000, 250 * (2 ** (attempt - 1)))
         await waitForAgentsChatRetry(controller.signal, backoffMs)
       }
     }
@@ -1927,7 +1963,19 @@ export async function agentsChatStream(
     releaseExternalSignal()
     throw new Error('agents_chat_stream_admission_identity_missing')
   }
-  handlers.onOpen?.({ turnId: publicTurnId })
+  try {
+    handlers.onOpen?.({ turnId: publicTurnId })
+  } catch (error: unknown) {
+    // Admission succeeded, but the consumer rejected the ownership handoff.
+    // Release the external abort listener and stop the local controller rather
+    // than leaving a live listener attached to a rejected stream.
+    releaseExternalSignal()
+    controller.abort()
+    if (initialResponse?.body) {
+      void initialResponse.body.cancel('agents_chat_stream_on_open_failed').catch(() => undefined)
+    }
+    throw error
+  }
   let cursor: AgentsChatEventCursor = {
     publicTurnId,
     eventId: null,
@@ -1935,6 +1983,25 @@ export async function agentsChatStream(
   }
   let sawTerminalEvent = false
   let notifiedError = false
+
+  const isTerminalResult = (response: AgentsChatResponseDto): boolean => {
+    const logicalStatus = response.trace?.logicalTaskState?.status
+    if (logicalStatus) {
+      return logicalStatus === 'succeeded'
+        || logicalStatus === 'failed'
+        || logicalStatus === 'cancelled'
+        || logicalStatus === 'waiting_input'
+    }
+    const runStatus = response.trace?.runOutcome?.status
+    if (runStatus === 'suspended' || runStatus === 'active' || runStatus === 'waiting_external') return false
+    // Older/minimal result envelopes have no lifecycle projection. Preserve
+    // their existing behavior and treat the result itself as terminal.
+    return true
+  }
+
+  const isTerminalDoneReason = (reason: string): boolean => {
+    return reason !== 'physical_suspended'
+  }
 
   const dispatchEvent = (
     eventName: string,
@@ -1954,18 +2021,18 @@ export async function agentsChatStream(
     if (advanced.status === 'duplicate') return
     cursor = advanced.cursor
     if (
-      event.event === 'result' ||
-      event.event === 'done' ||
+      (event.event === 'result' && isTerminalResult(event.data.response)) ||
+      (event.event === 'done' && isTerminalDoneReason(event.data.reason)) ||
       (event.event === 'error' && event.data.terminal === true)
     ) {
       sawTerminalEvent = true
     }
-    handlers.onEvent({
+    invokeAgentsChatHandler(() => handlers.onEvent({
       ...event,
       eventId: cursor.eventId ?? undefined,
       sequence: cursor.sequence,
       replayed,
-    })
+    }))
   }
 
   const consumeResponse = async (response: Response, replayed: boolean): Promise<void> => {
@@ -1992,7 +2059,7 @@ export async function agentsChatStream(
         const { done, value } = await reader.read()
         if (done) break
         armTransportIdle()
-        handlers.onTransportActivity?.()
+        invokeAgentsChatHandler(handlers.onTransportActivity)
         const events = parser.push(decoder.decode(value, { stream: true }))
         for (const event of events) {
           const payloadText = String(event.data || '').trim()
@@ -2009,6 +2076,9 @@ export async function agentsChatStream(
       }
     } finally {
       if (transportIdleTimerId !== null) globalThis.clearTimeout(transportIdleTimerId)
+      if (sawTerminalEvent || controller.signal.aborted) {
+        void reader.cancel('agents_chat_stream_terminal_or_aborted').catch(() => undefined)
+      }
       reader.releaseLock()
     }
   }
@@ -2050,6 +2120,7 @@ export async function agentsChatStream(
     let response: Response | null = initialResponse
     let replayed = initialResponse === null
     let reconnectAttempt = 0
+    let emptyReplayAttempt = 0
     while (!controller.signal.aborted && !sawTerminalEvent) {
       if (!response) {
         try {
@@ -2061,21 +2132,41 @@ export async function agentsChatStream(
           const status = error && typeof error === 'object'
             ? Number((error as { status?: unknown }).status)
             : 0
-          if (Number.isFinite(status) && status >= 400 && status < 500) {
+          if (Number.isFinite(status) && status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429) {
             notifyError(error)
             return
           }
           reconnectAttempt += 1
-          const backoffMs = Math.min(2_000, 200 * (2 ** Math.min(reconnectAttempt, 4)))
+          const retryAfterMs = error && typeof error === 'object'
+            ? Number((error as ApiRequestError).retryAfterMs)
+            : Number.NaN
+          const backoffMs = Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+            ? retryAfterMs
+            : Math.min(2_000, 200 * (2 ** Math.min(reconnectAttempt, 4)))
           await waitForAgentsChatRetry(controller.signal, backoffMs)
           continue
         }
       }
       try {
+        const sequenceBefore = cursor.sequence
         await consumeResponse(response, replayed)
         if (sawTerminalEvent || controller.signal.aborted) return
+        if (replayed && cursor.sequence === sequenceBefore) {
+          emptyReplayAttempt += 1
+          await waitForAgentsChatRetry(
+            controller.signal,
+            Math.min(2_000, 200 * (2 ** Math.min(emptyReplayAttempt, 4))),
+          )
+        } else {
+          emptyReplayAttempt = 0
+        }
       } catch (error: unknown) {
         if (controller.signal.aborted) return
+        if (error instanceof AgentsChatStreamHandlerError) {
+          notifyError(error.cause)
+          controller.abort()
+          return
+        }
         if (
           error instanceof AgentsChatReplayResyncRequiredError ||
           (error instanceof Error && error.message.startsWith('agents_chat_stream_'))

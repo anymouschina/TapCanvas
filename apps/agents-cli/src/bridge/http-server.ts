@@ -281,10 +281,10 @@ export async function startHarnessHttpServer(
         if (!chatRequest.stream) {
           try {
             const result = await runtime.run(chatRequest, () => undefined, abortSignal);
-            await lifecycle.complete(lifecycleUserId, lifecycleLease.sessionId, result);
+            await lifecycle.complete(lifecycleUserId, lifecycleLease.sessionId, result, lifecycleLease.turnId);
             writeJson(response, 200, result.response);
           } catch (error: unknown) {
-            await lifecycle.fail(lifecycleUserId, lifecycleLease.sessionId, error);
+            await lifecycle.fail(lifecycleUserId, lifecycleLease.sessionId, error, lifecycleLease.turnId);
             throw error;
           }
           return;
@@ -294,10 +294,10 @@ export async function startHarnessHttpServer(
         response.once("close", () => writer.stop());
         try {
           const result = await runtime.run(chatRequest, (event) => writer.emit(event), abortSignal);
-          await lifecycle.complete(lifecycleUserId, lifecycleLease.sessionId, result);
+          await lifecycle.complete(lifecycleUserId, lifecycleLease.sessionId, result, lifecycleLease.turnId);
           result.projector.finish(result.response, result.text);
         } catch (error: unknown) {
-          await lifecycle.fail(lifecycleUserId, lifecycleLease.sessionId, error);
+          await lifecycle.fail(lifecycleUserId, lifecycleLease.sessionId, error, lifecycleLease.turnId);
           const details = errorDetails(error);
           writer.emit({
             event: "error",

@@ -607,6 +607,23 @@ describe('liveChatRunStore request terminal contract', () => {
 		expect(useLiveChatRunStore.getState().activeRun?.asyncArtifacts).toEqual([])
 	})
 
+	it('settles an older persisted run when the initial transport lost requestId', () => {
+		useLiveChatRunStore.getState().startRun({
+			runId: 'run-legacy',
+			requestText: '执行请求',
+			sessionKey: 'session-1',
+		})
+
+		useLiveChatRunStore.getState().reconcileTurnStatus(
+			terminalSnapshot('succeeded', null),
+		)
+
+		expect(useLiveChatRunStore.getState().activeRun).toMatchObject({
+			status: 'succeeded',
+			finishedAt: Date.parse('2026-08-04T06:21:30.896Z'),
+		})
+	})
+
   it('retains exact structured tool and role activity without inferring from display text', () => {
     startRun()
 
@@ -675,4 +692,19 @@ describe('liveChatRunStore request terminal contract', () => {
     expect(toolLog?.title).toBe('tapcanvas_video_orchestrate started')
     expect(toolLog?.toolActivity?.toolName).toBe('tapcanvas_video_orchestrate')
   })
+})
+
+it('reconciles the final reply after the local run has already settled', () => {
+  useLiveChatRunStore.getState().clearRun()
+  startRun()
+  useLiveChatRunStore.getState().completeRun(responseWithTerminal({
+    version: 1, terminal: true, status: 'succeeded', reason: 'delivery_verified',
+  }), '模型正在处理当前任务')
+  const snapshot = terminalSnapshot('succeeded', 'delivery_verified')
+  useLiveChatRunStore.getState().reconcileTurnStatus(snapshot)
+  const run = useLiveChatRunStore.getState().activeRun
+  expect(run?.status).toBe('succeeded')
+  expect(run?.assistantPreview).toBe('真实最终答复')
+  useLiveChatRunStore.getState().reconcileTurnStatus(snapshot)
+  expect(useLiveChatRunStore.getState().activeRun).toBe(run)
 })

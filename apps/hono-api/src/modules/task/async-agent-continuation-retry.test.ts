@@ -124,3 +124,11 @@ describe("isAsyncAgentContinuationAttemptDue", () => {
 		).toBe(false);
 	});
 });
+
+
+it("bounds provider stream interruption retries on the same continuation", () => {
+ const error = new AppError("provider stream interrupted", { status: 502, code: "provider_stream_interrupted" });
+ expect(planAsyncAgentContinuationRetry({ error, currentAttempt: 0 })).toMatchObject({ shouldRetry: true, attempt: 1 });
+ expect(planAsyncAgentContinuationRetry({ error, currentAttempt: ASYNC_AGENT_CONTINUATION_MAX_ATTEMPTS - 1 }))
+  .toMatchObject({ shouldRetry: false, nextAttemptAt: null });
+});

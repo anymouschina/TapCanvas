@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentsChatTurnResumeReceiptDto, AgentsChatTurnStatusDto } from '../../api/agentsChatTurn'
 import { getAgentsChatTurnStatus, resumeAgentsChatTurn } from '../../api/server'
-import { ChatTurnResumeError, useChatTurnRecovery } from './useChatTurnRecovery'
+import { canStartVerifiedChatTurn, shouldReconcileLocalTurnFromDurableStatus } from './chatTurnRecovery'
+import { ChatTurnResumeError, suppressChatTurnRecovery, useChatTurnRecovery } from './useChatTurnRecovery'
 
 vi.mock('../../api/server', () => ({
   getAgentsChatTurnStatus: vi.fn(),
@@ -206,6 +207,108 @@ const resumeReceipt: AgentsChatTurnResumeReceiptDto = {
 describe('useChatTurnRecovery', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    sessionStorage.clear()
+  })
+
+  it('keeps observing terminal status while a resume request never returns', async () => {
+    vi.mocked(getAgentsChatTurnStatus).mockResolvedValue(orphanedSnapshot)
+    vi.mocked(resumeAgentsChatTurn).mockImplementation(() => new Promise(() => undefined))
+    const hook = renderHook(() => useChatTurnRecovery('session_1'))
+    await waitFor(() => expect(hook.result.current.snapshot).toEqual(orphanedSnapshot))
+    expect(hook.result.current.checking).toBe(true)
+
+    // Even an explicit refresh cannot duplicate an unresolved mutation.
+    await act(async () => { await hook.result.current.refresh({ retryRecovery: true }) })
+    expect(resumeAgentsChatTurn).toHaveBeenCalledTimes(1)
+
+    if (!activeSnapshot.turn) throw new Error('fixture requires a turn')
+    const terminalSnapshot: AgentsChatTurnStatusDto = {
+      ...activeSnapshot,
+      activeTurn: false,
+      turn: {
+        ...activeSnapshot.turn,
+        state: 'succeeded',
+        logicalTaskState: {
+          ...activeSnapshot.turn.logicalTaskState,
+          status: 'succeeded',
+          physicalRunStatus: 'completed',
+          deliveryStatus: 'satisfied',
+        },
+        finalResponse: '已完成',
+      },
+    }
+    vi.mocked(getAgentsChatTurnStatus).mockResolvedValue(terminalSnapshot)
+    await act(async () => { await hook.result.current.refresh() })
+    expect(hook.result.current.snapshot).toEqual(terminalSnapshot)
+    expect(canStartVerifiedChatTurn(hook.result.current)).toBe(true)
+    expect(shouldReconcileLocalTurnFromDurableStatus({
+      activeTurnId: 'request_1', snapshot: hook.result.current.snapshot,
+    })).toBe(true)
+    expect(hook.result.current.checking).toBe(false)
+    expect(resumeAgentsChatTurn).toHaveBeenCalledTimes(1)
+    hook.unmount()
+  })
+
+  it('does not let a late resume failure restore an already settled busy state', async () => {
+    let rejectResume: (error: Error) => void = () => { throw new Error('resume not started') }
+    vi.mocked(getAgentsChatTurnStatus).mockResolvedValue(orphanedSnapshot)
+    vi.mocked(resumeAgentsChatTurn).mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectResume = reject
+    }))
+    const hook = renderHook(() => useChatTurnRecovery('session_1'))
+    await waitFor(() => expect(hook.result.current.snapshot).toEqual(orphanedSnapshot))
+    vi.mocked(getAgentsChatTurnStatus).mockResolvedValue(idleSnapshot)
+    await act(async () => { await hook.result.current.refresh() })
+    await act(async () => { rejectResume(new Error('late transport failure')) })
+    expect(hook.result.current.snapshot).toEqual(idleSnapshot)
+    expect(hook.result.current.checking).toBe(false)
+    expect(hook.result.current.error).toBeNull()
+    hook.unmount()
+  })
+
+  it('does not turn read-only refreshes into repeated failed resume submissions', async () => {
+    vi.mocked(getAgentsChatTurnStatus).mockResolvedValue(orphanedSnapshot)
+    vi.mocked(resumeAgentsChatTurn).mockRejectedValue(new Error('recovery rejected'))
+    const hook = renderHook(() => useChatTurnRecovery('session_1'))
+    await waitFor(() => expect(hook.result.current.error).toBeInstanceOf(ChatTurnResumeError))
+    for (let index = 0; index < 3; index += 1) {
+      await act(async () => { await hook.result.current.refresh() })
+    }
+    expect(resumeAgentsChatTurn).toHaveBeenCalledTimes(1)
+    expect(hook.result.current.error?.message).toBe('recovery rejected')
+    hook.unmount()
+  })
+
+  it('suppresses only the interrupted turn identity', async () => {
+    suppressChatTurnRecovery('session_1', 'request_1')
+    vi.mocked(getAgentsChatTurnStatus).mockResolvedValue({ ...orphanedSnapshot, turn: orphanedSnapshot.turn ? { ...orphanedSnapshot.turn, turnId: 'request_2' } : null })
+    vi.mocked(resumeAgentsChatTurn).mockResolvedValue(resumeReceipt)
+
+    renderHook(() => useChatTurnRecovery('session_1'))
+    await waitFor(() => expect(resumeAgentsChatTurn).toHaveBeenCalled())
+    expect(resumeAgentsChatTurn).toHaveBeenCalledWith({ sessionKey: 'session_1', turnId: 'request_2' })
+  })
+
+  it('expires an old local suppression record', async () => {
+    sessionStorage.setItem('tapcanvas-chat-interrupted-turn:session_1', JSON.stringify({ turnId: 'request_1', expiresAt: Date.now() - 1 }))
+    vi.mocked(getAgentsChatTurnStatus).mockResolvedValue(orphanedSnapshot)
+    vi.mocked(resumeAgentsChatTurn).mockResolvedValue(resumeReceipt)
+
+    renderHook(() => useChatTurnRecovery('session_1'))
+    await waitFor(() => expect(resumeAgentsChatTurn).toHaveBeenCalled())
+  })
+
+  it('drops pre-TTL suppression records instead of suppressing recovery forever', async () => {
+    sessionStorage.setItem('tapcanvas-chat-interrupted-turn:session_1', JSON.stringify({ turnId: 'request_1' }))
+    vi.mocked(getAgentsChatTurnStatus).mockResolvedValue(orphanedSnapshot)
+    vi.mocked(resumeAgentsChatTurn).mockResolvedValue(resumeReceipt)
+
+    renderHook(() => useChatTurnRecovery('session_1'))
+    await waitFor(() => expect(resumeAgentsChatTurn).toHaveBeenCalledWith({
+      sessionKey: 'session_1',
+      turnId: 'request_1',
+    }))
+    expect(sessionStorage.getItem('tapcanvas-chat-interrupted-turn:session_1')).toBeNull()
   })
 
   it('checks durable status when the session becomes effective', async () => {
@@ -453,11 +556,13 @@ describe('useChatTurnRecovery', () => {
         .mockResolvedValueOnce(suspendedResponseSnapshot)
         .mockResolvedValueOnce(suspendedResponseSnapshot)
         .mockResolvedValueOnce(suspendedResponseSnapshot)
-        .mockResolvedValueOnce(suspendedResponseSnapshot)
-        .mockResolvedValueOnce(activeSnapshot)
+        .mockResolvedValue(suspendedResponseSnapshot)
       vi.mocked(resumeAgentsChatTurn)
         .mockRejectedValueOnce(new Error('continuation was not registered yet'))
-        .mockResolvedValueOnce({ ...resumeReceipt, recoveryKind: 'physical_budget' })
+        .mockImplementationOnce(async () => {
+          vi.mocked(getAgentsChatTurnStatus).mockResolvedValue(activeSnapshot)
+          return { ...resumeReceipt, recoveryKind: 'physical_budget' }
+        })
 
       const hook = renderHook(() => useChatTurnRecovery('session_1'))
       await act(async () => {
@@ -477,7 +582,7 @@ describe('useChatTurnRecovery', () => {
       expect(hook.result.current.error?.message).toBe('continuation was not registered yet')
 
       await act(async () => {
-        const refreshPromise = hook.result.current.refresh()
+        const refreshPromise = hook.result.current.refresh({ retryRecovery: true })
         await Promise.resolve()
         await vi.advanceTimersByTimeAsync(200)
         await refreshPromise

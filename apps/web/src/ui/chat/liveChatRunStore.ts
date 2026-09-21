@@ -113,7 +113,7 @@ export type LiveChatRunRecord = {
 
 type StartLiveChatRunInput = {
   runId: string
-  requestId: string
+  requestId?: string
   requestText?: string
   displayText?: string
   projectId?: string
@@ -763,7 +763,14 @@ export const useLiveChatRunStore = create<LiveChatRunStore>()(persist((set) => (
       const run = state.activeRun
       const turn = snapshot.turn
       if (!run || !turn) return state
-      if (run.sessionKey !== snapshot.sessionId || run.requestId !== turn.turnId) return state
+      // The durable turn snapshot is the authority for this exact session.
+      // Older browser bundles could lose the initial SSE frame before writing
+      // requestId, leaving a persisted liveRun that could never be settled even
+      // after the server had reached a terminal state.  Keep the strict turn-id
+      // match whenever it exists; when it is absent, the sessionKey itself is
+      // the only structural identity available and is safe to use here.
+      if (run.sessionKey !== snapshot.sessionId) return state
+      if (run.requestId && run.requestId !== turn.turnId) return state
       const attentionProjection = turn.attentionProjection ?? null
       if (turn.logicalTaskState.physicalRunStatus === 'running') {
         // activeTurn is the authoritative fact for this exact public request.
@@ -813,18 +820,20 @@ export const useLiveChatRunStore = create<LiveChatRunStore>()(persist((set) => (
       // waiting_external / waiting_input are logical nonterminal states. The
       // same durable public turn may later settle without opening a new local
       // run, so its authoritative terminal snapshot must still be applied.
-      // Already terminal local records remain immutable here; a resumed
-      // physical execution is handled by the running branch above.
+      // The exact durable turn can correct a terminal projection whose final
+      // response was missed by SSE; immutable task identity is checked above.
       if (
         run.status !== 'active'
         && run.status !== 'waiting_external'
         && run.status !== 'waiting_input'
+        && run.status !== turn.logicalTaskState.status
       ) return state
       const terminalStatus: LiveChatRunStatus = turn.logicalTaskState.status
       if (terminalStatus === 'active') return state
       if (
         run.status === terminalStatus
         && run.doneReason === turn.logicalTaskState.reasonCode
+        && (!trimString(turn.finalResponse) || run.assistantPreview === clipText(trimString(turn.finalResponse), MAX_ASSISTANT_PREVIEW_CHARS))
       ) return state
       const finishedAtCandidate = Date.parse(turn.updatedAt)
       const finishedAt = Number.isFinite(finishedAtCandidate) ? finishedAtCandidate : Date.now()
@@ -856,6 +865,7 @@ export const useLiveChatRunStore = create<LiveChatRunStore>()(persist((set) => (
             ? finishedAt
             : null,
           doneReason: turn.logicalTaskState.reasonCode,
+          assistantPreview: clipText(trimString(turn.finalResponse) || summary, MAX_ASSISTANT_PREVIEW_CHARS),
           errorMessage: terminalStatus === 'failed' ? summary : '',
           attentionProjection,
           logs: pushLog(

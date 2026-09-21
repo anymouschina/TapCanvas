@@ -83,10 +83,17 @@ export function resolveLiveChatSessionScope(state: {
 }
 
 export function buildEffectiveChatSessionKey(input: BuildEffectiveChatSessionKeyInput): string {
+  const projectId = normalizeSegment(input.projectId)
+  const flowId = normalizeSegment(input.flowId)
+  const chapterId = normalizeSegment(input.chapterId)
+  // 普通项目聊天必须绑定已经落地的 Flow。项目进入时 currentProject
+  // 会先于 currentFlow 被设置；此时返回空 key，调用方只能进入等待队列，
+  // 不能把首条消息写入一个永远不会再使用的 project-only 会话。
+  if (projectId && !chapterId && !flowId) return ''
   const projectScopedBaseKey = buildProjectScopedChatSessionBaseKey({
-    projectId: input.projectId,
-    flowId: input.flowId,
-    chapterId: input.chapterId,
+    projectId,
+    flowId,
+    chapterId,
   })
   const persistedBaseKey = normalizeSegment(input.persistedBaseKey)
   // A project/flow/chapter chat has one durable conversation source. A random

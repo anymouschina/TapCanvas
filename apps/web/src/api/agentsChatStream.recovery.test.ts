@@ -202,6 +202,61 @@ describe('agents chat durable event resubscription', () => {
     expect(requests[1]).toContain('/public/agents/chat/status')
   })
 
+  it('continues past a suspended result so a later post-result failure is observed', async () => {
+    const publicTurnId = 'public-chat-turn:suspended-then-failed'
+    const response = eventStream([
+      sseFrame({
+        id: `${publicTurnId}#1`,
+        event: 'result',
+        data: {
+          response: {
+            id: 'response-suspended',
+            vendor: 'agents',
+            text: '物理回合已挂起',
+            trace: { runOutcome: { status: 'suspended' } },
+          },
+        },
+      }),
+      sseFrame({
+        id: `${publicTurnId}#2`,
+        event: 'done',
+        data: { reason: 'physical_suspended' },
+      }),
+      sseFrame({
+        id: `${publicTurnId}#3`,
+        event: 'error',
+        data: {
+          message: '挂起的 AI 任务没有可验证的持久续跑执行者',
+          code: 'async_continuation_owner_missing',
+          terminal: true,
+          scope: 'protocol',
+          retryability: 'not_retryable',
+          acceptanceKnown: true,
+          sideEffectOutcomeKnown: true,
+        },
+      }),
+    ].join(''), publicTurnId)
+    const fetchMock = vi.fn(async (): Promise<Response> => response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const received: AgentsChatStreamEvent[] = []
+    let resolveError: (() => void) | null = null
+    const errorSeen = new Promise<void>((resolve) => { resolveError = resolve })
+    const abort = await agentsChatStream({ prompt: '恢复挂起任务' }, {
+      onEvent: (event) => {
+        received.push(event)
+        if (event.event === 'error') resolveError?.()
+      },
+      onError: (error) => { throw error },
+    })
+
+    await errorSeen
+    abort()
+
+    expect(received.map((event) => event.event)).toEqual(['result', 'done', 'error'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('retries a transient admission failure with the exact same idempotent request', async () => {
     vi.useFakeTimers()
     const publicTurnId = 'public-chat-turn:admission-retry'

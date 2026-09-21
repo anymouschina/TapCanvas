@@ -4582,6 +4582,7 @@ function equippedWorkflowRequiredTriggerFields(
 function buildEquippedWorkflowSchemaBranch(
 	workflow: NonNullable<AgentsBridgeRemoteToolsInput["equippedWorkflows"]>[number],
 	requiresAttachmentSelection: boolean,
+	triggerPayloadSchema: Record<string, unknown>,
 ): Record<string, unknown> {
 	const triggerRequired = equippedWorkflowRequiredTriggerFields(workflow);
 	return {
@@ -4590,19 +4591,17 @@ function buildEquippedWorkflowSchemaBranch(
 			...(requiresAttachmentSelection
 				? { attachmentId: { type: "string", const: workflow.attachmentId } }
 				: {}),
-			...(triggerRequired.length > 0
-				? {
-					triggerPayload: {
-						type: "object",
-						required: triggerRequired,
-					},
-				}
-				: {}),
+			idempotencyKey: { type: "string", minLength: 1 },
+			triggerPayload: {
+				...triggerPayloadSchema,
+				...(triggerRequired.length > 0 ? { required: triggerRequired } : {}),
+			},
 		},
 		required: [
 			...(requiresAttachmentSelection ? ["attachmentId"] : []),
 			...(triggerRequired.length > 0 ? ["triggerPayload"] : []),
 		],
+		additionalProperties: false,
 	};
 }
 
@@ -4717,6 +4716,37 @@ function buildEquippedWorkflowRunTool(
 		.map((modelKey) => modelKey.trim())
 		.filter(Boolean))].sort();
 	const requiresAttachmentSelection = equippedWorkflows.length > 1;
+	const triggerPayloadSchema: Record<string, unknown> = {
+		type: "object",
+		description: "按次触发参数。source 与 sourceGroupId 不可互换；必须遵守所选 attachment 的真实输入契约。",
+		properties: {
+			source: { type: "string", description: "仅供 sourceMode=inline_text 的工作流使用：本次故事事实与叙事节拍。不得在这里把剧情阶段数量写成物理视频 clip 拓扑；物理 clip 由工作流按实时模型能力冻结。" },
+			sourceGroupId: { type: "string", description: "调用者当前画布内的源组 id；绑定调用者项目已选节点（文本 + 已就绪图片/视频）作为本次源与参考资产，供工作流复用。" },
+			selectedAssetIds: { type: "array", items: { type: "string" }, description: "当前明确选中的稳定资产 ID；服务端会过滤掉无权限或跨项目 ID。" },
+			selectedNodeIds: { type: "array", items: { type: "string" }, description: "当前多选的画布节点 ID。" },
+			targetDurationSeconds: { type: "number", description: "目标成片总时长（秒）；仅声明总量，不声明 clip 分段。" },
+			requestedClipCount: { type: "number", minimum: 1, description: "用户明确指定的物理 clip 数量；未明确指定时必须省略。" },
+			requestedClipDurationsSeconds: { type: "array", minItems: 1, maxItems: 64, items: { type: "number", minimum: 1 }, description: "用户明确指定的逐物理 clip 有序时长（秒）；未逐段指定时必须省略。长度必须等于 requestedClipCount，总和必须等于 targetDurationSeconds。" },
+			videoModelKey: {
+				type: "string",
+				minLength: 1,
+				...(enabledVideoModelKeys.length > 0 ? { enum: enabledVideoModelKeys } : {}),
+				description: "必须逐字复制本字段 enum 中的当前 enabledVideoModels canonical modelKey；用户显式选择优先，账号生成偏好只有仍出现在 enum 中时才可使用。服务端据其实时 durationOptions 冻结物理 clip 拓扑；禁止猜测、展示名、过期偏好或默认模型。",
+			},
+			imageModelKey: {
+				type: "string",
+				minLength: 1,
+				...(enabledImageModelKeys.length > 0 ? { enum: enabledImageModelKeys } : {}),
+				description: "必须逐字复制本字段 enum 中的当前 enabledImageModels canonical modelKey；禁止使用展示名、过期偏好或默认模型。",
+			},
+			imageSize: { type: "string", minLength: 1, description: "图片模型实时目录支持的精确尺寸档位，例如 2K；禁止默认。" },
+			imageAspectRatio: { type: "string", minLength: 1, description: "图片模型实时目录支持的精确画幅比例；只配置图片节点，不表示用户指定了成片画幅。" },
+			videoResolution: { type: "string", minLength: 1, description: "视频模型实时目录支持的精确分辨率；若用户冻结了分辨率，必须逐字满足该约束。" },
+			videoAspectRatio: { type: "string", minLength: 1, description: "视频模型实时目录支持的精确画幅比例；若用户冻结了画幅，必须逐字满足该约束。" },
+		},
+		...(commonRequiredTriggerFields.length > 0 ? { required: commonRequiredTriggerFields } : {}),
+		additionalProperties: false,
+	};
 	return {
 		name: "tapcanvas_equipped_workflow_run",
 				description: [
@@ -4744,7 +4774,7 @@ function buildEquippedWorkflowRunTool(
 		parameters: {
 			type: "object",
 			oneOf: equippedWorkflows.map((workflow) =>
-				buildEquippedWorkflowSchemaBranch(workflow, requiresAttachmentSelection)),
+				buildEquippedWorkflowSchemaBranch(workflow, requiresAttachmentSelection, triggerPayloadSchema)),
 			properties: {
 				...(requiresAttachmentSelection
 					? {
@@ -4755,37 +4785,7 @@ function buildEquippedWorkflowRunTool(
 					}
 					: {}),
 				idempotencyKey: { type: "string", minLength: 1 },
-				triggerPayload: {
-					type: "object",
-					description: "按次触发参数。source 与 sourceGroupId 不可互换；必须遵守所选 attachment 的真实输入契约。",
-					properties: {
-						source: { type: "string", description: "仅供 sourceMode=inline_text 的工作流使用：本次故事事实与叙事节拍。不得在这里把剧情阶段数量写成物理视频 clip 拓扑；物理 clip 由工作流按实时模型能力冻结。" },
-						sourceGroupId: { type: "string", description: "调用者当前画布内的源组 id；绑定调用者项目已选节点（文本 + 已就绪图片/视频）作为本次源与参考资产，供工作流复用。" },
-						selectedAssetIds: { type: "array", items: { type: "string" }, description: "当前明确选中的稳定资产 ID；服务端会过滤掉无权限或跨项目 ID。" },
-						selectedNodeIds: { type: "array", items: { type: "string" }, description: "当前多选的画布节点 ID。" },
-						targetDurationSeconds: { type: "number", description: "目标成片总时长（秒）；仅声明总量，不声明 clip 分段。" },
-						requestedClipCount: { type: "number", minimum: 1, description: "用户明确指定的物理 clip 数量；未明确指定时必须省略。" },
-						requestedClipDurationsSeconds: { type: "array", minItems: 1, maxItems: 64, items: { type: "number", minimum: 1 }, description: "用户明确指定的逐物理 clip 有序时长（秒）；未逐段指定时必须省略。长度必须等于 requestedClipCount，总和必须等于 targetDurationSeconds。" },
-						videoModelKey: {
-							type: "string",
-							minLength: 1,
-							...(enabledVideoModelKeys.length > 0 ? { enum: enabledVideoModelKeys } : {}),
-							description: "必须逐字复制本字段 enum 中的当前 enabledVideoModels canonical modelKey；用户显式选择优先，账号生成偏好只有仍出现在 enum 中时才可使用。服务端据其实时 durationOptions 冻结物理 clip 拓扑；禁止猜测、展示名、过期偏好或默认模型。",
-						},
-						imageModelKey: {
-							type: "string",
-							minLength: 1,
-							...(enabledImageModelKeys.length > 0 ? { enum: enabledImageModelKeys } : {}),
-							description: "必须逐字复制本字段 enum 中的当前 enabledImageModels canonical modelKey；禁止使用展示名、过期偏好或默认模型。",
-						},
-						imageSize: { type: "string", minLength: 1, description: "图片模型实时目录支持的精确尺寸档位，例如 2K；禁止默认。" },
-						imageAspectRatio: { type: "string", minLength: 1, description: "图片模型实时目录支持的精确画幅比例；只配置图片节点，不表示用户指定了成片画幅。" },
-						videoResolution: { type: "string", minLength: 1, description: "视频模型实时目录支持的精确分辨率；若用户冻结了分辨率，必须逐字满足该约束。" },
-						videoAspectRatio: { type: "string", minLength: 1, description: "视频模型实时目录支持的精确画幅比例；若用户冻结了画幅，必须逐字满足该约束。" },
-					},
-					...(commonRequiredTriggerFields.length > 0 ? { required: commonRequiredTriggerFields } : {}),
-					additionalProperties: false,
-				},
+				triggerPayload: triggerPayloadSchema,
 			},
 			required: [
 				...(requiresAttachmentSelection ? ["attachmentId"] : []),

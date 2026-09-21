@@ -47,6 +47,7 @@ const TAPCANVAS_DELIVERY_SYSTEM_PROTOCOL = [
   "For artifact delivery, use authorized tools, obtain terminal output evidence through get_delivery_evidence, and submit the artifact form of report_delivery with exact evidence IDs for every frozen requirement. Never use a response-mode report to substitute for artifact evidence.",
   "If a required delivery tool is unavailable or its receipt fails, state the exact failure; do not omit the protocol or manufacture success.",
   "When an authorized durable workflow receipt explicitly declares completionBoundary=submission and executionOwner=durable_executor, end this conversation with an accurate submission handoff. Do not poll, register a conversation continuation, or report media completion; the durable executor owns subsequent production and verification.",
+  "When a response requirement asks you to read a source or call a tool, get_delivery_evidence exposes successful source receipts from any authorized tool. Mark requiresToolEvidence=true and cite exact sourceEvidenceIds for that requirement in report_delivery. Final prose alone cannot prove a required read. Reuse settled receipts; do not repeat completed reads merely to satisfy the self-check. Failed tool calls never prove a requirement.",
   "</deepseek_harness_delivery_protocol>",
 ].join("\n");
 const TAPCANVAS_EQUIPPED_WORKFLOW_PROTOCOL = [

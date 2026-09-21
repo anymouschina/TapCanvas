@@ -40,7 +40,7 @@ beforeEach(() => {
     disconnect() {}
   })
   vi.clearAllMocks()
-  useChatCommandStore.setState({ pending: null, busy: false })
+  useChatCommandStore.setState({ pending: null, pendingQueue: [], deferredUntilFlow: [], busy: false })
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: (query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
@@ -64,6 +64,8 @@ describe('chapter toolbar to main AI conversation', () => {
     const command = useChatCommandStore.getState().consume()
     expect(setAiChatOpen).toHaveBeenCalledWith(true)
     expect(command?.canvasNodeId).toBe('chapter-source')
+    expect(command?.queuedProjectId).toBe('project-1')
+    expect(command?.queuedChapterId).toBe('chapter-1')
     expect(command?.text).toContain(`"intent":"${intent}"`)
     expect(command?.text).toContain('"imageModel":"catalog-image-model"')
     expect(command?.text).toContain('"imageSize":"2K"')

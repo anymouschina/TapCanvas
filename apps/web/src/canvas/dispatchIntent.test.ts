@@ -28,7 +28,7 @@ function readFacts(text: string): Record<string, unknown> {
 describe('canvas actions enter the main AI chat', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    useChatCommandStore.setState({ pending: null, busy: false })
+    useChatCommandStore.setState({ pending: null, pendingQueue: [], deferredUntilFlow: [], busy: false })
   })
 
   it.each(['generate_scene_references', 'generate_shot_placeholders'] as const)(
@@ -62,9 +62,26 @@ describe('canvas actions enter the main AI chat', () => {
     const command = buildIntentChatCommand(intent, 'source-1', { chapterContext })
     expect(command.text).toContain('自主决定执行步骤')
     expect(command.canvasNodeId).toBe('source-1')
+    expect(command.queuedProjectId).toBe('project-1')
+    expect(command.queuedChapterId).toBe('chapter-1')
     expect(command).not.toHaveProperty('modelKey')
     expect(command).not.toHaveProperty('sessionKey')
     expect(command).not.toHaveProperty('executionToolPolicy')
+  })
+
+  it('keeps the clicked chapter scope when a queued action is consumed after navigation', () => {
+    const clickedContext = { ...chapterContext }
+    useChatCommandStore.getState().dispatchSend({ text: 'earlier request' })
+    dispatchIntent('generate_scene_references', 'source-1', { chapterContext: clickedContext })
+
+    clickedContext.projectId = 'project-2'
+    clickedContext.chapterId = 'chapter-2'
+    expect(useChatCommandStore.getState().consume()?.text).toBe('earlier request')
+    const command = useChatCommandStore.getState().consume()
+    expect(command).toMatchObject({
+      queuedProjectId: 'project-1',
+      queuedChapterId: 'chapter-1',
+    })
   })
 
   it('uses the existing main-chat submission path when a turn is already active', () => {

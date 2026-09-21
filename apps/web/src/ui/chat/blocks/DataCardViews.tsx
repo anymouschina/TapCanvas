@@ -5,6 +5,21 @@ import { serializeSbaChoiceSelection } from '@tapcanvas/storyboard-adventure-pro
 
 const CARD_REMARK_PLUGINS = [remarkGfm]
 const CLIPBOARD_WRITE_TIMEOUT_MS = 1_500
+
+// Structured artifact text can arrive with JSON escape sequences still present
+// (for example, `\\n` between timed prompt sections). Decode only transport
+// escapes here so the rendered document and clipboard contents are usable prose.
+function decodeArtifactText(value: string): string {
+  return value.replace(/\\r\\n|\\n|\\r|\\t/g, (escaped) => {
+    switch (escaped) {
+      case '\\r\\n': return '\n'
+      case '\\n': return '\n'
+      case '\\r': return '\r'
+      case '\\t': return '\t'
+      default: return escaped
+    }
+  })
+}
 import {
   IconCheck,
   IconChevronDown,
@@ -170,11 +185,27 @@ export function ArtifactCardView({ block }: BlockViewProps<DataBlock>) {
   const [expanded, setExpanded] = React.useState(false)
   const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'failed'>('idle')
   const title = String(payload?.title || '').trim()
-  const markdown = String(payload?.markdown || '').trim()
-  if (!title && !markdown) return null
+  const content = decodeArtifactText(String(payload?.content || '').trim())
+  const markdown = decodeArtifactText(String(payload?.markdown || '').trim())
+  const structuredBody = React.useMemo(() => {
+    if (!payload || typeof payload !== 'object') return ''
+    const serializable = Object.fromEntries(
+      Object.entries(payload).filter(([key, value]) => key !== 'title' && value !== undefined),
+    )
+    try {
+      return JSON.stringify(serializable, null, 2)
+    } catch {
+      return ''
+    }
+  }, [payload])
+  // markdown 是规范正文；没有 markdown 时保留结构化 artifact 的全部字段，避免
+  // 旧会话/外部模型返回 kind、shots、characters 等字段后卡片变成空壳。
+  const documentText = content || markdown || structuredBody
+  const isStructuredFallback = !content && !markdown && Boolean(structuredBody)
+  if (!title && !documentText) return null
   const copyDocument = async (): Promise<void> => {
     try {
-      await writeClipboardText(markdown)
+      await writeClipboardText(documentText)
       setCopyState('copied')
       toast('文档已复制', 'success')
     } catch (reason: unknown) {
@@ -226,22 +257,26 @@ export function ArtifactCardView({ block }: BlockViewProps<DataBlock>) {
       </div>
       {expanded ? (
         <div className="tc-ai-artifact__body tc-ai-chat-markdown">
-          <ReactMarkdown
-            remarkPlugins={CARD_REMARK_PLUGINS}
-            components={{
-              img: ({ node: _node, src, alt }) => {
-                const url = String(src || '').trim()
-                if (!url) return null
-                return (
-                  <a href={url} target="_blank" rel="noreferrer" className="tc-ai-chat-bubble__asset-link">
-                    <ManagedImage className="tc-ai-chat-bubble__asset-image" src={url} alt={String(alt || 'image')} />
-                  </a>
-                )
-              },
-            }}
-          >
-            {markdown}
-          </ReactMarkdown>
+          {isStructuredFallback ? (
+            <pre className="tc-ai-artifact__structured-body">{documentText}</pre>
+          ) : (
+            <ReactMarkdown
+              remarkPlugins={CARD_REMARK_PLUGINS}
+              components={{
+                img: ({ node: _node, src, alt }) => {
+                  const url = String(src || '').trim()
+                  if (!url) return null
+                  return (
+                    <a href={url} target="_blank" rel="noreferrer" className="tc-ai-chat-bubble__asset-link">
+                      <ManagedImage className="tc-ai-chat-bubble__asset-image" src={url} alt={String(alt || 'image')} />
+                    </a>
+                  )
+                },
+              }}
+            >
+              {documentText}
+            </ReactMarkdown>
+          )}
         </div>
       ) : null}
     </div>

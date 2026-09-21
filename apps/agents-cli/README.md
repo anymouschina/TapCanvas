@@ -177,3 +177,16 @@ SHA-256。后续远程调用自动附带顶层机器字段 `userIntentContract` 
 已锁定的续轮合同，以及开始远程执行后的合同不允许改写；无法确定远程副作用时同样保持锁定。
 只读动态 schema 加载不锁定合同。工具拒绝错误后，Agent 在同一 Harness turn 修订，
 不使用默认语义或自动补齐用户要求。
+
+### 响应任务中的来源证据
+
+响应任务可能要求“先读来源、调用工具再回答”。Agent 在自检时标记该 requirement 的
+`requiresToolEvidence` 并从 `get_delivery_evidence.sourceEvidence` 选择精确
+`sourceEvidenceIds`。任何授权工具的成功读取都可作为来源证据，不按媒体工具名单限制；
+失败调用和私有自检工具不可充当来源。Bridge 只检验引用与成功状态，交付标准的语义归属
+由 Agent 判断；最终正文哈希不替代明确要求的读取回执。已完成的读取可直接复用，
+无需为了验收重复调用。普通无需取证的响应继续使用最终正文证据。
+
+供应商断流的物理中断只将当前执行标为 `suspended`，逻辑任务仍 active、交付 pending；
+仅 `chat_turn_user_interrupt` 表示用户取消。没有真实 checkpoint 时不声称自动可恢复；暂停不伪造恢复 checkpoint 或可恢复声明，
+也不重新提交媒体任务。HTTP 完成/失败回调绑定原 turn 身份，不能覆盖已中断快照或后续回合。

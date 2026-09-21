@@ -12,6 +12,22 @@ export type ChatTerminalProjection = Readonly<{
 }>
 
 /**
+ * Reconcile a legacy/diagnostic turn verdict with the durable logical-task
+ * terminal state. The verdict is allowed to describe an intermediate handoff,
+ * but it cannot keep a terminal success-looking message marked partial after
+ * the server has durably verified delivery.
+ */
+export function projectTerminalTurnVerdict(input: ChatTerminalProjection): ChatTurnVerdict | null {
+  if (input.status === 'succeeded') {
+    return { status: 'satisfied', reasons: [] }
+  }
+  if (input.status === 'failed' || input.status === 'cancelled') {
+    return { status: 'failed', reasons: [input.reason] }
+  }
+  return null
+}
+
+/**
  * Consume the single Hono-committed logical-task state. The browser does not
  * re-arbitrate completion from delivery evidence, verdict prose, transport
  * completion or legacy request terminals.
@@ -49,6 +65,8 @@ export function formatTurnVerdictSummary(
   if (!verdict || verdict.status === 'satisfied') return null
   const labels = verdict.reasons.map((reason) => {
     switch (reason) {
+      case 'llm_provider_response_failed':
+        return '模型供应商未返回完整结果，具体原因已记录在执行日志中'
       case 'invalid_canvas_plan':
         return '返回的画布计划无效'
       case 'parsed_plan_without_nodes':
@@ -81,7 +99,7 @@ export function formatTurnVerdictSummary(
         return reason
     }
   })
-  const prefix = verdict.status === 'failed' ? '结构失败' : '部分完成'
+  const prefix = verdict.status === 'failed' ? '执行失败' : '部分完成'
   return `${prefix}：${labels.join('；')}`
 }
 

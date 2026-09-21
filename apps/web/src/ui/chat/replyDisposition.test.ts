@@ -2,13 +2,20 @@ import type { AgentLogicalTaskStateV1 } from '@tapcanvas/agent-observability'
 import { describe, expect, it } from 'vitest'
 
 import {
+  formatTurnVerdictSummary,
   isAsyncSubmissionResponse,
+  projectTerminalTurnVerdict,
   resolveAssistantReplyText,
   resolveChatTerminalProjection,
   resolveTerminalReply,
   shouldAutoAddAssistantAssetsToCanvas,
   shouldShowMissingCanvasPlanError,
 } from './replyDisposition'
+
+it('labels provider failures without claiming a structural failure', () => {
+  expect(formatTurnVerdictSummary({ status: 'failed', reasons: ['llm_provider_response_failed'] }))
+    .toBe('执行失败：模型供应商未返回完整结果，具体原因已记录在执行日志中')
+})
 
 function logicalTaskState(
   status: AgentLogicalTaskStateV1['status'],
@@ -54,6 +61,21 @@ describe('logical task disposition', () => {
         turnVerdict: { status: 'failed', reasons: ['diagnostic_only'] },
       },
     })).toEqual({ status: 'succeeded', reason: 'delivery_verification_satisfied' })
+  })
+
+  it('clears an intermediate partial verdict when the durable task succeeds', () => {
+    expect(projectTerminalTurnVerdict({
+      status: 'succeeded',
+      reason: 'delivery_verification_satisfied',
+    })).toEqual({ status: 'satisfied', reasons: [] })
+    expect(projectTerminalTurnVerdict({
+      status: 'failed',
+      reason: 'provider_task_failed',
+    })).toEqual({ status: 'failed', reasons: ['provider_task_failed'] })
+    expect(projectTerminalTurnVerdict({
+      status: 'waiting_external',
+      reason: 'managed_async_submission',
+    })).toBeNull()
   })
 
   it('preserves active and waiting states without projecting a terminal failure', () => {

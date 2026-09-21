@@ -302,7 +302,7 @@ export function tcCardToText(name: string, payload: unknown): string {
 			lines.push(`范围：${scope}`);
 			lines.push(`方式：${mode}`);
 			for (const [label, key] of [["已确认", "confirmed"], ["推断", "assumptions"], ["待确认", "unresolved"]] as const) {
-				const values = Array.isArray(p[key]) ? p[key].filter((v): v is string => typeof v === "string" && v.trim()).map((v) => v.trim()) : [];
+				const values = Array.isArray(p[key]) ? p[key].filter((v): v is string => typeof v === "string" && v.trim().length > 0).map((v) => v.trim()) : [];
 				if (values.length) lines.push(`${label}：\n${values.map((v, i) => `${i + 1}. ${v}`).join("\n")}`);
 			}
 			break;

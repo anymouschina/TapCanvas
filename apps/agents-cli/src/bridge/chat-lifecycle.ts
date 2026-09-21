@@ -254,31 +254,34 @@ function cancelledSnapshot(prior: ChatTurnSnapshot, reasonCode: string): ChatTur
   const now = new Date().toISOString();
   const turnId = nonEmptyString(priorTurn.turnId);
   if (!turnId) return prior;
+  const userCancelled = reasonCode === "chat_turn_user_interrupt";
   return {
     sessionId: prior.sessionId,
     durable: true,
     activeTurn: false,
     turn: {
       ...priorTurn,
-      state: "cancelled",
+      state: userCancelled ? "cancelled" : "suspended",
       logicalTaskState: logicalTaskState({
         turnId,
-        status: "cancelled",
+        status: userCancelled ? "cancelled" : "active",
         reasonCode,
         physicalRunStatus: "interrupted",
-        deliveryStatus: "unsatisfied",
+        deliveryStatus: userCancelled ? "unsatisfied" : "pending",
         updatedAt: now,
       }),
-      phase: "failed",
+      phase: userCancelled ? "failed" : "suspended",
       updatedAt: now,
       lastConfirmedAt: now,
       reasonCode,
-      lastConfirmedSummary: "DeepSeek Harness 当前回合已按用户请求中断",
+      lastConfirmedSummary: userCancelled ? "DeepSeek Harness 当前回合已按用户请求中断" : reasonCode === "provider_stream_interrupted"
+        ? "供应商连接已中断，当前物理执行已暂停；逻辑任务未取消"
+        : `当前物理执行已中断（${reasonCode}）；逻辑任务未取消`,
       finalResponse: null,
       terminalDelivery: null,
       recentEvents: [
         ...(Array.isArray(priorTurn.recentEvents) ? priorTurn.recentEvents : []),
-        { type: "turn.interrupted", at: now, toolName: null, toolStatus: "cancelled" },
+        { type: "turn.interrupted", at: now, toolName: null, toolStatus: userCancelled ? "cancelled" : "interrupted" },
       ].slice(-20),
     },
   };
@@ -327,19 +330,19 @@ export class HarnessChatLifecycleStore {
     return { signal: controller.signal, sessionId, turnId };
   }
 
-  async complete(userId: string, sessionId: string, result: HarnessBridgeResult): Promise<void> {
+  async complete(userId: string, sessionId: string, result: HarnessBridgeResult, turnId: string): Promise<void> {
     const key = this.key(userId, sessionId);
     const entry = this.active.get(key);
-    if (!entry) return;
+    if (!entry || !entry.snapshot.activeTurn || entry.snapshot.turn?.turnId !== turnId) return;
     const snapshot = terminalSnapshot(entry.snapshot, result);
     this.active.delete(key);
     await this.persist(userId, snapshot);
   }
 
-  async fail(userId: string, sessionId: string, error: unknown): Promise<void> {
+  async fail(userId: string, sessionId: string, error: unknown, turnId: string): Promise<void> {
     const key = this.key(userId, sessionId);
     const entry = this.active.get(key);
-    if (!entry) return;
+    if (!entry || !entry.snapshot.activeTurn || entry.snapshot.turn?.turnId !== turnId) return;
     const snapshot = failedSnapshot(entry.snapshot, error);
     this.active.delete(key);
     await this.persist(userId, snapshot);
@@ -387,9 +390,11 @@ export class HarnessChatLifecycleStore {
       return { interrupted: false, snapshot: await this.status(input.userId, input.sessionId) };
     }
     const snapshot = cancelledSnapshot(entry.snapshot, input.reasonCode);
-    this.active.set(key, { controller: entry.controller, snapshot });
+    const interruptedEntry = { controller: entry.controller, snapshot };
+    this.active.set(key, interruptedEntry);
     entry.controller.abort(Object.assign(new Error(input.reasonCode), { code: input.reasonCode }));
     await this.persist(input.userId, snapshot);
+    if (this.active.get(key) === interruptedEntry) this.active.delete(key);
     return { interrupted: true, snapshot };
   }
 }

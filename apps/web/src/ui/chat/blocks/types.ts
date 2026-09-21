@@ -44,7 +44,19 @@ export type SceneListItem = {
 }
 export type SceneListPayload = { title?: string; items: SceneListItem[]; newSceneAction?: string }
 
-export type ArtifactPayload = { title: string; summary?: string; markdown: string; timestamp?: string }
+/**
+ * 文档卡的正文优先使用 markdown；历史/外部模型也可能返回结构化文档字段。
+ * 保留未知字段，避免展示层因为协议演进或模型输出形状不同而丢失正文。
+ */
+export type ArtifactPayload = {
+  title?: string
+  summary?: string
+  /** Direct正文 for typed artifacts such as video prompts. */
+  content?: string
+  markdown?: string
+  timestamp?: string
+  [key: string]: unknown
+}
 
 export type ActionBannerPayload = { title: string; description?: string; action: string; cost?: number }
 

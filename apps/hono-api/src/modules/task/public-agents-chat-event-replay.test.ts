@@ -8,6 +8,7 @@ import {
 	markPublicChatStreamPayload,
 	parsePublicChatEventId,
 	projectExecutionTraceEventToPublicChatFrame,
+	resolvePublicChatReplayPollIntervalMs,
 	resolvePublicChatReplayAfterEvent,
 	traceStatusCanProduceMorePublicChatEvents,
 	verifyPublicChatReplaySessionIdentity,
@@ -158,6 +159,25 @@ describe("public chat durable event replay protocol", () => {
 		expect(traceStatusCanProduceMorePublicChatEvents("running")).toBe(true);
 		expect(traceStatusCanProduceMorePublicChatEvents("succeeded")).toBe(false);
 		expect(traceStatusCanProduceMorePublicChatEvents("waiting_async")).toBe(false);
+	});
+
+	it("backs off empty journal polls while resetting promptly after progress", () => {
+		expect(resolvePublicChatReplayPollIntervalMs({
+		previousIntervalMs: 250,
+		advanced: false,
+	})).toBe(500);
+		expect(resolvePublicChatReplayPollIntervalMs({
+		previousIntervalMs: 1_000,
+		advanced: false,
+	})).toBe(2_000);
+		expect(resolvePublicChatReplayPollIntervalMs({
+		previousIntervalMs: 2_000,
+		advanced: false,
+	})).toBe(2_000);
+		expect(resolvePublicChatReplayPollIntervalMs({
+		previousIntervalMs: 2_000,
+		advanced: true,
+	})).toBe(250);
 	});
 
 	it("fails closed when the seq=1 accepted session identity is missing or different", () => {

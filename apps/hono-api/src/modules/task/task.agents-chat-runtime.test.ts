@@ -639,7 +639,7 @@ describe("agents chat runtime status", () => {
 		});
 	});
 
-	it("preserves an active logical task across an interrupted physical run", () => {
+	it.each(["agent_running", "suspended"] as const)("preserves interrupted logical work without inventing a live transport (%s)", (phase) => {
 		const result = parseAgentsChatTurnStatusSnapshot({
 			sessionId: "session_1",
 			durable: true,
@@ -660,7 +660,7 @@ describe("agents chat runtime status", () => {
 					updatedAt: "2026-08-03T05:00:02.000Z",
 					continuationTicket: null,
 				},
-				phase: "agent_running",
+				phase,
 				startedAt: "2026-08-03T05:00:00.000Z",
 				updatedAt: "2026-08-03T05:00:02.000Z",
 				lastConfirmedAt: "2026-08-03T05:00:02.000Z",
@@ -684,9 +684,9 @@ describe("agents chat runtime status", () => {
 
 		expect(result.activeTurn).toBe(false);
 		expect(result.turn).toMatchObject({
-			state: "running",
+			state: phase === "suspended" ? "suspended" : "unknown",
 			logicalTaskState: { status: "active", physicalRunStatus: "interrupted" },
-			phase: "agent_running",
+			phase,
 			reasonCode: "provider_stream_interrupted",
 			recoveryCheckpoint: {
 				physicalRunId: "physical_run_interrupted_1",

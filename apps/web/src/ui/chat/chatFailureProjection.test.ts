@@ -22,9 +22,10 @@ describe('chat failure projection', () => {
     expect(result.deferred.map((item) => item.step)).toEqual([{ callId: 'call-1', status: 'failed' }])
   })
 
-  it('drops deferred failures after a non-failed terminal outcome', () => {
+  it('preserves failed attempts after success while pending states remain deferred', () => {
     const deferred = [{ step: { callId: 'call-1', status: 'failed' }, reason: 'recoverable_until_terminal' as const }]
-    expect(resolveDeferredToolSteps({ visible: [], deferred, terminalStatus: 'succeeded' })).toEqual([])
+    expect(resolveDeferredToolSteps({ visible: [], deferred, terminalStatus: 'succeeded' })).toEqual([{ callId: 'call-1', status: 'failed' }])
+    expect(resolveDeferredToolSteps({ visible: [], deferred, terminalStatus: 'cancelled' })).toEqual([{ callId: 'call-1', status: 'failed' }])
     expect(resolveDeferredToolSteps({ visible: [], deferred, terminalStatus: 'waiting_external' })).toEqual([])
     expect(resolveDeferredToolSteps({ visible: [], deferred, terminalStatus: 'waiting_input' })).toEqual([])
   })

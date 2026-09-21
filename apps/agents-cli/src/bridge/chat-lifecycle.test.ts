@@ -109,3 +109,21 @@ test("does not report a persisted running checkpoint as live after Bridge restar
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('provider physical interruption suspends without logical cancellation or invented recovery and ignores its late callbacks', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'tapcanvas-physical-interrupt-'));
+  try {
+    const store = new HarnessChatLifecycleStore(root);
+    const lease = await store.begin(request());
+    const result = await store.interrupt({ userId: 'user-1', sessionId: lease.sessionId, turnId: lease.turnId, reasonCode: 'provider_stream_interrupted' });
+    assert.equal(result.snapshot.turn?.state, 'suspended');
+    assert.equal((result.snapshot.turn?.logicalTaskState as Record<string, unknown>).status, 'active');
+    assert.equal((result.snapshot.turn?.logicalTaskState as Record<string, unknown>).deliveryStatus, 'pending');
+    assert.equal(result.snapshot.turn?.recoveryAvailable, undefined);
+    assert.equal(result.snapshot.turn?.recoveryCheckpoint ?? null, null);
+    await store.fail('user-1', lease.sessionId, new Error('late abort callback'), lease.turnId);
+    assert.deepEqual(await store.status('user-1', lease.sessionId), result.snapshot);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

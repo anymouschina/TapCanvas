@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { validateWorkflowToolArguments } from "../execution/execution.json-schema-validator";
 
 import {
 	buildAgentsBridgeRemoteTools,
@@ -24,6 +25,26 @@ type JsonSchemaNode = {
 };
 
 describe("equipped workflow remote tool contract", () => {
+	it("keeps each workflow selector branch executable with the complete call envelope", () => {
+		const tool = buildAgentsBridgeRemoteTools({
+			publicAgentsRequest: true, canvasProjectId: "project-1", canvasFlowId: "flow-1",
+			equippedWorkflows: [
+				{ attachmentId: "text", name: "Text", summary: "Text input", invocation: { sourceMode: "inline_text", requiredTriggerPayloadFields: ["source"] } },
+				{ attachmentId: "group", name: "Group", summary: "Group input", invocation: { sourceMode: "canvas_group", requiredTriggerPayloadFields: ["sourceGroupId"] } },
+			],
+		}).find(candidate => candidate.name === "tapcanvas_equipped_workflow_run");
+		expect(tool).toBeDefined();
+		if (!tool) throw new Error("workflow tool missing");
+		const schema = tool.parameters as JsonSchemaNode;
+		const branch = schema.oneOf?.[0];
+		expect(branch?.additionalProperties).toBe(false);
+		expect(branch?.properties?.idempotencyKey).toEqual(schema.properties?.idempotencyKey);
+		expect(branch?.properties?.triggerPayload?.properties).toEqual(schema.properties?.triggerPayload?.properties);
+		const args = { attachmentId: "text", idempotencyKey: "stable-task", triggerPayload: { source: "User source", videoAspectRatio: "9:16" } };
+		expect(validateWorkflowToolArguments(tool.parameters, args)).toEqual([]);
+		expect(validateWorkflowToolArguments(tool.parameters, { ...args, triggerPayload: {} }).length).toBeGreaterThan(0);
+		expect(validateWorkflowToolArguments(tool.parameters, { ...args, unknown: true }).length).toBeGreaterThan(0);
+	});
 	it("filters equipped workflows by the request's structural execution variant", () => {
 		const workflows = [
 			{

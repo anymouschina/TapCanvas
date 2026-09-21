@@ -27,3 +27,8 @@ export function canSubmitChatComposer(input: ChatSubmissionAdmission): boolean {
 export function shouldAwaitChatSubmissionReadiness(origin: ChatSubmissionOrigin): boolean {
   return origin === 'programmatic'
 }
+
+/** Capture the same explicit message for composer and card submissions. */
+export function resolveChatSubmissionText(input: { text?: string; draft: string }): string {
+  return (input.text ?? input.draft).trim()
+}

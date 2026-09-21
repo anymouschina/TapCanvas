@@ -141,6 +141,7 @@ import {
 	markPublicChatStreamPayload,
 	projectExecutionTraceEventToPublicChatFrame,
 	resolvePublicChatReplayAfterEvent,
+	resolvePublicChatReplayPollIntervalMs,
 	traceStatusCanProduceMorePublicChatEvents,
 	verifyPublicChatReplaySessionIdentity,
 	type PublicChatReplayResyncReason,
@@ -545,10 +546,9 @@ export function toStreamErrorPayload(error: unknown): StreamErrorPayload {
 // 为无 sessionKey 的 API key 调用（辅助创作模式）生成稳定的会话 key。
 // 关键：必须与前端 buildEffectiveChatSessionKey 对同一 (projectId, flowId) 的「默认会话」
 // （persistedBaseKey 为空时）产出的 key 完全一致，否则前端刷新后按自己的 key 查询历史
-// 会查不到本次存档的对话。前端默认 key 形如：
+// 会查不到本次存档的对话。普通项目必须先有 flowId；只有章节作用域允许不落 flow。
 //   有 flow: project:<id>:flow:<flowId>:lane:general:skill:default
-//   无 flow: project:<id>:lane:general:skill:default
-function buildAutoSessionKey(projectId: string, flowId?: string, chapterId?: string): string {
+export function buildAutoSessionKey(projectId: string, flowId?: string, chapterId?: string): string {
 	const normalizedChapterId = typeof chapterId === "string" ? chapterId.trim() : "";
 	// 章节画布按 project+chapter 隔离会话（与前端 buildProjectScopedChatSessionBaseKey 对齐），
 	// 不落 flow，避免跨项目/章节会话与记忆串台。
@@ -556,10 +556,13 @@ function buildAutoSessionKey(projectId: string, flowId?: string, chapterId?: str
 		return `project:${projectId}:chapter:${normalizedChapterId}:lane:general:skill:default`;
 	}
 	const normalizedFlowId = typeof flowId === "string" ? flowId.trim() : "";
-	const base = normalizedFlowId
-		? `project:${projectId}:flow:${normalizedFlowId}`
-		: `project:${projectId}`;
-	return `${base}:lane:general:skill:default`;
+	if (!normalizedFlowId) {
+		throw new AppError("项目对话必须等待 Flow 创建完成后才能发送", {
+			status: 409,
+			code: "agents_chat_flow_required",
+		});
+	}
+	return `project:${projectId}:flow:${normalizedFlowId}:lane:general:skill:default`;
 }
 
 async function resetRequestedConversation(
@@ -3723,8 +3726,27 @@ async function streamPublicChatJournalReplay(input: Readonly<{
 	afterSequence: number;
 	initialPage: PublicChatReplayPage;
 }>): Promise<void> {
+	const waitForReplayPoll = async (delayMs: number): Promise<boolean> => {
+		const signal = input.c.req.raw.signal;
+		if (signal.aborted) return false;
+		return new Promise<boolean>((resolve) => {
+			let settled = false;
+			const finish = (result: boolean): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeout);
+				signal.removeEventListener("abort", onAbort);
+				resolve(result);
+			};
+			const onAbort = (): void => finish(false);
+			const timeout = setTimeout(() => finish(true), delayMs);
+			signal.addEventListener("abort", onAbort, { once: true });
+			if (signal.aborted) finish(false);
+		});
+	};
 	let afterSequence = input.afterSequence;
 	let page = input.initialPage;
+	let replayPollIntervalMs = PUBLIC_CHAT_REPLAY_POLL_INTERVAL_MS;
 	let lastHeartbeatAt = Date.now();
 	while (!input.c.req.raw.signal.aborted) {
 		const gap = detectPublicChatReplayGap({
@@ -3746,10 +3768,15 @@ async function streamPublicChatJournalReplay(input: Readonly<{
 			return;
 		}
 
+		// Advance the poll cadence only when the journal produced a browser-visible
+		// frame. Provider/internal trace rows can be frequent without changing the
+		// public stream; treating those as progress would recreate a busy poll loop.
+		let pageAdvanced = false;
 		for (const event of page.events) {
 			afterSequence = event.seq;
 			const frame = projectExecutionTraceEventToPublicChatFrame(event, input.publicTurnId);
 			if (!frame) continue;
+			pageAdvanced = true;
 			if (event.payloadTruncated) {
 				await writePublicAgentsChatSseWithinDeadline(
 					input.stream,
@@ -3773,6 +3800,7 @@ async function streamPublicChatJournalReplay(input: Readonly<{
 		}
 
 		if (page.hasMore) {
+			if (pageAdvanced) replayPollIntervalMs = PUBLIC_CHAT_REPLAY_POLL_INTERVAL_MS;
 			page = await readPublicChatReplayPage({
 				c: input.c,
 				userId: input.userId,
@@ -3798,7 +3826,17 @@ async function streamPublicChatJournalReplay(input: Readonly<{
 			await input.stream.write(": replay-ping\n\n");
 			lastHeartbeatAt = Date.now();
 		}
-		await new Promise<void>((resolve) => setTimeout(resolve, PUBLIC_CHAT_REPLAY_POLL_INTERVAL_MS));
+		// A visible frame means the producer is making progress. Apply the reset
+		// before waiting so a stream that was previously idle does not add one
+		// stale 2s delay after it has already received fresh content.
+		if (pageAdvanced) replayPollIntervalMs = PUBLIC_CHAT_REPLAY_POLL_INTERVAL_MS;
+		if (!(await waitForReplayPoll(replayPollIntervalMs))) return;
+		if (!pageAdvanced) {
+			replayPollIntervalMs = resolvePublicChatReplayPollIntervalMs({
+				previousIntervalMs: replayPollIntervalMs,
+				advanced: false,
+			});
+		}
 		page = await readPublicChatReplayPage({
 			c: input.c,
 			userId: input.userId,
@@ -3969,8 +4007,7 @@ export async function handlePublicAgentsChatStatusRoute(c: AppContext): Promise<
 	const finalTurn = status.turn;
 	if (!finalTurn) return c.json(status);
 	const { recoveryCheckpoint, ...publicTurn } = finalTurn;
-	void recoveryCheckpoint;
-	return c.json({ ...status, turn: publicTurn });
+	return c.json({ ...status, turn: { ...publicTurn, recoveryAvailable: Boolean(recoveryCheckpoint) } });
 }
 
 export function parsePhysicalBudgetRecoveryRequest(input: {
@@ -4482,6 +4519,14 @@ export type PublicChatInterruptCompositeReceipt = Readonly<{
 	status: AgentsChatTurnStatusSnapshot | null;
 }>;
 
+export function resolvePublicChatInterruptReasonCode(
+	cancellationScope: "physical_only" | "logical_task",
+): "provider_stream_interrupted" | "chat_turn_user_interrupt" {
+	return cancellationScope === "physical_only"
+		? "provider_stream_interrupted"
+		: "chat_turn_user_interrupt";
+}
+
 export type PublicChatInterruptDependencies = Readonly<{
 	interruptLocalTransport: () => boolean;
 	interruptRuntime: () => Promise<AgentsChatTurnInterruptReceipt>;
@@ -4633,6 +4678,11 @@ export async function handlePublicAgentsChatInterruptRoute(c: AppContext): Promi
 			code: "chat_interrupt_scope_invalid",
 		});
 	}
+	// physical_only is the transport/lifecycle boundary used by conversation
+	// reset and system recovery. It must suspend the current physical model run
+	// so the durable Workflow can continue, while logical_task is the explicit
+	// user cancellation that is allowed to terminate the logical turn.
+	const interruptReasonCode = resolvePublicChatInterruptReasonCode(cancellationScope);
 	const inflightKey = buildInflightChatTurnKey(userId, sessionKey);
 	const localSnapshot = getInflightChatTurnSnapshot(inflightKey);
 	if (localSnapshot && localSnapshot.turnId !== turnId) {
@@ -4707,10 +4757,11 @@ export async function handlePublicAgentsChatInterruptRoute(c: AppContext): Promi
 		sessionKey,
 		turnId,
 		dependencies: {
-			interruptLocalTransport: () => interruptInflightChatTurn(inflightKey, turnId),
+			interruptLocalTransport: () => interruptInflightChatTurn(inflightKey, turnId, interruptReasonCode),
 			interruptRuntime: () => interruptAgentsChatTurn(c, userId, {
 				sessionId: sessionKey,
 				turnId,
+				reasonCode: interruptReasonCode,
 			}, {
 				timeoutMs: PUBLIC_CHAT_RUNTIME_INTERRUPT_DEADLINE_MS,
 			}),
@@ -4719,7 +4770,12 @@ export async function handlePublicAgentsChatInterruptRoute(c: AppContext): Promi
 				userId,
 				sessionKey,
 				rootRequestId: turnId,
-				scope: "physical_only",
+				// A user-requested logical-task interrupt must release every
+				// continuation owned by this turn. Keeping the physical-only
+				// scope here leaves the durable continuation alive, so the UI
+				// can report remote interruption while the task remains stuck
+				// in persistent continuation.
+				scope: cancellationScope === "logical_task" ? "all" : "physical_only",
 			}),
 		},
 	}), workflowAttempt()]);

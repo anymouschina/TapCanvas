@@ -181,6 +181,14 @@ docker-compose exec api dreamina version
 
 ## AI 对话架构（当前）
 
+### 2026-09-20 对话修复同步
+
+- 项目对话等待真实 Flow 就绪后发送；排队动作携带原项目/章节作用域，切换作用域后不得投递到新会话。章节继续使用 project + chapter 隔离。历史合并、恢复查询与流取消采用当前会话身份，旧异步请求不得覆盖新会话。
+- 消息相同时间戳时保持用户消息在对应助手消息之前；会话恢复展示真实终态，物理 suspended 不伪装成 running。SSE 事件回放无可见进展时从 250ms 逐步退避至 2s，连接取消即停止等待；新的可见事件重置等待间隔。
+- 状态查询仅以真实恢复 checkpoint 投影 `recoveryAvailable`；逻辑任务 active 但没有物理 activeTurn 时展示 unknown，不能推定仍在生成。DSH 响应自检允许 Agent 将取证要求绑定到已成功的工具回执，失败或不存在的回执不能证明交付，不为通过验收重复读取。
+- 逻辑任务取消同时取消该任务的后续 continuation；仅物理中断使用独立原因码，沿原任务的有界恢复策略继续，保留已受理工作流的 durable executor 单一执行归属。
+- 装配工作流的每个 `oneOf` 参数分支声明完整调用信封（选择身份、幂等键与触发参数），与顶层共用同一触发字段定义；必填字段来自对应工作流，不能因分支漏声明而误拒绝合法工具调用。
+
 DSH 的 `record_user_intent` 冻结语义合同后，网关通过执行请求顶层 `userIntentContract` / `userIntentContractHash` 成对携带机器字段。装备工作流启动时后端验证规范 hash 与所有者，写入冻结 trigger 的 `workflowUserIntent`；模型参数或 trigger 中伪造同名字段会显式失败。
 
 - 持久 Workflow 的受理回执明确声明 `completionBoundary=submission` 与 `executionOwner=durable_executor`。Bridge 的 `submissionHandoff` 只结束本轮提交交接，Hono 记录聊天边界 succeeded、媒体交付 pending，并且不登记另一份聊天 continuation；实际生成与最终交付仍由唯一 Workflow 执行器推进。只有真实成功终态的 `workflowOutputs` 可进入后续媒体验收。交付覆盖存在缺项时，验证节点保存全部既有 outputRefs/资产并显式报告 `workflow_delivery_coverage_unsatisfied`，不会把部分成片标成完整交付。

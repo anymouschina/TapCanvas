@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { AppError } from "../../middleware/error";
 
 import {
+	buildAutoSessionKey,
+	resolvePublicChatInterruptReasonCode,
 	buildBroadcastChatMessages,
 	buildStablePublicChatTurnId,
 	buildAsyncContinuationDeliveryReportLock,
@@ -1872,4 +1874,17 @@ describe("public agents chat required Skill propagation", () => {
 			allowedTools: ["read_file", "read_file_range", "tapcanvas_shot_table_critic"],
 		});
 	});
+});
+
+
+describe("chat scope and interrupt boundaries", () => {
+ it("requires a flow for project chat but preserves chapter isolation", () => {
+  expect(buildAutoSessionKey("p", "f")).toBe("project:p:flow:f:lane:general:skill:default");
+  expect(buildAutoSessionKey("p", undefined, "ch")).toBe("project:p:chapter:ch:lane:general:skill:default");
+  expect(() => buildAutoSessionKey("p")).toThrow("Flow");
+ });
+ it("distinguishes physical interruption from logical cancellation", () => {
+  expect(resolvePublicChatInterruptReasonCode("physical_only")).toBe("provider_stream_interrupted");
+  expect(resolvePublicChatInterruptReasonCode("logical_task")).toBe("chat_turn_user_interrupt");
+ });
 });

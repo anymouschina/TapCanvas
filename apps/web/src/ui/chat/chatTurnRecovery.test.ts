@@ -13,7 +13,7 @@ import {
   isRevokableChatTurn,
   isLocallySettledTurnMessage,
   readRequestErrorCode,
-  projectRecoveredFailedTurnMessage,
+  projectRecoveredTerminalTurnMessage,
   reconcileRecoveredProgressMessages,
   removeTrailingHistoryAssistantMessagesForNonterminalTurn,
   resolveRecoveredChatTurnTerminalText,
@@ -181,7 +181,7 @@ describe('chat turn recovery policy', () => {
       checking: true,
       error: null,
       snapshot: staleSnapshot,
-    })).toBe(false)
+    })).toBe(true)
     expect(shouldQueueIntoRecoveredTurn(staleSnapshot)).toBe(false)
     expect(shouldQueueIntoRecoveredTurn({ ...staleSnapshot, activeTurn: true })).toBe(true)
     expect(isRevokableChatTurn(staleSnapshot)).toBe(false)
@@ -619,7 +619,7 @@ describe('chat turn recovery policy', () => {
   })
 
   it('materializes a complete failed reply when refresh has no prior progress bubble', () => {
-    const projected = projectRecoveredFailedTurnMessage([
+    const projected = projectRecoveredTerminalTurnMessage([
       {
         id: 'm_user_recovered_turn_deadline',
         role: 'user',
@@ -627,6 +627,7 @@ describe('chat turn recovery policy', () => {
         ts: '07:41',
       },
     ], {
+      status: 'failed',
       turnId: 'turn_deadline',
       summary: '供应商权限校验失败，任务已失败。\n当前阶段：失败。\n失败原因：provider_permission_denied',
       startedAt: '07:41',
@@ -641,10 +642,50 @@ describe('chat turn recovery policy', () => {
       logicalTaskStatus: 'failed',
     })
     expect(projected[1]?.content).toContain('失败原因：provider_permission_denied')
-    expect(projectRecoveredFailedTurnMessage(projected, {
+    expect(projectRecoveredTerminalTurnMessage(projected, {
+      status: 'failed',
       turnId: 'turn_deadline',
       summary: projected[1]?.content || '',
       startedAt: '07:41',
     })).toBe(projected)
   })
+})
+
+it('resumes an inactive active task using the public recovery fact without disclosing the checkpoint', () => {
+  const snapshot: AgentsChatTurnStatusDto = {
+    ...idleSnapshot,
+    turn: {
+      turnId: 'request_1', internalTurnId: 'turn_1', state: 'unknown',
+      logicalTaskState: logicalTaskState('request_1', 'active', 'provider_stream_interrupted'),
+      phase: 'completion_verifying', startedAt: '2026-08-03T05:00:00.000Z', updatedAt: '2026-08-03T05:00:01.000Z',
+      lastConfirmedAt: '2026-08-03T05:00:01.000Z', requestText: 'Save the requested state', reasonCode: 'provider_stream_interrupted',
+      suspension: null, recoveryAvailable: true, lastConfirmedSummary: '', finalResponse: null, pendingQueueCount: 0, recentEvents: [],
+    },
+  }
+  expect(isRecoverableInactiveChatTurn(snapshot)).toBe(true)
+  expect(isRecoverableInactiveChatTurn({ ...snapshot, activeTurn: true })).toBe(false)
+  expect(isRecoverableInactiveChatTurn({ ...snapshot, turn: { ...snapshot.turn!, logicalTaskState: logicalTaskState('request_1', 'cancelled', 'user_interrupt') } })).toBe(false)
+})
+
+it('replaces stale progress text even when the local turn already has a success badge', () => {
+  const input = {
+    turnId: 'submitted-image-turn',
+    status: 'succeeded' as const,
+    summary: '目标节点已写入并触发后台执行。',
+    startedAt: '10:03',
+  }
+  const original = [{
+    id: buildRecoveredChatMessageIds(input.turnId).assistantMessageId,
+    role: 'assistant' as const,
+    content: '模型正在处理当前任务',
+    ts: '09:59',
+    phase: 'final' as const,
+    kind: 'result' as const,
+    logicalTaskStatus: 'succeeded' as const,
+  }]
+  const projected = projectRecoveredTerminalTurnMessage(original, input)
+  expect(projected).toHaveLength(1)
+  expect(projected[0]?.content).toBe(input.summary)
+  expect(projectRecoveredTerminalTurnMessage(projected, input)).toBe(projected)
+  expect(original[0]?.content).toBe('模型正在处理当前任务')
 })
