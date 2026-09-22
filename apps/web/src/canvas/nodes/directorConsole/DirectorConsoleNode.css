@@ -1,0 +1,85 @@
+/* 导演台入口节点：整张卡片即入口，沿用画布节点 token 与统一的 hover/selected 语义。 */
+
+.tc-director-console-node {
+  width: 260px;
+}
+
+.tc-director-console-node__entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--canvas-node-bg, #16161a);
+  color: var(--canvas-node-text, #ededef);
+  box-shadow: var(--canvas-node-shadow, 0 18px 40px rgba(0, 0, 0, 0.46));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.tc-director-console-node__entry:hover:not(:disabled),
+.react-flow__node.selected .tc-director-console-node__entry {
+  border-color: var(--canvas-node-border-selected, rgba(228, 228, 232, 0.5));
+}
+
+.tc-director-console-node__entry:focus-visible {
+  outline: 2px solid var(--canvas-node-border-selected, rgba(228, 228, 232, 0.5));
+  outline-offset: 2px;
+}
+
+.tc-director-console-node__entry:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.tc-director-console-node__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--canvas-node-chip-bg, rgba(255, 255, 255, 0.04));
+  color: var(--canvas-node-chip-text, #e4e5e8);
+}
+
+.tc-director-console-node__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.tc-director-console-node__title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-director-console-node__meta {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--canvas-node-subtext, #aaabae);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-director-console-node__affordance {
+  flex: 0 0 auto;
+  color: var(--canvas-node-action-muted-text, #9a9ba0);
+  transition: color 120ms ease;
+}
+
+.tc-director-console-node__entry:hover:not(:disabled) .tc-director-console-node__affordance {
+  color: var(--canvas-node-text, #ededef);
+}

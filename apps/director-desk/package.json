@@ -1,0 +1,28 @@
+{
+  "name": "director-desk",
+  "version": "0.4.8",
+  "shortVersion": "0.4.8",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/build-builtin-skill.mjs",
+    "dev": "vite --host 127.0.0.1",
+    "prebuild": "node scripts/build-builtin-skill.mjs && node --experimental-strip-types scripts/emit-tool-catalog.mjs",
+    "build": "tsc --noEmit && vite build",
+    "postbuild": "node scripts/build-offline-skill.mjs && node scripts/check-release-privacy.mjs",
+    "check:privacy": "node scripts/check-release-privacy.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "mediabunny": "1.55.7",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "@types/three": "0.185.4",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "vite": "8.2.2"
+  }
+}

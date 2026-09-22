@@ -1,0 +1,16 @@
+.surface-panel{display:grid;gap:6px;min-width:0;align-content:start}
+.surface-panel .field{margin:0;min-width:0}
+.surface-panel .field-pair{margin:0;gap:8px}
+.surface-panel select,.surface-panel input{width:100%;min-width:0;height:30px;font-size:11px;padding:4px 6px}
+.surface-panel button{min-width:0;min-height:30px;font-size:11px;padding:5px 8px}
+.surface-panel .button-row{margin:0;gap:6px}
+.surface-panel .button-row button{flex:1}
+.surface-panel .panel-help{margin:0;font-size:11px}
+.inspector .surface-panel .field{margin:0;gap:3px}
+.inspector .surface-panel .field input,.inspector .surface-panel .field select{height:30px;font-size:11px;padding:4px 6px}
+.inspector .surface-panel select[multiple]{height:54px}
+.surface-optical-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.surface-key-row{align-items:end}
+.surface-layer-select{display:flex;gap:4px;min-width:0}
+.surface-layer-select select{flex:1;width:0}
+.surface-layer-select button{flex:none;width:26px;padding:2px;font-size:17px}

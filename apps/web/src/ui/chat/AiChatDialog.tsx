@@ -1356,7 +1356,7 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   creategroup: '画布打组',
   reflowlayout: '整理画布布局',
   link_existing_asset: '关联已有素材',
-  capture_director_scene: '导演台机位取景',
+  director_desk: '操作导演台',
   add_director_console: '搭建导演台',
   // 分镜 / 故事板
   shot_table_critic: '校验分镜表',
@@ -4841,7 +4841,7 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
         ? selectedCanvasNodeContext
         : null)
     // 导演台模式：强制把 canvasNodeId 锚到「你打开的那个导演台节点」，不依赖画布选中态（支持一画布多导演台）。
-    // 小T 据此（+ tapcanvas-director-console 技能）用它当 capture_director_scene 的 id，操作这一个、不新建。
+    // 小T 据此把当前导演台节点作为宿主锚点，通过 tapcanvas_director_desk 操作已打开的导演台工程。
     const requestCanvasNodeId = explicitCanvasNodeId || (directorScopeActive
       ? (liveSendScope.directorNodeId as string)
       : (requestSelectedCanvasNodeContext?.nodeId || ''))
@@ -5209,13 +5209,7 @@ export default function AiChatDialog({ className }: { className?: string }): JSX
           ? { requireAgentsTeamExecution: true }
           : {}),
         temperature: 0.7,
-        ...((() => {
-          const DIRECTOR_SKILL = 'tapcanvas-director-console'
-          let skills = options?.requiredSkills ?? []
-          // 导演台打开时强制内联导演台技能（编辑优先 + 禁 Seedance 8 段收尾自检），不靠模型自匹配。
-          if (directorScopeActive && !skills.includes(DIRECTOR_SKILL)) skills = [DIRECTOR_SKILL, ...skills]
-          return skills.length ? { requiredSkills: skills } : {}
-        })()),
+        ...(options?.requiredSkills?.length ? { requiredSkills: [...options.requiredSkills] } : {}),
         ...(referenceImagesPayload.length ? { referenceImages: referenceImagesPayload } : {}),
         ...(assetInputsPayload.length ? { assetInputs: assetInputsPayload } : {}),
         ...(pendingUserInputAnswerRef.current ? { requestUserInputResponse: pendingUserInputAnswerRef.current } : {}),

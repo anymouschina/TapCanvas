@@ -29,7 +29,6 @@ export type AgentsBridgeRemoteToolCapability =
 	| "one_click_video"
 	| "paid_media_generation"
 	| "media_analysis"
-	| "director_console"
 	| "diagnostic_reviewer";
 
 export type BuiltInSmallTCapability = Readonly<{
@@ -276,10 +275,8 @@ const REMOTE_TOOL_CONTRACTS: Readonly<Record<string, RemoteToolContract>> = {
 	tapcanvas_distill_director_breakdown: contract(PROJECT_CANVAS, "media_analysis"),
 	tapcanvas_video_compare: contract(PROJECT_CANVAS, "media_analysis"),
 	tapcanvas_fetch_video_from_url: contract(PROJECT_CANVAS, "media_analysis"),
-	tapcanvas_capture_director_scene: contract(PROJECT_CANVAS, "director_console"),
-	tapcanvas_render_director_clip: contract(PROJECT_CANVAS, "director_console"),
-	tapcanvas_director_define_motion: contract(PROJECT_CANVAS, "director_console"),
-	tapcanvas_director_set_character_motion: contract(PROJECT_CANVAS, "director_console"),
+	// DirectorDesk executes in the user's browser through the relay queue.
+	tapcanvas_director_desk: contract(PROJECT_CANVAS, "canvas_extended"),
 	tapcanvas_master_storyboard_split: contract(PROJECT_CANVAS, "canvas_extended"),
 };
 
@@ -297,7 +294,6 @@ const PAID_REMOTE_TOOLS = new Set([
 	"tapcanvas_image_generate_to_canvas", "tapcanvas_video_generate_to_canvas", "tapcanvas_video_extract_last_frame", "tapcanvas_video_extract_frames",
 	"tapcanvas_video_concat", "tapcanvas_voice_card_dub", "tapcanvas_hyperframes_render", "tapcanvas_render_blocking_diagram", "tapcanvas_analyze_image",
 	"tapcanvas_analyze_video", "tapcanvas_decompose_video", "tapcanvas_distill_director_breakdown", "tapcanvas_video_compare", "tapcanvas_fetch_video_from_url",
-	"tapcanvas_capture_director_scene", "tapcanvas_render_director_clip",
 ]);
 
 const IDEMPOTENT_REMOTE_TOOLS: Readonly<Record<string, string>> = {
@@ -312,8 +308,8 @@ const UNSAFE_REMOTE_TOOLS = new Set([
 	"tapcanvas_book_style_confirm", "tapcanvas_book_chapter_summary_set", "tapcanvas_book_worldbible_confirm", "tapcanvas_book_storyboard_plan_upsert",
 	"tapcanvas_material_asset_version_create", "tapcanvas_material_asset_delete", "tapcanvas_material_assets_sync", "tapcanvas_set_style_reference",
 	"tapcanvas_project_look_bible_confirm", "tapcanvas_node_text_edit", "tapcanvas_flow_patch", "tapcanvas_annotate_shot", "tapcanvas_asset_add_to_canvas",
-	"tapcanvas_video_reconcile", "tapcanvas_image_reconcile", "tapcanvas_director_define_motion",
-	"tapcanvas_director_set_character_motion", "tapcanvas_master_storyboard_split", "tapcanvas_story_preview_orchestrate",
+	"tapcanvas_video_reconcile", "tapcanvas_image_reconcile", "tapcanvas_master_storyboard_split", "tapcanvas_story_preview_orchestrate",
+	"tapcanvas_director_desk",
 ]);
 
 function resolveRemoteToolExecution(name: string): ToolExecutionSemantics {
@@ -366,7 +362,6 @@ const BUILT_IN_SMALL_T_CAPABILITY_PRESENTATION: Readonly<Record<
 		replaceable: false,
 	},
 	media_analysis: { name: "媒体分析", description: "分析、拆解、比较图片和视频并提炼导演信息。", sideEffects: ["none"] },
-	director_console: { name: "3D导演台", description: "捕获导演场景、定义角色运动并渲染导演片段。", sideEffects: ["external_mutation", "paid_generation"] },
 	diagnostic_reviewer: { name: "创作诊断审查", description: "审查镜头表等创作合同并给出诊断证据。", sideEffects: ["none"] },
 };
 

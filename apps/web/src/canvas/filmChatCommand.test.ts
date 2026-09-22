@@ -70,7 +70,7 @@ describe('film chat commands', () => {
 			'tapcanvas_equipped_workflow_run',
 		])
 		expect(policy.allowedTools).not.toContain('tapcanvas_analyze_video')
-		expect(policy.allowedTools).not.toContain('tapcanvas_director_set_character_motion')
+		expect(policy.allowedTools).not.toContain('tapcanvas_director_desk')
 		expect(policy.allowedTools).not.toContain('tapcanvas_project_context_get')
 		expect(policy.allowedTools).not.toContain('tapcanvas_execution_get')
 		expect(policy.allowedTools).not.toContain('tapcanvas_execution_node_runs_get')

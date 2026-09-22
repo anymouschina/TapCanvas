@@ -1,0 +1,117 @@
+{
+  "format": "director-desk",
+  "version": 1,
+  "name": "空白工程",
+  "duration": 10,
+  "fps": 24,
+  "aspect": "16:9",
+  "room": {
+    "enabled": false,
+    "width": 8,
+    "depth": 6,
+    "height": 2.8
+  },
+  "entities": [
+    {
+      "id": "a0d1216a-c1b5-468f-8989-cb9e5e86b5e3",
+      "kind": "prop",
+      "asset": "ground",
+      "name": "地面 · 可缩放",
+      "color": "#b4b6ae",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        4,
+        1,
+        4
+      ],
+      "visible": true,
+      "locked": false,
+      "height": 1.75,
+      "build": "normal",
+      "gender": "male",
+      "path": null,
+      "face": "path",
+      "faceTarget": "",
+      "clips": [],
+      "pose": {},
+      "poseKeys": [],
+      "camera": null,
+      "count": 12,
+      "spacing": 0.75,
+      "seed": 42,
+      "reference": ""
+    },
+    {
+      "id": "a04a3d27-d45e-4858-b097-908bd2bf2c0f",
+      "kind": "camera",
+      "asset": "camera",
+      "name": "A · 主机位",
+      "color": "#d5d5d0",
+      "position": [
+        8,
+        3,
+        10
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "visible": true,
+      "locked": false,
+      "height": 1.75,
+      "build": "normal",
+      "gender": "male",
+      "path": null,
+      "face": "path",
+      "faceTarget": "",
+      "clips": [],
+      "pose": {},
+      "poseKeys": [],
+      "camera": {
+        "aim": "target",
+        "focal": 28,
+        "target": [
+          0,
+          1,
+          0
+        ],
+        "targetId": "",
+        "targetHeight": 1.2,
+        "mode": "free",
+        "offset": [
+          0,
+          1.6,
+          -1.8
+        ],
+        "inheritRotation": true,
+        "hideWalls": []
+      },
+      "count": 12,
+      "spacing": 0.75,
+      "seed": 42,
+      "reference": ""
+    }
+  ],
+  "cuts": [
+    {
+      "time": 0,
+      "cameraId": "a04a3d27-d45e-4858-b097-908bd2bf2c0f"
+    }
+  ],
+  "references": []
+}

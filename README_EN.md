@@ -14,6 +14,10 @@ TapCanvas is a multi-model AI content creation platform built around a visual ca
 
 **Language:** [中文](README.md) | English
 
+## Changelog
+
+- **2026-09-23 · Director desk upgrade**: Synced TapCanvasPro's standalone director desk, based on [DirectorDesk](https://github.com/mangfufu/director-desk), for 3D scene blocking, character staging and camera previs. Connected TapCanvas AI chat, tool relay and reference-video export to the canvas, replaced the previous embedded implementation, and added MIT attribution. Web development and production builds now build the director desk automatically; install its standalone dependencies before first use.
+
 ## Latest Capabilities
 
 - **Video-to-image reference via frame preview**: drag a frame from the video preview directly onto the canvas to use it as a reference image for image generation.
@@ -35,6 +39,7 @@ Seven built-in HeyRoute channels provide 31 models: 15 chat models (Claude, GPT,
 ```bash
 # 1) Install deps
 pnpm install
+npm --prefix apps/director-desk ci
 
 # 2) Configure env
 cp apps/web/.env.example apps/web/.env
@@ -132,6 +137,7 @@ Upstream open-source projects:
 | Project | Role in this repository |
 | --- | --- |
 | [new-api](https://github.com/QuantumNous/new-api) (upstream: [One API](https://github.com/songquanpeng/one-api)) | Source implementation of the `apps/new-api` model gateway: channel access, metering and model delivery |
+| [DirectorDesk](https://github.com/mangfufu/director-desk) | MIT-licensed source of the `apps/director-desk` 3D previs, scene blocking, staging and camera tools |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | Official runtime, agent loop and tooling for the `apps/agents-cli` bridge |
 | [React Flow](https://github.com/xyflow/xyflow) (`@xyflow/react`) | Node, handle and edge kernel of the infinite canvas |
 | [Mantine](https://github.com/mantinedev/mantine) | Web UI components and theming |

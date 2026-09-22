@@ -1,0 +1,7 @@
+.scene-switcher{display:flex;gap:6px;padding:8px 10px;min-width:0;border-bottom:1px solid #333}
+.scene-switcher select{min-width:0;flex:1;width:0}
+.scene-switcher button{flex-shrink:0}
+.sequence-panel{display:grid;gap:12px;min-width:0}
+.sequence-panel input,.sequence-panel select{min-width:0;width:100%}
+.sequence-actions{display:flex;gap:8px;flex-wrap:wrap}
+

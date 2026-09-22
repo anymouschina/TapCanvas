@@ -43,6 +43,11 @@ COPY apps/hono-api/src/modules/project-directory/project-directory.contract.ts \
      /workspace/apps/hono-api/src/modules/project-directory/project-directory.contract.ts
 COPY apps/web /workspace/apps/web
 
+COPY apps/director-desk/package.json apps/director-desk/package-lock.json /workspace/apps/director-desk/
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm --prefix /workspace/apps/director-desk ci --registry "${NPM_REGISTRY}"
+COPY apps/director-desk /workspace/apps/director-desk
+
 RUN pnpm build
 
 FROM ${DOCKERHUB_REGISTRY}/nginx:1.27-alpine AS runtime

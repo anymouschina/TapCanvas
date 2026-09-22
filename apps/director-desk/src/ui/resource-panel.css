@@ -1,0 +1,4 @@
+.resource-panel { min-width: 0; }
+.resource-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin: 10px 0; }
+.resource-panel select, .resource-panel textarea { min-width: 0; width: 100%; }
+.resource-panel textarea { resize: vertical; min-height: 56px; max-height: 100px; }

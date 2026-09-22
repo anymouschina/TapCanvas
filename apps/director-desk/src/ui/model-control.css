@@ -1,0 +1,10 @@
+#model-control { position: fixed; z-index: 65; right: 16px; bottom: 28px; width: min(400px, calc(100vw - 32px)); padding: 12px; border: 1px solid #555; border-radius: 8px; background: #161616f5; color: #eee; box-shadow: 0 6px 24px #0006; font-size: 12px; }
+#model-control[hidden], #model-control [hidden] { display: none !important; }
+.model-control-title, .model-control-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.model-control-title strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#model-control p { margin: 8px 0; line-height: 1.6; color: #bbb; }
+#model-control.recording p:first-of-type { display: none; }
+#model-control label { display: flex; align-items: center; gap: 8px; }
+#model-control select { flex: 1; min-width: 0; }
+#model-control button { min-height: 30px; }
+#model-control-status { display: block; margin-top: 8px; font-variant-numeric: tabular-nums; }

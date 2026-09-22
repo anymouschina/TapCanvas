@@ -1,0 +1,4 @@
+import {WARP_TYPES} from './warps.ts';
+import type { AssetDefinition } from '../assets/catalog/types.ts';
+import { defaultVisual, VISUAL_PRESETS, FIELD_TYPES, type VisualPreset } from './model.ts';
+export const VISUAL_ASSETS:AssetDefinition[]=[...Object.entries(WARP_TYPES).map(([id,name])=>({id:'warp-'+id,name,kind:'prop' as const,group:'空间扭曲',family:'warp-v1',icon:'◎',defaults:{warp:{type:id as keyof typeof WARP_TYPES,radius:2,strength:.5,frequency:2,speed:1}}})),...Object.entries(VISUAL_PRESETS).map(([id,name])=>({id:'visual-'+id,name,kind:'prop' as const,group:'视觉元素',family:'visual-v1',icon:'✧',aliases:[id,'抽象','特效'],defaults:{visual:defaultVisual(id as VisualPreset)}})),...Object.entries(FIELD_TYPES).map(([id,name])=>({id:'field-'+id,name:name+'场',kind:'prop' as const,group:'影响区域',family:'field-v1',icon:'◎',aliases:[id,'力场'],defaults:{field:{type:id as keyof typeof FIELD_TYPES,radius:3,strength:1,falloff:1,targets:[],start:0,end:0}}}))];

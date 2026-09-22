@@ -1,0 +1,8 @@
+.native-editor, .retarget-editor { display: grid; gap: 6px; min-width: 0; }
+.native-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; min-width: 0; }
+.native-values { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 6px; min-width: 0; }
+#zone-editor .native-values:has(>label:nth-child(3)),#look-editor .native-values:has(>label:nth-child(3)){grid-template-columns:repeat(3,minmax(0,1fr))}
+.native-editor select, .native-editor input, .native-editor button, .retarget-editor select, .retarget-editor input, .retarget-editor button { min-width: 0; width: 100%; height: 30px; padding: 3px 7px; margin: 0; }
+
+.retarget-stride { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; min-width: 0; }
+.look-key-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }

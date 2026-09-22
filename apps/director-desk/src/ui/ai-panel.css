@@ -1,0 +1,55 @@
+#ai-panel{position:fixed;right:12px;top:72px;bottom:12px;width:400px;max-width:calc(100vw - 16px);z-index:70;background:#181818;color:#eee;border:1px solid #454545;border-radius:8px;box-shadow:0 16px 48px #0009;display:flex;flex-direction:column;gap:12px;padding:14px;min-height:0}
+#ai-panel[hidden],#ai-panel [hidden]{display:none!important}
+.ai-header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0}
+.ai-header strong{display:block;font-size:14px;font-weight:600}
+.ai-header span{display:block;font-size:11px;color:#999;margin-top:4px}
+.ai-header button{height:30px;min-height:30px;width:30px;background:transparent;border:0}
+.ai-navigation{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;padding:3px;border:1px solid #333;border-radius:6px;background:#101010;flex-shrink:0}
+.ai-navigation button{height:30px;min-height:30px;padding:4px;font-size:12px;background:transparent;border:0}
+.ai-navigation button[aria-pressed=true]{background:#333;color:#fff}
+.ai-view{flex:1;min-height:0;min-width:0}
+#ai-panel label{display:flex;flex-direction:column;gap:5px;min-width:0;font-size:11px;color:#aaa}
+#ai-panel input,#ai-panel select{min-width:0;width:100%;height:32px;padding:5px 7px;font-size:12px;color:#eee}
+.ai-controls{display:grid;grid-template-columns:minmax(0,1fr) 82px;gap:8px}
+.ai-chat{display:flex;flex-direction:column;gap:8px}
+.ai-context-row{display:flex;align-items:center;gap:6px;min-width:0;flex-shrink:0}
+.ai-context-row p{flex:1}
+#ai-scene-prompt{flex-shrink:0;font-size:11px;min-height:30px;padding:4px 8px}
+#ai-panel textarea{min-width:0;width:100%;background:#111;color:#e8e8e8;border:1px solid #363636;border-radius:5px;padding:9px;font:12px/1.6 "Segoe UI","Microsoft YaHei",sans-serif;resize:none}
+#ai-transcript{flex:1;min-height:60px}
+#ai-prompt{height:clamp(64px,12vh,120px);min-height:64px;flex-shrink:0}
+#ai-panel .ai-prompt-label{font-size:11px;line-height:15px;color:#aaa}
+.ai-buttons{display:flex;align-items:center;gap:6px;flex-shrink:0}
+#ai-panel .ai-buttons button{min-height:32px;padding:5px 8px;font-size:11px;flex:1;min-width:0;white-space:nowrap}
+#ai-settings{display:flex;flex-direction:column;gap:12px}
+.ai-settings-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 8px}
+.ai-full-row{grid-column:1/-1}
+#ai-panel .ai-check{flex-direction:row;align-items:center;gap:6px;font-size:11px;min-height:22px;color:#ddd}
+#ai-panel input[type=checkbox]{width:14px;height:14px;margin:0;flex-shrink:0}
+#ai-settings>.ai-buttons{margin-top:auto}
+#ai-panel p{font-size:11px;color:#999;margin:0;line-height:1.5}
+#ai-mcp{display:flex;flex-direction:column;gap:16px}
+.ai-mcp-heading{display:flex;flex-direction:column;gap:6px;padding:4px 0}
+.ai-connection{display:grid;gap:8px;padding:12px;border:1px solid #333;background:#111;border-radius:5px;min-width:0}
+.ai-connection>span{font-size:11px;color:#aaa}
+#ai-mcp-status,#ai-mcp-lan-status{font:12px/1.6 Consolas,monospace;overflow-wrap:anywhere}
+#ai-mcp-copy,#ai-mcp-lan-copy{min-height:32px;font-size:12px}
+.ai-footer{display:flex;gap:6px;align-items:center;padding-top:8px;border-top:1px solid #333;flex-shrink:0;min-width:0}
+#ai-panel #ai-status{height:42px;min-height:42px;font-size:11px;padding:3px 0;color:#aaa;border:0;background:transparent;flex:1}
+#ai-background-stop{min-height:30px;padding:4px 8px;font-size:11px}
+#ai-panel[data-ai-page=chat] #ai-background-stop{display:none}
+#ai-resize{position:absolute;touch-action:none}
+#ai-resize:focus-visible,#ai-resize:hover{background:#ffffff20;outline:none;border-radius:4px}
+.ai-header{cursor:move;touch-action:none;user-select:none}
+.ai-window-buttons{display:flex;gap:2px;flex-shrink:0}
+#ai-resize{left:auto;top:auto;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;border-right:2px solid #777;border-bottom:2px solid #777}
+#ai-panel.ai-collapsed{padding:10px;gap:0;justify-content:center}
+#ai-panel.ai-collapsed>:not(.ai-header){display:none!important}
+#ai-panel.ai-collapsed .ai-header span{display:none}
+#ai-panel[data-running=true] .ai-header strong::after{content:' · 运行中';font-size:11px;font-weight:400;color:#bbb}
+@media(max-height:800px){
+ #ai-panel{top:68px;gap:8px;padding:10px}
+ .ai-settings-fields{gap:8px}
+ #ai-settings{gap:8px}
+ .ai-header span{display:none}
+}

@@ -28,7 +28,6 @@ import { CanvasLODContext } from './CanvasLODContext'
 import { CanvasBottomControls } from './CanvasBottomControls'
 import { CanvasDevPerfPanel } from './components/CanvasDevPerfPanel'
 
-import { DirectorCaptureRunner } from './nodes/directorConsole/DirectorCaptureRunner'
 import { applyTidyPosition, beginCanvasNodeDrag, clearCanvasNodeDragActivity, isCanvasNodeDragActive, registerCanvasTidyExecutor, useRFStore } from './store'
 import { useFocusStore } from './focusStore'
 import { toast } from '../ui/toast'
@@ -3871,7 +3870,6 @@ function CanvasInner({
 
   return (
     <CanvasRenderContext.Provider value={canvasRenderContextValue}>
-      <DirectorCaptureRunner />
       <div className={joinClassNames('tc-canvas', className)}
         style={canvasStyle}
         data-connecting={connectingType || ''}

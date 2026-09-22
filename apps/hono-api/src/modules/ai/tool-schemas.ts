@@ -481,7 +481,7 @@ export const canvasToolSchemas = [
 	{
 		name: "add_director_console",
 		description:
-			"在当前章节画布上种一个导演台节点（directorConsole）。导演台是一个真 3D 摄影棚：在空 3D 空间里摆放骨骼人体素体（角色，支持 56 种姿势预设：坐/跪/打斗/交流/情绪等，及逐关节微调）与机位，调机位位置/注视目标/FOV，从机位 POV 截图作为 AI 出图的空间/构图参考，截图可「发送到画布」生成参考图节点。场景搭建为节点内全屏 3D 编辑器中的交互操作，本工具仅负责创建空导演台节点；如需程序化摆场景+姿势+直接出参考图，用 tapcanvas_capture_director_scene。必须使用稳定 ID 以确保重试幂等；若同 id 节点已存在则直接返回，不重复创建。",
+			"在当前章节画布上种一个导演台入口节点（directorConsole）。导演台是独立的三维预演工作台：场景、角色、道具、机位、走位、分镜板与视频导出均由画布节点打开的导演台应用管理，本工具只负责创建入口节点，不复制或推断导演台内部场景数据。必须使用稳定 ID 以确保重试幂等；若同 id 节点已存在则直接返回，不重复创建。",
 		parameters: {
 			type: "object",
 			additionalProperties: false,
@@ -931,16 +931,13 @@ export const canvasNodeSpecs = {
 	directorConsole: {
 		label: "导演台",
 		purpose:
-			"真 3D 摄影棚 blocking 节点。节点内全屏 3D 编辑器：摆放骨骼人体素体（角色，含位置/旋转/缩放/颜色/姿势）与机位（位置/注视目标可锁定角色/FOV），双视角（导演视角总览 / 机位视角 POV）切换，按画幅比例从机位 POV 截图，截图可发送到画布生成参考图节点。素体支持 56 种姿势预设（posePresetId，分基础/坐跪/行动/武戏/交流/情绪六类）与逐关节 pose 微调，应按剧情为每个角色设定姿势——缺省 T-pose 无表演信息。适用于镜头 pre-viz、构图与空间关系编排、为 AI 出图提供精确机位/构图参考。",
+			"独立三维预演工作台入口。节点只保存导演台宿主状态；打开后由同源 iframe 加载 `apps/director-desk`，导演台在自己的 IndexedDB 工程中管理场景、角色、道具、机位、动作、分镜板与视频导出。",
 		fields: {
-			scene: "DirectorScene { characters: CharacterObj[], cameras: CameraObj[], aspect, activeCameraId? }",
-			"scene.characters[]": "CharacterObj { id, name, modelId, position[3], rotation[3], scale[3], uniformScale, colorHex, posePresetId?, pose?, hidden?, locked? }",
-			"scene.characters[].posePresetId": "静态定格姿势预设 id（56 种，完整枚举见 tapcanvas_capture_director_scene 工具 schema），如 sit/kneel/punch/hug/dejected——不会动。",
-			"scene.characters[].motionClip": "动画动作预设 id（会动，开箱即用，要角色「做动作」优先用它、别手搓关键帧）：待机 idle-breathe/look-around/impatient；交流 wave-loop/nod/shake-head/bow-once/clap-loop/salute-once/cheer-loop/point-forward；武戏 punch-combo/kick-once/block-recoil/sword-draw/taichi-flow；情绪 stagger-hit/clutch-fall/flinch-loop/dejected-sink。纯位移走 motion.locomotion，与 motionClip 取舍其一。",
-			"scene.characters[].pose": "Record<joint, [x,y,z]弧度>（进阶逐关节覆盖，joint=spine|neck|shoulderL|elbowL|shoulderR|elbowR|hipL|kneeL|hipR|kneeR；与 posePresetId 同给时 pose 优先）",
-			"scene.cameras[]": "CameraObj { id, name, position[3], lookAtMode('manual'|characterId), lookAt[3], fovDeg, screenshots: CameraShot[] }",
-			activeViewpoint: "'director' | 'camera'",
-			selectedObjectId: "string (optional; 当前选中对象 id)",
+			kind: "directorConsole",
+			label: "string",
+			status: "idle | running | success | error",
+			"host bridge": "window.directorDesktop（iframe 宿主桥接）",
+			"project storage": "导演台 IndexedDB 工程",
 		},
 	},
 } as const satisfies Record<string, unknown>;

@@ -1,0 +1,7 @@
+.rig-editor { display: grid; gap: 6px; min-width: 0; }
+.rig-editor select, .rig-editor input { width: 100%; min-width: 0; height: 30px; padding: 3px 6px; }
+.rig-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; min-width: 0; }
+.rig-buttons { display: grid; grid-template-columns: 1fr 1fr auto; gap: 4px; min-width: 0; }
+.rig-buttons button { min-width: 0; padding: 4px 6px; min-height: 28px; font-size: 11px; }
+.rig-angles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.rig-angles label { display: flex; align-items: center; gap: 3px; min-width: 0; font-size: 11px; }

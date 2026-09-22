@@ -1,6 +1,6 @@
 // LLM 容错：模型（尤其是 schema 被 agents-cli defer 成无结构占位时）常把嵌套 object 参数
 // 序列化成 JSON 字符串传入（2026-06-11 实证：image_generate_to_canvas 的 node、
-// capture_director_scene 的 scene 连续 400）。对已知「期望 object/array」的顶层参数做一次
+// 旧导演台场景参数曾连续触发该问题。对已知「期望 object/array」的顶层参数做一次
 // 安全解套；解析失败或得到标量则保留原值，由下游 zod 校验给出明确报错。
 const OBJECT_LIKE_ARG_KEYS = new Set([
 	"node",

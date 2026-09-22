@@ -105,11 +105,14 @@ describe("directorConsole 暴露", () => {
     expect(names).not.toContain("capture_shot");
     expect(names).not.toContain("relight_shot");
   });
-  it("directorConsole node spec 采用 3D scene 模型", () => {
-    const fields = (canvasNodeSpecs as any).directorConsole.fields as Record<string, string>;
-    expect(fields).toHaveProperty("scene");
-    expect(fields).not.toHaveProperty("shots");
-    expect(fields).not.toHaveProperty("panoramaUrl");
+  it("directorConsole node spec 采用独立导演台入口模型", () => {
+    const fields = canvasNodeSpecs.directorConsole.fields;
+    expect(fields).toMatchObject({
+      kind: "directorConsole",
+      label: "string",
+      status: "idle | running | success | error",
+    });
+    expect(fields).not.toHaveProperty("scene");
   });
   it("add_director_console 要求 id", () => {
     const t = canvasToolSchemas.find((x) => x.name === "add_director_console")!;
@@ -137,83 +140,13 @@ describe("buildAgentsBridgeRemoteTools 远程工具广播", () => {
 		});
 	});
 
-  it("advertises tapcanvas_capture_director_scene remote tool", () => {
-    expect(remoteNames).toContain("tapcanvas_capture_director_scene");
-  });
-
-  it("tapcanvas_capture_director_scene 要求 id / requestId / scene", () => {
-    const t = remoteTools.find((x) => x.name === "tapcanvas_capture_director_scene")!;
-    const req = (t.parameters as any).required as string[];
-    expect(req).toEqual(expect.arrayContaining(["id", "requestId", "scene"]));
-  });
-
-  it("tapcanvas_capture_director_scene 角色支持 posePresetId + 逐关节 pose（姿势契约）", () => {
-    const t = remoteTools.find((x) => x.name === "tapcanvas_capture_director_scene")!;
-    const charProps = (t.parameters as any).properties.scene.properties.characters.items
-      .properties as Record<string, any>;
-    expect(charProps.posePresetId?.type).toBe("string");
-    expect(charProps.pose?.type).toBe("object");
-    // 姿势 id 中文对照表在工具 description（description 不会被 agents-cli defer 剥掉）
-    expect(t.description).toContain("kneel单膝跪");
-    expect(t.description).toContain("punch出拳");
-    // posePresetId 仍为可选：不破坏既有调用
-    const req = (t.parameters as any).properties.scene.properties.characters.items.required as string[];
-    expect(req).not.toContain("posePresetId");
-  });
-
-	it("tapcanvas_capture_director_scene 通过精确目录查询保留完整 schema", () => {
-		const t = remoteTools.find((x) => x.name === "tapcanvas_capture_director_scene")!;
-		expect(surface.catalog.some((tool) => tool.name === t.name)).toBe(true);
-		expect(surface.tools.some((tool) => tool.name === t.name)).toBe(false);
-		expect(JSON.stringify(t.parameters).length).toBeGreaterThan(0);
-  });
-
-  it("advertises tapcanvas_render_director_clip 并要求 id / requestId / scene / animation", () => {
-    const t = remoteTools.find((x) => x.name === "tapcanvas_render_director_clip")!;
-    expect(t).toBeTruthy();
-    const req = (t.parameters as any).required as string[];
-    expect(req).toEqual(expect.arrayContaining(["id", "requestId", "scene", "animation"]));
-    const animReq = (t.parameters as any).properties.animation.required as string[];
-    expect(animReq).toEqual(expect.arrayContaining(["durationSeconds", "fps"]));
-    // cameras 不再强制(可改用 cameraOrbit 环绕运镜)；cameraOrbit 为合法属性
-    expect((t.parameters as any).properties.animation.properties.cameraOrbit).toBeTruthy();
-  });
-
-	it("tapcanvas_render_director_clip 通过精确目录查询保留完整 schema", () => {
-		const t = remoteTools.find((x) => x.name === "tapcanvas_render_director_clip")!;
-		expect(surface.catalog.some((tool) => tool.name === t.name)).toBe(true);
-		expect(surface.tools.some((tool) => tool.name === t.name)).toBe(false);
-		expect(JSON.stringify(t.parameters).length).toBeGreaterThan(0);
-  });
-
-  it("tapcanvas_render_director_clip description 含 motionClip 骨骼动画词表", () => {
-    const t = remoteTools.find((x) => x.name === "tapcanvas_render_director_clip")!;
-    expect(t.description).toContain("motionClip");
-    expect(t.description).toContain("walk");
-    expect(t.description).toContain("wave");
-  });
-
-  it("advertises tapcanvas_director_define_motion 并要求 [id, motion]", () => {
-    const t = remoteTools.find((x) => x.name === "tapcanvas_director_define_motion")!;
-    expect(t).toBeTruthy();
-    const req = (t.parameters as any).required as string[];
-    expect(req).toEqual(expect.arrayContaining(["id", "motion"]));
-    const motionReq = (t.parameters as any).properties.motion.required as string[];
-    expect(motionReq).toEqual(expect.arrayContaining(["id", "name", "durationSeconds", "keyframes"]));
-  });
-
-	it("tapcanvas_director_define_motion 通过精确目录查询保留完整 schema", () => {
-		const t = remoteTools.find((x) => x.name === "tapcanvas_director_define_motion")!;
-		expect(surface.catalog.some((tool) => tool.name === t.name)).toBe(true);
-		expect(surface.tools.some((tool) => tool.name === t.name)).toBe(false);
-		expect(JSON.stringify(t.parameters).length).toBeGreaterThan(0);
-  });
-
-  it("tapcanvas_director_define_motion description 含关节词表与弧度约定", () => {
-    const t = remoteTools.find((x) => x.name === "tapcanvas_director_define_motion")!;
-    expect(t.description).toContain("shoulderL");
-    expect(t.description).toContain("elbowR");
-    expect(t.description).toContain("customMotions");
-    expect(t.description).toContain("motionClip");
+  it("advertises the DirectorDesk relay tool", () => {
+    expect(remoteNames).toContain("tapcanvas_director_desk");
+    const tool = remoteTools.find((item) => item.name === "tapcanvas_director_desk");
+    expect(tool).toBeTruthy();
+    expect(tool?.parameters).toMatchObject({ required: ["tool"] });
+    expect(JSON.stringify(tool?.parameters)).toContain("director_apply");
+    expect(tool?.description).toContain("director_read");
+    expect(surface.catalog.some((item) => item.name === "tapcanvas_director_desk")).toBe(true);
   });
 });

@@ -1,0 +1,4 @@
+#resource-recovery, #resource-recovery .field { min-width: 0; }
+#resource-recovery [hidden] { display: none; }
+#resource-recovery select, #resource-recovery input { width: 100%; min-width: 0; }
+#resource-recovery .recovery-details { width: 100%; min-width: 0; resize: none; height: 48px; margin: 4px 0; overflow-wrap: anywhere; }

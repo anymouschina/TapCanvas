@@ -33,7 +33,6 @@ import { extractCanvasGraph, type CanvasImportData, type SerializedCanvas } from
 import { normalizeStoryboardNodeData } from './nodes/taskNode/storyboardEditor'
 import { buildVideoDurationPatch, readVideoDurationSeconds } from '../utils/videoDuration'
 import { createDefaultDirectorConsoleData } from './nodes/directorConsole/types'
-import { addCharacter as dcAddCharacter, addCamera as dcAddCamera, selectObject as dcSelectObject } from './nodes/directorConsole/state/scene'
 import { shouldVirtualizeCanvas } from './canvasPerformancePolicy'
 import { prepareVirtualizedTaskNodes } from './prepareVirtualizedTaskNodes'
 import { readWorkflowCanvasPorts, workflowPortHandleId } from './workflowCanvasPorts'
@@ -61,7 +60,7 @@ type RFState = {
   onEdgesChange: OnEdgesChange
   onConnect: OnConnect
   addNode: (type: string, label?: string, extra?: Record<string, any>) => void
-  addDirectorConsoleNode: (opts?: { id?: string; panoramaUrl?: string; position?: { x: number; y: number } }) => string
+  addDirectorConsoleNode: (opts?: { id?: string; position?: { x: number; y: number } }) => string
   addNodesAsGroup: (specs: { label?: string; extra?: Record<string, any> }[], groupName?: string) => { groupId: string | null; nodeIds: string[] }
   reset: () => void
   load: (data: { nodes: Node[]; edges: Edge[] } | null) => void
@@ -2564,14 +2563,8 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
             type: 'directorConsole',
             position,
             data: (() => {
-              // 默认场景：机位1 + 角色A（对齐 liblib，打开即可取景截图）
-              let d = createDefaultDirectorConsoleData(opts?.panoramaUrl)
-              d = dcAddCharacter(d, { id: `${id}-char-a`, modelId: 'male' })
-              d = dcAddCamera(d, { id: `${id}-cam-1` })
-              d = dcSelectObject(d, undefined)
-              return d as Record<string, unknown>
+              return createDefaultDirectorConsoleData() as Record<string, unknown>
             })(),
-            style: { width: 320 },
           }),
         ],
         pendingFocusNodeId: id,

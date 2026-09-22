@@ -1,0 +1,2 @@
+#surface-report { flex: 1; width: 100%; min-height: 70px; resize: none; white-space: pre-wrap; overflow-wrap: anywhere; background: #181818; color: #dedede; border: 1px solid #555; border-radius: 5px; padding: 12px; font: 12px/1.65 ui-monospace, Consolas, monospace; }
+#surface-summary { margin: 0; font-size: 12px; color: #bdbdbd; }

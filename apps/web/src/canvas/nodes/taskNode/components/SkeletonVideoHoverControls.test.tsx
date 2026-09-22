@@ -15,7 +15,7 @@ vi.mock('../../../../utils/videoFrameExtractor', () => ({
   captureFramesAtTimes: mocks.captureFramesAtTimes,
 }))
 
-vi.mock('../../directorConsole/uploadCanvasImageBlob', () => ({
+vi.mock('../../shared/uploadCanvasImageBlob', () => ({
   uploadCanvasImageBlob: mocks.uploadCanvasImageBlob,
 }))
 

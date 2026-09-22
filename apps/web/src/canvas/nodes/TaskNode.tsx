@@ -200,7 +200,7 @@ import {
   buildRetainedVideoSurfaceKey,
   readRetainedVideoPlaybackSnapshot,
 } from './taskNode/components/retainedVideoSurface'
-import { uploadCanvasImageBlob } from './directorConsole/uploadCanvasImageBlob'
+import { uploadCanvasImageBlob } from './shared/uploadCanvasImageBlob'
 import { useTaskNodeTheme } from './taskNode/useTaskNodeTheme'
 import { renderFeatureBlocks } from './taskNode/featureRenderers'
 import type { ShotTableAssetReference } from './taskNode/shotTable/ShotTableAssetPicker'

@@ -1,0 +1,3 @@
+#floor-editor .floor-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+#floor-editor .floor-actions button { height: auto; min-height: 32px; }
+#floor-editor .panel-help { margin: 4px 0 0; font-size: 11px; line-height: 1.45; }

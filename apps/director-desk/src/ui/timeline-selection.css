@@ -1,0 +1,7 @@
+.timeline-tracks{position:relative}
+.timeline-selection-range{position:absolute;top:0;bottom:0;background:#b9cce21c;border-inline:1px solid #afc4df;pointer-events:none;z-index:7;color:#eff5ff;font-size:10px;white-space:nowrap;padding-top:2px;overflow:hidden}
+.timeline-clip.clip-selected{outline:2px solid #d0e5ff;outline-offset:-2px;box-shadow:inset 0 0 0 2px #748aa544}
+[data-select].multi-selected{background:#344153;color:#fff}
+.ai-scope-row{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:#b8c6d8}
+.ai-scope-row span{flex:1;min-width:0;overflow-wrap:anywhere}
+.ai-scope-row button{flex:none;font-size:11px;padding:4px 7px}

@@ -1,0 +1,11 @@
+#update-panel{width:480px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);background:#181818;color:#eee;border:1px solid #444;border-radius:8px;padding:20px}
+#update-toggle{position:relative}#update-toggle.has-update::after{content:'';position:absolute;width:7px;height:7px;border-radius:50%;background:#f34b53;right:3px;top:3px;box-shadow:0 0 0 2px #191919}
+#update-panel::backdrop{background:#0008}#update-panel header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+#update-panel header button{width:30px}#update-panel p{font-size:12px;color:#aaa;line-height:1.5;margin:10px 0}
+#update-panel textarea{display:block;width:100%;resize:none;background:#111;color:#ddd;border:1px solid #333;padding:8px;line-height:1.5;font-size:12px}
+#update-message{height:56px}#update-notes{height:110px}#update-progress{width:100%;height:5px;margin:12px 0;accent-color:#ddd}
+.update-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}
+#update-panel button{min-width:0;min-height:32px;padding:5px 8px}#update-page{width:100%}
+#update-panel details{margin-top:14px;font-size:12px}#update-panel summary{cursor:pointer}#update-panel label{display:block;margin:10px 0}
+#update-panel input[type=url],#update-panel select{display:block;width:100%;min-width:0;margin-top:5px;height:32px}#update-panel .update-auto{display:flex;align-items:center;gap:6px}
+@media(max-height:700px){#update-panel{padding:12px}#update-panel header{margin-bottom:6px}#update-panel p,#update-panel label{margin:6px 0}#update-notes{height:60px}#update-panel details{margin-top:8px}#update-progress{margin:6px 0}.update-actions{margin:8px 0}}

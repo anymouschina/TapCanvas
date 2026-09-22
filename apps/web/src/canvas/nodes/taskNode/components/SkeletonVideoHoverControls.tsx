@@ -1,6 +1,6 @@
 import React from 'react'
 import { useRFStore } from '../../../store'
-import { uploadCanvasImageBlob } from '../../directorConsole/uploadCanvasImageBlob'
+import { uploadCanvasImageBlob } from '../../shared/uploadCanvasImageBlob'
 import { toast } from '../../../../ui/toast'
 import { captureFramesAtTimes } from '../../../../utils/videoFrameExtractor'
 

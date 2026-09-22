@@ -37,6 +37,7 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 
 默认展示最新 10 条，较早记录展开查看。
 
+- **2026-09-23 · 导演台升级**：同步 TapCanvasPro 的独立导演台，基于 [DirectorDesk](https://github.com/mangfufu/director-desk) 提供三维场景搭建、角色走位与摄影机预演；接入 TapCanvas AI 对话、工具中继和参考视频导出回画布，替换旧内嵌实现，并补充 MIT 许可鸣谢。Web 开发和构建会自动构建导演台，本地首次使用需安装其独立依赖。
 - **2026-09-21 · Agent 配置更新**：已添加工作流支持一键“更新并覆盖”，检查通过后直接更新当前装配，无需再次逐项确认；沿用原作用范围与已确认的替换、并列关系，保留历史版本、执行记录和生成资产。
 - **2026-09-21 · 冲突判定修正**：工作流共用工具或输出格式仅展示为提示，不再直接要求二选一；职责冲突仍由 Agent 分析，阻断错误与版本竞态明确报出。
 - **2026-09-21 · 配置列表修复**：补齐工作流更新时间与首次装载时间的前后端契约，修复 Agent 配置列表因缺少时间字段而加载失败的问题；配置更新相关前后端测试共 94 项通过。
@@ -46,11 +47,11 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 - **2026-09-11**：扩展 HeyRoute 渠道与模型配置，补充文本、图片和视频的渠道独立计价。
 - **2026-09-10**：接入 HeyRoute 渠道，新增推广注册链接与 API Key 申请入口。
 - **2026-09-08**：更新一键成片相关实现与配套技能。
-- **2026-09-06**：恢复 Agent 运行结果预览。
 
 <details>
-<summary>更早更新记录（3 条）</summary>
+<summary>更早更新记录（4 条）</summary>
 
+- **2026-09-06**：恢复 Agent 运行结果预览。
 - **2026-09-05**：接入 Agnes 图片与视频渠道，完善模型参数契约和 GPT Image 2 请求校验，修复视频时长范围计价与参考图免费额度计算。
 - **2026-09-04**：按官方接口契约修正 Agnes 视频生成请求格式。
 - **2026-09-03**：完善 Docker 部署与依赖构建，支持容器内构建 Web 和模型管理台，并自动初始化本地配置与密钥。
@@ -102,6 +103,7 @@ cd TapCanvas
 ```bash
 corepack enable
 pnpm -w install --frozen-lockfile
+npm --prefix apps/director-desk ci
 pnpm dev:web
 ```
 
@@ -142,6 +144,7 @@ TapCanvas 根项目及未另行声明的代码按 [MIT License](./LICENSE) 发�
 | 项目                                                                              | 在本仓库中的职责                                          |
 | --------------------------------------------------------------------------------- | --------------------------------------------------------- |
 | [new-api](https://github.com/QuantumNous/new-api)（上游为 [One API](https://github.com/songquanpeng/one-api)） | `apps/new-api` 模型网关的来源实现，负责渠道接入、计量与模型下发 |
+| [DirectorDesk](https://github.com/mangfufu/director-desk)                        | `apps/director-desk` 导演台的三维预演、场景搭建、走位与摄影机工具；本目录按 MIT 许可集成 |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)                | `apps/agents-cli` Bridge 的官方运行时、主代理循环与工具能力 |
 | [React Flow](https://github.com/xyflow/xyflow)（`@xyflow/react`）                    | 无限画布的节点、端口与连线内核                            |
 | [Mantine](https://github.com/mantinedev/mantine)                                   | Web 端 UI 组件与主题                                      |

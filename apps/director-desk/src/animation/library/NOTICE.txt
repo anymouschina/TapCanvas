@@ -1,0 +1,11 @@
+DirectorDesk built-in humanoid motion library v1
+
+Source motion and mannequin: Quaternius Universal Animation Library, Standard collection.
+License: CC0-1.0 (public-domain dedication).
+Source: https://quaternius.com/packs/universalanimationlibrary.html
+License: https://creativecommons.org/publicdomain/zero/1.0/
+
+This distribution contains a curated derivative with ten selected motions, white
+materials, renamed anatomical nodes and only the required numeric buffers.
+Unused motions, texture coordinates and unrelated metadata have been removed.
+The original source archive, development fixtures and private projects are not included.

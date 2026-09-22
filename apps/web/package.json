@@ -3,7 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
+    "build:director-desk": "node ./scripts/build-director-desk.mjs",
+    "predev": "node ./scripts/build-director-desk.mjs",
     "dev": "vite",
+    "prebuild": "node ./scripts/build-director-desk.mjs",
     "build": "vite build --mode production",
     "preview": "vite preview",
     "smoke:project-chapter-ui": "node ./scripts/project-chapter-ui-smoke.mjs",

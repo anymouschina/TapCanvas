@@ -50,3 +50,8 @@ helloagents
 project-data
 
 cert
+
+# 导演台 vendored app 的本地依赖、构建产物与下载型测试夹具
+/apps/director-desk/test-assets/
+/apps/director-desk/.audit/
+/apps/web/public/director-desk/

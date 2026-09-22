@@ -151,7 +151,7 @@ describe("deterministic agents bridge remote tool surface", () => {
 		const oneClickVideo = capabilities.find((item) => item.key === "one_click_video");
 		const workflowExecution = capabilities.find((item) => item.key === "workflow_execution");
 
-		expect(capabilities).toHaveLength(16);
+	expect(capabilities).toHaveLength(15);
 		expect(paidMedia).toMatchObject({
 			id: "builtin:paid_media_generation",
 			name: "真实媒体生成",
@@ -212,7 +212,7 @@ describe("deterministic agents bridge remote tool surface", () => {
 		expect(surface.explicitCapabilityTools.map((tool) => tool.name)).toEqual([
 			"tapcanvas_shot_table_critic",
 		]);
-		expect(surface.before.visibleToolCount).toBe(38);
+		expect(surface.before.visibleToolCount).toBe(34);
 		expect(surface.after.visibleToolCount).toBe(0);
 		expect(surface.catalogIndexMeasurement).toEqual({
 			visibleToolCount: 0,
@@ -406,7 +406,6 @@ describe("deterministic agents bridge remote tool surface", () => {
 			"canvas_extended",
 			"node_diagnostics",
 			"media_analysis",
-			"director_console",
 		]) {
 			expect(catalogCapabilities).not.toContain(unavailableCapability);
 		}
@@ -574,19 +573,19 @@ describe("deterministic agents bridge remote tool surface", () => {
 			},
 		}).toEqual({
 			projectOnly: {
-				before: { visibleToolCount: 68, descriptionChars: 29168, schemaChars: 87329 },
+				before: { visibleToolCount: 64, descriptionChars: 33550, schemaChars: 81725 },
 				after: { visibleToolCount: 9, descriptionChars: 2437, schemaChars: 2337 },
 				catalog: { visibleToolCount: 6, descriptionChars: 1951, schemaChars: 1432 },
 			},
 			flowWithoutBook: {
-				before: { visibleToolCount: 68, descriptionChars: 29168, schemaChars: 87329 },
+				before: { visibleToolCount: 64, descriptionChars: 33550, schemaChars: 81725 },
 				after: { visibleToolCount: 18, descriptionChars: 5140, schemaChars: 12209 },
-				catalog: { visibleToolCount: 32, descriptionChars: 18449, schemaChars: 56427 },
+				catalog: { visibleToolCount: 28, descriptionChars: 22831, schemaChars: 50823 },
 			},
 			bookFlow: {
-				before: { visibleToolCount: 68, descriptionChars: 29168, schemaChars: 87329 },
+				before: { visibleToolCount: 64, descriptionChars: 33550, schemaChars: 81725 },
 				after: { visibleToolCount: 23, descriptionChars: 6558, schemaChars: 15008 },
-				catalog: { visibleToolCount: 38, descriptionChars: 20018, schemaChars: 65332 },
+				catalog: { visibleToolCount: 34, descriptionChars: 24400, schemaChars: 59728 },
 			},
 		});
 	});
@@ -632,10 +631,10 @@ describe("deterministic agents bridge remote tool surface", () => {
 				},
 			},
 			flowWithoutBook: {
-				visibleToolCount: 32,
-				nameChars: 963,
-				enumJsonChars: 1060,
-				duplicatedWrapperEnumChars: 2120,
+				visibleToolCount: 28,
+				nameChars: 822,
+				enumJsonChars: 907,
+				duplicatedWrapperEnumChars: 1814,
 				capabilityCounts: {
 					material_persistence: 5,
 					material_read: 2,
@@ -643,14 +642,13 @@ describe("deterministic agents bridge remote tool surface", () => {
 					canvas_extended: 6,
 					paid_media_generation: 8,
 					media_analysis: 6,
-					director_console: 4,
 				},
 			},
 			bookFlow: {
-				visibleToolCount: 38,
-				nameChars: 1161,
-				enumJsonChars: 1276,
-				duplicatedWrapperEnumChars: 2552,
+				visibleToolCount: 34,
+				nameChars: 1020,
+				enumJsonChars: 1123,
+				duplicatedWrapperEnumChars: 2246,
 				capabilityCounts: {
 					book_persistence: 5,
 					book_read: 1,
@@ -660,7 +658,6 @@ describe("deterministic agents bridge remote tool surface", () => {
 					canvas_extended: 6,
 					paid_media_generation: 8,
 					media_analysis: 6,
-					director_console: 4,
 				},
 			},
 		});
@@ -694,14 +691,14 @@ describe("deterministic agents bridge remote tool surface", () => {
 		expect(weighted.slice(0, 10)).toEqual([
 			{ name: "tapcanvas_image_generate_to_canvas", descriptionChars: 2428, schemaChars: 34924, totalChars: 37352 },
 			{ name: "tapcanvas_flow_patch", descriptionChars: 646, schemaChars: 9591, totalChars: 10237 },
+			{ name: "tapcanvas_director_desk", descriptionChars: 9436, schemaChars: 531, totalChars: 9967 },
 			{ name: "tapcanvas_story_facts_commit", descriptionChars: 368, schemaChars: 6471, totalChars: 6839 },
 			{ name: "tapcanvas_render_blocking_diagram", descriptionChars: 1280, schemaChars: 4144, totalChars: 5424 },
 			{ name: "tapcanvas_story_preview_orchestrate", descriptionChars: 1052, schemaChars: 3902, totalChars: 4954 },
-			{ name: "tapcanvas_render_director_clip", descriptionChars: 2482, schemaChars: 1739, totalChars: 4221 },
 			{ name: "tapcanvas_shot_table_critic", descriptionChars: 310, schemaChars: 3846, totalChars: 4156 },
 			{ name: "tapcanvas_video_generate_to_canvas", descriptionChars: 883, schemaChars: 3218, totalChars: 4101 },
 			{ name: "tapcanvas_project_chapter_update", descriptionChars: 1055, schemaChars: 2270, totalChars: 3325 },
-			{ name: "tapcanvas_capture_director_scene", descriptionChars: 1296, schemaChars: 1970, totalChars: 3266 },
+			{ name: "tapcanvas_asset_add_to_canvas", descriptionChars: 514, schemaChars: 1752, totalChars: 2266 },
 		]);
 		expect(weighted.find((tool) => tool.name === "tapcanvas_flow_patch")).toEqual({
 			name: "tapcanvas_flow_patch",

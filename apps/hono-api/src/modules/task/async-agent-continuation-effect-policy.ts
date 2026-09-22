@@ -14,8 +14,6 @@ export const ASYNC_DEPENDENCY_REPLAY_DENIED_REMOTE_TOOLS = [
 	"tapcanvas_image_generate_to_canvas",
 	"tapcanvas_video_generate_to_canvas",
 	"tapcanvas_voice_card_dub",
-	"tapcanvas_capture_director_scene",
-	"tapcanvas_render_director_clip",
 	"tapcanvas_hyperframes_render",
 	"tapcanvas_workflow_run",
 	"tapcanvas_equipped_workflow_run",

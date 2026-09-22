@@ -182,9 +182,13 @@ import { resolveModelMediaOptions } from "./video-orchestrator.model-duration";
 import { loadPublicChatEnabledModelCatalogSummary } from "../model-catalog/model-catalog.public-chat-summary";
 import { buildAgentImageExecutionCatalog } from "./agents-tool-bridge.model-execution-catalog";
 import { splitMasterStoryboardForAgent } from "./agents-tool-bridge.master-storyboard-split";
-import { captureDirectorScene, defineDirectorMotion, setDirectorCharacterMotion } from "./agents-tool-bridge.capture-director-scene";
-import { getTaskResultByTaskId, tryClaimTaskResult, upsertTaskResult } from "./task-result.repo";
-import { readResultJson, buildResultJson } from "./director-capture.shared";
+import {
+	DIRECTOR_DESK_RELAY_TOOL_NAME,
+	claimDirectorDeskCall,
+	listPendingDirectorDeskCalls,
+	relayDirectorDeskTool,
+	reportDirectorDeskCall,
+} from "./director-desk-relay";
 import {
 	WorkflowExecutionFamilySchema,
 	WorkflowExecutionEventSchema,
@@ -345,10 +349,7 @@ export const AgentsToolExecuteRequestSchema = z.object({
     "tapcanvas_video_compare",
     "tapcanvas_fetch_video_from_url",
     "tapcanvas_shot_table_critic",
-    "tapcanvas_capture_director_scene",
-    "tapcanvas_render_director_clip",
-    "tapcanvas_director_define_motion",
-    "tapcanvas_director_set_character_motion",
+    DIRECTOR_DESK_RELAY_TOOL_NAME,
     "tapcanvas_master_storyboard_split",
     "tapcanvas_tool_catalog_get",
     "tapcanvas_tool_schema_get",
@@ -2360,10 +2361,6 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
       body.toolName === "tapcanvas_workflow_execution_inspect" ||
 	  body.toolName === "tapcanvas_workflow_resume" ||
       body.toolName === "tapcanvas_workflow_run" ||
-      body.toolName === "tapcanvas_capture_director_scene" ||
-      body.toolName === "tapcanvas_render_director_clip" ||
-      body.toolName === "tapcanvas_director_define_motion" ||
-      body.toolName === "tapcanvas_director_set_character_motion" ||
       body.toolName === "tapcanvas_master_storyboard_split";
     // A flow-scoped tool must read and write one flow truth. In a chapter
     // session that truth is chapters.canvas_flow, including read-only vision
@@ -5130,15 +5127,13 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
       );
     }
 
-    if (body.toolName === "tapcanvas_capture_director_scene") {
-      const generated = await captureDirectorScene({
-        c: c as never,
-        requestUserId,
-        devBypass,
-        flowId,
-        row,
-        bodyArgs: body.args,
-        ...(chapterCanvasId ? { chapterId: chapterCanvasId } : {}),
+    if (body.toolName === DIRECTOR_DESK_RELAY_TOOL_NAME) {
+      const generated = await relayDirectorDeskTool({
+        db: c.env.DB,
+        userId: requestUserId,
+        args: body.args,
+        nodeId: readTrimmedString(body.canvasNodeId) || null,
+        nowIso: new Date().toISOString(),
       });
       return c.json(
         AgentsToolExecuteResponseSchema.parse({
@@ -5148,54 +5143,6 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
         }),
       );
     }
-
-    if (body.toolName === "tapcanvas_render_director_clip") {
-      // clip 模式复用 captureDirectorScene：合入 mode:'clip'，浏览器离屏渲灰模动画 mp4 样片，
-      // 后端据 report 的 videoUrl 建带 sourceVideoUrl 的 video 节点（seedance v2v 入口）。
-      const generated = await captureDirectorScene({
-        c: c as never,
-        requestUserId,
-        devBypass,
-        flowId,
-        row,
-        bodyArgs: { ...(body.args as Record<string, unknown>), mode: "clip" },
-        ...(chapterCanvasId ? { chapterId: chapterCanvasId } : {}),
-      });
-      return c.json(
-        AgentsToolExecuteResponseSchema.parse({
-          ok: true,
-          content: stringifyAgentVisibleToolResult(generated),
-          data: generated as unknown as Record<string, unknown>,
-        }),
-      );
-    }
-
-    if (body.toolName === "tapcanvas_director_define_motion") {
-      const generated = await defineDirectorMotion({
-        c: c as never,
-        requestUserId,
-        devBypass,
-        flowId,
-        row,
-        bodyArgs: body.args,
-        ...(chapterCanvasId ? { chapterId: chapterCanvasId } : {}),
-      });
-      return c.json(AgentsToolExecuteResponseSchema.parse({ ok: true, content: stringifyAgentVisibleToolResult(generated), data: generated as unknown as Record<string, unknown> }));
-    }
-
-    if (body.toolName === "tapcanvas_director_set_character_motion") {
-      const generated = await setDirectorCharacterMotion({
-        c: c as never,
-        requestUserId,
-        devBypass,
-        flowId,
-        row,
-        bodyArgs: body.args,
-        ...(chapterCanvasId ? { chapterId: chapterCanvasId } : {}),
-      });
-      return c.json(AgentsToolExecuteResponseSchema.parse({ ok: true, content: stringifyAgentVisibleToolResult(generated), data: generated as unknown as Record<string, unknown> }));
-    }
-
     if (body.toolName === "tapcanvas_video_generate_to_canvas") {
 	  const publicTurnId = readTrimmedString(body.publicTurnId);
       const generated = await generateVideoToCanvas({
@@ -5901,74 +5848,40 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
     );
   });
 
-  publicApiRouter.post("/director-capture/claim", async (c) => {
+  publicApiRouter.post("/director-desk/tool-claim", async (c) => {
     const userId = requireUserId(c);
-    const body = (await c.req.json().catch(() => ({}))) as { captureId?: string };
-    const captureId = String(body.captureId ?? "").trim();
-    if (!captureId) return c.json({ ok: false, code: "bad_request" }, 400);
-    const row = await getTaskResultByTaskId(c.env.DB, userId, captureId);
-    if (!row || row.vendor !== "browser-director-capture") return c.json({ ok: false, code: "not_found" }, 404);
-    if (row.status !== "queued") return c.json({ ok: false, code: "already_claimed" }, 409);
-    const prev = readResultJson(row.result);
-    const leaseToken = crypto.randomUUID();
-    const nowIso = new Date().toISOString();
-    const won = await tryClaimTaskResult(c.env.DB, {
-      userId,
-      taskId: captureId,
-      nowIso,
-      result: JSON.parse(buildResultJson({ ...prev, phase: "claimed", leaseToken, leaseOwner: userId })),
-    });
-    if (!won) return c.json({ ok: false, code: "already_claimed" }, 409);
-    return c.json({ ok: true, leaseToken, scene: prev.scene });
+    const body = (await c.req.json().catch(() => ({}))) as { callId?: string };
+    const callId = String(body.callId ?? "").trim();
+    if (callId) {
+      const claimed = await claimDirectorDeskCall(c.env.DB, { userId, callId, nowIso: new Date().toISOString() });
+      return c.json(claimed.ok
+        ? { ok: true, call: { callId, tool: claimed.tool, arguments: claimed.arguments }, leaseToken: claimed.leaseToken }
+        : { ok: false, code: "already_claimed" });
+    }
+    return c.json({ ok: true, pending: await listPendingDirectorDeskCalls(c.env.DB, userId) });
   });
 
-  publicApiRouter.post("/director-capture/report", async (c) => {
+  publicApiRouter.post("/director-desk/tool-report", async (c) => {
     const userId = requireUserId(c);
     const body = (await c.req.json().catch(() => ({}))) as {
-      captureId?: string;
+      callId?: string;
       leaseToken?: string;
-      status?: string;
-      imageUrl?: string;
-      videoUrl?: string;
-      assetId?: string;
+      ok?: boolean;
+      data?: unknown;
       error?: string;
     };
-    const captureId = String(body.captureId ?? "").trim();
+    const callId = String(body.callId ?? "").trim();
     const leaseToken = String(body.leaseToken ?? "").trim();
-    if (!captureId || !leaseToken) return c.json({ ok: false, code: "bad_request" }, 400);
-    const row = await getTaskResultByTaskId(c.env.DB, userId, captureId);
-    if (!row || row.vendor !== "browser-director-capture") return c.json({ ok: false, code: "not_found" }, 404);
-    const prev = readResultJson(row.result);
-    if (row.status !== "claimed" || prev.leaseToken !== leaseToken || prev.leaseOwner !== userId) {
-      return c.json({ ok: false, code: "lease_invalid" }, 409);
-    }
-    const hasImageUrl = !!String(body.imageUrl ?? "").trim();
-    const hasVideoUrl = !!String(body.videoUrl ?? "").trim();
-    const hasAssetId = !!String(body.assetId ?? "").trim();
-    // image 模式：imageUrl + assetId；clip 模式：videoUrl + assetId（assetId 仍需上报）
-    const ok = body.status === "succeeded" && (hasImageUrl || hasVideoUrl) && hasAssetId;
-    const nowIso = new Date().toISOString();
-    await upsertTaskResult(c.env.DB, {
+    if (!callId || !leaseToken) return c.json({ ok: false, code: "bad_request" }, 400);
+    const reported = await reportDirectorDeskCall(c.env.DB, {
       userId,
-      taskId: captureId,
-      vendor: "browser-director-capture",
-      kind: "image_edit",
-      status: ok ? "succeeded" : "failed",
-      completedAt: nowIso,
-      chapterId: row.chapter_id,
-      nodeId: row.node_id,
-      nowIso,
-      result: JSON.parse(buildResultJson({
-        ...prev,
-        phase: ok ? "succeeded" : "failed",
-        ...(ok
-          ? {
-              assets: [{ type: "image" as const, url: hasImageUrl ? String(body.imageUrl) : String(body.videoUrl), assetId: String(body.assetId) }],
-              ...(hasVideoUrl ? { videoUrl: String(body.videoUrl) } : {}),
-            }
-          : { error: String(body.error ?? "render_failed") }),
-      })),
+      callId,
+      leaseToken,
+      ok: body.ok === true,
+      data: body.data,
+      error: body.error,
+      nowIso: new Date().toISOString(),
     });
-    return c.json({ ok: true });
+    return c.json(reported.ok ? { ok: true } : { ok: false, code: reported.code ?? "report_failed" }, reported.ok ? 200 : 409);
   });
 }

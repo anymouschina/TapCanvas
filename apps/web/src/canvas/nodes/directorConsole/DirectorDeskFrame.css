@@ -1,0 +1,66 @@
+/* 导演台全屏承载层：只保留一条极简控制条，其余交给导演台自身的界面。 */
+
+.tc-director-desk {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas-surface-bg, #0a0b0d);
+  color: var(--canvas-node-text, #ededef);
+}
+
+.tc-director-desk__bar {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--canvas-node-border, rgba(232, 232, 236, 0.08));
+  background: var(--canvas-node-header-bg, rgba(16, 16, 18, 0.96));
+}
+
+.tc-director-desk__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tc-director-desk__iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.tc-director-desk__state {
+  position: absolute;
+  inset: 0;
+  background: var(--canvas-surface-bg, #0a0b0d);
+}
+
+.tc-director-desk__state-text {
+  color: var(--canvas-node-subtext, #aaabae);
+}
+
+.tc-director-desk__state--error {
+  padding: 24px;
+  background: transparent;
+}
+
+.tc-director-desk__alert {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.tc-director-desk__alert code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--canvas-node-chip-bg, rgba(255, 255, 255, 0.06));
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-director-desk__bar,
+  .tc-director-desk__close {
+    transition: none;
+  }
+}

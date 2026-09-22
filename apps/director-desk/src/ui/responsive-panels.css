@@ -1,0 +1,40 @@
+/* Layout follows the panel width, including user-resized panels. */
+.sidebar,.inspector{min-width:0;container-type:inline-size}
+#inspector-content,#sidebar-content{overflow-x:hidden;overflow-y:auto}
+#inspector-content>*,#sidebar-content>*,.field-pair>*,.triple>*,.waypoint>*,.button-row>*,.inspect-title>*{min-width:0;max-width:100%}
+.field-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
+.triple{grid-template-columns:repeat(3,minmax(0,1fr))}
+.button-row{flex-wrap:wrap}
+.button-row>button{flex:1 1 auto}
+.inspector button,.sidebar button,.modal-body button{white-space:normal;overflow-wrap:anywhere}
+.inspector p,.sidebar p,.section-label,.inspect-subtitle{overflow-wrap:anywhere}
+.waypoint{grid-template-columns:24px minmax(0,1fr) 22px;gap:6px;padding:10px 8px}
+.point-time{grid-column:2;grid-row:1;flex-wrap:wrap}
+.point-coords{grid-column:1/-1;grid-row:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:3px}
+.point-coords label{display:grid;grid-template-columns:1fr;gap:4px;font-size:10px;min-width:0}
+.point-coords input{width:100%!important;min-width:0;height:30px;padding:5px;font:11px Consolas,monospace;background:#242424}
+.point-time input{max-width:100%}
+.side-tabs{gap:clamp(8px,5cqw,20px);padding-inline:12px}
+.side-bottom{padding-inline:10px}
+.asset-card{height:auto;min-height:100px}
+.view-toolbar{height:auto;min-height:47px;flex-wrap:wrap;padding-block:5px}
+.tools{flex-wrap:wrap}
+.view-modes{flex-shrink:0}
+.monitor-strip{height:auto;min-height:43px;flex-wrap:wrap;padding-block:6px}
+#camera-buttons{flex-wrap:wrap;overflow:visible;min-width:0}
+.monitor-actions{flex-wrap:wrap;min-width:0}
+.panel-topline{height:auto;min-height:33px;flex-wrap:wrap;gap:4px;padding-block:5px}
+.panel-topline>span{min-width:0;overflow-wrap:anywhere}
+.panel-topline b{overflow-wrap:anywhere}
+@container (max-width:280px){
+    .action-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    #inspector-tabs{gap:12px;padding-inline:10px;flex-wrap:wrap}
+    #inspector-footer .button-row>button{flex-basis:auto}
+}
+
+.position-key-marker{position:absolute;top:0;bottom:0;min-height:0;width:16px;padding:0;transform:translateX(-2px);font-size:12px;color:#eee;background:transparent;border:0;z-index:6}
+.asset-parameter-editor{display:grid;gap:8px;min-width:0}
+.asset-parameter-editor select,.asset-parameter-editor input{width:100%;min-width:0;height:32px}
+.parameter-value-row{display:grid;grid-template-columns:minmax(0,1fr) 32px;gap:6px}
+.parameter-value-row button{padding:0;min-width:0}
+.parameter-hint{font-size:10px;color:#999;margin:0;line-height:1.4}

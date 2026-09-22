@@ -106,7 +106,7 @@ function getActiveTeamId(): string | null {
   try { return localStorage.getItem('tapcanvas_active_team_id') } catch { return null }
 }
 
-function withAuth(init?: RequestInit, teamIdOverride?: string | null): RequestInit {
+export function withAuth(init?: RequestInit, teamIdOverride?: string | null): RequestInit {
   // When a caller explicitly targets a team (e.g. getMyTeam('personal')), align the
   // X-Team-Id header with that target. Otherwise the stale active-team header would win
   // over the ?teamId= query on the backend (header takes priority), making it impossible
@@ -210,7 +210,7 @@ type ApiRequestError = Error & {
   progress?: unknown
 }
 
-async function throwApiError(r: Response, fallbackMessage: string): Promise<never> {
+export async function throwApiError(r: Response, fallbackMessage: string): Promise<never> {
   let msg = fallbackMessage
   let body: unknown = null
   try {
@@ -11558,33 +11558,3 @@ export async function updateMyCommunityProfile(payload: {
 }
 
 // ---------------------------------------------------------------------------
-// Director-capture polling bridge (browser-side renderer → agents-cli)
-// ---------------------------------------------------------------------------
-
-export async function claimDirectorCapture(captureId: string): Promise<{ ok: boolean; leaseToken?: string; scene?: unknown; code?: string }> {
-  const r = await apiFetch(`${API_BASE}/public/director-capture/claim`, withAuth({
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ captureId }),
-  }))
-  // 409 = already_claimed (another tab won the race); return body, do not throw
-  if (!r.ok && r.status !== 409) await throwApiError(r, 'claim director capture failed')
-  return r.json()
-}
-
-export async function reportDirectorCapture(input: {
-  captureId: string
-  leaseToken: string
-  status: 'succeeded' | 'failed'
-  imageUrl?: string
-  videoUrl?: string
-  assetId?: string
-  error?: string
-}): Promise<void> {
-  const r = await apiFetch(`${API_BASE}/public/director-capture/report`, withAuth({
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  }))
-  if (!r.ok) await throwApiError(r, 'report director capture failed')
-}

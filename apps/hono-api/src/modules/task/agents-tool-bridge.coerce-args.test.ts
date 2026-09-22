@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { coerceStringifiedObjectArgs } from "./agents-tool-bridge.coerce-args";
 
 // LLM 常把嵌套 object 参数序列化成 JSON 字符串（schema 被 defer 后尤甚），
-// 2026-06-11 实证：image_generate_to_canvas 的 node、capture_director_scene 的 scene 连续 400。
+// 2026-06-11 实证：image_generate_to_canvas 的 node、导演台嵌套参数连续 400。
 describe("coerceStringifiedObjectArgs", () => {
 	it("把 JSON 字符串形态的 node/scene 解套成 object", () => {
 		const args = coerceStringifiedObjectArgs({
@@ -36,11 +36,8 @@ describe("coerceStringifiedObjectArgs", () => {
 		expect(args.node).toBe(node);
 	});
 
-	it("capture_director_scene: animation 作为对象时顶层透传不破坏嵌套数组", () => {
+	it("嵌套 animation 作为对象时顶层透传不破坏嵌套数组", () => {
 		const args = {
-			id: "n1",
-			requestId: "r1",
-			mode: "clip",
 			animation: {
 				durationSeconds: 4,
 				fps: 24,
@@ -57,8 +54,14 @@ describe("coerceStringifiedObjectArgs", () => {
 				},
 			},
 		};
-		const out = coerceStringifiedObjectArgs(args) as any;
-		const wp = out.animation.characters.hero.motion.locomotion.path.waypoints;
+		const out = coerceStringifiedObjectArgs(args);
+		const animation = out.animation as Record<string, unknown>;
+		const characters = animation.characters as Record<string, unknown>;
+		const hero = characters.hero as Record<string, unknown>;
+		const motion = (hero.motion as Record<string, unknown>);
+		const locomotion = motion.locomotion as Record<string, unknown>;
+		const path = locomotion.path as Record<string, unknown>;
+		const wp = path.waypoints as unknown[];
 		expect(Array.isArray(wp)).toBe(true);
 		expect(Array.isArray(wp[0])).toBe(true);
 		expect(wp[0]).toEqual([0, 0]);

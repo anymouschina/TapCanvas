@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "resourceId": "model-77d40145d15514e5613ea58a3730967ea21d8cac7bb66131c3f4016688417bd9",
+  "sha256": "157fa9ab2f70d938621fcd8299db77fabf570f43d2cc8415f2ecedac51dc276b",
+  "bytes": 2099704,
+  "rig": {
+    "version": 1,
+    "family": "humanoid",
+    "bones": {
+      "hips": "0/0/1/0",
+      "spine": "0/0/1/0/0",
+      "chest": "0/0/1/0/0/0",
+      "upperChest": "0/0/1/0/0/0/0",
+      "neck": "0/0/1/0/0/0/0/0",
+      "head": "0/0/1/0/0/0/0/0/0",
+      "leftShoulder": "0/0/1/0/0/0/0/1",
+      "leftUpperArm": "0/0/1/0/0/0/0/1/0",
+      "leftLowerArm": "0/0/1/0/0/0/0/1/0/0",
+      "leftHand": "0/0/1/0/0/0/0/1/0/0/0",
+      "rightShoulder": "0/0/1/0/0/0/0/2",
+      "rightUpperArm": "0/0/1/0/0/0/0/2/0",
+      "rightLowerArm": "0/0/1/0/0/0/0/2/0/0",
+      "rightHand": "0/0/1/0/0/0/0/2/0/0/0",
+      "leftUpperLeg": "0/0/1/0/1",
+      "leftLowerLeg": "0/0/1/0/1/0",
+      "leftFoot": "0/0/1/0/1/0/0",
+      "leftToes": "0/0/1/0/1/0/0/0",
+      "rightUpperLeg": "0/0/1/0/2",
+      "rightLowerLeg": "0/0/1/0/2/0",
+      "rightFoot": "0/0/1/0/2/0/0",
+      "rightToes": "0/0/1/0/2/0/0/0"
+    }
+  },
+  "presets": [
+    {
+      "id": "human-idle-v1",
+      "name": "站立待机",
+      "sourceClip": "Idle_Loop",
+      "index": 0,
+      "duration": 2.5,
+      "loop": true,
+      "defaultDuration": 4,
+      "group": "站立"
+    },
+    {
+      "id": "human-talk-v1",
+      "name": "交谈手势",
+      "sourceClip": "Idle_Talking_Loop",
+      "index": 1,
+      "duration": 2.933333333333333,
+      "loop": true,
+      "defaultDuration": 4,
+      "group": "站立"
+    },
+    {
+      "id": "human-walk-v1",
+      "name": "行走",
+      "sourceClip": "Walk_Loop",
+      "index": 2,
+      "duration": 1.3333333333333333,
+      "loop": true,
+      "defaultDuration": 4,
+      "group": "移动"
+    },
+    {
+      "id": "human-jog-v1",
+      "name": "慢跑",
+      "sourceClip": "Jog_Fwd_Loop",
+      "index": 3,
+      "duration": 0.9333333333333333,
+      "loop": true,
+      "defaultDuration": 4,
+      "group": "移动"
+    },
+    {
+      "id": "human-crouch-idle-v1",
+      "name": "蹲姿待机",
+      "sourceClip": "Crouch_Idle_Loop",
+      "index": 4,
+      "duration": 2.933333333333333,
+      "loop": true,
+      "defaultDuration": 4,
+      "group": "蹲姿"
+    },
+    {
+      "id": "human-crouch-walk-v1",
+      "name": "蹲着前进",
+      "sourceClip": "Crouch_Fwd_Loop",
+      "index": 5,
+      "duration": 2,
+      "loop": true,
+      "defaultDuration": 4,
+      "group": "移动"
+    },
+    {
+      "id": "human-sit-enter-v1",
+      "name": "坐下",
+      "sourceClip": "Sitting_Enter",
+      "index": 6,
+      "duration": 1.3,
+      "loop": false,
+      "defaultDuration": 1.3,
+      "group": "坐姿"
+    },
+    {
+      "id": "human-sit-idle-v1",
+      "name": "坐姿待机",
+      "sourceClip": "Sitting_Idle_Loop",
+      "index": 7,
+      "duration": 1.6666666666666667,
+      "loop": true,
+      "defaultDuration": 4,
+      "group": "坐姿"
+    },
+    {
+      "id": "human-sit-talk-v1",
+      "name": "坐姿交谈",
+      "sourceClip": "Sitting_Talking_Loop",
+      "index": 8,
+      "duration": 2.933333333333333,
+      "loop": true,
+      "defaultDuration": 4,
+      "group": "坐姿"
+    },
+    {
+      "id": "human-sit-exit-v1",
+      "name": "站起",
+      "sourceClip": "Sitting_Exit",
+      "index": 9,
+      "duration": 1.0333333333333334,
+      "loop": false,
+      "defaultDuration": 1.0333333333333334,
+      "group": "坐姿"
+    }
+  ]
+}

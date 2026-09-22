@@ -1,0 +1,20 @@
+.user-motion-modal{width:940px}
+.user-motion-modal [hidden]{display:none!important}
+.user-motion-layout{display:grid;grid-template-columns:210px minmax(0,1fr);gap:18px}
+.user-motion-layout>*{min-width:0}
+.user-motion-list{display:flex;flex-direction:column;gap:8px;border-right:1px solid #333;padding-right:16px}
+#user-motion-list{display:grid;gap:6px;min-height:240px;align-content:start}
+#user-motion-list button{display:flex;flex-direction:column;text-align:left;gap:4px;min-width:0}
+#user-motion-list button.active{border-color:#bbb;background:#333}
+#user-motion-list span{max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#user-motion-list small{color:#999;font-size:11px}
+#user-motion-pages{justify-content:space-between;align-items:center;font-size:11px;gap:3px}
+#user-motion-pages button{padding:3px 6px;min-height:26px;font-size:11px}
+#user-motion-preview{height:210px;min-width:0;background:#151515;border:1px solid #333;border-radius:5px;display:grid;place-items:center;color:#aaa;font-size:12px}
+#user-motion-preview canvas{width:100%;height:100%;display:block}
+.user-motion-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0;color:#aaa;font-size:11px}
+.user-motion-toolbar button{flex:none;min-height:26px;padding:3px 7px}
+#user-motion-settings{min-height:176px}
+.user-motion-modal .field,.user-motion-modal .field-pair>label.field{margin-bottom:6px}
+.user-motion-modal .modal-footer button{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-height:720px){#user-motion-preview{height:170px}.user-motion-modal .modal-body{padding:10px 16px}#user-motion-settings{min-height:156px}.user-motion-modal .field input,.user-motion-modal .field select{height:28px}}
