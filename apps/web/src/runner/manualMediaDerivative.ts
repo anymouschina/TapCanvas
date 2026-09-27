@@ -8,7 +8,10 @@ export function isWorkflowMediaOutput(node: Node): boolean {
 
 export function manualMediaDerivativeData(node: Node): Record<string, unknown> {
   const data = { ...node.data }
-  const receiptFields = new Set(['taskId', 'imageTaskId', 'imageTaskKind', 'videoTaskId', 'remoteTaskId', 'runId', 'runToken', 'lastError', 'error', 'errorMessage', 'logs', 'managedProjection', 'skipDagRun', 'readOnly'])
+  const receiptFields = new Set(['taskId', 'imageTaskId', 'imageTaskKind', 'videoTaskId', 'remoteTaskId',
+    'imageUrl', 'videoUrl', 'imageResults', 'videoResults', 'thumbnailUrl', 'posterUrl', 'results',
+    'assets', 'outputs', 'runId', 'runToken', 'lastError', 'error',
+    'errorMessage', 'logs', 'managedProjection', 'skipDagRun', 'readOnly'])
   for (const key of Object.keys(data)) {
     if (key.startsWith('workflow') || receiptFields.has(key)) delete data[key]
   }

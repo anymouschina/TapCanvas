@@ -29,6 +29,7 @@ const CATEGORY_LABELS: Readonly<Record<WorkflowAtomicNodeCategory, string>> = {
   skill: 'Skill',
   tool: '工具',
   control: '控制',
+  subworkflow: '子工作流',
   artifact: '产物',
   delivery: '最终输出',
 }

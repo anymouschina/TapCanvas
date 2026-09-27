@@ -40,6 +40,8 @@ import { resolveExecutionImageReferences } from "../task/agents-tool-bridge.imag
 import { renderClipPromptFromShots, type StructuredClip } from "../task/video-orchestrator.clip-shots";
 import { buildPreparedVideoReferences } from "./execution.prepared-video-references";
 import { buildClipInputEdges } from "../task/video-orchestrator.input-edges";
+import { buildWorkflowVideoEffectV2Identity, WORKFLOW_VIDEO_EFFECT_OPERATION } from "../task/workflow-video-effect-claim";
+import { assertVideoNodePreparationReadback, videoNodePreparationPatch, type WorkflowVideoPreparationReceipt } from "./execution.video-node-preparation";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -577,14 +579,21 @@ export function inspectPersistedWorkflowVideoAttempt(rowData: string, nodeId: st
 }
 
 export function workflowVideoEffectIdentity(
-	request: Pick<WorkflowVideoRunRequest, "executionFamilyId" | "runtimeNodeId">,
+	request: Pick<WorkflowVideoRunRequest, "executionFamilyId" | "runtimeNodeId">
+		& Partial<Pick<WorkflowVideoRunRequest, "structuredClip" | "clipId">>,
 ): Readonly<{
 	canvasNodeId: string;
 	effectId: string;
+	clipId: string | null;
 }> {
+	const clipId = readString(request.clipId) || (request.structuredClip ? readString(request.structuredClip.clipId) : "");
+	if (clipId) {
+		return { ...buildWorkflowVideoEffectV2Identity({ executionFamilyId: request.executionFamilyId, clipId }), clipId };
+	}
 	return {
 		canvasNodeId: `${request.runtimeNodeId}::family::${request.executionFamilyId}::output::video`,
 		effectId: `${request.executionFamilyId}:${request.runtimeNodeId}:video-submit`,
+		clipId: null,
 	};
 }
 
@@ -849,6 +858,8 @@ export async function runWorkflowVideoNode(
 
 function buildWorkflowVideoCanvasNode(request: WorkflowVideoRunRequest) {
   const identity = workflowVideoEffectIdentity(request);
+	const firstFrameUrl = request.firstFrameUrl === undefined ? null : persistentHttpUrl(request.firstFrameUrl);
+	if (request.firstFrameUrl !== undefined && !firstFrameUrl) throw new Error("Workflow video firstFrameUrl must be a persistent HTTP(S) asset URL");
   return {
 				id: identity.canvasNodeId,
 				type: "taskNode",
@@ -860,15 +871,20 @@ function buildWorkflowVideoCanvasNode(request: WorkflowVideoRunRequest) {
 						structuredClip: request.structuredClip,
 						itemIndex: request.itemIndex,
 					}),
-					prompt: request.stylePrompt
+					prompt: request.promptSourceProtocol === "tapcanvas.clip-production-packets/v1"
+						? request.prompt
+						: request.stylePrompt
 						? `${request.prompt}\n\n[项目统一视觉风格]\n${request.stylePrompt}`.trim()
 						: request.prompt,
+					...(request.promptSourceProtocol ? { workflowPromptSourceProtocol: request.promptSourceProtocol } : {}),
+					...(request.videoInputMode ? { workflowVideoInputMode: request.videoInputMode } : {}),
 					modelKey: request.modelKey,
 					videoModel: request.modelKey,
 					videoDurationSeconds: request.durationSeconds,
 					videoResolution: request.resolution,
 					...(request.size ? { videoSize: request.size } : {}),
 					aspectRatio: request.aspectRatio,
+					...(firstFrameUrl ? { firstFrameUrl } : {}),
 					referenceImageNodeIds: [...request.referenceImageNodeIds],
 					referenceAssetIds: [...request.referenceAssetIds],
 					...(request.stylePrompt ? { stylePrompt: request.stylePrompt, stylePromptApplied: true } : {}),
@@ -879,12 +895,17 @@ function buildWorkflowVideoCanvasNode(request: WorkflowVideoRunRequest) {
 					workflowExecutionId: request.executionId,
 					workflowExecutionFamilyId: request.executionFamilyId,
 					workflowRuntimeNodeId: request.runtimeNodeId,
+					...(identity.clipId ? {
+						workflowClipId: identity.clipId,
+						workflowEffectOperation: WORKFLOW_VIDEO_EFFECT_OPERATION,
+						workflowEffectSourceSnapshot: request.sourceSnapshot ?? { clipId: identity.clipId },
+					} : {}),
 					clipIndex: request.itemIndex,
 				},
 				};
 }
 
-export async function prepareWorkflowVideoNode(env: WorkerEnv, request: WorkflowVideoRunRequest): Promise<{ nodeId: string }> {
+export async function prepareWorkflowVideoNode(env: WorkerEnv, request: WorkflowVideoRunRequest): Promise<WorkflowVideoPreparationReceipt> {
   const context = createWorkflowInternalContext(env, request);
   const row = await freshReadFlowRow({ c: context, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}) });
   const node = buildWorkflowVideoCanvasNode(request);
@@ -893,7 +914,7 @@ export async function prepareWorkflowVideoNode(env: WorkerEnv, request: Workflow
     nodeIds: request.referenceImageNodeIds, assetIds: request.referenceAssetIds,
   });
   const prepared = buildPreparedVideoReferences(request.structuredClip?.assetObjectContracts, references);
-  if (request.structuredClip) {
+  if (request.structuredClip && request.promptSourceProtocol !== "tapcanvas.clip-production-packets/v1") {
     const prompt = renderClipPromptFromShots(request.structuredClip as unknown as StructuredClip, undefined, {
       assetReferenceIndicesByContractKey: prepared.referenceTokens,
     });
@@ -909,17 +930,22 @@ export async function prepareWorkflowVideoNode(env: WorkerEnv, request: Workflow
   });
   const existing = flowNode(row.data, node.id);
   if (existing) {
-    if (!isRecord(existing.data) || existing.data.prompt !== node.data.prompt) throw new Error("Prepared video node conflicts with persisted node");
-    if (!isDeepStrictEqual(existing.data.assetInputs, prepared.assetInputs)) throw new Error("Prepared video reference snapshot conflicts with persisted node");
-    if (inputEdges.length > 0) {
-      await persistFlowPatch({ c: context, row, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}), patch: { createEdges: inputEdges }, affectedNodeIds: [node.id, ...inputEdges.map((edge) => edge.source)] });
-    }
-    return { nodeId: node.id };
-  }
-  await persistFlowPatch({ c: context, row, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}), patch: { createNodes: [{ ...preparedNode, data: { ...preparedNode.data, status: "idle", workflowPreparedOnly: true } }], createEdges: inputEdges }, affectedNodeIds: [node.id, ...inputEdges.map((edge) => edge.source)] });
+		if (!isRecord(existing.data)) throw new Error("Prepared video node conflicts with persisted node");
+		const patch = videoNodePreparationPatch(existing.data, preparedNode.data);
+		if (patch || inputEdges.length > 0) {
+			await persistFlowPatch({ c: context, row, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}),
+				patch: { ...(patch ? { allowOverwrite: true, patchNodeData: [{ id: node.id, data: patch }] } : {}), createEdges: inputEdges },
+				affectedNodeIds: [node.id, ...inputEdges.map((edge) => edge.source)] });
+	    }
+	  } else {
+		await persistFlowPatch({ c: context, row, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}), patch: { createNodes: [{ ...preparedNode, data: { ...preparedNode.data, status: "idle", workflowPreparedOnly: true } }], createEdges: inputEdges }, affectedNodeIds: [node.id, ...inputEdges.map((edge) => edge.source)] });
+	  }
   const saved = await freshReadFlowRow({ c: context, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false, ...(request.chapterId ? { chapterId: request.chapterId } : {}) });
   const persisted = flowNode(saved.data, node.id);
   if (!persisted || !isRecord(persisted.data) || persisted.data.prompt !== node.data.prompt) throw new Error("Prepared video node read-back failed");
-  if (!isDeepStrictEqual(persisted.data.assetInputs, prepared.assetInputs)) throw new Error("Prepared video reference snapshot read-back failed");
-  return { nodeId: node.id };
+  assertVideoNodePreparationReadback(persisted.data, preparedNode.data);
+  return { nodeId: node.id, persisted: true, promptPersisted: true,
+	  referenceImageNodeIds: [...request.referenceImageNodeIds], referenceAssetIds: [...request.referenceAssetIds],
+	  ...(node.data.firstFrameUrl ? { firstFrameUrl: String(node.data.firstFrameUrl) } : {}),
+	  imageDependencies: references.map(({ referenceId, url }) => ({ referenceId, url })) };
 }

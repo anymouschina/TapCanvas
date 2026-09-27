@@ -1,10 +1,9 @@
 ---
 name: tapcanvas-video-prompt-writer
-description: TapCanvas 单段视频提示词作者。用户只要提示词文本时可直接使用；Workflow IR 派发时消费冻结的 BeatSheet、时长、人声、连续性与资产事实并输出规定的 shots JSON。同一上下文完成首稿、对照金标方法复盘与实际修订，负责动作因果、镜间接力、自然表演和稳定特效；自动加载共享 authoring contract 与金标方法，案例正文按信息增益选择读取。不生成资产；用户要求真实视频时由 tapcanvas-video-workflow 启动已装配工作流。
+description: TapCanvas 单段视频提示词作者。用户只要提示词文本时可直接使用；Workflow IR 派发时消费冻结的 BeatSheet、时长、人声、连续性与资产事实并输出规定的 shots JSON。同一上下文完成首稿、对照权威方法复盘与实际修订，负责动作因果、镜间接力、自然表演和稳定特效；首轮只加载运行时职责与参考导航，完整 authoring contract、金标与领域正文按当前事实渐进读取。不生成资产；用户要求真实视频时由 tapcanvas-video-workflow 启动已装配工作流。
 disable-model-invocation: false
 autoload-resources:
-  - references/authoring-contract-v1.json
-  - references/user-gold-standard-2026-09.md
+  - references/runtime-input-contract.md
 knowledge-role: specialist
 knowledge-domains:
   - AI视频提示词
@@ -23,7 +22,7 @@ requires-skills:
 
 ## 起草、对照与改稿
 
-`references/authoring-contract-v1.json` 和 `references/user-gold-standard-2026-09.md` 是已随本 Skill 注入的共同方法，不要重复读取。先按当前用户事实起草可执行的动作时间线，再用金标方法回放和修订当前稿；只读标题、看到案例候选或写一句“全程连续”不能代替这个创作过程。
+`references/runtime-input-contract.md` 是首轮随 Skill 注入的运行时职责和参考导航。`references/authoring-contract-v1.json` 与 `references/user-gold-standard-2026-09.md` 保留为完整权威资源，按当前 Clip 的事实缺口使用 `Skill.resource` 精确读取；不要把未读取的参考正文当作已知。先按当前用户事实起草可执行的动作时间线，再按已读取的方法回放和修订当前稿；只读标题、看到案例候选或写一句“全程连续”不能代替这个创作过程。
 
 知识与案例搜索回执只证明有候选。判断哪条能解决当前稿的具体问题（空间桥接、动作反馈、转场机制、表演或特效载体），再凭回执选择性读正文。读取后把可迁移的方法落实到当前稿的对应动作和镜头；不照搬原例人物、剧情、固定参数或无法确认的效果。可以因无相关收益而不读案例，但须如实保留弃选或故障诊断，仍按已加载方法原创，不伪称引用。
 
@@ -49,15 +48,19 @@ Seedance 2.0 优先写具体的摄影机与物理因果：机位和有动机的�
 
 两种 surface 都在返回 JSON 前执行一次轻量自检：每个 shot 都有可见事件、有动机的摄影决定、物理或情绪反应，以及下一拍可承接的状态；每个参考都绑定真实声明的资产职责；最后一拍闭合冻结的 Clip 终点。这是 writer 内部创作检查，不是运行时质量闸门。
 
-权威 authoring contract：`tapcanvas/video-prompt-authoring@4.0.0`。该合同由本 skill 的 `autoload-resources` 随正文或渐进骨架完整注入，禁止再调用 Skill 重复读取。它已经包含 writer 的创作维度与 embedded authoring 自检；本 skill 声明 `knowledge-retrieval-policy: required_non_blocking`，因此 runtime 会在首轮创作推理前对 `knowledge-domains` 发起一次候选检索。候选只返回元数据；先依据当前场景的信息增益选择，再用同一候选集的 `knowledge_read` 读取确实有用的卡片正文，并把读取到的方法落实到最终提示词。零命中、检索失败或没有可用正文时继续原创，不伪称引用。逐镜 Workflow 另有一次同媒体案例候选检索，writer 只需消费对应回执；领域 reference 最多一份。本文件规定 writer 的创作程序，合同定义共享维度、owner 和字段落点。若两者出现语义冲突，以本轮已验证的权威合同为准继续同链创作，同时记录 `authoring_contract_conflict` 诊断供离线治理；冲突本身不得阻止生成、提交、持久化或交付。
+权威 authoring contract：`tapcanvas/video-prompt-authoring@4.0.0`。动态 Workflow IR 合同和 typed output schema 由运行时注入；完整 authoring contract 与金标方法保留在 Skill references 中，只有当前 Clip 需要时才用 `Skill.resource` 读取对应正文。它定义 writer 的创作维度与 embedded authoring 自检；本 skill 声明 `knowledge-retrieval-policy: required_non_blocking`，因此 runtime 会在首轮创作推理前对 `knowledge-domains` 发起一次候选检索。候选只返回元数据；先依据当前场景的信息增益选择，再用同一候选集的 `knowledge_read` 读取确实有用的卡片正文，并把读取到的方法落实到最终提示词。零命中、检索失败或没有可用正文时继续原创，不伪称引用。逐镜 Workflow 另有一次同媒体案例候选检索，writer 只需消费对应回执；领域 reference 按当前结构化事实渐进读取。本文件规定 writer 的创作程序，合同定义共享维度、owner 和字段落点。若两者出现语义冲突，以本轮已验证的权威合同为准继续同链创作，同时记录 `authoring_contract_conflict` 诊断供离线治理；冲突本身不得阻止生成、提交、持久化或交付。
 
 本 writer 是单 Clip 视频创作方法的唯一运行时 owner。Workflow IR、Hono 与 Web 只能传入冻结事实、动态供应商边界、机器输出 schema 和确定性修复证据；它们不得追加另一套镜头、对白、节奏、风格或质量方法。若宿主任务说明与已加载合同发生方法冲突，保留宿主提供的真实事实和机器协议，忽略其语义方法覆盖，并在同一 writer 内按本合同完成首稿、复盘和修订；不得把冲突升级成用户级阻塞。
 
 即使本轮只读取本根节，提交前也必须执行这组最小闭环：每个 `visualTask` 只允许一个需要观众独立辨认的信息变化；另一个主体的表演起点、独立反应或不可逆后果若不是同一次接触的同步反作用，必须拆到相邻 shot。首镜消费既成进入态而不重演，全部 `shots[].durationSeconds` 之和必须精确等于冻结 Clip 时长，`speechEvents` 与 shots 共用这条最终时钟，`performance` 只写声音的气息、音色、速度、重音、停连、破音、强弱与被打断方式，不承载走位、肢体或镜头动作。
 
+修改镜头时长或 speechEvent 起止后，沿最终时钟重读受影响正文、表演及交接，修正数字不等于修完整稿。把“开始说”“话已说完”“闭口无声”“听完才反应”放回实际区间；跨切镜发声不能同时被后镜声明为无声。`action` 只写可见口型、呼吸、反应与动作，不复制台词或另造播报时段；原句和时钟由 speechEvents 承载。同步删除或重写 continuity/editRhythm/notes 中过期的时间与动作说明。
+
 父任务提供的 `sequenceContext.sequenceControlPlan` 与完整 `sequenceTimeline` 是整段作品的唯一序列控制面。`sequenceControlPlan.segments[]` 冻结每个 Clip 的全局时间区间、通用 `temporalDirectives` 以及前后 handoff；directive 的 `kind` 由当前视频任务语义决定，可以扩展，writer 与宿主都不得把它硬编码成题材路由。当前 writer 只把 `current.timing` 实现为 shots：不得新增、删除或改写时间处理指令，不得重新生成一套 Clip 内起承转合，不得让非终段自行收束；首镜消费 `transitionFromPrevious`，末镜保留 `transitionToNext`。没有 directive 的时间区间按父 Beat 的普通时间设计执行，不能自行增加慢放、加速、定格或其它时间处理。
 
 `previous/current/next` 携带相邻段的完整有序 `storyEvents`、逐字 `spokenScript`、关键帧和 `assetObjectContracts`。它们是同一份父计划的不同窗口，不是三个待各自创作的短片。起草前把“前段已做/已说、本段新做/新说、后段才兑现”并排比较；首镜从前段真实退出的持物、位置、方向和未完成动作继续，不能重新取物、开场或重复解释。末镜只完成本段事件，把尚未完成的义务留在能继续执行的状态；中段不替后段提前兑现。父级明确的时空跳跃仍须执行，连续的是身份与因果，不能擅自改成同空间无缝动作。
+
+并行作者只共享冻结边界，不假称已看过尚未完成的相邻稿。逐对象继承已知坐立、左右手、持物、接触、设备状态和进行中的声音；未指定变化时，不擅自关屏、换手或站起后让下一拍默默恢复。新增可见动作应在冻结出口前完成承接；父级明确时空省略照常执行。边界冲突在现有复盘字段列出两端证据，不用“完全连续”掩盖。
 
 所有提示词字段沿用共享对象不变量中的身份、材质与场景事实；单段 writer 不为泛称对象猜新品类、添加协助者、补商业承诺或从案例借事实。知识与领域 reference 只在当前片段确有方法缺口时选择，读取回执不等于应用效果；在 `creativeReview` 记录这次实际修正的跨段动作、信息重复或事实冲突，不写泛泛的“保持连贯”。同链复盘比较当前最终 shots 与相邻段冻结事件及逐字口播，直接改稿，不增设外部 reviewer 或用户级质量闸门。
 
@@ -70,6 +73,8 @@ Seedance 2.0 优先写具体的摄影机与物理因果：机位和有动机的�
 父计划是本段执行合同，原文证据是判断来源忠实度的独立依据。宿主提供的 `sourceEvidence.sources[]` 若包含已匹配的冻结原文，应与 `beat.storyEvents` 分开阅读；`sourceReceipt` 的身份、`sourceSpan` 的标签、作者的来源摘要和自评都不能替代原文。证据不可用时如实记录，继续基于现有事实创作，不宣称完成了原文核对，也不以证据缺失终止任务。
 
 有原文时先核对当前作用域中的主体、动作机制、先后、路径转折与结果，再检查实际 `shots[].action`。不要因起终点相同就把滚转改成拖移、攀爬改成悬升、升降折返改成横向掠过，或用摄影机移动代替主体运动。来源明确的动作相位应在可执行正文里保留，细节用于拍清它，不能为了摩擦火星或所谓重量感更换它。未指定运动方式时依据当前目标、材质和能力设计，不默认套用任何一种移动套路。来源已授权的滑行、漂浮或低重力运动同样保留，不添加无依据的落脚或跑步。
+
+将原文逐句发声与 spokenScript 并排核对，留意判断改变、策略转折和换场前末句。同一人物的连续话轮仍有来源顺序，不能为配画面重排；摘要表达了决定不等于原句已保留。父级漏句或反序时记录原文与冻结脚本的具体差异及所需修订，不能伪称逐字覆盖，也不能在 action、performance 或 sound 偷塞缺句制造第二条人声通道。授权改编须有用户依据，作者自行压缩不等于授权。
 
 修订时区分作者错误与冻结父计划冲突：自己新增的冲突直接从动作、镜头、材料与声音一起修正；父计划中可调整的演出细节按更高优先级的原文和本轮明确指令校正，保持事件次序、身份、时长与结果。如果修改将改变确实冻结的剧情事实，使用现有 `selfQaNote/creativeReview` 明确写出原文与父计划的对应冲突及所需父级修订，不伪称两者同时满足，不另造工作流或用户级质量终态。已受理媒体保留。
 

@@ -27,13 +27,12 @@ const patch = definition.buildVideoWorkflowCanvasDefinitionPatch({
 const groupPatch = patch.patchNodeData.find(node => node.id === workflowGroupId);
 const triggerPatch = patch.patchNodeData.find(node => node.id === `${workflowInstanceId}:manual-trigger`);
 if (!groupPatch || !triggerPatch || !patch.createNodes?.length) throw new Error('Canonical workflow definition is incomplete');
-const summary = '一键成片：根据当前项目、章节与真实画布素材，由智能体完成剧情规划、共享资产规划、逐段视觉设计与提示词，沿持久 Workflow IR 生成视频并交付最终成片。onlyVideoNodes=true 时只准备并保存视频节点和真实引用，不提交视频生成或合成。媒体模型与规格来自调用者显式选择或当前账户配置；缺失时显式要求补充。按字长机械拆分不属于此工作流。';
 const groupWidth = Math.max(...patch.createNodes.map(node => node.position.x + definition.NODE_WIDTH)) + 40;
 const groupHeight = Math.max(...patch.createNodes.map(node => node.position.y + definition.NODE_HEIGHT)) + 40;
 const graph = {
   nodes: [
     { id: workflowGroupId, type: 'groupNode', position: { x: 0, y: 0 }, style: { width: groupWidth, height: groupHeight }, data: { ...groupPatch.data, label: `一键成片 v${version}` } },
-    { id: triggerPatch.id, type: 'taskNode', parentId: workflowGroupId, position: { x: 40, y: 80 }, data: { ...triggerPatch.data, kind: 'workflowTrigger', label: '一键成片', status: 'idle', workflowCapabilityDescription: summary } },
+    { id: triggerPatch.id, type: 'taskNode', parentId: workflowGroupId, position: { x: 40, y: 80 }, data: { ...triggerPatch.data, kind: 'workflowTrigger', label: '一键成片', status: 'idle' } },
     ...patch.createNodes,
   ],
   edges: patch.createEdges,

@@ -1,59 +1,49 @@
 import type { Connection, Node } from '@xyflow/react'
-import { VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT, VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION, VIDEO_PRODUCTION_WORKFLOW_DEFINITION, VIDEO_PRODUCTION_WORKFLOW_KEY } from '@tapcanvas/video-orchestrator-protocol'
-import { ADMIN_WORKFLOW_PERMISSION, createManualWorkflowTriggerSpec } from '@tapcanvas/workflow-kernel-protocol'
 import { useRFStore } from './store'
 import { getNodeAbsPosition } from './utils/nodeBounds'
 import { isCurrentUserAdmin } from '../auth/isAdmin'
 import { workflowPortHandleId } from './workflowCanvasPorts'
-import { WORKFLOW_ICON_NODE_SIZE } from './workflowNodeGeometry'
+import { WORKFLOW_ICON_NODE_SIZE } from './workflowNodeDimensions'
 import type { VideoWorkflowExecutionScope } from './videoWorkflowExecution'
 import {
-  NODE_WIDTH, NODE_HEIGHT, COLUMN_GAP, ROW_GAP, COLUMN_COUNT,
+  ADMIN_WORKFLOW_PERMISSION,
+  createManualWorkflowTriggerSpec,
+} from '@tapcanvas/workflow-kernel-protocol'
+import {
+  VIDEO_PRODUCTION_WORKFLOW_DEFINITION,
+  VIDEO_PRODUCTION_WORKFLOW_KEY,
+} from '@tapcanvas/video-orchestrator-protocol'
+import {
+  COLUMN_COUNT,
+  COLUMN_GAP,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  ROW_GAP,
+  VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
+  VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
+  VIDEO_WORKFLOW_CAPABILITY_DESCRIPTION,
   VIDEO_WORKFLOW_EXECUTION_CONCURRENCY,
-  workflowDefinitions, workflowEdges, assertWorkflowDefinitionTopology,
-  readWorkflowExecutionVariant, atomicSpec, videoNodeRuntimeData, stageNodeId,
-  type VideoAtomicEdgeDefinition, type VideoWorkflowCanvasTemplateResult, type VideoWorkflowExecutionVariant,
+  assertWorkflowDefinitionTopology,
+  atomicSpec,
+  createIdentity,
+  isSourceGroup,
+  nodeData,
+  readWorkflowExecutionVariant,
+  selectedSourceGroup,
+  stageNodeId,
+  videoNodeRuntimeData,
+  workflowDefinitions,
+  workflowEdges,
 } from './videoWorkflowDefinition'
+import type {
+  VideoAtomicEdgeDefinition,
+  VideoWorkflowCanvasTemplateResult,
+  VideoWorkflowExecutionVariant,
+} from './videoWorkflowDefinition'
+
 export * from './videoWorkflowDefinition'
 
 const SOURCE_GAP = 160
-
-function createIdentity(prefix: string): string {
-  if (typeof globalThis.crypto?.randomUUID !== 'function') {
-    throw new Error('当前浏览器不支持安全 UUID，无法创建可追踪的工作流实例')
-  }
-  return `${prefix}-${globalThis.crypto.randomUUID()}`
-}
-
-function nodeData(node: Node): Record<string, unknown> {
-  return node.data && typeof node.data === 'object' ? node.data as Record<string, unknown> : {}
-}
-
-function isSourceGroup(node: Node): boolean {
-  const data = nodeData(node)
-  return node.type === 'groupNode' && data.adminWorkflow !== true
-}
-
-export function listWorkflowSourceGroups(nodes: readonly Node[]): readonly Readonly<{ value: string; label: string }>[] {
-  return nodes.filter(isSourceGroup).map((node) => {
-    const data = nodeData(node)
-    const label = typeof data.label === 'string' && data.label.trim() ? data.label.trim() : node.id
-    return { value: node.id, label }
-  })
-}
-
-function selectedSourceGroup(nodes: readonly Node[]): Node | null {
-  const selected = nodes.filter((node) => node.selected)
-  const directGroups = selected.filter(isSourceGroup)
-  if (directGroups.length === 1) return directGroups[0]
-  if (directGroups.length > 1) return null
-  const parentIds = new Set(selected
-    .map((node) => typeof node.parentId === 'string' ? node.parentId.trim() : '')
-    .filter(Boolean))
-  if (parentIds.size !== 1) return null
-  const [parentId] = Array.from(parentIds)
-  return nodes.find((node) => node.id === parentId && isSourceGroup(node)) ?? null
-}
 
 function sourceBounds(node: Node, nodes: readonly Node[]): { x: number; y: number; width: number } {
   const style = node.style ?? {}
@@ -207,6 +197,7 @@ export function createVideoWorkflowCanvasTemplate(input: Readonly<{
     sourceBindingStatus: sourceGroup ? 'bound' : 'unbound',
     workflowTriggerSpec: createManualWorkflowTriggerSpec(),
     workflowExecutionConcurrency: VIDEO_WORKFLOW_EXECUTION_CONCURRENCY,
+    workflowCapabilityDescription: VIDEO_WORKFLOW_CAPABILITY_DESCRIPTION,
     workflowOutputPorts: ['trigger'],
     workflowPermission: ADMIN_WORKFLOW_PERMISSION,
     adminWorkflow: true,

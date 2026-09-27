@@ -983,7 +983,10 @@ describe("workflow node executor registry", () => {
 				},
 			},
 		}), { runAgent: vi.fn(), runJavascript: vi.fn(), runVideo: submitVideo });
-    const prepareVideo = vi.fn(async () => ({ nodeId: "prepared-video" }));
+		const prepareVideo = vi.fn(async () => ({
+			nodeId: "prepared-video", persisted: true as const, promptPersisted: true as const,
+			referenceImageNodeIds: [], referenceAssetIds: [], imageDependencies: [],
+		}));
     const noVideoSubmission = vi.fn();
     const prepared = await executeRegisteredWorkflowNode(context({
       node: node("prepare", "tapcanvas.video.prepare/v1", { workflowVideoReferencePolicy: "forbidden" }, "each", ["prepared-nodes"], 1, ["production-plan"]),
@@ -1166,6 +1169,82 @@ describe("workflow node executor registry", () => {
 			styleReferenceImages: ["https://assets.example/style.png"],
 			stylePrompt: "二维赛璐璐，蓝紫霓虹",
 			styleFingerprint: "sha256:style-night",
+		}));
+	});
+
+	it("submits Clip image items with their frozen model and stable effect identity", async () => {
+		const runImage = vi.fn(async () => ({
+			status: "waiting_external" as const,
+			nodeId: "planned-image-node",
+			taskId: "image-task-clip",
+			reused: false,
+		}));
+		const result = await executeRegisteredWorkflowNode(context({
+			node: node("clip-image", "tapcanvas.image.generate/v1", {
+				workflowImageReferenceAssetBindings: [],
+			}, "once", ["image"], undefined, ["asset-items"]),
+			inputs: { "asset-items": [{
+				protocolVersion: "tapcanvas.clip-production-asset-item/v1",
+				assetId: "effect-asset-1",
+				effectAssetId: "effect-asset-1",
+				generationSpecVersion: "clip-image-spec/v1",
+				generationSpec: {
+					prompt: "冻结的资产提示词", negativePrompt: "冻结的负向提示词", modelKey: "image-model",
+					aspectRatio: "1:1", size: "1K",
+				},
+				imageSource: { mode: "generate", generationSpecVersion: "clip-image-spec/v1", generationSpec: {
+					prompt: "冻结的资产提示词", negativePrompt: "冻结的负向提示词", modelKey: "image-model",
+					aspectRatio: "1:1", size: "1K",
+				} },
+				prompt: "冻结的资产提示词", negativePrompt: "冻结的负向提示词",
+				referenceAssetBindings: [], role: "prop://ticket", displayName: "车票",
+			}] },
+		}), { runAgent: vi.fn(), runJavascript: vi.fn(), runImage, runVideo });
+
+		expect(result).toMatchObject({ ok: false, waitingExternal: true });
+		expect(runImage).toHaveBeenCalledWith(expect.objectContaining({
+			assetIdentity: { assetId: "effect-asset-1", generationSpecVersion: "clip-image-spec/v1" },
+			prompt: "冻结的资产提示词",
+			negativePrompt: "冻结的负向提示词",
+			modelKey: "image-model",
+			aspectRatio: "1:1",
+			imageSize: "1K",
+		}));
+	});
+
+	it("hydrates exact Clip image reuse into the preplanned canvas identity", async () => {
+		const runImage = vi.fn();
+		const resolveProjectAsset = vi.fn(async () => ({
+			assetId: "source-asset", projectId: "project-1", url: "https://assets.example/source.png",
+			mediaKind: "image" as const, mimeType: "image/png", nodeId: null, flowId: null, styleFingerprint: null,
+		}));
+		const hydrateClipReusedImageNode = vi.fn(async () => ({ nodeId: "preplanned-reuse-node" }));
+		const result = await executeRegisteredWorkflowNode(context({
+			node: node("clip-image", "tapcanvas.image.generate/v1", {
+				workflowImageReferenceAssetBindings: [],
+			}, "once", ["image"], undefined, ["asset-items"]),
+			inputs: { "asset-items": [{
+				protocolVersion: "tapcanvas.clip-production-asset-item/v1",
+				assetId: "effect-asset-1", effectAssetId: "effect-asset-1", generationSpecVersion: "project-asset-reuse/v1",
+				imageSource: { mode: "reuse", existingAssetId: "source-asset", existingProjectId: "project-1" },
+				existingAssetId: "source-asset", existingProjectId: "project-1", referenceAssetBindings: [],
+			}] },
+			flowVersionData: {
+				workflowProjectContext: selectedAssetProjectContext(["source-asset"]),
+				workflowDeliveryScope: { flowId: "caller-flow", projectId: "project-1" },
+			},
+		}), {
+			runAgent: vi.fn(), runJavascript: vi.fn(), runImage, runVideo,
+			resolveProjectAsset, hydrateClipReusedImageNode,
+		});
+
+		expect(result).toMatchObject({ ok: true, outputRefs: { ports: { image: {
+			imageUrl: "https://assets.example/source.png", nodeId: "preplanned-reuse-node", generatedAssetId: "source-asset",
+		} } } });
+		expect(runImage).not.toHaveBeenCalled();
+		expect(hydrateClipReusedImageNode).toHaveBeenCalledWith(expect.objectContaining({
+			effectAssetId: "effect-asset-1", generationSpecVersion: "project-asset-reuse/v1",
+			existingAssetId: "source-asset", imageUrl: "https://assets.example/source.png",
 		}));
 	});
 
@@ -6531,7 +6610,7 @@ describe("staged chapter authoring executors", () => {
     }, { runAgent: vi.fn(), runJavascript: vi.fn(), runVideo });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("errorMessage" in result ? result.errorMessage : "Unexpected external wait");
-    expect(result.outputRefs.evidence).toMatchObject({ itemCount: 0, consumerBinding: "deferred_until_design" });
+    expect(result.outputRefs.evidence).toMatchObject({ itemCount: 1, consumerBinding: "deferred_until_design" });
   });
 
   it("prepares shared backgrounds without waiting for clip designs or the assembled BeatSheet", async () => {
@@ -6549,8 +6628,8 @@ describe("staged chapter authoring executors", () => {
   });
 
   it("fans out exact clip identities and assembles persisted per-item text outputs", async () => {
-    const { chapter, shared, clip } = stagedAuthoringFixture();
-    const inputs = { "chapter-plan": [{ text: JSON.stringify(chapter) }], "chapter-assets": [{ text: JSON.stringify(shared) }] };
+    const { chapter, shared, clip, ledger } = stagedAuthoringFixture();
+    const inputs = { "source-ledger": [ledger], "chapter-plan": [{ text: JSON.stringify(chapter) }], "chapter-assets": [{ text: JSON.stringify(shared) }] };
     const split = await executeRegisteredWorkflowNode(context({ node: node("split", "video.clip-design-inputs/v1", {}, "once", ["clip-design-inputs"]), inputs }), { runAgent: vi.fn(), runJavascript: vi.fn(), runVideo });
     expect(split.ok).toBe(true);
     if (!split.ok) throw new Error("errorMessage" in split ? split.errorMessage : "Unexpected external wait");
@@ -6567,15 +6646,15 @@ describe("staged chapter authoring executors", () => {
 });
 
 it("runs each clip design with one item and a frozen schema instead of the whole chapter collection", async () => {
-  const { chapter, shared, clip } = stagedAuthoringFixture();
+  const { chapter, shared, clip, ledger } = stagedAuthoringFixture();
   const runAgent = vi.fn(async (_request: WorkflowAgentRunRequest) => ({ taskId: "clip-design-task", text: JSON.stringify(clip), assets: [],
     expectedDelivery: { version: 1 }, deliveryEvidence: { version: 1 }, deliveryVerification: { version: 2, status: "satisfied" },
     requestTerminal: { status: "succeeded", reason: "delivery_verification_satisfied" } }));
   const split = await executeRegisteredWorkflowNode(context({ node: node("split", "video.clip-design-inputs/v1", {}, "once", ["clip-design-inputs"]),
-    inputs: { "chapter-plan": [chapter], "chapter-assets": [shared] } }), { runAgent: vi.fn(), runJavascript: vi.fn(), runVideo });
+    inputs: { "source-ledger": [ledger], "chapter-plan": [chapter], "chapter-assets": [shared] } }), { runAgent: vi.fn(), runJavascript: vi.fn(), runVideo });
   if (!split.ok) throw new Error("errorMessage" in split ? split.errorMessage : "Unexpected external wait");
   const result = await executeRegisteredWorkflowNode(context({ node: node("designer", "agents.logical-task/v2", {
-    workflowInstruction: "Design one clip", workflowAgentOutputArtifactType: "tapcanvas.clip-design/v1", workflowAgentOutputEncoding: "json_object",
+    workflowInstruction: "Design one clip", workflowAgentOutputArtifactType: "tapcanvas.clip-design/v2", workflowAgentOutputEncoding: "json_object",
     workflowAgentJsonObjectContract: { allowedFields: ["clipIndex", "beat", "blockingPlan", "timing"], jsonSchema: { type: "object" } },
     workflowAgentModelKey: "test-model", workflowAgentDefinitionId: "writer", workflowAgentDeliveryRequirement: "Deliver one clip",
   }, "each", ["clip-designs"], 16, ["clip-design-inputs"]), inputs: { "clip-design-inputs": [split.outputRefs.ports["clip-design-inputs"]] } }), { runAgent, runJavascript: vi.fn(), runVideo });
@@ -6589,8 +6668,9 @@ it("runs each clip design with one item and a frozen schema instead of the whole
 it("materializes one shared image once and retains both object consumers through the writer join", async () => {
   const projectContext = selectedAssetProjectContext(["shared"]);
   const objectRegistry = ["first", "second"].map(objectId => ({ objectId, kind: "prop", name: objectId,
-    referenceRole: "prop", referenceAssetIds: ["shared"], referenceImageNodeIds: [] }));
-  const prepared = prepareChapterAssetCollection({ assets: {objectRegistry,assetPlans:[],backgroundPlans:[]},
+    physicalIdentityKey: null, referenceRole: "prop", identityInvariant: `同一${objectId}`,
+    imageSource: { mode: "reuse", assetIds: ["shared"] } }));
+  const prepared = prepareChapterAssetCollection({ assets: {objectRegistry,backgroundPlans:[]},
     projectContext,executionId:"e",nodeId:"prepare" });
   const resolveProjectAsset = vi.fn(async () => ({assetId:"shared",projectId:projectContext.projectId,
     url:"https://assets.test/shared.png",mediaKind:"image" as const,mimeType:"image/png",nodeId:"shared-node",flowId:"flow-1",styleFingerprint:null}));

@@ -6,6 +6,7 @@ import {
 	WorkflowCapabilityDescriptorSchema,
 } from "./capability-bay.schemas";
 import { materializeWorkflowConfigurationInheritance } from "../execution/execution.workflow-configuration";
+import { flattenWorkflowNodeTree } from "../execution/execution.node-tree";
 import {
 	inspectVideoWorkflowCanvasDefinition,
 } from "../execution/execution.video-workflow-definition-authority";
@@ -76,6 +77,40 @@ function nodeId(node: unknown): string {
 	return stringValue(record(node)?.id);
 }
 
+export function resolveWorkflowCapabilitySummary(input: Readonly<{
+	name: string;
+	summary: string;
+	semanticEvidence: readonly Readonly<{
+		label: string;
+		description: string;
+		operation: string;
+	}>[];
+}>): string {
+	const authored = stringValue(input.summary);
+	if (authored) return authored;
+	const structuralSummary = input.semanticEvidence
+		.map((item) => stringValue(item.description) || stringValue(item.label))
+		.filter(Boolean)
+		.slice(0, 8)
+		.join("；");
+	return structuralSummary || `工作流“${stringValue(input.name)}”已装载，可依据下方输入、输出与执行契约调用。`;
+}
+
+export function workflowCapabilityNodeBreakdown(versionData: string): {
+	mainNodeCount: number;
+	inlineStepCount: number;
+} | null {
+	const root = parseVersionData(versionData);
+	const rootNodes = Array.isArray(root.nodes) ? root.nodes : [];
+	const isExecutableNode = (node: unknown): boolean => {
+		const kind = stringValue(nodeData(node).kind);
+		return kind === "workflowTrigger" || kind === "workflowStage";
+	};
+	const mainNodeCount = rootNodes.filter(isExecutableNode).length;
+	const inlineStepCount = flattenWorkflowNodeTree(rootNodes).filter(isExecutableNode).length - mainNodeCount;
+	return inlineStepCount > 0 ? { mainNodeCount, inlineStepCount } : null;
+}
+
 export function assertVideoWorkflowCanvasDefinitionCurrent(versionData: string): void {
 	const state = inspectVideoWorkflowCanvasDefinition(versionData);
 	if (!state.applicable || state.current) return;
@@ -100,9 +135,12 @@ export function deriveWorkflowInvocationContract(
 	const sourceNode = resolvedStages.find((node) => {
 		return workflowExecutorRef(node) === "tapcanvas.canvas.group.read/v1";
 	});
+	const textInputNode = resolvedStages.find((node) => workflowExecutorRef(node) === "workflow.input.text/v1");
 	const sourceMode = sourceNode
 		? stringValue(nodeData(sourceNode).workflowSourceMode) || "canvas_group"
-		: "none";
+		: textInputNode
+			? "inline_text"
+			: "none";
 	const requiredTriggerPayloadFields: string[] = [];
 	if (sourceMode === "inline_text") {
 		requiredTriggerPayloadFields.push("source");
@@ -144,7 +182,20 @@ export function deriveWorkflowInvocationContract(
 	if (videoEstimateNodes.some((node) => !stringValue(nodeData(node).workflowVideoAspectRatio))) {
 		requiredTriggerPayloadFields.push("videoAspectRatio");
 	}
-	const executionVariants = stringList(resolvedStages.map((node) => nodeData(node).workflowExecutionVariant));
+	const hasVideoStage = resolvedStages.some((node) => {
+		const data = nodeData(node);
+		const spec = record(data.workflowAtomicSpec) ?? {};
+		const executorRef = workflowExecutorRef(node);
+		const operation = stringValue(spec.operation);
+		return executorRef === "video.estimate/v1"
+			|| executorRef === "tapcanvas.video.generate/v1"
+			|| operation === "video_generate"
+			|| operation === "video_submission"
+			|| operation === "video_result";
+	});
+	const executionVariants = hasVideoStage
+		? stringList(resolvedStages.map((node) => nodeData(node).workflowExecutionVariant))
+		: [];
 	const executionVariant = executionVariants.length === 1
 		&& (executionVariants[0] === "full_video" || executionVariants[0] === "first_video")
 		? executionVariants[0]
@@ -160,7 +211,7 @@ export function deriveWorkflowInvocationContractFromVersionData(
 	versionData: string,
 ): WorkflowCapabilityDescriptor["invocation"] {
 	const root = parseVersionData(versionData);
-	const nodes = Array.isArray(root.nodes) ? root.nodes : [];
+	const nodes = flattenWorkflowNodeTree(Array.isArray(root.nodes) ? root.nodes : []);
 	const workflowNodes = nodes.filter((node) => {
 		const kind = stringValue(nodeData(node).kind);
 		return kind === "workflowTrigger" || kind === "workflowStage" || kind === "workflowOutput";
@@ -177,7 +228,7 @@ export function buildWorkflowCapabilityDescriptor(input: {
 	version: CapabilityFlowVersionSource;
 }): WorkflowCapabilityDescriptor {
 	const root = parseVersionData(input.version.data);
-	const nodes = Array.isArray(root.nodes) ? root.nodes : [];
+	const nodes = flattenWorkflowNodeTree(Array.isArray(root.nodes) ? root.nodes : []);
 	const workflowNodes = nodes.filter((node) => {
 		const kind = stringValue(nodeData(node).kind);
 		return kind === "workflowTrigger" || kind === "workflowStage";

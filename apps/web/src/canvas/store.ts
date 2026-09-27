@@ -3,9 +3,13 @@ import { createWithEqualityFn } from 'zustand/traditional'
 import type { Edge, Node, OnConnect, OnEdgesChange, OnNodesChange, Connection } from '@xyflow/react'
 import { addEdge, applyEdgeChanges, applyNodeChanges } from '@xyflow/react'
 import { runNodeMock } from '../runner/mockRunner'
-import { runNodeDagToTarget } from '../runner/dag'
+import { runNodeDagToTarget, WorkflowMediaRecoveryPendingError } from '../runner/dag'
 import { isWorkflowMediaOutput, manualMediaDerivativeData } from '../runner/manualMediaDerivative'
+import { requiresWorkflowMediaRecovery, usesPreparedWorkflowMediaSubmission } from '../runner/workflowMediaExecutionState'
+import { resumeWorkflowMediaOutput, WorkflowMediaExecutionStillActiveError } from '../runner/workflowMediaOutputExecution'
 import { runFlowDag } from '../runner/dag'
+import { requestWorkflowExecutionSnapshot } from './workflowExecutionRequest'
+import { toast } from '../ui/toast'
 import {
   createTaskNodeInitialData,
   getTaskNodeCoreType,
@@ -3083,6 +3087,39 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
     await runNodeMock(selected.id, get, set)
   },
   runNodeBranchClones: async (id, count) => {
+    const source = get().nodes.find((node) => node.id === id)
+    if (source && requiresWorkflowMediaRecovery(source)) {
+      toast('正在读取工作流执行记录…', 'info')
+      try {
+        const execution = await resumeWorkflowMediaOutput(get().nodes, id)
+        requestWorkflowExecutionSnapshot(execution.id)
+        toast('已受理工作流恢复；新执行与原媒体回执可在快照中查看。', 'info')
+      } catch (error: unknown) {
+        if (error instanceof WorkflowMediaExecutionStillActiveError) {
+          get().appendLog(id,
+            `[${new Date().toISOString()}] workflow_media_recovery_deferred executionId=${error.executionId} executionStatus=${error.executionStatus} attemptStatus=${error.attemptStatus} hasProviderTaskReceipt=${error.hasProviderTaskReceipt} submissionState=${error.submissionState ?? 'unknown'}`,
+          )
+          requestWorkflowExecutionSnapshot(error.executionId)
+          toast(error.message, 'info')
+          return
+        }
+        toast(error instanceof Error ? error.message : '工作流媒体恢复失败', 'error')
+      }
+      return
+    }
+    if (source && usesPreparedWorkflowMediaSubmission(source)) {
+      try {
+        await runNodeDagToTarget(id, get, set, { concurrency: 1 })
+      } catch (error: unknown) {
+        if (error instanceof WorkflowMediaExecutionStillActiveError || error instanceof WorkflowMediaRecoveryPendingError) {
+          requestWorkflowExecutionSnapshot(error.executionId)
+          toast(error.message, 'info')
+          return
+        }
+        toast(error instanceof Error ? error.message : '工作流媒体执行失败', 'error')
+      }
+      return
+    }
     const total = Math.max(1, Math.min(8, Math.floor(count || 1)))
     const cloneIds: string[] = []
     if (total > 1) {

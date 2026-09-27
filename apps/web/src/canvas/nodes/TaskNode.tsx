@@ -220,7 +220,16 @@ import { REMOTE_IMAGE_URL_REGEX } from './taskNode/utils'
 import {
   buildAssetRefId,
 } from '../../runner/assetReference'
-import { runNodeDagToTarget } from '../../runner/dag'
+import { runNodeDagToTarget, WorkflowMediaRecoveryPendingError } from '../../runner/dag'
+import {
+  resumeWorkflowMediaOutput,
+  WorkflowMediaExecutionStillActiveError,
+} from '../../runner/workflowMediaOutputExecution'
+import { requiresWorkflowMediaRecovery, usesPreparedWorkflowMediaSubmission } from '../../runner/workflowMediaExecutionState'
+import { usePreparedMediaSubmissionStore } from '../../runner/preparedWorkflowMediaSubmission'
+import { requestWorkflowExecutionSnapshot } from '../workflowExecutionRequest'
+import { WorkflowMediaAttemptHistory } from './taskNode/components/WorkflowMediaAttemptHistory'
+import type { WorkflowMediaAttempt } from '../workflowMediaAttemptProjection'
 import { isModerationFailure } from '../../runner/taskErrorClassifier'
 import { collectUpstreamComposeAudioTracks, collectUpstreamComposeSources } from '../../runner/collectUpstreamComposeSources'
 import {
@@ -893,7 +902,13 @@ function collectDynamicUpstreamReferenceEntriesForNode(
 }
 
 function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>): JSX.Element {
-  const status = data?.status ?? 'idle'
+  const [workflowMediaResumePending, setWorkflowMediaResumePending] = React.useState(false)
+  const preparedMediaPending = usePreparedMediaSubmissionStore((state) => state.pending.has(id))
+  const status = workflowMediaResumePending || preparedMediaPending ? 'running' : data?.status ?? 'idle'
+  const workflowMediaAttemptsValue = (data as Record<string, unknown>).workflowOutputAttempts
+  const workflowMediaAttempts = Array.isArray(workflowMediaAttemptsValue)
+    ? workflowMediaAttemptsValue as WorkflowMediaAttempt[]
+    : []
   const showGenerationOverlay = status === 'running' || status === 'queued'
   const color =
     status === 'success' ? '#16a34a' :
@@ -3791,6 +3806,56 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   ])
 
   const runNode = () => {
+    const activeCanvasNode = useRFStore.getState().nodes.find((node) => node.id === id)
+    if (activeCanvasNode && requiresWorkflowMediaRecovery(activeCanvasNode)) {
+      if (workflowMediaResumePending) return
+      useRFStore.getState().appendLog(id, `[${new Date().toISOString()}] workflow_media_recovery_requested kind=${kind}`)
+      setWorkflowMediaResumePending(true)
+      if (coreKind === 'video') {
+        void runNodeDagToTarget(id, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
+          .catch((error: unknown) => {
+            if (error instanceof WorkflowMediaExecutionStillActiveError || error instanceof WorkflowMediaRecoveryPendingError) {
+              requestWorkflowExecutionSnapshot(error.executionId)
+              toast(error.message, 'info')
+              return
+            }
+            toast(error instanceof Error ? error.message : '工作流媒体恢复失败', 'error')
+          })
+          .finally(() => setWorkflowMediaResumePending(false))
+        return
+      }
+      void resumeWorkflowMediaOutput(useRFStore.getState().nodes, id)
+        .then((execution) => {
+          requestWorkflowExecutionSnapshot(execution.id)
+          toast('已受理工作流恢复；新执行与原媒体回执可在快照中查看。', 'info')
+        })
+        .catch((error: unknown) => {
+          if (error instanceof WorkflowMediaExecutionStillActiveError) {
+            useRFStore.getState().appendLog(id,
+              `[${new Date().toISOString()}] workflow_media_recovery_deferred executionId=${error.executionId} executionStatus=${error.executionStatus} attemptStatus=${error.attemptStatus} hasProviderTaskReceipt=${error.hasProviderTaskReceipt} submissionState=${error.submissionState ?? 'unknown'}`,
+            )
+            requestWorkflowExecutionSnapshot(error.executionId)
+            toast(error.message, 'info')
+            return
+          }
+          toast(error instanceof Error ? error.message : '工作流媒体恢复失败', 'error')
+        })
+        .finally(() => setWorkflowMediaResumePending(false))
+      return
+    }
+    if (activeCanvasNode && usesPreparedWorkflowMediaSubmission(activeCanvasNode)) {
+      if (preparedMediaPending) return
+      void runNodeDagToTarget(id, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
+        .catch((error: unknown) => {
+          if (error instanceof WorkflowMediaExecutionStillActiveError || error instanceof WorkflowMediaRecoveryPendingError) {
+            requestWorkflowExecutionSnapshot(error.executionId)
+            toast(error.message, 'info')
+            return
+          }
+          toast(error instanceof Error ? error.message : '媒体节点首次生成失败', 'error')
+        })
+      return
+    }
     useRFStore.getState().appendLog(id, `[${new Date().toISOString()}] manual_generation_requested kind=${kind}`)
     if (isPlainTextNode) {
       updateNodeData(id, { prompt })
@@ -10465,7 +10530,7 @@ const rewritePromptWithCharacters = React.useCallback(
         />
       )}
       {!hideImageMeta && !isCanvasMediaNode && !isStoryboardEditorNode && !isWorkflowStageNode && !isWorkflowTriggerNode && (
-        <TaskNodeHeader
+      <TaskNodeHeader
           NodeIcon={NodeIcon}
           editing={editing}
           labelDraft={labelDraft}
@@ -10527,9 +10592,10 @@ const rewritePromptWithCharacters = React.useCallback(
             if (nodeReadOnly) return
             setEditing(true)
           }}
-          labelInputRef={labelInputRef}
-        />
+        labelInputRef={labelInputRef}
+      />
       )}
+      <WorkflowMediaAttemptHistory attempts={workflowMediaAttempts} />
       <TopToolbar
         isVisible={isSingleSelectionActive && !gridSplitOpen && !anyImageEditorOpen}
         hasContent={hasContent}

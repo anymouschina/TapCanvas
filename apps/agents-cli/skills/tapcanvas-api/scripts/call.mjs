@@ -101,6 +101,12 @@ const ENDPOINTS = {
     needsPayload: false,
     access: "protected",
   },
+  capabilityBayWorkflowRun: {
+    method: "POST",
+    path: "/agents/capability-bay/workflows/run",
+    needsPayload: true,
+    access: "protected",
+  },
   capabilityBayInspect: {
     method: "POST",
     path: "/agents/capability-bay/inspect",
@@ -627,7 +633,7 @@ function printHelp() {
       "TapCanvas unified API caller",
       "",
       "Required:",
-      "  --endpoint <chat|openAiChat|chatStatus|chatResume|chatInterrupt|draw|vision|video|taskResult|taskLogs|models|modelCatalogModels|newApiModels|videoUnderstand|projects|projectCreate|chapterCreate|chapterGet|chapterUpdate|assets|assetCreate|capabilityBayGet|capabilityBayInspect|capabilityBayWorkflowEquip|capabilityBayWorkflowUnequip|capabilityBayProjectAdopt|books|bookIndex|bookChapter|bookIngest|projectSessions|memoryContext|flows|flowCreate|flowGet|flowVersions|flowRollback|chapterFlowGet|chapterCanvasMembership|chapterFlowPut|communityPublish|communityProjectGet|agentDiagnostics|agentDiagnosticEvents|flowPatch|flowScopeRepair|executions|executionRun|executionGet|executionCancel|executionNodeRuns|executionAttempts|executionFamily|executionContext|executionSnapshot|executionResume|executionMetrics|executionNodeHistory|toolExecute>",
+      "  --endpoint <chat|openAiChat|chatStatus|chatResume|chatInterrupt|draw|vision|video|taskResult|taskLogs|models|modelCatalogModels|newApiModels|videoUnderstand|projects|projectCreate|chapterCreate|chapterGet|chapterUpdate|assets|assetCreate|capabilityBayGet|capabilityBayWorkflowRun|capabilityBayInspect|capabilityBayWorkflowEquip|capabilityBayWorkflowUnequip|capabilityBayProjectAdopt|books|bookIndex|bookChapter|bookIngest|projectSessions|memoryContext|flows|flowCreate|flowGet|flowVersions|flowRollback|chapterFlowGet|chapterCanvasMembership|chapterFlowPut|communityPublish|communityProjectGet|agentDiagnostics|agentDiagnosticEvents|flowPatch|flowScopeRepair|executions|executionRun|executionGet|executionCancel|executionNodeRuns|executionAttempts|executionFamily|executionContext|executionSnapshot|executionResume|executionMetrics|executionNodeHistory|toolExecute>",
       "",
       "Optional config overrides:",
       "  --config <path>",

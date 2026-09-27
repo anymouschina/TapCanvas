@@ -27,6 +27,8 @@ import {
   equipWorkflowCapability,
   getCapabilityBay,
   inspectWorkflowCapability,
+  launchEquippedWorkflow,
+  cancelWorkflowExecution,
   updateBuiltInCapabilityState,
   updateSkillCapabilityState,
   updateWorkflowCapabilityState,
@@ -34,11 +36,22 @@ import {
   type CapabilityBayCandidateDto,
   type CapabilityBayDto,
   type CapabilityInspectionDto,
+  type LaunchEquippedWorkflowRequestDto,
 } from '../../api/server'
 import { ManagedImage } from '../../domain/resource-runtime/components/ManagedImage'
 import { ExecutionLogModal } from '../ExecutionLogModal'
 import { WorkflowExecutionSnapshotModal } from '../WorkflowExecutionSnapshotModal'
 import { isCurrentUserAdmin } from '../../auth/isAdmin'
+import { loadSelectedChatModel, readStoredChatModelValue } from '../chat/chatModelSelection'
+import { useModelOptionsState } from '../../config/useModelOptions'
+import type { ModelOptionsState } from '../../config/useModelOptions'
+import {
+  CAPABILITY_BAY_MEDIA_FIELDS,
+  buildCapabilityBayLaunchTriggerPayload,
+  type CapabilityBayLaunchMediaSelection,
+  type CapabilityBayMediaField,
+} from './capabilityBayLaunchPayload'
+import { CapabilityBayLaunchFields } from './CapabilityBayLaunchFields'
 import './CapabilityBayDialog.css'
 
 type WorkflowEquipScope = 'current_user' | 'all_users'
@@ -46,9 +59,17 @@ type WorkflowEquipScope = 'current_user' | 'all_users'
 type CapabilityBayDialogProps = {
   opened: boolean
   projectId?: string
+  launchScope?: CapabilityBayLaunchScope | null
   focusRequest?: { requestKey: string; flowId: string } | null
   onClose: () => void
 }
+
+export type CapabilityBayLaunchScope = Readonly<{
+  projectId: string
+  chapterId?: string
+  canvasFlowId?: string
+  selectedGroupIds: readonly string[]
+}>
 
 type CapabilityBayTab = 'workflows' | 'equipped' | 'skills' | 'built_in' | 'invocations'
 type PrimaryRouteDecision = 'replace_existing' | 'coexist' | 'keep_existing' | 'edit_workflow'
@@ -60,12 +81,23 @@ type WorkflowCatalogItem = {
   updatedAt: string | null
   candidate: CapabilityBayCandidateDto | null
   canDelete: boolean
+  canEdit: boolean
 }
 
 type PendingCapabilityBayLoad = {
   projectKey: string
+  includeInvocations: boolean
   promise: Promise<void>
 }
+
+type AcceptedWorkflowLaunch = Readonly<{
+  sourceId: string
+  executionId: string
+  status: 'queued' | 'running' | 'success' | 'failed' | 'canceled'
+}>
+
+const IMAGE_LAUNCH_MEDIA_FIELDS = new Set<string>(CAPABILITY_BAY_MEDIA_FIELDS.slice(0, 3))
+const VIDEO_LAUNCH_MEDIA_FIELDS = new Set<string>(CAPABILITY_BAY_MEDIA_FIELDS.slice(3))
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -78,18 +110,27 @@ function effectLabel(effect: CapabilityBayCandidateDto['descriptor']['sideEffect
   return '只读或纯计算'
 }
 
+function workflowNodeCountLabel(candidate: CapabilityBayCandidateDto): string {
+  if (candidate.nodeBreakdown) {
+    return `${candidate.nodeBreakdown.mainNodeCount} 主流程节点 · ${candidate.nodeBreakdown.inlineStepCount} 内嵌步骤`
+  }
+  return `${candidate.descriptor.nodeCount} 节点`
+}
+
 function formatCapabilityDate(value: string | null): string | null {
   if (!value) return null
   const timestamp = new Date(value)
   return Number.isNaN(timestamp.getTime()) ? null : timestamp.toLocaleString('zh-CN', { hour12: false })
 }
 
-export function CapabilityBayDialog({ opened, projectId, focusRequest = null, onClose }: CapabilityBayDialogProps): JSX.Element {
+export function CapabilityBayDialog({ opened, projectId, launchScope = null, focusRequest = null, onClose }: CapabilityBayDialogProps): JSX.Element {
   const [data, setData] = React.useState<CapabilityBayDto | null>(null)
   const [activeTab, setActiveTab] = React.useState<CapabilityBayTab>('workflows')
   const [query, setQuery] = React.useState('')
   const [loading, setLoading] = React.useState(false)
+  const [invocationsLoaded, setInvocationsLoaded] = React.useState(false)
   const [busyFlowId, setBusyFlowId] = React.useState('')
+  const [workflowActionBySourceId, setWorkflowActionBySourceId] = React.useState<Record<string, 'launch' | 'cancel'>>({})
   const [error, setError] = React.useState('')
   const [notice, setNotice] = React.useState('')
   const [inspection, setInspection] = React.useState<CapabilityInspectionDto | null>(null)
@@ -105,25 +146,36 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
   const [adoptingProject, setAdoptingProject] = React.useState(false)
   const [snapshotExecutionId, setSnapshotExecutionId] = React.useState<string | null>(null)
   const [logExecutionId, setLogExecutionId] = React.useState<string | null>(null)
+  const [launchSourceBySourceId, setLaunchSourceBySourceId] = React.useState<Record<string, string>>({})
+  const [launchMediaSelectionBySourceId, setLaunchMediaSelectionBySourceId] = React.useState<Record<string, CapabilityBayLaunchMediaSelection>>({})
+  const [acceptedLaunch, setAcceptedLaunch] = React.useState<AcceptedWorkflowLaunch | null>(null)
   const handledFocusRequestRef = React.useRef('')
   const pendingLoadRef = React.useRef<PendingCapabilityBayLoad | null>(null)
+  const launchIdempotencyKeysRef = React.useRef(new Map<string, string>())
 
-  const load = React.useCallback(async (): Promise<void> => {
+  const load = React.useCallback(async (options: Readonly<{ includeInvocations?: boolean; force?: boolean }> = {}): Promise<void> => {
     const projectKey = projectId?.trim() ?? ''
+    const includeInvocations = options.includeInvocations === true
     const pending = pendingLoadRef.current
-    if (pending?.projectKey === projectKey) return pending.promise
+    if (!options.force && pending?.projectKey === projectKey && (pending.includeInvocations || !includeInvocations)) {
+      return pending.promise
+    }
 
     setLoading(true)
     setError('')
     const entry: PendingCapabilityBayLoad = {
       projectKey,
+      includeInvocations,
       promise: Promise.resolve(),
     }
     pendingLoadRef.current = entry
     entry.promise = (async (): Promise<void> => {
       try {
-        const nextData = await getCapabilityBay(projectKey || undefined)
-        if (pendingLoadRef.current === entry) setData(nextData)
+        const nextData = await getCapabilityBay(projectKey || undefined, { includeInvocations })
+        if (pendingLoadRef.current === entry) {
+          setData(nextData)
+          if (includeInvocations) setInvocationsLoaded(true)
+        }
       } catch (nextError: unknown) {
         if (pendingLoadRef.current === entry) setError(errorMessage(nextError))
       } finally {
@@ -142,24 +194,19 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
     setNotice('')
     setInspection(null)
     setRouteDecisions({})
+    setInvocationsLoaded(false)
+    setLaunchSourceBySourceId({})
+    setLaunchMediaSelectionBySourceId({})
+    setAcceptedLaunch(null)
+    setWorkflowActionBySourceId({})
+    launchIdempotencyKeysRef.current.clear()
     void load()
   }, [load, opened])
 
-  const equippedCandidates = React.useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase()
-    const source = data?.candidates ?? []
-    const routingReadySourceIds = new Set((data?.attachments ?? [])
-      .filter((attachment) => attachment.routingReady)
-      .map((attachment) => attachment.sourceId))
-    return source.filter((candidate) => {      const routingReady = routingReadySourceIds.has(candidate.descriptor.sourceId)
-      if (!routingReady) return false
-      if (!normalized) return true
-      return [candidate.descriptor.name, candidate.descriptor.summary, candidate.projectName ?? '', ...candidate.descriptor.operations]
-        .join(' ')
-        .toLocaleLowerCase()
-        .includes(normalized)
-    })
-  }, [data?.attachments, data?.candidates, query])
+  React.useEffect(() => {
+    if (!opened || activeTab !== 'invocations' || !data || invocationsLoaded) return
+    void load({ includeInvocations: true })
+  }, [activeTab, data, invocationsLoaded, load, opened])
 
   const routingReadySourceIds = React.useMemo(() => new Set((data?.attachments ?? [])
     .filter((attachment) => attachment.routingReady)
@@ -171,7 +218,43 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
   const userEnabledBySourceId = React.useMemo(() => new Map((data?.attachments ?? [])
     .map((attachment) => [attachment.sourceId, attachment.userEnabled] as const)), [data?.attachments])
 
-  const inspect = React.useCallback(async (candidate: CapabilityBayCandidateDto, updateExisting = false): Promise<void> => {
+  const isDisabledSystemWorkflow = React.useCallback((candidate: CapabilityBayCandidateDto): boolean => (
+    attachmentScopeBySourceId.get(candidate.descriptor.sourceId) === 'all_users'
+    && userEnabledBySourceId.get(candidate.descriptor.sourceId) === false
+  ), [attachmentScopeBySourceId, userEnabledBySourceId])
+
+  const equippedCandidates = React.useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase()
+    const source = data?.candidates ?? []
+    return source.filter((candidate) => {
+      if (isDisabledSystemWorkflow(candidate)) return false
+      if (!routingReadySourceIds.has(candidate.descriptor.sourceId)) return false
+      if (!normalized) return true
+      return [candidate.descriptor.name, candidate.descriptor.summary, candidate.projectName ?? '', ...candidate.descriptor.operations]
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(normalized)
+    })
+  }, [data?.candidates, isDisabledSystemWorkflow, query, routingReadySourceIds])
+
+  const requiredMediaFieldsBySourceId = React.useMemo(() => new Map((data?.attachments ?? [])
+    .map((attachment) => [
+      attachment.sourceId,
+      attachment.descriptor.invocation?.requiredTriggerPayloadFields ?? [],
+    ] as const)), [data?.attachments])
+  const needsImageCatalog = opened && activeTab === 'equipped' && [...requiredMediaFieldsBySourceId.values()]
+    .some((fields) => fields.some((field) => IMAGE_LAUNCH_MEDIA_FIELDS.has(field)))
+  const needsVideoCatalog = opened && activeTab === 'equipped' && [...requiredMediaFieldsBySourceId.values()]
+    .some((fields) => fields.some((field) => VIDEO_LAUNCH_MEDIA_FIELDS.has(field)))
+  const imageModelState: ModelOptionsState = useModelOptionsState('image', { enabled: needsImageCatalog })
+  const videoModelState: ModelOptionsState = useModelOptionsState('video', { enabled: needsVideoCatalog })
+
+  const enabledWorkflowCount = React.useMemo(() => [...routingReadySourceIds].filter((sourceId) => (
+    attachmentScopeBySourceId.get(sourceId) !== 'all_users'
+    || userEnabledBySourceId.get(sourceId) !== false
+  )).length, [attachmentScopeBySourceId, routingReadySourceIds, userEnabledBySourceId])
+
+  const inspect = React.useCallback(async (candidate: CapabilityBayCandidateDto): Promise<void> => {
     setBusyFlowId(candidate.descriptor.sourceId)
     setError('')
     setNotice('')
@@ -179,36 +262,13 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
     setRouteDecisions({})
     setEquipScope(attachmentScopeBySourceId.get(candidate.descriptor.sourceId) ?? 'current_user')
     try {
-      const result = await inspectWorkflowCapability(candidate.descriptor.sourceId)
-      const existing = data?.attachments.find((attachment) => attachment.sourceId === candidate.descriptor.sourceId)
-      if (updateExisting && existing && !result.report.blocking) {
-        await equipWorkflowCapability({
-          flowId: result.descriptor.sourceId,
-          sourceVersionId: result.descriptor.sourceVersionId,
-          descriptorSha256: result.descriptorSha256,
-          inspectionToken: result.inspectionToken,
-          scope: existing.scope,
-          resolutions: result.report.conflicts.map((conflict) => {
-            const previous = existing.routeDecisions.find((decision) => decision.withCapabilityId === conflict.withCapabilityId)
-            return {
-              conflictId: conflict.id,
-              withCapabilityId: conflict.withCapabilityId,
-              action: conflict.resolutionMode !== 'choose_primary' ? 'acknowledge'
-                : previous?.action === 'coexist' ? 'coexist' : 'replace_existing',
-            }
-          }),
-        })
-        setNotice(`“${result.descriptor.name}”已更新装载，小T现在可以使用${existing.scope === 'all_users' ? '（全体用户）' : ''}`)
-        await load()
-      } else {
-        setInspection(result)
-      }
+      setInspection(await inspectWorkflowCapability(candidate.descriptor.sourceId))
     } catch (nextError: unknown) {
       setError(errorMessage(nextError))
     } finally {
       setBusyFlowId('')
     }
-  }, [attachmentScopeBySourceId, data?.attachments, load])
+  }, [attachmentScopeBySourceId])
 
   React.useEffect(() => {
     if (!opened || !data || !focusRequest) return
@@ -326,6 +386,148 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
     }
   }, [data?.builtInCapabilities, load])
 
+  const updateLaunchMediaSelection = React.useCallback((
+    sourceId: string,
+    field: CapabilityBayMediaField,
+    value: string,
+  ): void => {
+    setLaunchMediaSelectionBySourceId((current) => {
+      const next: Partial<Record<CapabilityBayMediaField, string>> = {
+        ...(current[sourceId] ?? {}),
+      }
+      if (value) next[field] = value
+      else delete next[field]
+      if (field === 'imageModelKey') {
+        delete next.imageAspectRatio
+        delete next.imageSize
+      }
+      if (field === 'videoModelKey') {
+        delete next.videoResolution
+        delete next.videoAspectRatio
+      }
+      return { ...current, [sourceId]: next }
+    })
+  }, [])
+
+  const runEquippedWorkflow = React.useCallback((candidate: CapabilityBayCandidateDto): void => {
+    const sourceId = candidate.descriptor.sourceId
+    const attachment = data?.attachments.find((item) => item.sourceId === sourceId)
+    const invocation = attachment?.descriptor.invocation
+    if (!launchScope?.projectId || Boolean(launchScope.chapterId) === Boolean(launchScope.canvasFlowId)) {
+      setError('当前画布范围尚未就绪；请从已保存的项目画布或章节画布启动')
+      return
+    }
+    if (!attachment || !attachment.routingReady || !invocation) {
+      setError('已添加工作流的权限或调用合同不可用，请刷新 Agent 配置后重试')
+      return
+    }
+    if (acceptedLaunch && acceptedLaunch.sourceId === sourceId
+      && (acceptedLaunch.status === 'queued' || acceptedLaunch.status === 'running')) {
+      setError(`该工作流已有执行在运行：${acceptedLaunch.executionId}`)
+      return
+    }
+
+    const requiredFields = invocation.requiredTriggerPayloadFields
+    const payloadResult = buildCapabilityBayLaunchTriggerPayload({
+      requiredFields,
+      source: launchSourceBySourceId[sourceId] ?? '',
+      selectedGroupIds: launchScope.selectedGroupIds,
+      mediaSelection: launchMediaSelectionBySourceId[sourceId] ?? {},
+      imageModelOptions: imageModelState.options,
+      videoModelOptions: videoModelState.options,
+      imageCatalogLoading: imageModelState.loading,
+      imageCatalogError: imageModelState.error,
+      videoCatalogLoading: videoModelState.loading,
+      videoCatalogError: videoModelState.error,
+    })
+    if (!payloadResult.ok) {
+      setError(payloadResult.error)
+      return
+    }
+    const triggerPayload = payloadResult.payload
+
+    let idempotencyKey = launchIdempotencyKeysRef.current.get(sourceId)
+    if (!idempotencyKey) {
+      idempotencyKey = globalThis.crypto?.randomUUID?.()
+      if (!idempotencyKey) {
+        setError('浏览器无法生成安全幂等键，工作流未启动')
+        return
+      }
+      launchIdempotencyKeysRef.current.set(sourceId, idempotencyKey)
+    }
+    const request: Omit<LaunchEquippedWorkflowRequestDto, 'agentModelKey'> = {
+      intent: 'run_selected_equipped_workflow',
+      attachmentId: attachment.id,
+      executionVariant: invocation.executionVariant ?? null,
+      projectId: launchScope.projectId,
+      ...(launchScope.chapterId ? { chapterId: launchScope.chapterId } : { canvasFlowId: launchScope.canvasFlowId }),
+      ...(requiredFields.includes('sourceGroupId') && launchScope.selectedGroupIds.length === 1
+        ? { canvasNodeId: launchScope.selectedGroupIds[0] }
+        : {}),
+      idempotencyKey,
+      ...(triggerPayload ? { triggerPayload } : {}),
+    }
+
+    setBusyFlowId(sourceId)
+    setWorkflowActionBySourceId((current) => ({ ...current, [sourceId]: 'launch' }))
+    setError('')
+    setNotice('')
+    setAcceptedLaunch(null)
+    void (async (): Promise<void> => {
+      try {
+        const selectedModel = await loadSelectedChatModel(readStoredChatModelValue())
+        const result = await launchEquippedWorkflow({
+          ...request,
+          agentModelKey: selectedModel.request.model,
+        })
+        setAcceptedLaunch({
+          sourceId,
+          executionId: result.execution.id,
+          status: result.execution.status,
+        })
+        launchIdempotencyKeysRef.current.delete(sourceId)
+        const acceptedMessage = result.created
+          ? `工作流已受理，执行编号：${result.execution.id}`
+          : `已确认同一幂等请求的执行，编号：${result.execution.id}`
+        setNotice(result.invocationRecord.status === 'failed'
+          ? `${acceptedMessage}；使用记录保存失败，诊断编号：${result.invocationRecord.diagnosticId}`
+          : acceptedMessage)
+      } catch (nextError: unknown) {
+        setError(`工作流启动失败：${errorMessage(nextError)}`)
+      } finally {
+        setBusyFlowId('')
+        setWorkflowActionBySourceId((current) => {
+          const next = { ...current }
+          delete next[sourceId]
+          return next
+        })
+      }
+    })()
+  }, [acceptedLaunch, data?.attachments, imageModelState, launchMediaSelectionBySourceId, launchScope, launchSourceBySourceId, videoModelState])
+
+  const cancelAcceptedWorkflow = React.useCallback((launch: AcceptedWorkflowLaunch): void => {
+    setBusyFlowId(launch.sourceId)
+    setWorkflowActionBySourceId((current) => ({ ...current, [launch.sourceId]: 'cancel' }))
+    setError('')
+    setNotice('')
+    void (async (): Promise<void> => {
+      try {
+        const result = await cancelWorkflowExecution(launch.executionId)
+        setAcceptedLaunch({ ...launch, status: result.execution.status })
+        setNotice(`执行 ${launch.executionId} 已取消请求，当前状态：${result.execution.status}`)
+      } catch (nextError: unknown) {
+        setError(`取消执行失败：${errorMessage(nextError)}`)
+      } finally {
+        setBusyFlowId('')
+        setWorkflowActionBySourceId((current) => {
+          const next = { ...current }
+          delete next[launch.sourceId]
+          return next
+        })
+      }
+    })()
+  }, [])
+
   const skillItems = React.useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
     return (data?.skills ?? []).filter((skill) => !normalized || [skill.name, skill.key, skill.description ?? '', skill.category]
@@ -368,6 +570,7 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
           updatedAt: project.updatedAt,
           candidate: null,
           canDelete: project.canDelete,
+          canEdit: project.canEdit,
         })
         continue
       }
@@ -380,6 +583,7 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
           updatedAt: project.updatedAt,
           candidate,
           canDelete: project.canDelete,
+          canEdit: candidate.canEdit,
         })
       }
     }
@@ -394,6 +598,7 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
         updatedAt: null,
         candidate,
         canDelete: false,
+        canEdit: candidate.canEdit,
       })
     }
 
@@ -408,6 +613,15 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
       ].join(' ').toLocaleLowerCase().includes(normalized)
     })
   }, [data?.candidates, data?.workflowProjects, query])
+
+  const activeWorkflowCatalogItems = React.useMemo(
+    () => workflowCatalogItems.filter((item) => !item.candidate || !isDisabledSystemWorkflow(item.candidate)),
+    [isDisabledSystemWorkflow, workflowCatalogItems],
+  )
+  const disabledWorkflowCatalogItems = React.useMemo(
+    () => workflowCatalogItems.filter((item) => item.candidate && isDisabledSystemWorkflow(item.candidate)),
+    [isDisabledSystemWorkflow, workflowCatalogItems],
+  )
 
   const deleteProject = React.useCallback(async (item: WorkflowCatalogItem): Promise<void> => {
     if (!item.projectId || !item.canDelete) return
@@ -500,9 +714,6 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
   const hasEditDecision = primaryRouteConflicts.some(
     (conflict) => routeDecisions[conflict.id] === 'edit_workflow',
   )
-  const hasReplacementDecision = primaryRouteConflicts.some(
-    (conflict) => routeDecisions[conflict.id] === 'replace_existing',
-  )
   const canEquip = Boolean(inspection) && !inspection?.report.blocking && allPrimaryRoutesDecided && !hasKeepDecision && !hasEditDecision
   // 尚未做出选择的主路由冲突：确认按钮被禁用时用它给出明确指引（为什么不能点、要去哪里选）。
   const pendingPrimaryRoute = primaryRouteConflicts.find(
@@ -525,8 +736,12 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
       setError('该工作流没有所属项目，无法跳转编辑')
       return
     }
+    if (!data?.candidates.find((candidate) => candidate.descriptor.sourceId === inspection.descriptor.sourceId)?.canEdit) {
+      setError('该工作流由管理员发布，当前账号无权编辑来源项目')
+      return
+    }
     openWorkflowEditor(inspection.descriptor.projectId, inspection.descriptor.sourceId)
-  }, [inspection, openWorkflowEditor])
+  }, [data?.candidates, inspection, openWorkflowEditor])
 
   const finishPrimaryRouteDecision = React.useCallback((): void => {
     if (!inspection) return
@@ -542,6 +757,73 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
     }
     void equip()
   }, [editInspectedWorkflow, equip, hasEditDecision, hasKeepDecision, inspection])
+
+  const renderWorkflowCatalogItem = (item: WorkflowCatalogItem): JSX.Element => {
+    const candidate = item.candidate
+    const busy = candidate ? busyFlowId === candidate.descriptor.sourceId : false
+    const projectBusy = busyFlowId === `project:${item.projectId}`
+    const routingReady = candidate ? routingReadySourceIds.has(candidate.descriptor.sourceId) : false
+    const disabledSystemWorkflow = candidate ? isDisabledSystemWorkflow(candidate) : false
+    const sharedSystemWorkflow = candidate ? attachmentScopeBySourceId.get(candidate.descriptor.sourceId) === 'all_users' : false
+    const routeConfirmationRequired = candidate ? candidate.attached && !routingReady : false
+    const versionChanged = candidate ? candidate.attached && candidate.attachedVersionId !== candidate.descriptor.sourceVersionId : false
+    const attachedAt = candidate?.attachedAt ?? null
+    const updatedAt = candidate ? candidate.updatedAt : item.updatedAt
+
+    return (
+      <article className={`capability-bay__item${candidate && selectedCandidate?.descriptor.sourceId === candidate.descriptor.sourceId ? ' is-selected' : ''}`} key={item.key}>
+        <span className="capability-bay__item-icon" aria-hidden="true"><IconTopologyStar3 className="capability-bay__item-svg" size={19} /></span>
+        <span className="capability-bay__item-copy">
+          <span className="capability-bay__item-title-row">
+            <strong className="capability-bay__item-title">{candidate?.descriptor.name || item.projectName}</strong>
+            <span className="capability-bay__state is-equipped">工作流</span>
+            {sharedSystemWorkflow ? <span className="capability-bay__state is-system">系统发布 · 全体用户</span> : null}
+            {disabledSystemWorkflow ? <span className="capability-bay__state is-disabled">已关闭</span> : null}
+            {routingReady && !disabledSystemWorkflow ? <span className="capability-bay__state is-equipped"><IconCheck className="capability-bay__state-icon" size={12} />已添加</span> : null}
+            {routeConfirmationRequired ? <span className="capability-bay__state is-stale"><IconAlertTriangle className="capability-bay__state-icon" size={12} />待重新确认</span> : null}
+            {versionChanged && item.canEdit ? <span className="capability-bay__state is-stale"><IconAlertTriangle className="capability-bay__state-icon" size={12} />有新版本</span> : null}
+          </span>
+          <span className="capability-bay__item-summary">{candidate?.descriptor.summary || (candidate ? workflowNodeCountLabel(candidate) : `${item.flowCount} 个工作流画布`)}</span>
+          <span className="capability-bay__item-meta">
+            <span className="capability-bay__meta-item">{item.projectName}</span>
+            {candidate ? <span className="capability-bay__meta-item">{workflowNodeCountLabel(candidate)}</span> : null}
+            {candidate ? <span className="capability-bay__meta-item">版本 {candidate.descriptor.sourceRevision}</span> : null}
+            {candidate && formatCapabilityDate(attachedAt) ? <span className="capability-bay__meta-item">装载于 {formatCapabilityDate(attachedAt)}</span> : null}
+            {candidate && formatCapabilityDate(updatedAt) ? <span className="capability-bay__meta-item">更新于 {formatCapabilityDate(updatedAt)}</span> : null}
+            {candidate ? <span className="capability-bay__meta-item">{candidate.descriptor.sideEffects.map(effectLabel).join(' · ')}</span> : null}
+            {!candidate && item.updatedAt ? <span className="capability-bay__meta-item">更新于 {new Date(item.updatedAt).toLocaleString('zh-CN', { hour12: false })}</span> : null}
+            {!candidate ? <span className="capability-bay__meta-item">尚无可添加的已保存工作流</span> : null}
+          </span>
+        </span>
+        <span className="capability-bay__item-actions">
+          {item.canEdit ? <button className="capability-bay__secondary-action" type="button" disabled={!item.projectId || projectBusy} onClick={() => item.projectId && openWorkflowEditor(item.projectId, candidate?.descriptor.sourceId)}><IconEdit className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">编辑</span></button> : null}
+          {item.canDelete ? <button className="capability-bay__secondary-action" type="button" disabled={projectBusy} onClick={() => void deleteProject(item)}><IconTrash className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">{projectBusy ? '删除中…' : '删除'}</span></button> : null}
+          {candidate ? (
+            sharedSystemWorkflow && !item.canEdit ? (
+              <button className={disabledSystemWorkflow ? 'capability-bay__primary-action' : 'capability-bay__secondary-action'} type="button" disabled={busy} onClick={() => void toggleWorkflow(candidate, disabledSystemWorkflow)}>
+                {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : disabledSystemWorkflow ? <IconPlugConnected className="capability-bay__button-icon" size={15} /> : <IconPlugConnectedX className="capability-bay__button-icon" size={15} />}
+                <span className="capability-bay__button-label">{busy ? '处理中…' : disabledSystemWorkflow ? '启用' : '关闭'}</span>
+              </button>
+            ) : disabledSystemWorkflow ? (
+              <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void toggleWorkflow(candidate, true)}>
+                {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnected className="capability-bay__button-icon" size={15} />}
+                <span className="capability-bay__button-label">{busy ? '启用中…' : '启用'}</span>
+              </button>
+            ) : routingReady && !candidate.stale ? (
+              <button className="capability-bay__secondary-action" type="button" disabled><IconCheck className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">已添加</span></button>
+            ) : (
+              <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate)}>
+                {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnected className="capability-bay__button-icon" size={15} />}
+                <span className="capability-bay__button-label">{routeConfirmationRequired ? '重新检查' : versionChanged ? '检查并更新' : '检查并添加'}</span>
+              </button>
+            )
+          ) : (
+            <button className="capability-bay__secondary-action" type="button" disabled><IconPlugConnectedX className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">暂不可添加</span></button>
+          )}
+        </span>
+      </article>
+    )
+  }
 
   return (
     <>
@@ -564,9 +846,9 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
             <h2 className="capability-bay__title" id="capability-bay-title">Agent 配置</h2>
             <span className="capability-bay__subtitle">设置小T可以使用的工作流、技能和内置功能</span>
           </span>
-          <span className="capability-bay__count">已添加 {routingReadySourceIds.size} 个工作流</span>
+          <span className="capability-bay__count">已添加 {enabledWorkflowCount} 个工作流</span>
           <Tooltip className="capability-bay__tooltip" label="刷新能力状态" withArrow>
-            <button className="capability-bay__icon-action" type="button" aria-label="刷新能力状态" disabled={loading} onClick={() => void load()}>
+            <button className="capability-bay__icon-action" type="button" aria-label="刷新能力状态" disabled={loading} onClick={() => void load({ includeInvocations: activeTab === 'invocations', force: true })}>
               <IconRefresh className={loading ? 'capability-bay__refresh-svg is-loading' : 'capability-bay__refresh-svg'} size={17} />
             </button>
           </Tooltip>
@@ -625,70 +907,34 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
               <section className="capability-bay__section" aria-labelledby="capability-bay-projects-title">
                 <header className="capability-bay__section-header">
                   <strong className="capability-bay__section-title" id="capability-bay-projects-title">工作流项目</strong>
-                  <span className="capability-bay__section-count">{workflowCatalogItems.length} 个工作流</span>
+                  <span className="capability-bay__section-count">{activeWorkflowCatalogItems.length} 个工作流</span>
                 </header>
-                {!loading && !error && workflowCatalogItems.length === 0 ? <div className="capability-bay__section-empty">还没有工作流项目</div> : null}
-                {workflowCatalogItems.map((item) => {
-                  const candidate = item.candidate
-                  const busy = candidate ? busyFlowId === candidate.descriptor.sourceId : false
-                  const projectBusy = busyFlowId === `project:${item.projectId}`
-                  const routingReady = candidate ? routingReadySourceIds.has(candidate.descriptor.sourceId) : false
-                  const routeConfirmationRequired = candidate ? candidate.attached && !routingReady : false
-                  const versionChanged = candidate ? candidate.attached && candidate.attachedVersionId !== candidate.descriptor.sourceVersionId : false
-                  const attachedAt = candidate?.attachedAt ?? null
-                  const updatedAt = candidate ? candidate.updatedAt : item.updatedAt
-                  return (
-                    <article className={`capability-bay__item${candidate && selectedCandidate?.descriptor.sourceId === candidate.descriptor.sourceId ? ' is-selected' : ''}`} key={item.key}>
-                      <span className="capability-bay__item-icon" aria-hidden="true"><IconTopologyStar3 className="capability-bay__item-svg" size={19} /></span>
-                      <span className="capability-bay__item-copy">
-                        <span className="capability-bay__item-title-row">
-                          <strong className="capability-bay__item-title">{candidate?.descriptor.name || item.projectName}</strong>
-                          <span className="capability-bay__state is-equipped">工作流</span>
-                          {routingReady ? <span className="capability-bay__state is-equipped"><IconCheck className="capability-bay__state-icon" size={12} />已添加</span> : null}
-                          {routeConfirmationRequired ? <span className="capability-bay__state is-stale"><IconAlertTriangle className="capability-bay__state-icon" size={12} />待重新确认</span> : null}
-                          {versionChanged ? <span className="capability-bay__state is-stale"><IconAlertTriangle className="capability-bay__state-icon" size={12} />有新版本</span> : null}
-                        </span>
-                        <span className="capability-bay__item-summary">{candidate?.descriptor.summary || (candidate ? `${candidate.descriptor.nodeCount} 个工作流节点` : `${item.flowCount} 个工作流画布`)}</span>
-                        <span className="capability-bay__item-meta">
-                          <span className="capability-bay__meta-item">{item.projectName}</span>
-                          {candidate ? <span className="capability-bay__meta-item">{candidate.descriptor.nodeCount} 节点</span> : null}
-                          {candidate ? <span className="capability-bay__meta-item">版本 {candidate.descriptor.sourceRevision}</span> : null}
-                          {candidate && formatCapabilityDate(attachedAt) ? <span className="capability-bay__meta-item">装载于 {formatCapabilityDate(attachedAt)}</span> : null}
-                          {candidate && formatCapabilityDate(updatedAt) ? <span className="capability-bay__meta-item">更新于 {formatCapabilityDate(updatedAt)}</span> : null}
-                          {candidate ? <span className="capability-bay__meta-item">{candidate.descriptor.sideEffects.map(effectLabel).join(' · ')}</span> : null}
-                          {!candidate && item.updatedAt ? <span className="capability-bay__meta-item">更新于 {new Date(item.updatedAt).toLocaleString('zh-CN', { hour12: false })}</span> : null}
-                          {!candidate ? <span className="capability-bay__meta-item">尚无可添加的已保存工作流</span> : null}
-                        </span>
-                      </span>
-                      <span className="capability-bay__item-actions">
-                        <button className="capability-bay__secondary-action" type="button" disabled={!item.projectId || projectBusy} onClick={() => item.projectId && openWorkflowEditor(item.projectId, candidate?.descriptor.sourceId)}><IconEdit className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">编辑</span></button>
-                        {item.canDelete ? <button className="capability-bay__secondary-action" type="button" disabled={projectBusy} onClick={() => void deleteProject(item)}><IconTrash className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">{projectBusy ? '删除中…' : '删除'}</span></button> : null}
-                        {candidate ? (
-                          routingReady && !candidate.stale ? (
-                            <button className="capability-bay__secondary-action" type="button" disabled><IconCheck className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">已添加</span></button>
-                          ) : (
-                            <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate, candidate.attached)}>
-                              {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnected className="capability-bay__button-icon" size={15} />}
-                              <span className="capability-bay__button-label">{routeConfirmationRequired ? '重新检查' : versionChanged ? '更新并覆盖' : '检查并添加'}</span>
-                            </button>
-                          )
-                        ) : (
-                          <button className="capability-bay__secondary-action" type="button" disabled><IconPlugConnectedX className="capability-bay__button-icon" size={15} /><span className="capability-bay__button-label">暂不可添加</span></button>
-                        )}
-                      </span>
-                    </article>
-                  )
-                })}
+                {!loading && !error && activeWorkflowCatalogItems.length === 0 ? <div className="capability-bay__section-empty">{disabledWorkflowCatalogItems.length > 0 ? '当前没有启用的工作流' : '还没有工作流项目'}</div> : null}
+                {activeWorkflowCatalogItems.map(renderWorkflowCatalogItem)}
+                {disabledWorkflowCatalogItems.length > 0 ? (
+                  <details className="capability-bay__disabled-workflows">
+                    <summary className="capability-bay__disabled-workflows-summary">
+                      <span>已关闭的系统工作流（{disabledWorkflowCatalogItems.length}）</span>
+                      <span className="capability-bay__disabled-workflows-hint">展开后可重新启用</span>
+                    </summary>
+                    {disabledWorkflowCatalogItems.map(renderWorkflowCatalogItem)}
+                  </details>
+                ) : null}
               </section>
             ) : null}
             {!loading && !error && activeTab === 'equipped' && equippedCandidates.length === 0 ? <div className="capability-bay__section-empty">还没有添加工作流</div> : null}
             {activeTab === 'equipped' ? equippedCandidates.map((candidate) => {
-              const busy = busyFlowId === candidate.descriptor.sourceId
+              const workflowAction = workflowActionBySourceId[candidate.descriptor.sourceId]
+              const busy = busyFlowId === candidate.descriptor.sourceId || workflowAction !== undefined
               const routingReady = routingReadySourceIds.has(candidate.descriptor.sourceId)
               const routeConfirmationRequired = candidate.attached && !routingReady
               const versionChanged = candidate.attached && candidate.attachedVersionId !== candidate.descriptor.sourceVersionId
               const isSystemWorkflow = attachmentScopeBySourceId.get(candidate.descriptor.sourceId) === 'all_users'
               const userEnabled = userEnabledBySourceId.get(candidate.descriptor.sourceId) ?? true
+              const attachment = data?.attachments.find((item) => item.sourceId === candidate.descriptor.sourceId)
+              const invocation = attachment?.descriptor.invocation
+              const launch = acceptedLaunch?.sourceId === candidate.descriptor.sourceId ? acceptedLaunch : null
+              const launchActive = launch?.status === 'queued' || launch?.status === 'running'
               const attachedAt = candidate.attachedAt
               const updatedAt = candidate.updatedAt
               return (
@@ -703,22 +949,66 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                       {routeConfirmationRequired ? <span className="capability-bay__state is-stale"><IconAlertTriangle className="capability-bay__state-icon" size={12} />待重新确认</span> : null}
                       {versionChanged ? <span className="capability-bay__state is-stale"><IconAlertTriangle className="capability-bay__state-icon" size={12} />有新版本</span> : null}
                     </span>
-                    <span className="capability-bay__item-summary">{candidate.descriptor.summary || `${candidate.descriptor.nodeCount} 个工作流节点`}</span>
+                    <span className="capability-bay__item-summary">{candidate.descriptor.summary || workflowNodeCountLabel(candidate)}</span>
                     <span className="capability-bay__item-meta">
                       <span className="capability-bay__meta-item">{candidate.projectName || '个人工作流'}</span>
-                      <span className="capability-bay__meta-item">{candidate.descriptor.nodeCount} 节点</span>
+                      <span className="capability-bay__meta-item">{workflowNodeCountLabel(candidate)}</span>
                       <span className="capability-bay__meta-item">版本 {candidate.descriptor.sourceRevision}</span>
                       {formatCapabilityDate(attachedAt) ? <span className="capability-bay__meta-item">装载于 {formatCapabilityDate(attachedAt)}</span> : null}
                       {formatCapabilityDate(updatedAt) ? <span className="capability-bay__meta-item">更新于 {formatCapabilityDate(updatedAt)}</span> : null}
                       <span className="capability-bay__meta-item">{candidate.descriptor.sideEffects.map(effectLabel).join(' · ')}</span>
                     </span>
+                    {routingReady && userEnabled && invocation ? (
+                      <CapabilityBayLaunchFields
+                        workflowName={candidate.descriptor.name}
+                        requiredFields={invocation.requiredTriggerPayloadFields}
+                        source={launchSourceBySourceId[candidate.descriptor.sourceId] ?? ''}
+                        selectedGroupIds={launchScope?.selectedGroupIds ?? []}
+                        mediaSelection={launchMediaSelectionBySourceId[candidate.descriptor.sourceId] ?? {}}
+                        imageModelState={imageModelState}
+                        videoModelState={videoModelState}
+                        disabled={busy}
+                        onSourceChange={(value) => setLaunchSourceBySourceId((current) => ({
+                          ...current,
+                          [candidate.descriptor.sourceId]: value,
+                        }))}
+                        onMediaSelectionChange={(field, value) => updateLaunchMediaSelection(candidate.descriptor.sourceId, field, value)}
+                      />
+                    ) : null}
+                    {routingReady && userEnabled && !launchScope ? (
+                      <span className="capability-bay__launch-hint is-error">当前项目或章节画布范围尚未就绪</span>
+                    ) : null}
+                    {launch ? (
+                      <span className="capability-bay__launch-hint" role="status">
+                        执行 {launch.executionId} · {launch.status}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="capability-bay__item-actions">
-                    {isSystemWorkflow && candidate.stale && adminUser ? (
-                      <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate, candidate.attached)}>
-                        <IconRefresh className="capability-bay__button-icon" size={15} />
-                        <span className="capability-bay__button-label">更新并覆盖</span>
+                    {routingReady && userEnabled ? (
+                      <button
+                        className="capability-bay__primary-action"
+                        type="button"
+                        disabled={busy || Boolean(launchActive) || !launchScope || !invocation}
+                        onClick={() => runEquippedWorkflow(candidate)}
+                      >
+                        {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconBolt className="capability-bay__button-icon" size={15} />}
+                        <span className="capability-bay__button-label">{workflowAction === 'launch' ? '启动中…' : '运行工作流'}</span>
                       </button>
+                    ) : null}
+                    {launch ? (
+                      <>
+                        <button className="capability-bay__secondary-action" type="button" onClick={() => setLogExecutionId(launch.executionId)}>
+                          <IconHistory className="capability-bay__button-icon" size={15} />
+                          <span className="capability-bay__button-label">查看执行</span>
+                        </button>
+                        {launchActive ? (
+                          <button className="capability-bay__cancel-action" type="button" disabled={busy} onClick={() => cancelAcceptedWorkflow(launch)}>
+                            {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnectedX className="capability-bay__button-icon" size={15} />}
+                            <span className="capability-bay__button-label">{workflowAction === 'cancel' ? '取消中…' : '取消执行'}</span>
+                          </button>
+                        ) : null}
+                      </>
                     ) : null}
                     {isSystemWorkflow ? (
                       <Tooltip className="capability-bay__tooltip" label={userEnabled ? '关闭后该工作流不会出现在你的小T中（仅对当前账号生效）' : '重新启用该系统级工作流'} withArrow>
@@ -735,9 +1025,9 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                         </button>
                       </Tooltip>
                     ) : (
-                      <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate, candidate.attached)}>
+                      <button className="capability-bay__primary-action" type="button" disabled={busy} onClick={() => void inspect(candidate)}>
                         {busy ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnected className="capability-bay__button-icon" size={15} />}
-                        <span className="capability-bay__button-label">{routeConfirmationRequired ? '重新检查' : versionChanged ? '更新并覆盖' : '检查并添加'}</span>
+                        <span className="capability-bay__button-label">{routeConfirmationRequired ? '重新检查' : versionChanged ? '检查并更新' : '检查并添加'}</span>
                       </button>
                     )}
                   </span>
@@ -803,6 +1093,7 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                 </article>
               )
             }) : null}
+            {activeTab === 'invocations' && loading && data ? <div className="capability-bay__empty"><IconLoader2 className="capability-bay__empty-loader" size={21} />正在加载使用记录…</div> : null}
             {activeTab === 'invocations' && !loading && invocationItems.length === 0 ? <div className="capability-bay__empty">小T还没有运行过已添加的工作流</div> : null}
             {activeTab === 'invocations' ? invocationItems.map((invocation) => (
               <article className="capability-bay__item" key={invocation.id}>
@@ -928,13 +1219,13 @@ export function CapabilityBayDialog({ opened, projectId, focusRequest = null, on
                 ) : null}
                 {pendingPrimaryRoute ? (
                   <p className="capability-bay__inspection-hint" role="status">
-                    请先为「{pendingPrimaryRoute.title}」选择处理方式：用新工作流替换 / 并列保留两者 / 保留当前，不添加 / 编辑为委托关系。
+                    请先为「{pendingPrimaryRoute.title}」选择处理方式：用新工作流替换 / 保留当前，不添加 / 编辑为委托关系。
                   </p>
                 ) : null}
                 <button className="capability-bay__cancel-action" type="button" onClick={() => setInspection(null)}>取消</button>
                 <button className="capability-bay__confirm-action" type="button" disabled={inspection.report.blocking || !allPrimaryRoutesDecided || busyFlowId === inspection.descriptor.sourceId} onClick={finishPrimaryRouteDecision}>
                   {busyFlowId === inspection.descriptor.sourceId ? <IconLoader2 className="capability-bay__button-loader" size={15} /> : <IconPlugConnected className="capability-bay__button-icon" size={15} />}
-                  <span className="capability-bay__button-label">{hasEditDecision ? '去编辑工作流' : hasKeepDecision ? '保留当前设置' : canEquip && primaryRouteConflicts.length > 0 ? (hasReplacementDecision ? (updatingInspection ? '确认替换并更新' : '确认替换并添加') : (updatingInspection ? '确认并列并更新' : '确认并列并添加')) : (updatingInspection ? '确认更新装载' : '添加给小T')}</span>
+                  <span className="capability-bay__button-label">{hasEditDecision ? '去编辑工作流' : hasKeepDecision ? '保留当前设置' : canEquip && primaryRouteConflicts.length > 0 ? (updatingInspection ? '确认替换并更新' : '确认替换并添加') : (updatingInspection ? '确认更新装载' : '添加给小T')}</span>
                 </button>
               </footer>
             </aside>

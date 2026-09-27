@@ -601,7 +601,7 @@ export function applyWorkflowArtifactJsonObjectContract(
 					// `objectId` names the registry object a plan generates; `role` is
 					// host-compiled from it and stays allowed only so an older persisted
 					// candidate remains readable.
-					assetPlans: ["objectId", "role", "prompt", "negativePrompt", "identityBoardSpec", "sceneCard", "identityAnchors", "prohibitedDrift"],
+					assetPlans: ["objectId", "role", "prompt", "negativePrompt", "identityBoardSpec", "sceneCard", "identityAnchors", "prohibitedDrift", "referenceAssetBindings"],
 				} : {}),
 				blockingPlans: [...BEAT_SHEET_BLOCKING_PLAN_FIELDS],
 				beats: [...BEAT_SHEET_EXECUTION_BEAT_FIELDS],

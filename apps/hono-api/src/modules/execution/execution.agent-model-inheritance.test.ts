@@ -26,7 +26,23 @@ describe("workflow Agent model inheritance", () => {
 		expect(resolveWorkflowAgentModelKey({
 			flowVersionData: { nodes: [], edges: [] },
 			configuredModelKey: null,
-		})).toBe("");
+	})).toBe("");
+	});
+
+	it("uses an explicitly admitted direct Agent model before authored node configuration", () => {
+		expect(resolveWorkflowAgentModelKey({
+			flowVersionData: {
+				workflowDirectAgentModelSelection: { model: " user-selected-model ", source: "user_preference" },
+			},
+			configuredModelKey: "authored-model",
+		})).toBe("user-selected-model");
+	});
+
+	it("fails on an invalid frozen direct model selection instead of falling back", () => {
+		expect(() => resolveWorkflowAgentModelKey({
+			flowVersionData: { workflowDirectAgentModelSelection: { model: "", source: "unknown" } },
+			configuredModelKey: "authored-model",
+		})).toThrow("selection is invalid");
 	});
 
 	it("records an explicit immutable model cutover without retaining the old active model", () => {

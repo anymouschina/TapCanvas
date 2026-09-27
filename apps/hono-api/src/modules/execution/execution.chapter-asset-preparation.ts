@@ -4,6 +4,7 @@ import { createWorkflowCollection, isWorkflowCollection } from '@tapcanvas/workf
 import { compileWorkflowAssetPlanDrafts } from './execution.video-workflow-contract';
 import { resolveWorkflowProjectImageReferences } from './execution.project-image-references';
 import type { WorkflowProjectContext } from './execution.project-context';
+import { projectChapterAssetSources } from './execution.chapter-asset-source';
 import type { ChapterAssetPlan } from './execution.video-authoring-stages';
 
 type Facts = Readonly<Record<string, unknown>>;
@@ -26,8 +27,9 @@ export function prepareChapterAssetCollection(input: Readonly<{
   executionId: string;
   nodeId: string;
 }>) {
-  const drafts = compileWorkflowAssetPlanDrafts(input.assets.assetPlans, input.assets.objectRegistry, [], []);
-  const objects = new Map(input.assets.objectRegistry.map(object => [object.objectId, object]));
+  const sources = projectChapterAssetSources(input.assets.objectRegistry);
+  const drafts = compileWorkflowAssetPlanDrafts(sources.assetPlans, sources.objectRegistry, [], []);
+  const objects = new Map(sources.objectRegistry.map(object => [object.objectId, object]));
   const reuse = new Map<string, readonly Facts[]>();
   for (const object of objects.values()) {
     const objectRole = role(object);
@@ -42,7 +44,7 @@ export function prepareChapterAssetCollection(input: Readonly<{
     }));
   }
   const plans: Facts[] = [
-    ...drafts.filter(plan => !reuse.has(plan.objectId)).map(plan => ({
+    ...drafts.map(plan => ({
       ...plan, displayName: objects.get(plan.objectId)?.name,
     })),
     ...Array.from(reuse.values()).flat(),

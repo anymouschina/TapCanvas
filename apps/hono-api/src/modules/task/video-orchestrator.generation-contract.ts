@@ -19,6 +19,9 @@ export type VideoGenerationContract = {
   maxDurationSeconds: number;
   maxShotDurationSeconds?: number;
   referenceAudioPolicy: VideoReferenceAudioPolicy;
+  supportsReferenceImages?: boolean | null;
+  supportsFirstLastFrame?: boolean | null;
+  maxReferenceImages?: number | null;
 };
 
 async function resolveEnabledRuntimeVideoOptions(input: {
@@ -229,6 +232,22 @@ export function parseVideoGenerationContract(value: unknown): VideoGenerationCon
   const maxShotDurationRaw = record.maxShotDurationSeconds;
   const maxShotDurationSeconds = maxShotDurationRaw === undefined ? undefined : Number(maxShotDurationRaw);
   const referenceAudioPolicy = parseReferenceAudioPolicy(record.referenceAudioPolicy);
+  const supportsReferenceImages = record.supportsReferenceImages === undefined
+    ? undefined
+    : record.supportsReferenceImages === null || typeof record.supportsReferenceImages === "boolean"
+      ? record.supportsReferenceImages
+      : Number.NaN;
+  const supportsFirstLastFrame = record.supportsFirstLastFrame === undefined
+    ? undefined
+    : record.supportsFirstLastFrame === null || typeof record.supportsFirstLastFrame === "boolean"
+      ? record.supportsFirstLastFrame
+      : Number.NaN;
+  const maxReferenceImages = record.maxReferenceImages === undefined
+    ? undefined
+    : record.maxReferenceImages === null || (typeof record.maxReferenceImages === "number"
+      && Number.isSafeInteger(record.maxReferenceImages) && record.maxReferenceImages >= 0)
+      ? record.maxReferenceImages
+      : Number.NaN;
   if (
     !videoModel ||
     durationOptions.length === 0 ||
@@ -236,6 +255,9 @@ export function parseVideoGenerationContract(value: unknown): VideoGenerationCon
     maxDurationSeconds <= 0 ||
     maxDurationSeconds !== durationOptions[durationOptions.length - 1] ||
     !referenceAudioPolicy ||
+    (typeof supportsReferenceImages === "number" && Number.isNaN(supportsReferenceImages)) ||
+    (typeof supportsFirstLastFrame === "number" && Number.isNaN(supportsFirstLastFrame)) ||
+    (typeof maxReferenceImages === "number" && Number.isNaN(maxReferenceImages)) ||
     (maxShotDurationSeconds !== undefined && (!Number.isFinite(maxShotDurationSeconds) || maxShotDurationSeconds <= 0))
   ) {
     return null;
@@ -246,6 +268,9 @@ export function parseVideoGenerationContract(value: unknown): VideoGenerationCon
     maxDurationSeconds,
     ...(maxShotDurationSeconds !== undefined ? { maxShotDurationSeconds } : {}),
     referenceAudioPolicy,
+    ...(supportsReferenceImages !== undefined ? { supportsReferenceImages } : {}),
+    ...(supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame } : {}),
+    ...(maxReferenceImages !== undefined ? { maxReferenceImages } : {}),
   };
 }
 
@@ -314,6 +339,7 @@ export async function resolveStoryPlanGenerationContract(input: {
 export async function resolveVideoGenerationContract(input: {
   c: AppContext;
   videoModel: string;
+  videoInputModes?: readonly ("image_to_video" | "reference_to_video")[];
 }): Promise<VideoGenerationContract> {
   const videoModel = input.videoModel.trim();
   if (!videoModel) throw new Error("video_generation_model_required");
@@ -338,11 +364,33 @@ export async function resolveVideoGenerationContract(input: {
       field: "durationOptions", code: "video_generation_duration_options_missing", observed: rawDurations ?? null });
   }
   const referenceAudioPolicy = readReferenceAudioPolicy(videoOptions);
+  const supportsReferenceImages = typeof videoOptions.supportsReferenceImages === "boolean"
+    ? videoOptions.supportsReferenceImages
+    : null;
+  const supportsFirstLastFrame = typeof videoOptions.supportsFirstLastFrame === "boolean"
+    ? videoOptions.supportsFirstLastFrame
+    : null;
+  const rawMaxReferenceImages = videoOptions.maxReferenceImages;
+  const maxReferenceImages = typeof rawMaxReferenceImages === "number"
+    && Number.isSafeInteger(rawMaxReferenceImages)
+    && rawMaxReferenceImages >= 0
+    ? rawMaxReferenceImages
+    : null;
+  const videoInputModes = [...new Set(input.videoInputModes ?? [])];
+  if (videoInputModes.includes("reference_to_video") && supportsReferenceImages !== true) {
+    throw new ExternalDependencyError({ kind: "model_catalog", identity: videoModel,
+      field: "supportsReferenceImages", code: "video_model_reference_images_not_supported", observed: supportsReferenceImages });
+  }
+  if (videoInputModes.includes("image_to_video") && supportsFirstLastFrame !== true) {
+    throw new ExternalDependencyError({ kind: "model_catalog", identity: videoModel,
+      field: "supportsFirstLastFrame", code: "video_model_first_frame_not_supported", observed: supportsFirstLastFrame });
+  }
   return {
     videoModel,
     durationOptions,
     maxDurationSeconds: durationOptions[durationOptions.length - 1],
     referenceAudioPolicy,
+    ...(videoInputModes.length > 0 ? { supportsReferenceImages, supportsFirstLastFrame, maxReferenceImages } : {}),
   };
 }
 

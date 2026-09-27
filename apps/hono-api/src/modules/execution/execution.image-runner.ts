@@ -12,6 +12,7 @@ import { buildInternalApiKey } from "../apiKey/internal-api-key";
 import { freshReadFlowRow } from "../task/video-orchestrator.flow-io";
 import { isProviderTaskPendingStatus } from "../task/provider-task-status";
 import { workflowImageSemanticLabel } from "./execution.media-label";
+import { buildWorkflowImageTaskId } from "../task/workflow-image-effect-claim";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -264,24 +265,30 @@ export async function runWorkflowImageNode(
 		if (!isRecord(existingNode.data) || !persistedWorkflowImageRequestMatches(existingNode.data, request)) {
 			throw new Error(`Workflow image output ${identity.canvasNodeId} already exists with a different generation contract`);
 		}
-		let persisted = inspectPersistedWorkflowImageNode(row.data, identity.canvasNodeId, null);
-		if (persisted.status === "waiting_external" && persisted.taskId) {
-			await reconcileImageNodesForFlow({
-				c: context,
-				requestUserId: request.ownerId,
-				devBypass: false,
-				flowId: request.flowId,
-				row,
-				target: { nodeId: identity.canvasNodeId, taskId: persisted.taskId },
-				...(request.chapterId ? { chapterId: request.chapterId } : {}),
-			});
-			row = await readRow();
-			persisted = inspectPersistedWorkflowImageNode(row.data, identity.canvasNodeId, persisted.taskId);
+		const prepared = existingNode.data.workflowPreparedOnly === true && existingNode.data.status === "idle"
+			&& !readString(existingNode.data.taskId) && !readString(existingNode.data.imageTaskId)
+			&& !readString(existingNode.data.imageUrl)
+			&& !(Array.isArray(existingNode.data.imageResults) && existingNode.data.imageResults.length > 0);
+		if (!prepared) {
+			let persisted = inspectPersistedWorkflowImageNode(row.data, identity.canvasNodeId, null);
+			if (persisted.status === "waiting_external" && persisted.taskId) {
+				await reconcileImageNodesForFlow({
+					c: context,
+					requestUserId: request.ownerId,
+					devBypass: false,
+					flowId: request.flowId,
+					row,
+					target: { nodeId: identity.canvasNodeId, taskId: persisted.taskId },
+					...(request.chapterId ? { chapterId: request.chapterId } : {}),
+				});
+				row = await readRow();
+				persisted = inspectPersistedWorkflowImageNode(row.data, identity.canvasNodeId, persisted.taskId);
+			}
+			if (persisted.status === "waiting_external" && persisted.taskId && !flowNode(row.data, persisted.nodeId)) {
+				return reconcileWorkflowMediaReceipt(context, request.ownerId, persisted.nodeId, persisted.taskId, "image");
+			}
+			return persisted;
 		}
-		if (persisted.status === "waiting_external" && persisted.taskId && !flowNode(row.data, persisted.nodeId)) {
-			return reconcileWorkflowMediaReceipt(context, request.ownerId, persisted.nodeId, persisted.taskId, "image");
-		}
-		return persisted;
 	}
 
 	if (request.authorizedRetry) {
@@ -336,6 +343,7 @@ export async function runWorkflowImageNode(
 					...(request.styleFingerprint ? { styleFingerprint: request.styleFingerprint } : {}),
 					waitForResult: false,
 					workflowEffectId: identity.effectId,
+					workflowTaskId: buildWorkflowImageTaskId({ ownerId: request.ownerId, effectId: identity.effectId }),
 					workflowExecutionId: request.executionId,
 					workflowExecutionFamilyId: request.executionFamilyId,
 					workflowRuntimeNodeId: request.runtimeNodeId,

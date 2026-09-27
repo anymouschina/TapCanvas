@@ -1,18 +1,21 @@
 import type { Node } from '@xyflow/react'
 import { VIDEO_PRODUCTION_WORKFLOW_DEFINITION, VIDEO_PRODUCTION_WORKFLOW_KEY } from '@tapcanvas/video-orchestrator-protocol'
 import {
-  WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX,
-  WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MIN,
   WORKFLOW_ATOMIC_NODE_CATEGORIES,
   type WorkflowAtomicNodeCategory,
 } from '@tapcanvas/workflow-kernel-protocol'
 import { useRFStore } from './store'
 import {
+  VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
   VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
-  VIDEO_PROMPT_ONLY_WORKFLOW_NODE_IDS,
   VIDEO_WORKFLOW_MAX_CLIPS_MAX,
   VIDEO_WORKFLOW_MAX_CLIPS_MIN,
-} from './videoWorkflowCanvasTemplate'
+  atomicSpec,
+  stageNodeId,
+  videoNodeRuntimeData,
+  workflowDefinitions,
+  workflowEdges,
+} from './videoWorkflowDefinition'
 import { compileReachableWorkflowGraph } from './workflowCanvasGraph'
 import { compileWorkflowPortEdges, type CompiledWorkflowEdge } from './workflowCanvasPorts'
 import { markVideoWorkflowRequested } from './videoWorkflowProjectionSync'
@@ -53,6 +56,7 @@ type CompiledVideoWorkflowMediaConfiguration = Readonly<{
 }> | null
 
 export type VideoWorkflowExecutionScope = 'media_delivery' | 'prompt_only'
+export type VideoWorkflowExecutionVariant = 'full_video' | 'first_video'
 
 type CompiledVideoWorkflowSource = Readonly<{
   kind: 'canvas_group'
@@ -74,7 +78,9 @@ export type CompiledVideoWorkflow = Readonly<{
   workflowKey: typeof VIDEO_PRODUCTION_WORKFLOW_KEY
   backendDefinitionVersion: number
   canvasDefinitionVersion: typeof VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION
+  canvasDefinitionFingerprint: typeof VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT
   executionScope: VideoWorkflowExecutionScope
+  executionVariant: VideoWorkflowExecutionVariant
   workflowInstanceId: string
   triggerNodeId: string
   source: CompiledVideoWorkflowSource
@@ -82,20 +88,40 @@ export type CompiledVideoWorkflow = Readonly<{
   edges: readonly CompiledWorkflowEdge[]
 }>
 
-const PROMPT_ONLY_NODE_IDS = new Set<string>(VIDEO_PROMPT_ONLY_WORKFLOW_NODE_IDS)
+type JsonRecord = Record<string, unknown>
 
-function nodeData(node: Node): Record<string, unknown> {
-  return node.data && typeof node.data === 'object' ? node.data as Record<string, unknown> : {}
+function nodeData(node: Node): JsonRecord {
+  return node.data && typeof node.data === 'object' && !Array.isArray(node.data)
+    ? node.data as JsonRecord
+    : {}
 }
 
-function readString(data: Record<string, unknown>, key: string): string | null {
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function structurallyEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => structurallyEqual(value, right[index]))
+  }
+  if (!isRecord(left) || !isRecord(right)) return false
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index] && structurallyEqual(left[key], right[key]))
+}
+
+function readString(data: JsonRecord, key: string): string | null {
   const value = data[key]
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed || null
 }
 
-function readPositiveNumber(data: Record<string, unknown>, key: string): number | null {
+function readPositiveNumber(data: JsonRecord, key: string): number | null {
   const value = data[key]
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
@@ -106,21 +132,29 @@ function readStringArray(value: unknown): readonly string[] {
     : []
 }
 
-function configuredExecutionScope(data: Record<string, unknown>): VideoWorkflowExecutionScope {
-	if (data.workflowExecutionScope === 'prompt_only' || data.workflowExecutionScope === 'media_delivery') {
-		return data.workflowExecutionScope
-	}
-	throw new Error('一键成片触发器缺少不可变执行范围；请重新创建“完整成片”或“只出首个视频”模板')
+function readExecutionScope(data: JsonRecord, label: string): VideoWorkflowExecutionScope {
+  if (data.workflowExecutionScope === 'prompt_only' || data.workflowExecutionScope === 'media_delivery') {
+    return data.workflowExecutionScope
+  }
+  throw new Error(`${label} 缺少有效的不可变执行范围`)
 }
 
-function atomicSpec(data: Record<string, unknown>): Record<string, unknown> {
-  const value = data.workflowAtomicSpec
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('原子节点缺少 workflowAtomicSpec')
-  return value as Record<string, unknown>
+function readExecutionVariant(data: JsonRecord, label: string): VideoWorkflowExecutionVariant {
+  if (data.workflowExecutionVariant === 'full_video' || data.workflowExecutionVariant === 'first_video') {
+    return data.workflowExecutionVariant
+  }
+  throw new Error(`${label} 缺少有效的不可变执行变体`)
+}
+
+function assertCurrentCanvasDefinition(data: JsonRecord, label: string): void {
+  if (data.workflowCanvasDefinitionVersion !== VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION
+    || data.workflowCanvasDefinitionFingerprint !== VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT) {
+    throw new Error(`${label} 的一键成片画布定义已过期；请重新创建 v${VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION} 工作流`)
+  }
 }
 
 function requestedMediaConfiguration(
-  data: Record<string, unknown>,
+  data: JsonRecord,
   operation: string,
   workflowNodeId: string,
 ): CompiledVideoWorkflowMediaConfiguration {
@@ -147,15 +181,35 @@ function requestedMediaConfiguration(
   return null
 }
 
-function compileNode(node: Node): CompiledVideoWorkflowNode | null {
+function assertNodeMatchesDefinition(node: Node, definition: ReturnType<typeof workflowDefinitions>[number]): void {
   const data = nodeData(node)
-  if (data.kind !== 'workflowStage') return null
-  const spec = atomicSpec(data)
-  const categoryValue = spec.category
-  const category = WORKFLOW_ATOMIC_NODE_CATEGORIES.find((candidate) => candidate === categoryValue)
+  const spec = data.workflowAtomicSpec
+  const runtimeNodeData = videoNodeRuntimeData(definition)
+  const runtimeSpec = runtimeNodeData.workflowAtomicSpec
+  const definitionRuntimeSpec = definition.runtimeData?.workflowAtomicSpec
+  const expectedSpec = isRecord(runtimeSpec)
+    ? runtimeSpec
+    : isRecord(definitionRuntimeSpec)
+      ? definitionRuntimeSpec
+      : atomicSpec(definition)
+  if (node.type !== 'taskNode' || data.kind !== 'workflowStage'
+    || data.workflowNodeId !== definition.nodeId
+    || data.workflowNodeKind !== definition.operation
+    || !structurallyEqual(spec, expectedSpec)
+    || !structurallyEqual(data.workflowInputPorts, definition.inputPorts)
+    || !structurallyEqual(data.workflowOptionalInputPorts, definition.optionalInputPorts ?? [])
+    || !structurallyEqual(data.workflowOutputPorts, definition.outputPorts)) {
+    throw new Error(`工作流节点 ${node.id} 与 v${VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION} typed-port 合同不一致`)
+  }
+}
+
+function compileNode(node: Node, definition: ReturnType<typeof workflowDefinitions>[number]): CompiledVideoWorkflowNode {
+  const data = nodeData(node)
+  assertNodeMatchesDefinition(node, definition)
+  const spec = data.workflowAtomicSpec as JsonRecord
+  const category = WORKFLOW_ATOMIC_NODE_CATEGORIES.find((candidate) => candidate === spec.category)
   const operation = readString(spec, 'operation')
-  const workflowNodeId = readString(data, 'workflowNodeId')
-  if (!category || !operation || !workflowNodeId) throw new Error(`视频原子节点 ${node.id} 的合同不完整`)
+  if (!category || !operation) throw new Error(`视频原子节点 ${node.id} 的合同不完整`)
   const rawMaxClipCount = data.workflowBeatSheetTakeCount
   const maxClipCount = operation === 'max_clip'
     ? typeof rawMaxClipCount === 'number'
@@ -166,14 +220,14 @@ function compileNode(node: Node): CompiledVideoWorkflowNode | null {
         : null
     : null
   if (operation === 'max_clip' && maxClipCount === null) {
-    throw new Error(`Clip 上限节点 ${workflowNodeId} 必须配置 ${VIDEO_WORKFLOW_MAX_CLIPS_MIN}–${VIDEO_WORKFLOW_MAX_CLIPS_MAX} 的正整数`)
+    throw new Error(`Clip 上限节点 ${definition.nodeId} 必须配置 ${VIDEO_WORKFLOW_MAX_CLIPS_MIN}–${VIDEO_WORKFLOW_MAX_CLIPS_MAX} 的正整数`)
   }
   return {
     id: node.id,
-    workflowNodeId,
+    workflowNodeId: definition.nodeId,
     category,
     operation,
-    executorRef: readString(spec, 'executorRef'),
+    executorRef: typeof spec.executorRef === 'string' ? spec.executorRef : null,
     skillId: readString(data, 'workflowSkillId'),
     toolId: readString(data, 'workflowToolId'),
     inputPorts: readStringArray(spec.inputPorts),
@@ -188,24 +242,77 @@ function compileNode(node: Node): CompiledVideoWorkflowNode | null {
     deliveryRequirement: readString(data, 'workflowAgentDeliveryRequirement') ?? readString(data, 'workflowDeliveryRequirement'),
     instruction: readString(data, 'workflowInstruction'),
     maxClipCount,
-    requestedMediaConfiguration: requestedMediaConfiguration(data, operation, workflowNodeId),
+    requestedMediaConfiguration: requestedMediaConfiguration(data, operation, definition.nodeId),
   }
 }
 
-export function compileVideoWorkflow(
-  triggerNodeId: string,
-): CompiledVideoWorkflow {
+export function compileVideoWorkflow(triggerNodeId: string): CompiledVideoWorkflow {
+  const normalizedTriggerNodeId = triggerNodeId.trim()
+  if (!normalizedTriggerNodeId) throw new Error('一键成片触发器身份不能为空')
   const store = useRFStore.getState()
-  const trigger = store.nodes.find((node) => node.id === triggerNodeId)
+  const trigger = store.nodes.find((node) => node.id === normalizedTriggerNodeId)
   if (!trigger) throw new Error('一键成片触发器不存在')
   const triggerData = nodeData(trigger)
-  if (triggerData.workflowKey !== VIDEO_PRODUCTION_WORKFLOW_KEY) throw new Error('该触发器不是一键成片工作流')
+  if (trigger.type !== 'taskNode' || triggerData.kind !== 'workflowTrigger'
+    || triggerData.workflowKey !== VIDEO_PRODUCTION_WORKFLOW_KEY
+    || triggerData.adminWorkflow !== true) {
+    throw new Error('该节点不是有效的一键成片工作流触发器')
+  }
   const workflowInstanceId = readString(triggerData, 'workflowInstanceId')
   if (!workflowInstanceId) throw new Error('一键成片触发器缺少工作流实例身份')
-  const executionScope = configuredExecutionScope(triggerData)
+  assertCurrentCanvasDefinition(triggerData, '一键成片触发器')
+  const executionScope = readExecutionScope(triggerData, '一键成片触发器')
+  const executionVariant = readExecutionVariant(triggerData, '一键成片触发器')
+  if (executionScope === 'prompt_only' && executionVariant !== 'full_video') {
+    throw new Error('提示词工作流不支持首视频媒体变体')
+  }
+
+  const group = typeof trigger.parentId === 'string'
+    ? store.nodes.find((node) => node.id === trigger.parentId && node.type === 'groupNode')
+    : undefined
+  if (!group) throw new Error('一键成片触发器没有所属工作流组')
+  const groupData = nodeData(group)
+  assertCurrentCanvasDefinition(groupData, '一键成片工作流组')
+  if (groupData.workflowKey !== VIDEO_PRODUCTION_WORKFLOW_KEY
+    || groupData.adminWorkflow !== true
+    || groupData.workflowInstanceId !== workflowInstanceId
+    || readExecutionScope(groupData, '一键成片工作流组') !== executionScope
+    || readExecutionVariant(groupData, '一键成片工作流组') !== executionVariant) {
+    throw new Error('一键成片工作流组与触发器身份或执行范围不一致')
+  }
+
+  const definitions = workflowDefinitions(executionScope, executionVariant)
+  const edges = workflowEdges(executionScope, executionVariant)
+  const expectedById = new Map(definitions.map((definition) => [definition.nodeId, definition] as const))
+  const expectedIds = new Set(definitions.map((definition) => stageNodeId(workflowInstanceId, definition.nodeId)))
+  const instanceStages = store.nodes.filter((node) => {
+    const data = nodeData(node)
+    return data.workflowInstanceId === workflowInstanceId && data.kind === 'workflowStage'
+  })
+  if (instanceStages.length !== definitions.length) {
+    throw new Error(`一键成片工作流节点数量与 v${VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION} 定义不一致`)
+  }
+  for (const node of instanceStages) {
+    if (!expectedIds.has(node.id) || node.parentId !== group.id) {
+      throw new Error(`工作流包含不属于当前 v${VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION} 组的阶段节点 ${node.id}`)
+    }
+  }
+  for (const definition of definitions) {
+    const nodeId = stageNodeId(workflowInstanceId, definition.nodeId)
+    const node = instanceStages.find((candidate) => candidate.id === nodeId)
+    if (!node) throw new Error(`工作流缺少 v${VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION} 阶段节点 ${definition.nodeId}`)
+    const data = nodeData(node)
+    assertCurrentCanvasDefinition(data, `工作流阶段节点 ${definition.nodeId}`)
+    if (data.workflowKey !== VIDEO_PRODUCTION_WORKFLOW_KEY
+      || data.adminWorkflow !== true
+      || data.workflowInstanceId !== workflowInstanceId) {
+      throw new Error(`工作流阶段节点 ${definition.nodeId} 的身份合同不一致`)
+    }
+    assertNodeMatchesDefinition(node, definition)
+  }
 
   const graph = compileReachableWorkflowGraph({
-    triggerNodeId,
+    triggerNodeId: normalizedTriggerNodeId,
     nodes: store.nodes,
     edges: store.edges,
     isEligibleNode: (node) => {
@@ -215,41 +322,36 @@ export function compileVideoWorkflow(
         && data.workflowInstanceId === workflowInstanceId
     },
   })
-  const compiledNodes = graph.nodes.map(compileNode).filter((node): node is CompiledVideoWorkflowNode => node !== null)
-  if (compiledNodes.length === 0) {
-    const stageCount = store.nodes.filter((node) => {
-      const data = nodeData(node)
-      return data.workflowInstanceId === workflowInstanceId && data.kind === 'workflowStage'
-    }).length
-    if (stageCount > 0) {
-      throw new Error(`触发器没有连接到原子图；当前实例有 ${stageCount} 个节点。请点击“重建默认连接”，或从 trigger 端口连接到“画布来源”`)
-    }
-    throw new Error('当前工作流实例没有原子节点，请重新创建一键成片原子模板')
+  const reachableStageIds = new Set(graph.nodes
+    .filter((node) => node.id !== normalizedTriggerNodeId)
+    .map((node) => node.id))
+  const unreachableNodeId = Array.from(expectedIds).find((nodeId) => !reachableStageIds.has(nodeId))
+  if (unreachableNodeId) {
+    throw new Error(`工作流阶段节点 ${unreachableNodeId} 未连接到触发器可达图`)
   }
   const compiledEdges = compileWorkflowPortEdges(graph.nodes, graph.edges)
-  const sourceNode = graph.nodes.find((node) => {
-    const compiled = compileNode(node)
-    return compiled?.category === 'source'
-  })
+  const sourceNode = graph.nodes.find((node) => node.id === stageNodeId(workflowInstanceId, 'canvas-source'))
   if (!sourceNode) throw new Error('当前可达图缺少“画布来源”节点')
-  if (executionScope === 'media_delivery' && !compiledNodes.some((node) => node.category === 'delivery')) {
-    throw new Error('当前可达图缺少“交付验收”节点')
+  if (executionScope === 'media_delivery'
+    && !expectedById.has('delivery-verify')) {
+    throw new Error('完整成片工作流定义缺少交付验收终点')
   }
-  if (executionScope === 'prompt_only' && !compiledNodes.some((node) => node.workflowNodeId === 'prompt-package')) {
-    throw new Error('当前提示词工作流缺少“提示词包汇总”终点')
+  if (executionScope === 'prompt_only' && !expectedById.has('prompt-package')) {
+    throw new Error('提示词工作流定义缺少提示词包终点')
   }
+
   const sourceNodeData = nodeData(sourceNode)
-  const sourceMode = readString(sourceNodeData, 'workflowSourceMode') ?? 'canvas_group'
+  const sourceMode = readString(sourceNodeData, 'workflowSourceMode')
   let source: CompiledVideoWorkflowSource
   if (sourceMode === 'inline_text') {
     const text = readString(sourceNodeData, 'workflowSourceText')
-    if (!text) throw new Error('请在“画布来源”节点中填写测试文本')
+    if (!text) throw new Error('“画布来源”节点的测试文本为空')
     source = { kind: 'inline_text', text }
   } else if (sourceMode === 'project_context') {
     source = { kind: 'project_context' }
   } else if (sourceMode === 'canvas_group') {
     const sourceGroupId = readString(sourceNodeData, 'sourceGroupId')
-    if (!sourceGroupId) throw new Error('请在“画布来源”节点中绑定来源组，或切换为“测试文本”')
+    if (!sourceGroupId) throw new Error('“画布来源”节点没有绑定来源组')
     const sourceGroup = store.nodes.find((node) => {
       const data = nodeData(node)
       return node.id === sourceGroupId && node.type === 'groupNode' && data.adminWorkflow !== true
@@ -266,82 +368,31 @@ export function compileVideoWorkflow(
       videoProfileId: readString(sourceData, 'videoProfileId'),
     }
   } else {
-    throw new Error(`不支持的来源模式：${sourceMode}`)
+    throw new Error('“画布来源”节点缺少明确的来源模式')
   }
 
-  const deliveryContractNode = graph.nodes.find((node) => readString(nodeData(node), 'workflowNodeId') === 'delivery-contract')
-  const deliveryContractData = deliveryContractNode ? nodeData(deliveryContractNode) : {}
-  const deliveryTargetDuration = deliveryContractNode
-    ? readPositiveNumber(deliveryContractData, 'workflowTargetDurationSeconds')
-    : null
-  if (!deliveryTargetDuration || !Number.isInteger(deliveryTargetDuration)) {
-    throw new Error('请在“成片交付合同”节点中填写正整数目标总时长')
-  }
-  const deliveryVideoModelKey = readString(deliveryContractData, 'workflowVideoModelKey')
-  if (!deliveryVideoModelKey) {
-    throw new Error('请在“成片交付合同”节点中选择用于时长规划的视频模型')
-  }
-  if (executionScope === 'media_delivery') {
-    const estimateNode = compiledNodes.find((node) => node.workflowNodeId === 'cost-estimate')
-    const estimateConfiguration = estimateNode?.requestedMediaConfiguration
-    if (!estimateConfiguration || estimateConfiguration.kind !== 'video') {
-      throw new Error('请在“费用预估”节点中选择视频模型、分辨率和比例')
-    }
-    if (estimateConfiguration.modelKey !== deliveryVideoModelKey) {
-      throw new Error('“成片交付合同”的时长能力模型必须与“费用预估”的视频模型一致')
-    }
-  }
-
-  const scopedNodes = executionScope === 'prompt_only'
-    ? compiledNodes
-      .filter((node) => PROMPT_ONLY_NODE_IDS.has(node.workflowNodeId))
-      .map((node) => node.workflowNodeId === 'clip-fan-out'
-        ? { ...node, inputPorts: node.inputPorts.filter((port) => port !== 'asset-items') }
-        : node)
-    : compiledNodes
-  const scopedNodeIds = new Set([triggerNodeId, ...scopedNodes.map((node) => node.id)])
-  const scopedEdges = executionScope === 'prompt_only'
-    ? compiledEdges.filter((edge) => scopedNodeIds.has(edge.source) && scopedNodeIds.has(edge.target))
-    : compiledEdges
-
-  const agentNodes = scopedNodes.filter((node) => node.category === 'agent')
-  const unboundAgent = agentNodes.find((node) => !node.agentDefinitionId)
-  if (unboundAgent) throw new Error(`Agent 节点“${unboundAgent.workflowNodeId}”还没有选择执行智能体`)
-  const unboundAgentModel = agentNodes.find((node) => !node.agentModelKey)
-  if (unboundAgentModel) throw new Error(`Agent 节点“${unboundAgentModel.workflowNodeId}”还没有从实时目录选择文本模型`)
-  const invalidAgentOutputBudget = agentNodes.find((node) => node.agentMaxOutputTokens === null
-    || node.agentMaxOutputTokens < WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MIN
-    || node.agentMaxOutputTokens > WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX)
-  if (invalidAgentOutputBudget) {
-    throw new Error(`Agent 节点“${invalidAgentOutputBudget.workflowNodeId}”必须配置 ${WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MIN}–${WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX} 的单次最大输出 Token`)
-  }
-  const incompleteAgentContract = agentNodes.find((node) => !node.instruction
-    || !node.outputArtifactType
-    || !node.outputEncoding
-    || !node.deliveryRequirement)
-  if (incompleteAgentContract) {
-    throw new Error(`Agent 节点“${incompleteAgentContract.workflowNodeId}”缺少任务、输出格式或本节点交付合同`)
-  }
-  if (executionScope === 'media_delivery') {
-    const unconfiguredMediaNode = scopedNodes.find((node) => (
-      node.operation === 'image_generate' || node.operation === 'estimate'
-    ) && node.requestedMediaConfiguration === null)
-    if (unconfiguredMediaNode) {
-      throw new Error(`媒体节点“${unconfiguredMediaNode.workflowNodeId}”还没有从实时目录完成模型与规格配置`)
-    }
-  }
-
+  const compiledNodes = graph.nodes.flatMap((node) => {
+    if (node.id === normalizedTriggerNodeId) return []
+    const workflowNodeId = readString(nodeData(node), 'workflowNodeId')
+    const definition = workflowNodeId
+      ? definitions.find((candidate) => candidate.nodeId === workflowNodeId)
+      : undefined
+    if (!definition) throw new Error(`触发器可达图包含未知工作流阶段节点 ${node.id}`)
+    return [compileNode(node, definition)]
+  })
   return {
     protocolVersion: '1',
     workflowKey: VIDEO_PRODUCTION_WORKFLOW_KEY,
     backendDefinitionVersion: VIDEO_PRODUCTION_WORKFLOW_DEFINITION.definitionVersion,
     canvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
+    canvasDefinitionFingerprint: VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
     executionScope,
+    executionVariant,
     workflowInstanceId,
-    triggerNodeId,
+    triggerNodeId: normalizedTriggerNodeId,
     source,
-    nodes: scopedNodes,
-    edges: scopedEdges,
+    nodes: compiledNodes,
+    edges: compiledEdges,
   }
 }
 
@@ -351,8 +402,8 @@ function dispatchVideoWorkflow(definition: CompiledVideoWorkflow): void {
   requestWorkflowExecution(definition.triggerNodeId)
   toast(
     definition.executionScope === 'prompt_only'
-			? '正在保存当前画布并启动提示词工作流；该范围不会提交图片或视频任务'
-			: '正在保存当前画布并启动一键成片持久工作流',
+      ? '正在保存当前画布并启动提示词工作流；该范围不会提交图片或视频任务'
+      : '正在保存当前画布并启动一键成片持久工作流',
     'info',
   )
 }

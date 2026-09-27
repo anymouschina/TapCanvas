@@ -104,7 +104,7 @@ Sequence invariants:
 | First and last frame | `[ref:first-last-frame-guide]` |
 | API, Runway, Volcengine, fal, provider/router surfaces, China-facing surfaces, workflow, pricing, model IDs | `[skill:seedance-pipeline]`, `[ref:api-workflow]`, `[ref:model-name-map]` |
 | Color, ACES, HDR/SDR, aspect ratio, subtitles, audio post, or QC | `[ref:color-pipeline-aces]`, `[ref:aspect-ratio-delivery]`, `[ref:subtitles-localization]`, `[ref:audio-post-delivery]`, `[ref:delivery-qc]` |
-| Genre template, examples, or a worked directing example in a specific genre | `[skill:seedance-recipes]`, `[ref:examples-by-mode]`, `[ref:genre-guides]`, `[ref:directing-engine-genre-library]` |
+| Genre template, examples, or a worked directing example in a specific genre | First choose the closest imported `awesome-seedance` domain skill below; otherwise use `[skill:seedance-recipes]`, `[ref:examples-by-mode]`, `[ref:genre-guides]`, or `[ref:directing-engine-genre-library]` |
 | Chinese examples or safe Chinese rewrites | `[skill:seedance-examples-zh]`, `[skill:seedance-vocab-zh]`, `[ref:vocab/zh]` |
 | Japanese examples or safe Japanese rewrites | `[skill:seedance-examples-ja]`, `[skill:seedance-vocab-ja]`, `[ref:vocab/ja]` |
 | Korean examples or safe Korean rewrites | `[skill:seedance-examples-ko]`, `[skill:seedance-vocab-ko]`, `[ref:vocab/ko]` |
@@ -115,3 +115,26 @@ Sequence invariants:
 | Why a rule works, or a novel case no rule covers | `[ref:model-mechanics]` |
 
 Preserve reference tags exactly, keep prompts proportional to the verified duration and active surface contract, and never convert field-observed community tricks into official platform guarantees. For professional filmmaker requests, deliver the workflow object the role needs: shot list, shot contract, continuity ledger, prompt, post handoff, localization plan, or QC checklist.
+
+## Imported awesome-seedance template skills
+
+This project includes the domain template skills from [LearnPrompt/awesome-seedance](https://github.com/LearnPrompt/awesome-seedance). They are evidence-backed prompt-structure references, not a replacement for the active Seedance surface contract or TapCanvas's production workflow. Use the smallest relevant skill and read its generated case reference before drafting; select one anchor case and transfer its structure, guidance, and failure patterns rather than copying its prose or example entities.
+
+| Creative domain | Skill |
+|---|---|
+| Broad template selection across narrative, commercial, UGC, dialogue, action, travel, animation, and storyboard work | `[skill:seedance-prompt-library]` |
+| 3D cartoon character short | `[skill:seedance-3d-cartoon]` |
+| Cars and vehicles at speed | `[skill:seedance-car-vehicle]` |
+| Epic fantasy and sci-fi spectacle | `[skill:seedance-epic-fantasy-scifi]` |
+| Fashion lookbook and portrait film | `[skill:seedance-fashion-lookbook]` |
+| Horror and suspense | `[skill:seedance-horror-suspense]` |
+| Twist-ending comedy skit | `[skill:seedance-meme-comedy]` |
+| Pets and animals as the lead | `[skill:seedance-pet-animal]` |
+| Early-2000s DV home video | `[skill:seedance-retro-dv-home-video]` |
+| Sports and extreme stunts | `[skill:seedance-sports-extreme]` |
+| Storyboard grid to video | `[skill:seedance-storyboard-grid-to-video]` |
+| Cinematic travel vlog montage | `[skill:seedance-travel-city-walk]` |
+
+When the output is for TapCanvas rather than a user-facing standalone prompt, these skills only supply domain craft. The final node prompt and execution remain owned by `tapcanvas-video-workflow` and `tapcanvas-video-prompt-writer`; preserve the active `generationContract`, real asset URLs, reference-role rules, continuity ledger, and delivery verifier. Do not import the source repo's installer, provider/API instructions, or its platform-specific numeric claims into the TapCanvas execution path.
+
+The import provenance and refresh boundary are recorded in `[ref:awesome-seedance-import]`.

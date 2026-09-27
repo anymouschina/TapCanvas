@@ -36,6 +36,7 @@ import { derivedApplyGuard, remoteApplyGuard } from './remoteApplyGuard'
 import { notifications } from '@mantine/notifications'
 import { resolveTeamPresenceId } from './presenceEligibility'
 import { applyCanvasGraphPatch } from './applyCanvasGraphPatch'
+import { isWorkflowMediaAttemptNode } from '../workflowMediaAttemptProjection'
 import { isSelectionOnlyNodeDiff } from '../persistence/isSelectionOnlyNodeDiff'
 import { isServerManagedProjectionData } from './serverManagedProjection'
 import {
@@ -319,7 +320,9 @@ function applyCanvasPatch(patch: SyncPatch): void {
 
   // 检测是否有真正的新节点（不在当前 store 里）
   const existingIds = new Set(useRFStore.getState().nodes.map((n) => n.id))
-  const hasNewNodes = patch.upsertNodes?.some((u) => !existingIds.has(u.id)) ?? false
+  const hasNewNodes = patch.upsertNodes?.some((u) =>
+    !existingIds.has(u.id) && !isWorkflowMediaAttemptNode(u),
+  ) ?? false
 
   useRFStore.setState((s) => {
     const currentNodeById = new Map(s.nodes.map((node) => [node.id, node]))

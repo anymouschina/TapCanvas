@@ -1,4 +1,5 @@
 import { ASSET_OBJECT_KINDS } from "../workflow-asset-registry/index.mjs";
+import { inspectGenerationReferenceBindings } from "../workflow-asset-registry/generation-references.mjs";
 // Structural asset-role contract. Never inspect or rewrite creative prose here.
 const text = { type: 'string', minLength: 1 };
 const strings = { type: 'array', items: text };
@@ -35,6 +36,10 @@ const stringList = (value) => Array.isArray(value) && value.every(nonempty);
 
 export function inspectSceneReferencePlan(value, path = 'assetPlan', stage = 'authored') {
   if (!record(value)) return `${path} must be an object`;
+  if (value.referenceAssetBindings !== undefined) {
+    const referenceError = inspectGenerationReferenceBindings(value.referenceAssetBindings, `${path}.referenceAssetBindings`);
+    if (referenceError) return referenceError;
+  }
   const kind = typeof value.role === 'string' ? value.role.split('://')[0] : '';
   const scene = kind === 'scene';
   if (kind !== 'character' && value.identityBoardSpec !== undefined) {

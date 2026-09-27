@@ -4,12 +4,12 @@ import graph from "./system-video-production-workflow.graph.json";
 import { builtInOneClickWorkflowSql } from "./system-one-click-workflow";
 
 export const BUILTIN_VIDEO_PRODUCTION_WORKFLOW = Object.freeze({
-	id: "tapcanvas.builtin.video-production/v90",
-	projectId: "00000000-0000-4000-8000-000000000121",
-	flowId: "00000000-0000-4000-8000-000000000122",
-	flowVersionId: "00000000-0000-4000-8000-000000000123",
-	attachmentId: "00000000-0000-4000-8000-000000000124",
-	releasedAt: "2026-09-20T00:00:00.000Z",
+	id: "tapcanvas.builtin.video-production/v114",
+	projectId: "00000000-0000-4000-8000-000000000131",
+	flowId: "00000000-0000-4000-8000-000000000132",
+	flowVersionId: "00000000-0000-4000-8000-000000000133",
+	attachmentId: "00000000-0000-4000-8000-000000000134",
+	releasedAt: "2026-09-24T00:00:00.000Z",
 });
 
 export function createBuiltInVideoProductionWorkflowDefinition() {

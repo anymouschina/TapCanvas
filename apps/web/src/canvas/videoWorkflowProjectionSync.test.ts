@@ -25,8 +25,8 @@ function snapshot(workflowRunId: string, generatedAt: string): VideoAtomicWorkfl
     nodes: VIDEO_ATOMIC_WORKFLOW_NODE_IDS.map((atomicNodeId) => ({
       workflowRunId,
       atomicNodeId,
-      status: atomicNodeId === 'clip-writer-agent' ? 'succeeded' : 'queued',
-      completedUnits: atomicNodeId === 'clip-writer-agent' ? 2 : 0,
+      status: atomicNodeId === 'clip-production-pipeline' ? 'succeeded' : 'queued',
+      completedUnits: atomicNodeId === 'clip-production-pipeline' ? 2 : 0,
       totalUnits: 1,
       inputArtifactIds: [],
       outputArtifactIds: [],
@@ -34,11 +34,11 @@ function snapshot(workflowRunId: string, generatedAt: string): VideoAtomicWorkfl
       errorCount: 0,
       errorMessages: [],
       timing: { startedAt: null, updatedAt: null, finishedAt: null, durationMs: null },
-      outputRefs: atomicNodeId === 'clip-writer-agent' ? {
-        ports: { 'clip-prompts': ['A', 'B'] },
+      outputRefs: atomicNodeId === 'clip-production-pipeline' ? {
+        ports: { 'prompt-package': ['A', 'B'] },
         artifacts: [],
         evidence: { totalItems: 2 },
-        itemRuns: [{ itemId: 'clip-0', index: 0, status: 'success', runtimeNodeId: 'clip:0', ports: { 'clip-prompts': { text: 'A' } }, artifacts: [], evidence: {} }],
+        itemRuns: [{ itemId: 'clip-0', index: 0, status: 'success', runtimeNodeId: 'clip:0', ports: { packets: { text: 'A' } }, artifacts: [], evidence: {} }],
       } : { ports: {}, artifacts: [], evidence: {}, itemRuns: [] },
       latestEventSeq: 2,
     })),
@@ -121,18 +121,18 @@ describe('video workflow canvas projection sync', () => {
     useRFStore.setState({
       nodes: [
         { id: 'trigger', type: 'taskNode', position: { x: 0, y: 0 }, data: { kind: 'workflowTrigger', workflowInstanceId: 'wf-1' } },
-        { id: 'writer', type: 'taskNode', position: { x: 0, y: 0 }, data: { kind: 'workflowStage', workflowInstanceId: 'wf-1', workflowNodeId: 'clip-writer-agent', workflowProjectionNodeId: 'clip-contracts' } },
-        { id: 'package', type: 'taskNode', position: { x: 0, y: 0 }, data: { kind: 'workflowStage', workflowInstanceId: 'wf-1', workflowNodeId: 'prompt-package', workflowProjectionNodeId: 'clip-contracts' } },
+        { id: 'pipeline', type: 'taskNode', position: { x: 0, y: 0 }, data: { kind: 'workflowStage', workflowInstanceId: 'wf-1', workflowNodeId: 'clip-production-pipeline' } },
+        { id: 'aggregate', type: 'taskNode', position: { x: 0, y: 0 }, data: { kind: 'workflowStage', workflowInstanceId: 'wf-1', workflowNodeId: 'clip-production-aggregate' } },
       ],
     })
 
     applyVideoWorkflowSnapshot('wf-1', snapshot('run-atomic', '2026-08-11T08:00:05.000Z'))
 
-    const writer = useRFStore.getState().nodes.find((node) => node.id === 'writer')
-    const promptPackage = useRFStore.getState().nodes.find((node) => node.id === 'package')
-    expect(writer?.data.workflowStatus).toBe('succeeded')
-    expect(writer?.data.workflowLocalTestOutput).toEqual({ 'clip-prompts': ['A', 'B'] })
-    expect(writer?.data.workflowItemRuns).toHaveLength(1)
-    expect(promptPackage?.data.workflowStatus).toBe('queued')
+    const pipeline = useRFStore.getState().nodes.find((node) => node.id === 'pipeline')
+    const aggregate = useRFStore.getState().nodes.find((node) => node.id === 'aggregate')
+    expect(pipeline?.data.workflowStatus).toBe('succeeded')
+    expect(pipeline?.data.workflowLocalTestOutput).toEqual({ 'prompt-package': ['A', 'B'] })
+    expect(pipeline?.data.workflowItemRuns).toHaveLength(1)
+    expect(aggregate?.data.workflowStatus).toBe('queued')
   })
 })

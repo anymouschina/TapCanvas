@@ -1,5 +1,6 @@
 import { ASSET_OBJECT_KINDS, ASSET_REFERENCE_ROLES } from "../workflow-asset-registry/index.mjs";
 import { sceneReferenceCardSchema } from "../scene-reference-contract/index.mjs";
+import { generationReferenceBindingsSchema } from "../workflow-asset-registry/generation-references.mjs";
 const nonEmptyStringSchema = { type: "string", minLength: 1 };
 const stringArraySchema = (minItems = 0) => ({ type: "array", minItems, items: nonEmptyStringSchema });
 export function beatSheetObjectRegistrySchema(contract = {}) {
@@ -67,7 +68,7 @@ export function beatSheetObjectRegistrySchema(contract = {}) {
   };
 }
 
-export function beatSheetAssetPlansSchema() {
+export function beatSheetAssetPlanVariants() {
   const identityBoardSpec = {
     type: "object",
     properties: {
@@ -115,27 +116,25 @@ export function beatSheetAssetPlansSchema() {
     },
   };
   const commonFields = ["objectId", "prompt", "negativePrompt", "identityAnchors", "prohibitedDrift"];
-  const variant = (kind, extraFields) => {
+  const variant = (extraFields) => {
     const fields = [...commonFields.filter(field => !extraFields.includes("sceneCard") || (field !== "prompt" && field !== "negativePrompt")), ...extraFields];
     return {
       type: "object",
       properties: {
         ...Object.fromEntries(fields.map((field) => [field, allProperties[field]])),
+        referenceAssetBindings: generationReferenceBindingsSchema,
       },
       required: fields,
       additionalProperties: false,
     };
   };
-  return {
-    type: "array",
-    minItems: 1,
-    items: {
-      anyOf: [
-        variant("character", ["identityBoardSpec"]),
-        variant("scene|environment", ["sceneCard"]),
-        variant("prop|vfx|palette|composition|wardrobe", []),
-      ],
-    },
-  };
+  return [
+    { kinds: ["character"], schema: variant(["identityBoardSpec"]) },
+    { kinds: ["scene"], schema: variant(["sceneCard"]) },
+    { kinds: ["prop", "vfx", "palette", "composition"], schema: variant([]) },
+  ];
 }
 
+export function beatSheetAssetPlansSchema() {
+  return { type: "array", minItems: 1, items: { anyOf: beatSheetAssetPlanVariants().map(variant => variant.schema) } };
+}

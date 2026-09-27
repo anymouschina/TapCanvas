@@ -117,7 +117,7 @@ function readImageResultCandidate(value: unknown): {
   };
 }
 
-function readFirstImageResult(data: Record<string, unknown>): {
+export function readFirstImageResult(data: Readonly<Record<string, unknown>>): {
   url: string;
   assetId: string;
   assetRefId: string;

@@ -39,6 +39,8 @@ import { CANVAS_EDGE_TYPES, CANVAS_NODE_TYPES } from './canvasElementTypes'
 import { useUIStore } from '../ui/uiStore'
 import { getActiveTeamId } from '../ui/team/TeamManagementModal'
 import { runFlowDag } from '../runner/dag'
+import { projectWorkflowMediaAttempts } from './workflowMediaAttemptProjection'
+import { planWorkflowGroupTaskExecution } from './workflowGroupTaskExecution'
 import { syncGenericVideoNodeOnce, syncImageNodeOnce } from '../runner/remoteRunner'
 import { isWorkflowOwnedMediaNodeData } from '../runner/mediaTaskRuntime'
 import { useInsertMenuStore } from './insertMenuStore'
@@ -2808,8 +2810,29 @@ function CanvasInner({
         toast('组内没有可执行任务节点', 'info')
         return
       }
-      await runFlowDag(1, useRFStore.getState, useRFStore.setState, { only: new Set(nodeIds) })
-      toast(`已触发组内 ${nodeIds.length} 个节点执行`, 'success')
+      const state = useRFStore.getState()
+      const plan = planWorkflowGroupTaskExecution(state.nodes, state.edges, nodeIds)
+      if (plan.deferredTargets.length > 0) {
+        toast(`组内 ${plan.deferredTargets.length} 个普通下游节点等待其工作流媒体前置结果；本次未盲目执行。`, 'info')
+      }
+      const actions: Promise<unknown>[] = []
+      if (plan.dagTargets.length > 0) {
+        actions.push(runFlowDag(1, useRFStore.getState, useRFStore.setState, { only: new Set(plan.dagTargets) }))
+      }
+      if (plan.workflowMediaTargets.length > 0) {
+        actions.push((async () => {
+          for (const mediaNodeId of plan.workflowMediaTargets) {
+            await useRFStore.getState().runNodeBranchClones(mediaNodeId, 1)
+          }
+        })())
+      }
+      const outcomes = await Promise.allSettled(actions)
+      const failedActions = outcomes.filter((outcome) => outcome.status === 'rejected').length
+      if (failedActions > 0) {
+        toast(`组内有 ${failedActions} 类执行动作失败；对应原因已显示，请查看节点状态。`, 'error')
+      } else if (plan.deferredTargets.length === 0) {
+        toast('组内执行入口已处理；请查看节点状态与工作流执行快照。', 'success')
+      }
     } catch (err) {
       console.error(err)
       toast('组内一键执行失败', 'error')
@@ -3488,8 +3511,14 @@ function CanvasInner({
     () => filterAdminWorkflowCanvasGraph(nodes, edges, isAdmin),
     [edges, isAdmin, nodes],
   )
-  const renderNodes = adminVisibleGraph.nodes as FlowNode[]
-  const renderEdges = adminVisibleGraph.edges as FlowEdge[]
+  const workflowMediaGraph = useMemo(
+    () => dragging
+      ? adminVisibleGraph
+      : projectWorkflowMediaAttempts(adminVisibleGraph.nodes, adminVisibleGraph.edges),
+    [adminVisibleGraph, dragging],
+  )
+  const renderNodes = workflowMediaGraph.nodes as FlowNode[]
+  const renderEdges = workflowMediaGraph.edges as FlowEdge[]
 
   const styledViewNodes = useMemo(() => {
     if (dragging && !viewOnly && !referencePickerTargetId) {

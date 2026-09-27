@@ -54,6 +54,21 @@
 .capability-bay__state.is-disabled { color: var(--tc-color-text-tertiary, #7b828e); background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.035)); }
 .capability-bay__item-summary { overflow: hidden; color: #8f929a; font-size: 12px; line-height: 17px; text-overflow: ellipsis; white-space: nowrap; }
 .capability-bay__item-meta { display: flex; flex-wrap: wrap; gap: 8px; color: #666a73; font-size: 10px; }
+.capability-bay__launch-fields { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.capability-bay__launch-media-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; max-width: 720px; }
+.capability-bay__launch-field { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.capability-bay__launch-field-label { overflow: hidden; color: var(--tc-color-text-tertiary, #7b828e); font-size: 10px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.capability-bay__launch-select { width: 100%; min-width: 0; height: 30px; padding: 0 8px; color: var(--tc-color-text-primary, #eef0f4); background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.035)); border: 1px solid var(--tc-color-border-subtle, rgba(212, 215, 220, 0.08)); border-radius: 6px; outline: none; font: inherit; font-size: 11px; }
+.capability-bay__launch-select:focus { border-color: var(--tc-color-border-strong, rgba(198, 203, 211, 0.24)); }
+.capability-bay__launch-select:disabled { cursor: not-allowed; opacity: 0.58; }
+.capability-bay__launch-option { color: #edf3ff; background: #10161d; }
+.capability-bay__launch-status { color: var(--tc-color-text-secondary, #a9afb9); font-size: 10px; line-height: 15px; }
+.capability-bay__launch-status.is-error { color: var(--tc-color-danger, #f87171); }
+.capability-bay__launch-source { width: min(100%, 520px); min-height: 56px; margin-top: 6px; padding: 8px 9px; color: #e6e7ea; background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 6px; outline: none; font: inherit; font-size: 11px; line-height: 16px; resize: vertical; }
+.capability-bay__launch-source:focus { border-color: rgba(255, 255, 255, 0.2); }
+.capability-bay__launch-source::placeholder { color: #696c74; }
+.capability-bay__launch-hint { display: block; color: #9396a0; font-size: 10px; line-height: 15px; }
+.capability-bay__launch-hint.is-error { color: #fca5a5; }
 .capability-bay__meta-item + .capability-bay__meta-item::before { content: '·'; margin-right: 8px; }
 .capability-bay__item-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
 .capability-bay__create-project { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 10px; background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.035)); }
@@ -67,6 +82,10 @@
 .capability-bay__section-header { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 10px 4px; }
 .capability-bay__section-title { color: var(--tc-color-text-secondary, #a9afb9); font-size: 12px; line-height: 18px; font-weight: 600; }
 .capability-bay__section-count { color: var(--tc-color-text-tertiary, #7b828e); font-size: 10px; line-height: 14px; }
+.capability-bay__disabled-workflows { margin: 12px 10px 0; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+.capability-bay__disabled-workflows-summary { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--tc-color-text-secondary, #a9afb9); font-size: 11px; cursor: pointer; list-style-position: inside; }
+.capability-bay__disabled-workflows-summary:hover { color: var(--tc-color-text-primary, #eef0f4); }
+.capability-bay__disabled-workflows-hint { color: var(--tc-color-text-tertiary, #7b828e); font-size: 10px; }
 .capability-bay__section-empty { min-height: 72px; display: flex; align-items: center; justify-content: center; color: var(--tc-color-text-tertiary, #7b828e); font-size: 12px; }
 .capability-bay__state.is-queued { color: var(--tc-color-text-tertiary, #7b828e); background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.035)); }
 .capability-bay__state.is-running { color: var(--tc-color-info, #9aa1ac); background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.035)); }

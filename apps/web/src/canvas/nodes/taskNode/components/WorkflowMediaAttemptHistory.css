@@ -1,0 +1,39 @@
+.tc-workflow-media-attempt-history {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.tc-workflow-media-attempt-history__summary {
+  color: var(--mantine-color-dimmed);
+  cursor: pointer;
+}
+
+.tc-workflow-media-attempt-history__list {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.tc-workflow-media-attempt-history__attempt {
+  overflow-wrap: anywhere;
+}
+
+.tc-workflow-media-attempt-history__line,
+.tc-workflow-media-attempt-history__metadata,
+.tc-workflow-media-attempt-history__error {
+  overflow-wrap: anywhere;
+}
+
+.tc-workflow-media-attempt-history__metadata {
+  color: var(--mantine-color-dimmed);
+}
+
+.tc-workflow-media-attempt-history__error {
+  color: var(--mantine-color-red-6);
+}
+
+.tc-workflow-media-attempt-history__asset-link {
+  color: var(--mantine-color-anchor);
+}

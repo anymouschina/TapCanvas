@@ -178,7 +178,6 @@ import {
   parseVideoGenerationContract,
   resolveStoryPlanGenerationContract,
 } from "./video-orchestrator.generation-contract";
-import { resolveModelMediaOptions } from "./video-orchestrator.model-duration";
 import { loadPublicChatEnabledModelCatalogSummary } from "../model-catalog/model-catalog.public-chat-summary";
 import { buildAgentImageExecutionCatalog } from "./agents-tool-bridge.model-execution-catalog";
 import { splitMasterStoryboardForAgent } from "./agents-tool-bridge.master-storyboard-split";
@@ -224,11 +223,7 @@ import {
 	WorkflowResumeError,
 } from "../execution/execution.resume-service";
 import { buildWorkflowProjectContextForRun } from "../execution/execution.project-context-runtime";
-import {
-  freezeWorkflowVideoDurationPlan,
-  WORKFLOW_VIDEO_DURATION_PLAN_TRIGGER_FIELD,
-  type FrozenWorkflowVideoDurationPlan,
-} from "../execution/execution.video-workflow-contract";
+import { freezeWorkflowVideoPlanAtAdmission } from "./workflow-video-plan-admission";
 import { requireStoryboardV12ArtifactPayload } from "../storyboard/storyboard-persistence-contract";
 import {
   type StoryboardPlanRecord,
@@ -933,120 +928,6 @@ async function requireEnabledImageModelCatalog(
 		});
 	}
 	return catalogResult.summary.imageModels;
-}
-
-async function freezeWorkflowVideoPlanAtAdmission(input: Readonly<{
-  c: AppContext;
-  triggerPayload: Record<string, unknown> | undefined;
-}>): Promise<Readonly<{
-  triggerPayload: Record<string, unknown> | undefined;
-  durationPlan: FrozenWorkflowVideoDurationPlan | null;
-}>> {
-  const targetDurationValue = input.triggerPayload?.targetDurationSeconds;
-  const modelKeyValue = input.triggerPayload?.videoModelKey;
-  if (targetDurationValue === undefined || modelKeyValue === undefined) {
-    return { triggerPayload: input.triggerPayload, durationPlan: null };
-  }
-  const targetDurationSeconds = Number(targetDurationValue);
-  const requestedClipCountValue = input.triggerPayload?.requestedClipCount;
-  const requestedClipCount = requestedClipCountValue === undefined
-    ? null
-    : Number(requestedClipCountValue);
-  const requestedClipDurationsValue = input.triggerPayload?.requestedClipDurationsSeconds;
-  const requestedClipDurationsSeconds = requestedClipDurationsValue === undefined
-    ? null
-    : Array.isArray(requestedClipDurationsValue)
-      ? requestedClipDurationsValue
-      : null;
-  const modelKey = readTrimmedString(modelKeyValue);
-  if (!Number.isInteger(targetDurationSeconds) || targetDurationSeconds <= 0) {
-    throw new AppError("targetDurationSeconds must be a positive integer", {
-      status: 400,
-      code: "workflow_video_target_duration_invalid",
-    });
-  }
-  if (!modelKey) {
-    throw new AppError("videoModelKey is required when targetDurationSeconds is provided", {
-      status: 400,
-      code: "workflow_video_model_key_required",
-    });
-  }
-  if (requestedClipCount !== null && (!Number.isInteger(requestedClipCount) || requestedClipCount <= 0)) {
-    throw new AppError("requestedClipCount must be a positive integer", {
-      status: 400,
-      code: "workflow_requested_clip_count_invalid",
-    });
-  }
-  if (
-    requestedClipDurationsValue !== undefined
-    && (
-      !requestedClipDurationsSeconds
-      || requestedClipDurationsSeconds.length === 0
-      || requestedClipDurationsSeconds.length > 64
-      || requestedClipDurationsSeconds.some((duration) => (
-        typeof duration !== "number" || !Number.isInteger(duration) || duration <= 0
-      ))
-    )
-  ) {
-    throw new AppError("requestedClipDurationsSeconds must contain 1..64 positive integers", {
-      status: 400,
-      code: "workflow_requested_clip_durations_invalid",
-    });
-  }
-  if (
-    requestedClipDurationsSeconds
-    && requestedClipCount === null
-  ) {
-    throw new AppError("requestedClipCount is required when requestedClipDurationsSeconds is provided", {
-      status: 400,
-      code: "workflow_requested_clip_count_required_for_durations",
-    });
-  }
-  if (
-    requestedClipDurationsSeconds
-    && requestedClipCount !== null
-    && requestedClipDurationsSeconds.length !== requestedClipCount
-  ) {
-    throw new AppError("requestedClipCount must match requestedClipDurationsSeconds.length", {
-      status: 400,
-      code: "workflow_requested_clip_count_duration_mismatch",
-    });
-  }
-  if (
-    requestedClipDurationsSeconds
-    && requestedClipDurationsSeconds.reduce((total, duration) => total + Number(duration), 0) !== targetDurationSeconds
-  ) {
-    throw new AppError("requestedClipDurationsSeconds must sum to targetDurationSeconds", {
-      status: 400,
-      code: "workflow_requested_clip_duration_total_mismatch",
-    });
-  }
-  const mediaOptions = await resolveModelMediaOptions({ c: input.c, modelKey });
-  assertWorkflowVideoMediaSelectionSupported({
-    modelKey,
-    resolution: readTrimmedString(input.triggerPayload?.videoResolution),
-    aspectRatio: readTrimmedString(input.triggerPayload?.videoAspectRatio),
-    resolutionOptions: mediaOptions.resolutionOptions,
-    aspectRatioOptions: mediaOptions.aspectRatioOptions,
-  });
-  const durationPlan = freezeWorkflowVideoDurationPlan({
-    targetDurationSeconds,
-    modelKey,
-    durationOptions: mediaOptions.durationOptions,
-    ...(requestedClipDurationsSeconds
-      ? { explicitDurations: requestedClipDurationsSeconds as number[] }
-      : {}),
-  });
-  return {
-    triggerPayload: {
-      ...(input.triggerPayload ?? {}),
-      targetDurationSeconds,
-      ...(requestedClipCount === null ? {} : { requestedClipCount }),
-      ...(requestedClipDurationsSeconds ? { requestedClipDurationsSeconds } : {}),
-      [WORKFLOW_VIDEO_DURATION_PLAN_TRIGGER_FIELD]: durationPlan,
-    },
-    durationPlan,
-  };
 }
 
 /**
@@ -2174,6 +2055,7 @@ export function registerPublicAgentsToolBridgeRoutes(publicApiRouter: OpenAPIHon
       const admittedVideoPlan = await freezeWorkflowVideoPlanAtAdmission({
         c: c as unknown as AppContext,
         triggerPayload: parsedTriggerPayload,
+        workflowData: target.flow.data,
       });
       let triggerPayload = bindWorkflowUserIntentToTrigger({
         ownerId: requestUserId,

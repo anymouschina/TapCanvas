@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Node } from '@xyflow/react'
 import { useRFStore } from './store'
 import {
+  VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
   VIDEO_ATOMIC_WORKFLOW_EDGES,
   VIDEO_ATOMIC_WORKFLOW_NODES,
   VIDEO_PROMPT_ONLY_WORKFLOW_EDGES,
+  VIDEO_PROMPT_ONLY_WORKFLOW_NODES,
   createVideoWorkflowCanvasTemplate,
 } from './videoWorkflowCanvasTemplate'
 import { compileVideoWorkflow, runVideoWorkflow } from './videoWorkflowExecution'
@@ -32,301 +34,137 @@ const sourceGroup: Node = {
   },
 }
 
-function configureAgentModels(nodeIds: readonly string[]): void {
-  for (const nodeId of nodeIds) {
-    const node = useRFStore.getState().nodes.find((candidate) => candidate.id === nodeId)
-    const spec = node?.data.workflowAtomicSpec
-    if (
-      spec &&
-      typeof spec === 'object' &&
-      !Array.isArray(spec) &&
-      (spec as Record<string, unknown>).executorRef === 'agents.logical-task/v2'
-    ) useRFStore.getState().updateNodeData(nodeId, { workflowAgentModelKey: 'text-model-request-key' })
-  }
-  const deliveryContractNodeId = nodeIds.find((id) => id.endsWith(':delivery-contract'))
-  if (deliveryContractNodeId) {
-    useRFStore.getState().updateNodeData(deliveryContractNodeId, {
-      workflowVideoModelKey: 'video-model-request-key',
-      workflowTargetDurationSeconds: 72,
-    })
-  }
-  for (const estimateNodeId of nodeIds.filter((id) => id.endsWith('cost-estimate'))) {
-    useRFStore.getState().updateNodeData(estimateNodeId, {
-      workflowVideoModelKey: 'video-model-request-key',
-      workflowVideoResolution: '1080p',
-      workflowVideoAspectRatio: '16:9',
-    })
-  }
-  for (const assetImageNodeId of nodeIds.filter((id) => id.endsWith('image-generate'))) {
-    useRFStore.getState().updateNodeData(assetImageNodeId, {
-      workflowImageModelKey: 'gpt-image-2',
-      workflowImageAspectRatio: '16:9',
-      workflowImageSize: '2K',
-    })
-  }
+function resetStore(nodes: readonly Node[] = []): void {
+  useRFStore.getState().reset()
+  useRFStore.setState({ nodes: [...nodes], edges: [], nextGroupId: 1 })
 }
 
-describe('one-click film atomic workflow execution', () => {
-	beforeEach(() => {
+function workflowNodeId(workflowInstanceId: string, nodeId: string): string {
+  return `${workflowInstanceId}:${nodeId}`
+}
+
+describe('v114 one-click film workflow execution', () => {
+  beforeEach(() => {
     vi.stubGlobal('crypto', { randomUUID: () => 'video-execution-test-id' })
-		workflowExecutionMocks.requestWorkflowExecution.mockClear()
-		useRFStore.getState().reset()
+    workflowExecutionMocks.requestWorkflowExecution.mockClear()
+    resetStore()
   })
 
-	it('fails explicitly when the canvas-source node has not bound a real group', () => {
+  it('compiles the canonical v114 graph with typed ports and project context', () => {
     const result = createVideoWorkflowCanvasTemplate()
-    configureAgentModels(result.nodeIds)
-		useRFStore.getState().updateNodeData(`${result.workflowInstanceId}:canvas-source`, {
-			workflowSourceMode: 'canvas_group',
-		})
 
-    expect(() => compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)).toThrow(
-      '请在“画布来源”节点中绑定来源组，或切换为“测试文本”',
+    const compiled = compileVideoWorkflow(workflowNodeId(result.workflowInstanceId, 'manual-trigger'))
+
+    expect(compiled.canvasDefinitionVersion).toBe(114)
+    expect(compiled.canvasDefinitionFingerprint).toBe(VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT)
+    expect(compiled.executionScope).toBe('media_delivery')
+    expect(compiled.executionVariant).toBe('full_video')
+    expect(compiled.source).toEqual({ kind: 'project_context' })
+    expect(compiled.nodes).toHaveLength(VIDEO_ATOMIC_WORKFLOW_NODES.length)
+    expect(compiled.edges).toHaveLength(VIDEO_ATOMIC_WORKFLOW_EDGES.length)
+    expect(new Set(compiled.nodes.map((node) => node.workflowNodeId))).toEqual(
+      new Set(VIDEO_ATOMIC_WORKFLOW_NODES.map((node) => node.nodeId)),
     )
-	})
+    expect(compiled.nodes.find((node) => node.workflowNodeId === 'clip-production-pipeline')).toMatchObject({
+      executorRef: 'workflow.pipeline.run/v1',
+      inputPorts: ['delivery-contract', 'source-segments', 'clip-sequences', 'chapter-assets'],
+      outputPorts: ['node-plan', 'prompt-package', 'media-items', 'prepared-nodes'],
+    })
+    expect(compiled.edges).toContainEqual(expect.objectContaining({
+      sourcePort: 'clip-sequences',
+      targetPort: 'clip-sequences',
+    }))
+  })
 
-	it('fails explicitly when a persisted trigger has no immutable execution scope', () => {
-		const result = createVideoWorkflowCanvasTemplate({ executionScope: 'media_delivery' })
-		useRFStore.getState().updateNodeData(`${result.workflowInstanceId}:manual-trigger`, {
-			workflowExecutionScope: undefined,
-		})
-
-		expect(() => compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)).toThrow(
-			'一键成片触发器缺少不可变执行范围',
-		)
-	})
-
-  it('compiles all atomic operations, typed ports and the selected source facts', () => {
-    useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
+  it('compiles an explicitly bound source group without changing its factual inputs', () => {
+    resetStore([sourceGroup])
     const result = createVideoWorkflowCanvasTemplate()
-    configureAgentModels(result.nodeIds)
-		useRFStore.getState().updateNodeData(`${result.workflowInstanceId}:canvas-source`, {
-			workflowSourceMode: 'canvas_group',
-		})
+    useRFStore.getState().updateNodeData(workflowNodeId(result.workflowInstanceId, 'canvas-source'), {
+      workflowSourceMode: 'canvas_group',
+      sourceGroupId: sourceGroup.id,
+    })
 
-    const compiled = compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)
-
-    expect(compiled.source).toMatchObject({
+    expect(compileVideoWorkflow(workflowNodeId(result.workflowInstanceId, 'manual-trigger')).source).toEqual({
       kind: 'canvas_group',
       groupId: sourceGroup.id,
       sourceRecipeId: 'recipe-1',
       targetDurationSeconds: 72,
       videoAspect: '16:9',
       videoModel: 'seedance-2',
+      videoProfileId: null,
     })
-    expect(compiled.nodes).toHaveLength(VIDEO_ATOMIC_WORKFLOW_NODES.length)
-    expect(compiled.nodes.find((node) => node.workflowNodeId === 'beat-sheet-format')).toMatchObject({
-      operation: 'max_clip',
-      maxClipCount: 80,
-      executorRef: 'video.beat-sheet.take/v1',
-    })
-    expect(compiled.edges).toHaveLength(VIDEO_ATOMIC_WORKFLOW_EDGES.length)
-    expect(compiled.edges).toContainEqual(expect.objectContaining({
-      sourcePort: 'asset-bindings',
-      targetPort: 'asset-bindings',
-    }))
-    expect(compiled.edges).toContainEqual(expect.objectContaining({
-      sourcePort: 'estimate',
-      targetPort: 'estimate',
-    }))
-    expect(compiled.edges).toContainEqual(expect.objectContaining({
-      source: expect.stringContaining(':production-handoff'),
-      target: expect.stringContaining(':video-submit'),
-    }))
-    expect(compiled.edges.some((edge) => (
-      edge.source.includes(':asset-consumer-bind')
-      && edge.target.includes(':production-handoff')
-    ))).toBe(true)
   })
 
-	it('compiles an unbound project-context source without asking SmallT for a group id', () => {
-		const result = createVideoWorkflowCanvasTemplate()
-		configureAgentModels(result.nodeIds)
-
-		const compiled = compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)
-
-		expect(compiled.source).toEqual({ kind: 'project_context' })
-	})
-
-  it('uses bounded authoring roles instead of nesting the root orchestrator', () => {
+  it('rejects a workflow node whose persisted typed-port contract differs from v114', () => {
     const result = createVideoWorkflowCanvasTemplate()
-    const nodeByWorkflowId = new Map(useRFStore.getState().nodes.flatMap((node) => {
-      const workflowNodeId = typeof node.data.workflowNodeId === 'string' ? node.data.workflowNodeId : ''
-      return workflowNodeId ? [[workflowNodeId, node] as const] : []
-    }))
+    const nodeId = workflowNodeId(result.workflowInstanceId, 'chapter-sequence-agent')
+    useRFStore.getState().updateNodeData(nodeId, { workflowInputPorts: ['invented-port'] })
 
-    expect(nodeByWorkflowId.get('beat-sheet-agent')?.data.workflowAtomicSpec).toMatchObject({
-      category: 'agent',
-      executorRef: 'agents.logical-task/v2',
-    })
-    expect(nodeByWorkflowId.get('beat-sheet-agent')?.data.workflowAgentDefinitionId).toBe('writer')
-		expect(nodeByWorkflowId.get('asset-coverage')?.data.workflowAtomicSpec).toMatchObject({
-			category: 'control',
-			executorRef: 'video.asset-plans.project/v1',
-		})
-    expect(nodeByWorkflowId.get('clip-writer-agent')?.data.workflowAgentDefinitionId).toBe('video-prompt-writer')
-		expect(nodeByWorkflowId.get('voice-plan-agent')).toBeUndefined()
-    expect([...nodeByWorkflowId.values()].some((node) => node.data.workflowAgentDefinitionId === 'orchestrator')).toBe(false)
+    expect(() => compileVideoWorkflow(workflowNodeId(result.workflowInstanceId, 'manual-trigger')))
+      .toThrow(/typed-port 合同不一致/)
   })
 
-  it('treats edited graph dependencies as authoritative instead of running the old fixed UI chain', () => {
-    useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
+  it('rejects a graph edge that targets an undeclared typed port', () => {
     const result = createVideoWorkflowCanvasTemplate()
-    configureAgentModels(result.nodeIds)
+    useRFStore.setState((state) => ({
+      edges: state.edges.map((edge) => edge.target === workflowNodeId(result.workflowInstanceId, 'clip-production-pipeline')
+        && edge.source.endsWith(':chapter-sequence-project')
+        ? { ...edge, targetHandle: 'in-workflow:unknown-port' }
+        : edge),
+    }))
+
+    expect(() => compileVideoWorkflow(workflowNodeId(result.workflowInstanceId, 'manual-trigger')))
+      .toThrow(/不存在输入端口 unknown-port/)
+  })
+
+  it('rejects a missing required connection based on the graph’s actual typed inputs', () => {
+    const result = createVideoWorkflowCanvasTemplate()
     useRFStore.setState((state) => ({
       edges: state.edges.filter((edge) => !(
-        edge.source.endsWith(':blocking-diagrams') && edge.target.endsWith(':clip-fan-out')
+        edge.target === workflowNodeId(result.workflowInstanceId, 'clip-production-pipeline')
+        && edge.source.endsWith(':chapter-sequence-project')
       )),
     }))
 
-    expect(() => compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)).toThrow(
-      '节点“逐 Clip 展开”缺少输入端口 beat-sheet 的连线',
-    )
+    expect(() => compileVideoWorkflow(workflowNodeId(result.workflowInstanceId, 'manual-trigger')))
+      .toThrow(/缺少输入端口 clip-sequences 的连线/)
   })
 
-  it('rejects a connection that feeds the wrong artifact port', () => {
-    useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
+  it('rejects an out-of-date fingerprint and immutable scope mismatch', () => {
     const result = createVideoWorkflowCanvasTemplate()
-    configureAgentModels(result.nodeIds)
-    useRFStore.setState((state) => ({
-      edges: state.edges.map((edge) => {
-        if (!edge.target.endsWith(':clip-fan-out')) return edge
-        if (edge.source.endsWith(':blocking-diagrams')) {
-          return { ...edge, targetHandle: 'in-workflow:asset-items' }
-        }
-        return edge
-      }),
-    }))
+    const triggerNodeId = workflowNodeId(result.workflowInstanceId, 'manual-trigger')
+    useRFStore.getState().updateNodeData(triggerNodeId, { workflowCanvasDefinitionFingerprint: 'sha256:stale' })
+    expect(() => compileVideoWorkflow(triggerNodeId)).toThrow(/画布定义已过期/)
 
-    expect(() => compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)).toThrow(
-      '节点“逐 Clip 展开”不存在输入端口 asset-items',
-    )
+    useRFStore.getState().updateNodeData(triggerNodeId, {
+      workflowCanvasDefinitionFingerprint: VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
+      workflowExecutionScope: 'prompt_only',
+    })
+    expect(() => compileVideoWorkflow(triggerNodeId)).toThrow(/身份或执行范围不一致/)
   })
 
-  it('rejects a partially configured paid media request instead of silently filling parameters', () => {
-    useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
-    const result = createVideoWorkflowCanvasTemplate()
-    const estimateNodeId = result.nodeIds.find((id) => id.endsWith(':cost-estimate'))
-    if (!estimateNodeId) throw new Error('test template did not create cost-estimate')
-    useRFStore.getState().updateNodeData(estimateNodeId, {
-      workflowVideoModelKey: 'video-model-request-key',
-    })
-
-    expect(() => compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)).toThrow(
-      '显式模型、分辨率和比例必须同时完整',
-    )
-  })
-
-  it('rejects an invalid Clip ceiling before any workflow execution is requested', () => {
-    const result = createVideoWorkflowCanvasTemplate()
-    configureAgentModels(result.nodeIds)
-    useRFStore.getState().updateNodeData(`${result.workflowInstanceId}:beat-sheet-format`, {
-      workflowBeatSheetTakeCount: 0,
-    })
-
-    expect(() => compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)).toThrow(
-      'Clip 上限节点 beat-sheet-format 必须配置 1–1000 的正整数',
-    )
-    expect(workflowExecutionMocks.requestWorkflowExecution).not.toHaveBeenCalled()
-  })
-
-  it('starts media delivery through the durable workflow runtime without dispatching a SmallT chat command', () => {
-    useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
-    const result = createVideoWorkflowCanvasTemplate()
-    configureAgentModels(result.nodeIds)
-    const triggerNodeId = `${result.workflowInstanceId}:manual-trigger`
-    useRFStore.getState().updateNodeData(`${result.workflowInstanceId}:beat-sheet-agent`, {
-      workflowAgentDefinitionId: 'writer',
-    })
-    useRFStore.getState().updateNodeData(`${result.workflowInstanceId}:clip-writer-agent`, {
-      workflowAgentDefinitionId: 'video-prompt-writer',
-    })
-		runVideoWorkflow(triggerNodeId)
-		expect(workflowExecutionMocks.requestWorkflowExecution).toHaveBeenCalledWith(triggerNodeId)
-		expect(useRFStore.getState().nodes.find((node) => node.id === triggerNodeId)?.data).toMatchObject({
-			workflowExecutionMode: 'media_delivery',
-			triggerStatus: 'requested',
-		})
-  })
-
-  it('starts an immutable prompt-only template through the same durable workflow runtime', () => {
+  it('compiles the prompt-only graph using its immutable scope and exact topology', () => {
     const result = createVideoWorkflowCanvasTemplate({ executionScope: 'prompt_only' })
-    configureAgentModels(result.nodeIds)
-    const sourceNodeId = result.nodeIds.find((nodeId) => nodeId.endsWith(':canvas-source'))
-    if (!sourceNodeId) throw new Error('test template did not create canvas-source')
-    useRFStore.getState().updateNodeData(sourceNodeId, {
-      workflowSourceMode: 'inline_text',
-      workflowSourceText: '一只猫在雨夜寻找回家的路',
-    })
-    const triggerNodeId = result.workflowInstanceId + ':manual-trigger'
-		runVideoWorkflow(triggerNodeId)
-		expect(workflowExecutionMocks.requestWorkflowExecution).toHaveBeenCalledWith(triggerNodeId)
-		expect(useRFStore.getState().nodes.find((node) => node.id === triggerNodeId)?.data).toMatchObject({
-			workflowExecutionMode: 'prompt_only',
-			triggerStatus: 'requested',
-		})
-  })
 
-  it('does not expose a transient scope override that can disguise a media-delivery template', () => {
-    useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
-    const result = createVideoWorkflowCanvasTemplate({ executionScope: 'media_delivery' })
-    configureAgentModels(result.nodeIds)
+    const compiled = compileVideoWorkflow(workflowNodeId(result.workflowInstanceId, 'manual-trigger'))
 
-    const compiled = compileVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)
-
-    expect(compiled.executionScope).toBe('media_delivery')
-    expect(compiled.nodes.some((node) => node.workflowNodeId === 'asset-image-generate')).toBe(true)
-    expect(compiled.nodes.some((node) => node.workflowNodeId === 'video-submit')).toBe(true)
-  })
-
-  it('builds a prompt-only canvas with design images but no video submission', () => {
-    useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
-    const result = createVideoWorkflowCanvasTemplate({ executionScope: 'prompt_only' })
-    configureAgentModels(result.nodeIds)
-    const triggerNodeId = `${result.workflowInstanceId}:manual-trigger`
-
-    const compiled = compileVideoWorkflow(triggerNodeId)
     expect(compiled.executionScope).toBe('prompt_only')
-    expect(compiled.nodes.map((node) => node.workflowNodeId)).toEqual([
-      'canvas-source',
-      'delivery-contract',
-      'beat-sheet-agent',
-      'chapter-assets-agent',
-      'clip-design-fan-out',
-      'background-fan-out',
-      'clip-design-agent',
-      'background-image-generate',
-      'beat-sheet-assemble',
-      'beat-sheet-format',
-      'blocking-diagrams',
-      'clip-fan-out',
-      'clip-writer-agent',
-      'prompt-package',
-    ])
-    expect(compiled.nodes.find((node) => node.workflowNodeId === 'delivery-contract')?.inputPorts).toEqual(['canvas-facts'])
+    expect(compiled.nodes).toHaveLength(VIDEO_PROMPT_ONLY_WORKFLOW_NODES.length)
     expect(compiled.edges).toHaveLength(VIDEO_PROMPT_ONLY_WORKFLOW_EDGES.length)
-    expect(compiled.nodes.some((node) => node.workflowNodeId === 'asset-coverage')).toBe(false)
-    expect(compiled.nodes.some((node) => node.workflowNodeId === 'video-submit')).toBe(false)
-    expect(compiled.nodes.find((node) => node.workflowNodeId === 'clip-fan-out')?.inputPorts).toEqual(['delivery-contract', 'beat-sheet'])
-
-		runVideoWorkflow(triggerNodeId)
-		expect(workflowExecutionMocks.requestWorkflowExecution).toHaveBeenCalledWith(triggerNodeId)
-		expect(useRFStore.getState().nodes.find((node) => node.id === triggerNodeId)?.data).toMatchObject({
-			workflowExecutionMode: 'prompt_only',
-			triggerStatus: 'requested',
-		})
+    expect(compiled.nodes.some((node) => node.workflowNodeId === 'clip-media-pipeline')).toBe(false)
+    expect(compiled.nodes.some((node) => node.workflowNodeId === 'delivery-verify')).toBe(false)
   })
 
-  it('fails before creating an execution when an Agent node has no explicit model', () => {
-    useRFStore.setState({ nodes: [sourceGroup], edges: [], nextGroupId: 1 })
+  it('requests durable workflow execution and marks the trigger as requested', () => {
     const result = createVideoWorkflowCanvasTemplate()
-    configureAgentModels(result.nodeIds)
-		const agentNodeId = result.nodeIds.find((id) => id.endsWith(':clip-writer-agent'))
-		if (!agentNodeId) throw new Error('test template did not create clip-writer-agent')
-    useRFStore.getState().updateNodeData(agentNodeId, { workflowAgentModelKey: undefined })
+    const triggerNodeId = workflowNodeId(result.workflowInstanceId, 'manual-trigger')
 
-    expect(() => runVideoWorkflow(`${result.workflowInstanceId}:manual-trigger`)).toThrow(
-			'Agent 节点“clip-writer-agent”还没有从实时目录选择文本模型',
-    )
+    runVideoWorkflow(triggerNodeId)
+
+    expect(workflowExecutionMocks.requestWorkflowExecution).toHaveBeenCalledWith(triggerNodeId)
+    expect(useRFStore.getState().nodes.find((node) => node.id === triggerNodeId)?.data).toMatchObject({
+      workflowExecutionMode: 'media_delivery',
+      triggerStatus: 'requested',
+    })
   })
 })

@@ -741,6 +741,8 @@ export async function executeWorkflowNodeByMode(
 				} : undefined,
 				inputs: { ...inputs, ...continuationInputs },
 				runtimeItemIndex: item.index,
+				runtimeItemLineage: lineage,
+				runtimeParentNodeIds: [...(context.runtimeParentNodeIds ?? []), context.node.id],
 				resumeOnly: resumeCurrentItem,
 			}, dependencies);
 		} catch (error: unknown) {

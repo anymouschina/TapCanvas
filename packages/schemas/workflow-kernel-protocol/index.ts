@@ -1,3 +1,15 @@
+import { parseWorkflowKnowledgeDiagnostics, type WorkflowKnowledgeDiagnostics } from "./retrieval-contract.mjs";
+import {
+	deriveWorkflowPipelinePortArtifactContractV1,
+	WORKFLOW_PIPELINE_RUN_EXECUTOR_REF,
+	type WorkflowPipelinePortArtifactContractV1,
+} from "./inline-pipeline";
+import {
+	CLIP_PRODUCTION_ASSET_INTENTS_ARTIFACT_TYPE,
+	CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE,
+	CLIP_PRODUCTION_PACKET_PROTOCOL_VERSION,
+} from "../clip-production-packet/index.mjs";
+export { normalizeKnowledgeCandidateLimit } from "./retrieval-contract.mjs";
 import { isDetachedCanvasNode, projectCanvasMembership } from './canvas-lifecycle';
 export * from './canvas-lifecycle';
 
@@ -8,6 +20,7 @@ export * from "./plugin-contract";
 export * from "./artifact-contract";
 export * from "./control-contract";
 export * from "./execution-semantics";
+export * from "./inline-pipeline";
 
 export const WORKFLOW_ATOMIC_NODE_CATEGORIES = [
 	"source",
@@ -18,6 +31,7 @@ export const WORKFLOW_ATOMIC_NODE_CATEGORIES = [
 	"control",
 	"artifact",
 	"delivery",
+	"subworkflow",
 ] as const;
 export type WorkflowAtomicNodeCategory = (typeof WORKFLOW_ATOMIC_NODE_CATEGORIES)[number];
 
@@ -91,12 +105,7 @@ export type WorkflowKnowledgeCandidateSetV2 = Readonly<{
 	createdAt: string;
 	retrievalMode: "vector";
 	abstained: boolean;
-	diagnostics: Readonly<{
-		vectorCandidates: number;
-		indexedCards: number;
-		availableCards: number;
-		embeddingModel: string;
-	}>;
+	diagnostics: WorkflowKnowledgeDiagnostics;
 	candidates: readonly WorkflowKnowledgeCandidateV2[];
 }>;
 
@@ -175,8 +184,8 @@ export function parseWorkflowKnowledgeCandidateSetV2(value: unknown): WorkflowKn
 	}
 	const diagnostics = asRecord(record.diagnostics);
 	if (!diagnostics) throw new Error("Workflow knowledge candidate set diagnostics must be an object");
-	if (!Array.isArray(record.candidates) || record.candidates.length > 12) {
-		throw new Error("Workflow knowledge candidate set requires at most 12 candidates");
+	if (!Array.isArray(record.candidates)) {
+		throw new Error("Workflow knowledge candidate set requires a candidates array");
 	}
 	const candidates = record.candidates.map(parseWorkflowKnowledgeCandidate);
 	const cardIdentities = candidates.map((candidate) => `${candidate.sourceRoot}\u0000${candidate.cardId}`);
@@ -197,12 +206,7 @@ export function parseWorkflowKnowledgeCandidateSetV2(value: unknown): WorkflowKn
 		abstained: typeof record.abstained === "boolean"
 			? record.abstained
 			: (() => { throw new Error("Workflow knowledge abstained must be boolean"); })(),
-		diagnostics: {
-			vectorCandidates: requireFiniteKnowledgeNumber(diagnostics.vectorCandidates, "diagnostics.vectorCandidates"),
-			indexedCards: requireFiniteKnowledgeNumber(diagnostics.indexedCards, "diagnostics.indexedCards"),
-			availableCards: requireFiniteKnowledgeNumber(diagnostics.availableCards, "diagnostics.availableCards"),
-			embeddingModel: requireKnowledgeString(diagnostics.embeddingModel, "diagnostics.embeddingModel"),
-		},
+		diagnostics: parseWorkflowKnowledgeDiagnostics(diagnostics),
 		candidates,
 	};
 }
@@ -401,7 +405,7 @@ export type WorkflowExecutorPortArtifactContractV1 = Readonly<{
  */
 export const WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS = Object.freeze({
 	"video.chapter-assets.prepare/v1": {
-		inputArtifactTypes: { "chapter-assets": ["tapcanvas.chapter-asset-plan/v1"] },
+		inputArtifactTypes: { "chapter-assets": ["tapcanvas.chapter-asset-plan/v3"] },
 		outputArtifactTypes: { "asset-items": ["tapcanvas.asset-plan-items/v2"] },
 	},
 	"video.asset-consumers.bind/v1": {
@@ -409,15 +413,15 @@ export const WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS = Object.freeze({
 		outputArtifactTypes: { "asset-bindings": ["tapcanvas.asset-bindings/v1"] },
 	},
 	"tapcanvas.chapter-backgrounds.split/v1": {
-		inputArtifactTypes: { "chapter-assets": ["tapcanvas.chapter-asset-plan/v1"] },
+		inputArtifactTypes: { "chapter-assets": ["tapcanvas.chapter-asset-plan/v3"] },
 		outputArtifactTypes: { "asset-items": ["tapcanvas.asset-plan-items/v2"] },
 	},
 	"video.clip-design-inputs/v1": {
-		inputArtifactTypes: { "chapter-plan": ["tapcanvas.chapter-beat-plan/v1"], "chapter-assets": ["tapcanvas.chapter-asset-plan/v1"] },
+		inputArtifactTypes: { "source-ledger": ["tapcanvas.source-unit-ledger/v1"], "chapter-plan": ["tapcanvas.chapter-beat-plan/v3"], "chapter-assets": ["tapcanvas.chapter-asset-plan/v3"] },
 		outputArtifactTypes: { "clip-design-inputs": ["tapcanvas.clip-design-inputs/v1"] },
 	},
 	"video.beat-sheet.assemble/v1": {
-		inputArtifactTypes: { "chapter-plan": ["tapcanvas.chapter-beat-plan/v1"], "chapter-assets": ["tapcanvas.chapter-asset-plan/v1"], "clip-designs": ["tapcanvas.clip-design/v1"] },
+		inputArtifactTypes: { "source-ledger": ["tapcanvas.source-unit-ledger/v1"], "chapter-plan": ["tapcanvas.chapter-beat-plan/v3"], "chapter-assets": ["tapcanvas.chapter-asset-plan/v3"], "clip-designs": ["tapcanvas.clip-design/v2"] },
 		outputArtifactTypes: { "beat-sheet": ["tapcanvas.beat-sheet/v2"] },
 	},
 	"tapcanvas.blocking-backgrounds.split/v1": {
@@ -451,17 +455,117 @@ export const WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS = Object.freeze({
 			"asset-items": ["tapcanvas.asset-plan-items/v2"],
 		},
 	},
+	"video.opening-frame.prepare/v1": {
+		inputArtifactTypes: { "frame-plan": ["tapcanvas.opening-frame-plan/v1"] },
+		outputArtifactTypes: { "prompt-package": ["tapcanvas.opening-frame-prompt-package/v1"] },
+	},
+	"video.clip-segmentation.project/v1": {
+		inputArtifactTypes: {
+			segmentation: ["tapcanvas.chapter-clip-segmentation/v1"],
+			"delivery-contract": ["tapcanvas.delivery-contract/v2"],
+		},
+		outputArtifactTypes: {
+			"clip-segments": ["tapcanvas.clip-source-segments/v1"],
+		},
+	},
+	"video.chapter-sequence.project/v1": {
+		inputArtifactTypes: {
+			"chapter-sequence": ["tapcanvas.chapter-sequence/v1"],
+			"clip-segments": ["tapcanvas.clip-source-segments/v1"],
+			"delivery-contract": ["tapcanvas.delivery-contract/v2"],
+		},
+		outputArtifactTypes: {
+			"chapter-sequence": ["tapcanvas.chapter-sequence-bound/v1"],
+			"clip-sequences": ["tapcanvas.chapter-sequence-clips/v1"],
+		},
+	},
+	"video.clip-production.collect/v1": {
+		inputArtifactTypes: {
+			packets: [CLIP_PRODUCTION_PACKET_PROTOCOL_VERSION],
+			"clip-segments": ["tapcanvas.clip-source-segments/v1"],
+			"chapter-assets": ["tapcanvas.chapter-asset-plan/v3"],
+		},
+		outputArtifactTypes: {
+			"clip-production": [CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE],
+			"asset-intents": [CLIP_PRODUCTION_ASSET_INTENTS_ARTIFACT_TYPE],
+		},
+	},
+	"video.clip-production.nodes.materialize/v1": {
+		inputArtifactTypes: {
+			"clip-production": [CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE],
+			"asset-intents": [CLIP_PRODUCTION_ASSET_INTENTS_ARTIFACT_TYPE],
+			"delivery-contract": ["tapcanvas.delivery-contract/v2"],
+		},
+		outputArtifactTypes: {
+			"node-plan": ["tapcanvas.clip-production-node-plan/v1"],
+			"media-items": ["tapcanvas.clip-production-media-items/v1"],
+			"prepared-nodes": ["tapcanvas.video-node/v1"],
+			"prompt-package": ["tapcanvas.prompt-package/v2"],
+		},
+	},
+	"video.clip-production.media.project/v1": {
+		inputArtifactTypes: { "media-item": ["tapcanvas.clip-production-media-item/v1"] },
+		outputArtifactTypes: {
+			"clip-production": [CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE],
+			"asset-items": ["tapcanvas.asset-plan-items/v2"],
+			"prepared-nodes": ["tapcanvas.video-node/v1"],
+		},
+	},
+	"video.clip-production.assets.project/v1": {
+		inputArtifactTypes: {
+			"asset-intents": [CLIP_PRODUCTION_ASSET_INTENTS_ARTIFACT_TYPE],
+		},
+		outputArtifactTypes: {
+			"asset-items": ["tapcanvas.asset-plan-items/v2"],
+		},
+	},
+	"video.clip-production.project/v1": {
+		inputArtifactTypes: {
+			"clip-production": [CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE],
+			"asset-bindings": ["tapcanvas.asset-bindings/v1"],
+			"delivery-contract": ["tapcanvas.delivery-contract/v2"],
+		},
+		outputArtifactTypes: {
+			"prompt-package": ["tapcanvas.prompt-package/v2"],
+		},
+	},
+	"video.clip-production.aggregate/v1": {
+		inputArtifactTypes: {
+			"source-segments": ["tapcanvas.clip-source-segments/v1"],
+			"prompt-packages": ["tapcanvas.prompt-package/v2"],
+			estimates: ["tapcanvas.video-estimate/v1"],
+			"video-assets": ["tapcanvas.video-clips/v1"],
+			"prepared-nodes": ["tapcanvas.video-node/v1"],
+		},
+		outputArtifactTypes: {
+			"prompt-package": ["tapcanvas.prompt-package/v2"],
+			estimate: ["tapcanvas.video-estimate/v1"],
+			"video-assets": ["tapcanvas.video-clips/v1"],
+			"prepared-nodes": ["tapcanvas.video-node/v1"],
+		},
+	},
 	"tapcanvas.image.generate/v1": {
 		inputArtifactTypes: {
 			"asset-items": ["tapcanvas.asset-plan-items/v2"],
+			"prompt-package": ["tapcanvas.image-prompt-package/v1", "tapcanvas.opening-frame-prompt-package/v1"],
 		},
+		outputArtifactTypes: {},
+	},
+	"tapcanvas.video.generate/v1": {
+		inputArtifactTypes: { "first-frame": ["tapcanvas.image/v1"] },
 		outputArtifactTypes: {},
 	},
 } satisfies Readonly<Record<string, WorkflowExecutorPortArtifactContractV1>>);
 
 export function resolveWorkflowExecutorPortArtifactContract(
 	executorRef: string,
+	options?: Readonly<{ workflowPipeline?: unknown }>,
 ): WorkflowExecutorPortArtifactContractV1 | null {
+	if (executorRef === WORKFLOW_PIPELINE_RUN_EXECUTOR_REF) {
+		if (options?.workflowPipeline === undefined) return null;
+		const contract: WorkflowPipelinePortArtifactContractV1 = deriveWorkflowPipelinePortArtifactContractV1(options.workflowPipeline);
+		return contract;
+	}
 	return Object.prototype.hasOwnProperty.call(WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS, executorRef)
 		? WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS[
 			executorRef as keyof typeof WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS

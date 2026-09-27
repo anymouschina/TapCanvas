@@ -16,6 +16,8 @@ TapCanvas 对外 API 的唯一 skill：统一入口、统一凭据、明确失�
 
 ## 工作流恢复
 
+当前新执行冻结 `workflowMediaDeliveryPolicy.maxRetries=0`：图片或视频供应商失败后保留精确回执和成功兄弟资产，不自动重提付费任务；已受理任务仍按原 taskId 对账。历史已冻结 `maxRetries=1` 的执行按原快照解释，不能把新策略倒灌到旧回执。需要再次生成失败项时，必须取得用户对精确失败项的明确授权，再使用下述 `mediaRetries`；不重复启动整条工作流。集合查询断连保留 waiting_external 与观察失败证据，由后台继续对账。
+
 用户已授权重试失败图片时，`executionResume` 可传 `mediaRetries:[{nodeId,itemId,taskId}]`，三项必须取自同一次 `executionNodeRuns` 的精确失败图片回执。服务端验证旧项 failed、旧 taskId 一致、没有产物及下游已受理副作用，再沿原执行族创建独立幂等的新图片尝试；旧失败节点和成功兄弟项保留。普通空对象 resume 不授权重复提交媒体。正在执行、已成功、身份不符或已有资产的项不能重试；不得通过新建完整工作流绕过。该模式与其他 resume 修订模式互斥，不修改模型、提示词或来源。
 
 引用被判为废弃但公开删除清单没有对应节点时，用 `chapterCanvasMembership --chapterId <真实章节ID>` 读取只读归属诊断（需管理员身份并核对章节权限）；核对精确节点/任务 ID、可见性、明确删除、执行脱离与保留事实。此接口不恢复节点、不允许据诊断自行复活用户已删除素材。
@@ -134,6 +136,8 @@ agents bridge 也不暴露本 skill 终端脚本中的 `models`、`modelCatalogM
 
 只有当前运行面真实提供 shell/`exec_command`、且没有 agents bridge 远程工具面时，才使用平台 CLI：`tapcanvas api call --profile <local|production> --endpoint <name> --payload '<json>'`。安装后先执行 `tapcanvas doctor --profile <local|production> --json` 验证 CLI、所选凭据与所选 API；失败时原地报告，不得退回仓库相对路径脚本。大 payload 可用 `--payloadFile /abs/path/request.json`，或通过 stdin 传入并使用 `--payload -`。常用只读入口可使用 `tapcanvas projects list --profile <local|production>`、`tapcanvas flows list --profile <local|production> --project-id <id>` 与 `tapcanvas flows get --profile <local|production> --flow-id <id>`。
 
+终端代用户执行明确选中的已装配工作流时，使用 `capabilityBayWorkflowRun` endpoint，它复用能力舱手动运行入口。请求携带实际用户所选且已启用的 `agentModelKey`；不要把外部助手的模型身份作为应用模型偏好提交。`triggerPayload.onlyVideoNodes` 的显式布尔值仅覆盖本次交付选择，不写回章节 FilmSpec；省略时沿用章节偏好。运行需真实附件、项目及章节/画布身份与稳定幂等键，完整字段见 endpoint-reference。应用内部父 Agent 委派仍使用 `tapcanvas_equipped_workflow_run` 并继承该父 Agent 本轮真实模型。
+
 用户明确要求创建新的项目画布时，终端可使用同一 skill 的两个受保护正式入口：先调用 `projectCreate`，payload 为 `{ "name": "<非空名称>" }`；再调用 `flowCreate`，payload 必须包含服务端刚返回的真实 `projectId`、非空 `name`、序列化 flow `data`、`ownerType:"project"`、`ownerId:<同一 projectId>` 与 `source:"user"`，并由服务端生成稳定 flow id。创建完成后必须立即用 `projects`/`flows`/`flowGet` 回读归属与初始节点事实，后续节点写入仍只使用 `tapcanvas_flow_patch`。这两个入口只用于用户本轮明确授权的新画布，不得拿来复制、覆盖或替换已有项目。
 
 用户明确要求跨环境同步完整项目时，仍只走本 skill：先分别 `doctor` 并用 `projects` 查重，目标存在同名项目时禁止覆盖；再用 `projectCreate` / `flowCreate` 创建新目标，以 `bookIndex` / `bookChapter` 读取源书籍并用 `bookIngest` 写入目标，按章节号建立源/目标章节映射，通过 `chapterGet` / `chapterUpdate` / `chapterFlowGet` / `chapterFlowPut` 同步章节事实与画布。项目资产必须沿 `assets` 的 cursor 读完并逐条 `assetCreate`，媒体 URL 只允许在 CLI 进程管道中原样传递，不得回显给主模型。公开创作过程使用 `communityPublish`，并用 `communityProjectGet` 回读社区详情；若同时发布 TV 快照，必须使用已同步的真实成片与封面资产创建 `publishRecord`。任一步失败都保留已经创建的项目、画布与资产并报告部分成功，禁止删除或覆盖补偿。
@@ -227,7 +231,7 @@ flow_patch 的 data.sourceNodeIds 是当前画布内真实节点 ID 的有序数
 
 ### 视频集合部分交付
 
-新受理工作流在执行快照冻结 `workflowMediaDeliveryPolicy={version:1,maxRetries:1,exhausted:"deliver_successes"}`：失败视频沿原节点的稳定 retryIndex=1 身份最多追加一次受理尝试，复用已经成功或在途的回执，不重做成功片段。仍有失败且至少一个片段成功时，等待全部在途片段结束后按冻结片段顺序拼接成功项。Agent API 的 result.delivery 明确返回 status=partial、requestedDurationSeconds、actualDurationSeconds、completedItemIds 与 missingItemIds；顶层 succeeded 表示已经交付可播放结果，调用方必须读取 delivery.status 判断是否完整。全部片段失败仍返回失败；不得补黑帧、拉长片段或称短片为完整目标时长。此策略只在新执行受理时冻结，不改写历史任务。
+历史冻结了 `workflowMediaDeliveryPolicy={version:1,maxRetries:1,exhausted:"deliver_successes"}` 的执行，仍按其原快照允许一次追加受理尝试；新执行的 `maxRetries=0` 不自动重提。失败项与已成功或在途的回执分别保留，不能重做成功片段。仍有失败且至少一个片段成功时，等待全部在途片段结束后按冻结片段顺序拼接成功项。Agent API 的 result.delivery 明确返回 status=partial、requestedDurationSeconds、actualDurationSeconds、completedItemIds 与 missingItemIds；顶层 succeeded 表示已经交付可播放结果，调用方必须读取 delivery.status 判断是否完整。全部片段失败仍返回失败；不得补黑帧、拉长片段或称短片为完整目标时长。
 
 ### 冻结工作流资产详情（只读）
 

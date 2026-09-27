@@ -977,8 +977,8 @@ export function buildCanvasCapabilityManifest(input?: {
 				mediaAssetPurposes: MEDIA_ASSET_PURPOSES,
 				prerequisiteAssetUrlFields: ["imageUrl", "imageResults[].url", "videoUrl", "videoResults[].url", "storyboardEditorCells[].imageUrl", "firstFrameUrl", "lastFrameUrl"],
 				deliveryContract: [
-					"Workflow ports carry typed chapter plans, shared assets, per-clip designs and persisted execution evidence. A connection or placeholder does not prove an upstream asset exists.",
-					"onlyVideoNodes=true delivers saved video nodes, prompts and exact references; it does not submit video generation or concatenation.",
+					"Workflow ports carry frozen source segments, chapter asset identities, per-clip production packets and persisted execution evidence. A connection or placeholder does not prove an upstream asset exists.",
+					"onlyVideoNodes=true delivers saved video nodes, prompts, exact references and real URLs for required upstream images; it does not submit video generation or concatenation.",
 					"Accepted executions are not completed media. Preserve every produced asset and report missing delivery evidence explicitly.",
 				],
 			},

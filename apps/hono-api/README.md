@@ -226,8 +226,15 @@ DSH 的 `record_user_intent` 冻结语义合同后，网关通过执行请求顶
 
 - 一键成片从 TapCanvas-pro 当前工作区同步到 Workflow IR v90，保留本仓库 DeepSeek Harness 内核与统一聊天入口。章节剧情、共享资产、逐 Clip 视觉设计使用独立结构化产物；同一持久执行器继续负责资产生成、writer、视频和合成，不能把节点受理当作成片成功。
 - 编辑器的纯定义位于 `apps/web/src/canvas/videoWorkflowDefinition.ts`。`node scripts/export-system-video-workflow.mjs` 在构建期生成后端 `system-video-production-workflow.graph.json`；`--check` 校验两端无漂移。该产物是当前代码的编译结果，不从文档、用户数据库或分析资产读取运行时知识。
-- API 启动通过 `syncBuiltInVideoProductionWorkflow` 发布独立的系统级 v90 工作流（31 个节点、51 条边），使用不可变版本和新保留身份；重复启动验证已发布版本，不覆盖历史运行、资产或用户工作流。原先按字长拆分的系统工作流仍只服务该显式操作。模型和媒体规格由动态目录与真实调用配置提供，不在发布定义中固化新模型。
+- 历史系统级 v90 工作流（31 个节点、51 条边）使用不可变版本和独立保留身份；已发布版本、历史运行、资产及用户工作流不被新版覆盖。原先按字长拆分的系统工作流仍只服务该显式操作。模型和媒体规格由动态目录与真实调用配置提供，不在发布定义中固化新模型。
 - 本次代码同步不执行数据库发布、不重启服务、不提交付费媒体任务。实际生效需部署/重启 API 与新版 Web/bridge；运行中的旧执行仍保留原冻结版本。 发布 SQL 可通过 `pnpm --filter @tapcanvas/api exec node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/export-system-one-click-workflow.ts --video-production` 生成；该命令仅导出文件，不连接数据库。
+
+### 2026-09-24 一键成片 v114 工作流
+
+- 当前系统发布定义使用不可变身份 `tapcanvas.builtin.video-production/v114`；Web 纯定义导出的图为 15 个主节点、30 条边。旧 v90 定义、已冻结执行和已产出资产继续保留。源码同步与 SQL 导出不连接用户数据库，部署时才由既有系统工作流发布路径校验并装配新版。
+- 章节来源在执行受理时冻结，随后按章级来源分段、共享资产注册和逐 Clip 生产包推进；`clip-production-pipeline` 和 `clip-media-pipeline` 以 typed step/item 回执记录生产和媒体阶段，章级聚合与交付校验使用真实资产、节点终态及来源坐标。结构化 Agent 节点采用同一 DSH Bridge 的 `repair_with_correction` 与 `multi_inference` 合同，不另建旧 Pro agent loop。
+- `onlyVideoNodes` 只准备视频节点及其真实图片依赖，不提交视频供应商或合成。预制媒体节点第一次生成沿用已保存节点身份并读回任务回执；失败媒体恢复依据 execution family 与精确 item/task 回执，不能把缺失 URL 的上游占位视为可执行资产，也不重复提交不确定状态的任务。已产出媒体保留在原节点与执行记录。
+- Agent 配置中的已装载工作流可显式启动：请求携带 attachment、调用范围、动态目录所选 Agent/图片/视频模型及媒体规格、幂等键和本轮来源字段；只对 descriptor 的 `requiredTriggerPayloadFields` 要求的字段展示并提交选择，缺少可执行目录或必填规格时显式失败。后端复核装配版本、权限、目录和输入合同后由同一持久 Workflow 受理。普通编辑器触发器把显式 `workflowTriggerPayload` 传给启动端；Hono 只负责协议与事实性校验，不以本地语义路由决定创作步骤。
 
 
 - 一键成片的执行层同步 TapCanvas-pro 最新原子节点合同：章节来源与资产注册表被冻结在 execution，创作输出按 BeatSheet、资产准备、镜头写作和交付证据分阶段记录；blocking diagram、背景引用、图像/视频真实 URL 以及节点归属采用共享结构 schema 验证。执行层保留已成功媒体回执并追加重试、探测与交付覆盖记录，不因后续诊断删除已有资产。集合节点持久化每项 checkpoint，恢复只处理尚未满足合同的项。运行内核仍为当前 DeepSeek Harness，未恢复旧自研 agent loop；结构化候选修复通过同一 Bridge 的提交合同与显式 repair checkpoint 继续，Hono 仅传递真实失败与冻结来源。

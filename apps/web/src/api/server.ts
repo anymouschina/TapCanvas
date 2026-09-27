@@ -664,6 +664,12 @@ export type WorkflowNodeRunDto = {
   finishedAt?: string | null
 }
 
+export type WorkflowMediaRetryRequestDto = Readonly<{
+  nodeId: string
+  itemId: string | null
+  taskId: string | null
+}>
+
 export type WorkflowExecutionContextDto = {
   executionId: string
   projectId: string | null
@@ -2858,8 +2864,10 @@ const AgentCapabilityAttachmentDtoSchema = z.object({
 
 const CapabilityBayCandidateDtoSchema = z.object({
   descriptor: WorkflowCapabilityDescriptorDtoSchema,
+  nodeBreakdown: z.object({ mainNodeCount: z.number().int().positive(), inlineStepCount: z.number().int().positive() }).nullable(),
   descriptorSha256: z.string(),
   projectName: z.string().nullable(),
+  canEdit: z.boolean(),
   updatedAt: z.string().min(1),
   attachedAt: z.string().nullable(),
   attached: z.boolean(),
@@ -2910,6 +2918,7 @@ const CapabilityBayDtoSchema = z.object({
     flowCount: z.number().int().nonnegative(),
     updatedAt: z.string(),
     canDelete: z.boolean(),
+    canEdit: z.boolean(),
   }).strict()),
   invocations: z.array(z.object({
     id: z.string(),
@@ -2982,10 +2991,11 @@ export async function generateWorkflowCapabilityDescription(input: {
   return WorkflowCapabilityDescriptionResponseDtoSchema.parse(await response.json())
 }
 
-export async function getCapabilityBay(projectId?: string): Promise<CapabilityBayDto> {
+export async function getCapabilityBay(projectId?: string, options: Readonly<{ includeInvocations?: boolean }> = {}): Promise<CapabilityBayDto> {
 	const normalizedProjectId = projectId?.trim() ?? ''
 	const query = new URLSearchParams()
 	if (normalizedProjectId) query.set('projectId', normalizedProjectId)
+	if (options.includeInvocations) query.set('includeInvocations', 'true')
 	const suffix = query.size > 0 ? `?${query.toString()}` : ''
 	let response: Response
 	try {
@@ -3000,6 +3010,56 @@ export async function getCapabilityBay(projectId?: string): Promise<CapabilityBa
 	}
   if (!response.ok) await throwApiError(response, `加载 Agent 配置失败: ${response.status}`)
   return CapabilityBayDtoSchema.parse(await response.json())
+}
+
+export type LaunchEquippedWorkflowRequestDto = Readonly<{
+  intent: 'run_selected_equipped_workflow'
+  attachmentId: string
+  executionVariant: 'full_video' | 'first_video' | null
+  projectId: string
+  chapterId?: string
+  canvasFlowId?: string
+  canvasNodeId?: string
+  idempotencyKey: string
+  agentModelKey: string
+  triggerPayload?: Readonly<{
+    source?: string
+    sourceGroupId?: string
+    onlyVideoNodes?: boolean
+    imageModelKey?: string
+    imageAspectRatio?: string
+    imageSize?: string
+    videoModelKey?: string
+    videoResolution?: string
+    videoAspectRatio?: string
+  }>
+}>
+
+const EquippedWorkflowLaunchResponseDtoSchema = z.object({
+  created: z.boolean(),
+  execution: z.object({
+    id: z.string().min(1),
+    status: z.enum(['queued', 'running', 'success', 'failed', 'canceled']),
+    createdAt: z.string().min(1),
+  }).passthrough(),
+  invocationRecord: z.discriminatedUnion('status', [
+    z.object({ status: z.literal('recorded') }).strict(),
+    z.object({ status: z.literal('failed'), diagnosticId: z.string().min(1) }).strict(),
+  ]),
+}).strict()
+
+export type EquippedWorkflowLaunchResponseDto = z.infer<typeof EquippedWorkflowLaunchResponseDtoSchema>
+
+export async function launchEquippedWorkflow(
+  input: LaunchEquippedWorkflowRequestDto,
+): Promise<EquippedWorkflowLaunchResponseDto> {
+  const response = await apiFetch(`${API_BASE}/agents/capability-bay/workflows/run`, withAuth({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }))
+  if (!response.ok) await throwApiError(response, `启动已添加工作流失败: ${response.status}`)
+  return EquippedWorkflowLaunchResponseDtoSchema.parse(await response.json())
 }
 
 export async function createAiWorkflowProject(name: string): Promise<{
@@ -5427,6 +5487,7 @@ export async function runWorkflowExecution(payload: {
   replayFromExecutionId?: string
   startFromNodeId?: string
   concurrency?: number
+  triggerPayload?: Record<string, unknown>
 }): Promise<WorkflowExecutionDto> {
   const r = await apiFetch(`${API_BASE}/executions/run`, withAuth({
     method: 'POST',
@@ -5443,6 +5504,7 @@ export async function runWorkflowExecution(payload: {
         : {}),
       concurrency: payload.concurrency ?? 1,
       trigger: 'manual',
+      ...(payload.triggerPayload ? { triggerPayload: payload.triggerPayload } : {}),
     }),
   }))
   if (!r.ok) await throwApiError(r, `run execution failed: ${r.status}`)
@@ -5534,7 +5596,11 @@ export async function getWorkflowExecutionMetrics(flowId?: string): Promise<Work
 
 export async function resumeWorkflowExecution(
   executionId: string,
-  request: Readonly<{ providerBalanceRestored?: true; nodeId?: string }> = {},
+  request: Readonly<{
+    providerBalanceRestored?: true
+    nodeId?: string
+    mediaRetries?: readonly WorkflowMediaRetryRequestDto[]
+  }> = {},
 ): Promise<WorkflowExecutionDto> {
   const r = await apiFetch(`${API_BASE}/executions/${encodeURIComponent(executionId)}/resume`, withAuth({
     method: 'POST',

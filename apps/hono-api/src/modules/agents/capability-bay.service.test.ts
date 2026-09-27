@@ -124,6 +124,7 @@ const report = {
 	targetCapabilityId: descriptor.capabilityId,
 	checkedAt: "2026-08-15T00:00:00.000Z",
 	descriptorSha256: "a".repeat(64),
+	semanticAnalysis: { status: "succeeded" } as const,
 	conflicts: [],
 	blocking: false,
 	requiresConfirmation: false,
@@ -425,6 +426,19 @@ describe("workflow equip scope", () => {
 						workflowCanvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION - 1,
 					},
 				},
+				{
+					id: "video-stage-1",
+					data: {
+						kind: "workflowStage",
+						workflowKey: VIDEO_PRODUCTION_WORKFLOW_KEY,
+						workflowExecutionVariant: "full_video",
+						workflowCanvasDefinitionVersion: VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION - 1,
+						workflowAtomicSpec: {
+							operation: "video_submission",
+							executorRef: "tapcanvas.video.generate/v1",
+						},
+					},
+				},
 			],
 			edges: [],
 		});
@@ -514,7 +528,7 @@ describe("workflow equip scope", () => {
 
 		const rows = await listEquippedWorkflowCapabilities(context, "user-1");
 
-		expect(rows[0]?.preparation).toBeUndefined();
+		expect(rows[0]).not.toHaveProperty("preparation");
 	});
 
 	it("rejects a non-admin attempt to publish a workflow as all_users", async () => {
@@ -623,6 +637,10 @@ describe("getCapabilityBay", () => {
 			name: "当前项目",
 			project_kind: "creative",
 			updated_at: "2026-08-15T00:00:00.000Z",
+			owner_id: "user-1",
+			team_id: null,
+			team_shared: false,
+			access: "team_edit",
 		}]);
 		mocks.attachmentFindMany.mockResolvedValue([]);
 		mocks.invocationFindMany.mockResolvedValue([]);
@@ -634,6 +652,7 @@ describe("getCapabilityBay", () => {
 
 	it("loads the current project alongside globally managed AI workflow projects", async () => {
 		const bayContext = {
+			get: (key: string) => key === "auth" ? {} : undefined,
 			env: {
 				DB: {
 					flows: { findMany: mocks.flowFindMany },
@@ -675,7 +694,48 @@ describe("getCapabilityBay", () => {
 		expect(result.invocations).toEqual([]);
 		expect(result.candidates[0]).toMatchObject({
 			projectName: "当前项目",
+			canEdit: true,
 			descriptor: { sourceVersionId: expect.stringMatching(/^capability-version-[a-f0-9]{64}$/) },
+		});
+		expect(mocks.invocationFindMany).not.toHaveBeenCalled();
+	});
+
+	it("projects workflow editability and loads invocations only when requested", async () => {
+		mocks.listProjectsAccessibleByUser.mockResolvedValue([{
+			id: "project-1",
+			name: "工作流项目",
+			project_kind: "ai_workflow",
+			updated_at: "2026-08-15T00:00:00.000Z",
+			owner_id: "user-1",
+			team_id: null,
+			team_shared: false,
+			access: "owner",
+		}]);
+
+		const bayContext = {
+			get: (key: string) => key === "auth" ? {} : undefined,
+			env: {
+				DB: {
+					flows: { findMany: mocks.flowFindMany },
+					flow_versions: { findMany: mocks.versionFindMany },
+					agent_capability_attachments: { findMany: mocks.attachmentFindMany },
+					agent_capability_preferences: { findMany: mocks.preferenceFindMany },
+					agent_builtin_capability_settings: { findMany: mocks.systemSettingFindMany },
+					agent_skills: { findMany: mocks.skillFindMany },
+					agent_capability_invocations: { findMany: mocks.invocationFindMany },
+				},
+			},
+		} as unknown as AppContext;
+
+		const result = await getCapabilityBay(bayContext, "user-1", undefined, { includeInvocations: true });
+
+		expect(result.candidates[0]).toMatchObject({ canEdit: true, nodeBreakdown: null });
+		expect(result.workflowProjects[0]).toMatchObject({ canEdit: true, canDelete: true });
+		expect(mocks.invocationFindMany).toHaveBeenCalledWith({
+			where: { user_id: "user-1" },
+			orderBy: { created_at: "desc" },
+			take: 100,
+			include: { workflow_executions: true },
 		});
 	});
 
@@ -1547,7 +1607,7 @@ describe("capability coexistence action boundary", () => {
   for (const capabilityId of ["builtin:paid_media_generation", "tapcanvas-video-prompt-writer"]) {
     it(`preserves ${capabilityId} for coexist while rejecting replacement`, () => {
       const input = {
-        descriptor: { ...descriptor, requiredSkills: ["tapcanvas-video-prompt-writer"] },
+		descriptor: { ...descriptor, requiredSkills: ["tapcanvas-video-prompt-writer"], sideEffects: [...descriptor.sideEffects] },
         report: { ...report, conflicts: [{
           id: "overlap", severity: "warning" as const, category: "semantic_overlap" as const,
           withCapabilityId: capabilityId, resolutionMode: "choose_primary" as const,

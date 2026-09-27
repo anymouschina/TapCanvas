@@ -112,7 +112,12 @@ export const AgentCapabilityAttachmentSchema = z.object({
 export const CapabilityBayCandidateSchema = z.object({
 	descriptor: WorkflowCapabilityDescriptorSchema,
 	descriptorSha256: z.string(),
+	nodeBreakdown: z.object({
+		mainNodeCount: z.number().int().min(1),
+		inlineStepCount: z.number().int().min(1),
+	}).nullable(),
 	projectName: z.string().nullable(),
+	canEdit: z.boolean(),
 	updatedAt: z.string().min(1),
 	attachedAt: z.string().nullable(),
 	attached: z.boolean(),
@@ -154,6 +159,7 @@ export const AiWorkflowProjectSchema = z.object({
 	flowCount: z.number().int().min(0),
 	updatedAt: z.string().min(1),
 	canDelete: z.boolean(),
+	canEdit: z.boolean(),
 });
 
 export const CapabilityBayProjectSchema = z.object({
@@ -220,6 +226,50 @@ export const GenerateWorkflowCapabilityDescriptionRequestSchema = z.object({
 	}).strict(),
 }).strict();
 
+export const EquippedWorkflowTriggerPayloadSchema = z.object({
+	source: z.string().trim().min(1).max(200_000).optional(),
+	sourceGroupId: z.string().trim().min(1).max(200).optional(),
+	onlyVideoNodes: z.boolean().optional(),
+	videoModelKey: z.string().trim().min(1).max(200).optional(),
+	videoResolution: z.string().trim().min(1).max(80).optional(),
+	videoSize: z.string().trim().min(1).max(80).optional(),
+	videoAspectRatio: z.string().trim().min(1).max(80).optional(),
+	imageModelKey: z.string().trim().min(1).max(200).optional(),
+	imageAspectRatio: z.string().trim().min(1).max(80).optional(),
+	imageSize: z.string().trim().min(1).max(80).optional(),
+	targetDurationSeconds: z.number().int().positive().optional(),
+	requestedClipCount: z.number().int().positive().optional(),
+	requestedClipDurationsSeconds: z.array(z.number().int().positive()).min(1).max(64).optional(),
+	selectedAssetIds: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+}).strict();
+
+export type EquippedWorkflowTriggerPayload = z.infer<typeof EquippedWorkflowTriggerPayloadSchema>;
+
+export const LaunchEquippedWorkflowRequestSchema = z.object({
+	intent: z.literal("run_selected_equipped_workflow"),
+	attachmentId: z.string().trim().min(1).max(200),
+	executionVariant: z.enum(["full_video", "first_video"]).nullable(),
+	projectId: z.string().trim().min(1).max(200),
+	chapterId: z.string().trim().min(1).max(200).optional(),
+	canvasFlowId: z.string().trim().min(1).max(200).optional(),
+	canvasNodeId: z.string().trim().min(1).max(200).optional(),
+	idempotencyKey: z.string().trim().min(1).max(200),
+	agentModelKey: z.string().trim().min(1).max(200),
+	triggerPayload: EquippedWorkflowTriggerPayloadSchema.optional(),
+}).strict().superRefine((value, context) => {
+	const hasChapter = value.chapterId !== undefined;
+	const hasCanvasFlow = value.canvasFlowId !== undefined;
+	if (hasChapter === hasCanvasFlow) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["chapterId"],
+			message: "Provide exactly one chapterId or canvasFlowId",
+		});
+	}
+});
+
+export type LaunchEquippedWorkflowRequest = z.infer<typeof LaunchEquippedWorkflowRequestSchema>;
+
 export const GenerateWorkflowCapabilityDescriptionResponseSchema = z.object({
 	description: z.string().trim().min(1).max(1_000),
 }).strict();
@@ -228,6 +278,7 @@ export type GenerateWorkflowCapabilityDescriptionRequest = z.infer<typeof Genera
 
 export const CapabilityBayQuerySchema = z.object({
 	projectId: z.string().min(1).optional(),
+	includeInvocations: z.literal("true").optional(),
 }).strict();
 
 export const CreateAiWorkflowProjectRequestSchema = z.object({

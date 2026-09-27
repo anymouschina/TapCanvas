@@ -44,7 +44,11 @@ requires-skills:
   - cinematic-feel-director
 ---
 
-完整章节生产的持久 Workflow 已拆分职责：`tapcanvas.chapter-beat-plan/v1`、`tapcanvas.chapter-asset-plan/v1`、`tapcanvas.clip-design/v1` 分别按 `tapcanvas-video-authoring-stages` 交付；不能要求其中任何一个节点再写整份 BeatSheet。最终 BeatSheet 由确定性组装器生成，现有来源、对象与下游 writer 合同继续有效。首 Clip 快速验证的独立单 Clip 合同保持按其声明的 artifact 执行。
+当前已装配紧凑一键成片图以冻结来源分段、章级共享资产注册表、全章连续性/对白规划、逐 Clip packet 作者、节点投影和媒体执行为主线。每个 Clip 对应一个视频节点，章内重复资产按精确注册身份共用；跨章节历史资产由通用图片节点执行时依据稳定身份在项目记忆中查询并验证真实 URL，不向章级作者一次性注入历史目录。触发视频时先验真其上游图片 URL。作者从 Skill 与同媒体知识候选按需获取创作证据，模型沿用户本轮配置继承。旧版多节点 BeatSheet 与独立站位图生产合同只在当前 Workflow IR 实际包含对应 artifact/执行器时适用，不能从历史描述补出额外节点或声称紧凑版已经上传站位图。
+
+完整章节生产的持久 Workflow 已拆分职责：`tapcanvas.source-unit-ledger/v1`、`tapcanvas.chapter-beat-plan/v3`、`tapcanvas.chapter-asset-plan/v3`、`tapcanvas.clip-design/v2` 分别按 `tapcanvas-video-authoring-stages` 交付；原文单位独立持久化，章节只分配引用，对白及说话人由冻结来源投影；不能要求其中任何一个节点再写整份 BeatSheet。最终 BeatSheet 由确定性组装器生成，现有来源、对象与下游 writer 合同继续有效。首 Clip 快速验证的独立单 Clip 合同保持按其声明的 artifact 执行。
+
+完整 `full_video` 图直接以 `canvas-source` 的 canonical 原文启动 delivery-contract、source ledger、章节资产与章节编排；该变体不插入 text-expansion 节点，也不因此减少来源覆盖、对白/声音合同、共享资产身份或逐 Clip 提示词要求。保留 text-expansion 的 `expanded-source` 只属于 `first_video` 快速验证变体，且仅在显式连线时作为非权威草稿输入。
 
 
 # TapCanvas 视频 Workflow IR
@@ -81,7 +85,7 @@ requires-skills:
 
 - 使用 `tapcanvas_equipped_workflow_run` 启动当前工具 schema 中列出的真实 attachment。
 - 工作流 execution 已受理，并取得稳定 `executionId/runId`。
-- 用户要求的终点节点达到成功；首视频验证必须出现恰好一条真实 `videoUrl`，完整成片必须出现真实最终视频 URL；onlyVideoNodes=true 时验收全部视频节点、提示词与引用的持久化回执，不要求视频 URL。
+- 用户要求的终点节点达到成功；首视频验证必须出现恰好一条真实 `videoUrl`，完整成片必须出现真实最终视频 URL；onlyVideoNodes=true 时验收全部视频节点、提示词与所依赖图片的真实 URL 及持久化绑定回执；只有图片占位节点或连线不能满足交付，不要求视频 URL。
 - 原目标为完整章节时，Agent 已按原文逐项核对全章实际视听承载；技术批次状态或账本字段存在不能替代这次判断。未满足时保留缺口并继续同链工作，不宣称全章完成。
 - 结果通过 `expectedDelivery -> deliveryEvidence -> deliveryVerification` 验收；脚本、提示词、估价、节点数量或供应商受理回执不能冒充视频。
 - 已生成媒体始终保留。后续诊断或语义复盘只能追加证据或新版本，不得回滚、覆盖或丢弃资产。

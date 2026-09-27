@@ -36,6 +36,8 @@ import {
 	detectStructuralCapabilityConflicts,
 	inspectVideoWorkflowCanvasDefinition,
 	omitNonCompetingCapabilityConflicts,
+	resolveWorkflowCapabilitySummary,
+	workflowCapabilityNodeBreakdown,
 	workflowCapabilityDescriptorsShareInvocationRoute,
 } from "./capability-bay.descriptor";
 import { listBuiltInSmallTCapabilities } from "../task/agents-bridge-remote-tool-surface";
@@ -349,13 +351,17 @@ function mapAttachment(row: {
 	const routeDecisions = routingReady
 		? CapabilityRouteDecisionSchema.array().parse(parseJson(row.route_decisions_json ?? "[]", "主路径决策"))
 		: [];
+	const descriptor = WorkflowCapabilityDescriptorSchema.parse(parseJson(row.descriptor_json, "能力描述"));
 	return AgentCapabilityAttachmentSchema.parse({
 		id: row.id,
 		kind: row.capability_kind,
 		sourceId: row.source_id,
 		sourceVersionId: row.source_version_id,
 		descriptorSha256: row.descriptor_sha256,
-		descriptor: WorkflowCapabilityDescriptorSchema.parse(parseJson(row.descriptor_json, "能力描述")),
+		descriptor: {
+			...descriptor,
+			summary: resolveWorkflowCapabilitySummary(descriptor),
+		},
 		conflictReport: CapabilityConflictReportSchema.parse(parseJson(row.conflict_report_json, "冲突报告")),
 		routeDecisions,
 		routingReady,
@@ -606,7 +612,12 @@ function parseInvocationInput(value: string | null): Record<string, unknown> | n
 		: null;
 }
 
-export async function getCapabilityBay(c: AppContext, userId: string, projectId?: string) {
+export async function getCapabilityBay(
+	c: AppContext,
+	userId: string,
+	projectId?: string,
+	options: Readonly<{ includeInvocations?: boolean }> = {},
+) {
 	const db = c.env.DB;
 	const accessibleProjects = await listProjectAccessSummaries(db, userId);
 	const currentProject = projectId
@@ -619,10 +630,21 @@ export async function getCapabilityBay(c: AppContext, userId: string, projectId?
 		});
 	}
 	const managedProjects = accessibleProjects.filter((project) => project.project_kind === "ai_workflow");
+	const editableProjectIds = new Set(accessibleProjects
+		.filter((project) => project.access === "owner" || project.access === "team_edit")
+		.map((project) => project.id));
 	const sourceProjectIds = [...new Set([
 		...managedProjects.map((project) => project.id),
 		...(currentProject ? [currentProject.id] : []),
 	])];
+	const invocationRowsPromise = options.includeInvocations
+		? db.agent_capability_invocations.findMany({
+				where: { user_id: userId },
+				orderBy: { created_at: "desc" },
+				take: 100,
+				include: { workflow_executions: true },
+		  })
+		: Promise.resolve([]);
 	const [attachmentRows, skillRows, preferenceRows, invocationRows, systemSettings] = await Promise.all([
 		db.agent_capability_attachments.findMany({
 			where: {
@@ -636,12 +658,7 @@ export async function getCapabilityBay(c: AppContext, userId: string, projectId?
 			orderBy: [{ sort_order: "asc" }, { name: "asc" }],
 		}),
 		db.agent_capability_preferences.findMany({ where: { user_id: userId }, orderBy: { updated_at: "desc" } }),
-		db.agent_capability_invocations.findMany({
-			where: { user_id: userId },
-			orderBy: { created_at: "desc" },
-			take: 100,
-			include: { workflow_executions: true },
-		}),
+		invocationRowsPromise,
 		readBuiltInCapabilitySystemSettings(c),
 	]);
 	// 系统级（all_users）工作流对全体用户可见：即使其项目不在调用者可访问范围内，
@@ -649,12 +666,17 @@ export async function getCapabilityBay(c: AppContext, userId: string, projectId?
 	const systemAttachmentFlowIds = [...new Set(attachmentRows
 		.filter((attachment) => attachment.scope === "all_users")
 		.map((attachment) => attachment.source_id))];
+	const systemAttachmentFlowIdSet = new Set(systemAttachmentFlowIds);
 	const flowRows = await db.flows.findMany({
 		where: systemAttachmentFlowIds.length > 0
 			? { OR: [{ project_id: { in: sourceProjectIds } }, { id: { in: systemAttachmentFlowIds } }] }
 			: { project_id: { in: sourceProjectIds } },
 		orderBy: { updated_at: "desc" },
 	});
+	const systemProjectIds = new Set(flowRows
+		.filter((flow) => systemAttachmentFlowIdSet.has(flow.id))
+		.map((flow) => flow.project_id)
+		.filter((id): id is string => Boolean(id)));
 	const projectNameById = new Map(accessibleProjects.map((project) => [project.id, project.name]));
 	// 系统级工作流可能属于调用者不可访问的项目，补齐其项目名用于展示。
 	const missingProjectIds = [...new Set(flowRows
@@ -718,9 +740,16 @@ export async function getCapabilityBay(c: AppContext, userId: string, projectId?
 			const descriptorSha256 = capabilityDescriptorSha256(descriptor);
 			const canvasDefinition = inspectVideoWorkflowCanvasDefinition(descriptorVersion.data);
 			candidates.push({
-				descriptor,
+				// This is a display projection; keep the stored descriptor hash stable.
+				descriptor: {
+					...descriptor,
+					summary: resolveWorkflowCapabilitySummary(descriptor),
+				},
 				descriptorSha256,
+				nodeBreakdown: workflowCapabilityNodeBreakdown(descriptorVersion.data),
 				projectName: flow.project_id ? projectNameById.get(flow.project_id) ?? null : null,
+				canEdit: !(systemAttachmentFlowIdSet.has(flow.id) && !isAdminRequest(c))
+					&& (flow.project_id ? editableProjectIds.has(flow.project_id) : flow.owner_id === userId),
 				updatedAt: flow.updated_at,
 				attachedAt: attached?.createdAt ?? null,
 				attached: Boolean(attached),
@@ -797,7 +826,10 @@ export async function getCapabilityBay(c: AppContext, userId: string, projectId?
 		projectKind: "ai_workflow" as const,
 		flowCount: flowCountByProjectId.get(project.id) ?? 0,
 		updatedAt: project.updated_at,
-		canDelete: project.access === "owner",
+		canDelete: isAdminRequest(c)
+			? project.access === "owner" || systemProjectIds.has(project.id)
+			: project.access === "owner" && !systemProjectIds.has(project.id),
+		canEdit: editableProjectIds.has(project.id),
 	}));
 	const currentProjectSummary = currentProject ? {
 		id: currentProject.id,

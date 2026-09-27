@@ -1,14 +1,14 @@
+import { mapWorkflowNodeTree } from "./execution.node-tree";
 import { CORE_WORKFLOW_EXECUTOR_SEMANTICS } from "./execution.core-semantics";
-import { parseWorkflowNodes, resolveWorkflowNodeExecutorRef } from "./execution.node-runtime";
 
 export type MediaDeliveryPolicy = Readonly<{
   version: 1;
-  maxRetries: 1;
+  maxRetries: 0 | 1;
   exhausted: "deliver_successes";
 }>;
 
 export const MEDIA_DELIVERY_POLICY: MediaDeliveryPolicy = {
-  version: 1, maxRetries: 1, exhausted: "deliver_successes",
+  version: 1, maxRetries: 0, exhausted: "deliver_successes",
 };
 
 /**
@@ -28,17 +28,13 @@ const MEDIA_DELIVERY_EXECUTOR_REFS: ReadonlySet<string> = new Set<string>([
 
 /** Freeze the execution contract at admission, never reinterpret historical runs. */
 export function freezeMediaDeliveryPolicy(flow: Record<string, unknown>): Record<string, unknown> {
-  const targets = new Set(parseWorkflowNodes(flow).flatMap(node => {
-    const executorRef = resolveWorkflowNodeExecutorRef(node);
-    return executorRef !== null && MEDIA_DELIVERY_EXECUTOR_REFS.has(executorRef) ? [node.id] : [];
-  }));
   if (!Array.isArray(flow.nodes)) return flow;
-  return { ...flow, nodes: flow.nodes.map(node => {
-    if (!node || typeof node !== "object" || Array.isArray(node)) return node;
-    const value = node as Record<string, unknown>;
-    if (!targets.has(String(value.id))) return node;
+  return { ...flow, nodes: mapWorkflowNodeTree(flow.nodes, value => {
     const data = value.data && typeof value.data === "object" && !Array.isArray(value.data)
       ? value.data as Record<string, unknown> : {};
+    const spec = data.workflowAtomicSpec && typeof data.workflowAtomicSpec === "object" && !Array.isArray(data.workflowAtomicSpec)
+      ? data.workflowAtomicSpec as Record<string, unknown> : {};
+    if (typeof spec.executorRef !== "string" || !MEDIA_DELIVERY_EXECUTOR_REFS.has(spec.executorRef)) return value;
     return { ...value, data: { ...data, workflowMediaDeliveryPolicy: MEDIA_DELIVERY_POLICY } };
   }) };
 }
@@ -48,8 +44,8 @@ export function readMediaDeliveryPolicy(data: Record<string, unknown>): MediaDel
   if (value === undefined) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid media delivery policy");
   const policy = value as Record<string, unknown>;
-  if (policy.version !== 1 || policy.maxRetries !== 1 || policy.exhausted !== "deliver_successes") {
+  if (policy.version !== 1 || (policy.maxRetries !== 0 && policy.maxRetries !== 1) || policy.exhausted !== "deliver_successes") {
     throw new Error("Invalid media delivery policy");
   }
-  return MEDIA_DELIVERY_POLICY;
+  return { version: 1, maxRetries: policy.maxRetries, exhausted: "deliver_successes" };
 }

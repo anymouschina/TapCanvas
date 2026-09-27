@@ -97,6 +97,7 @@ import {
 	EquipCapabilityRequestSchema,
 	GenerateWorkflowCapabilityDescriptionRequestSchema,
 	InspectCapabilityRequestSchema,
+	LaunchEquippedWorkflowRequestSchema,
 	UpdateBuiltInCapabilityRequestSchema,
 	UpdateSkillCapabilityRequestSchema,
 	UpdateWorkflowCapabilityStateRequestSchema,
@@ -114,6 +115,7 @@ import {
 	unequipWorkflowCapability,
 	deleteAiWorkflowProject,
 } from "./capability-bay.service";
+import { launchEquippedWorkflowFromUserSelection } from "./equipped-workflow-launch.service";
 import {
 	AdminBuiltInCapabilitySchema,
 	UpdateAdminBuiltInCapabilityRequestSchema,
@@ -240,7 +242,25 @@ agentsRouter.get("/capability-bay", async (c) => {
 	if (!userId) return c.json({ error: "Unauthorized" }, 401);
 	const parsed = CapabilityBayQuerySchema.safeParse(c.req.query());
 	if (!parsed.success) return c.json({ error: "Invalid query", issues: parsed.error.issues }, 400);
-	return c.json(await getCapabilityBay(c as unknown as AppContext, userId, parsed.data.projectId));
+	return c.json(await getCapabilityBay(c as unknown as AppContext, userId, parsed.data.projectId, {
+		includeInvocations: parsed.data.includeInvocations === "true",
+	}));
+});
+
+agentsRouter.post("/capability-bay/workflows/run", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const body: unknown = await c.req.json().catch(() => null);
+	const parsed = LaunchEquippedWorkflowRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return c.json({ error: "Invalid workflow launch request", issues: parsed.error.issues }, 400);
+	}
+	const result = await launchEquippedWorkflowFromUserSelection(
+		c as unknown as AppContext,
+		userId,
+		parsed.data,
+	);
+	return c.json(result, result.created ? 202 : 200);
 });
 
 agentsRouter.post("/capability-bay/projects", async (c) => {

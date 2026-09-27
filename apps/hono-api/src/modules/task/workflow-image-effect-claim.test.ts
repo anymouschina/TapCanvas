@@ -5,7 +5,8 @@ describe('durable image effect claim', () => {
     const current = { nodes: [] as Record<string, unknown>[] };
     const submit = vi.fn();
     const attempt = async () => {
-      const patch = buildWorkflowImageClaim({ current, node: { data: { prompt: 'image' } }, nodeId:'asset', effectId:'effect', claimedAt:'now' });
+      const patch = buildWorkflowImageClaim({ current, node: { data: { prompt: 'image', workflowTaskId: 'task' } }, nodeId:'asset', effectId:'effect', claimedAt:'now' });
+      if (!('createNodes' in patch)) throw new Error('Expected a new image claim node');
       current.nodes.push(...patch.createNodes);
       await submit();
     };
@@ -13,6 +14,6 @@ describe('durable image effect claim', () => {
     expect(result.map(item => item.status)).toEqual(['fulfilled','rejected']);
     expect(submit).toHaveBeenCalledTimes(1);
     expect(current.nodes).toHaveLength(1);
-    expect(() => buildWorkflowImageClaim({ current, node:{data:{}},nodeId:'asset',effectId:'effect',claimedAt:'later' })).toThrow('already claimed');
+    expect(() => buildWorkflowImageClaim({ current, node:{data:{workflowTaskId:'task'}},nodeId:'asset',effectId:'effect',claimedAt:'later' })).toThrow('already claimed');
   });
 });

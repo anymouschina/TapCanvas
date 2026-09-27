@@ -1,4 +1,5 @@
 import type { AppContext } from "../../types";
+import type { VideoFrameSizeOption } from "./video-frame-domain";
 import {
   loadPublicChatEnabledModelCatalogSummary,
   type PublicChatEnabledVideoModelSummary,
@@ -50,9 +51,12 @@ export async function resolveModelMediaOptions(input: {
 }): Promise<{
   durationOptions: number[];
   maxReferenceImages: number | null;
+  supportsReferenceImages: boolean | null;
+  supportsFirstLastFrame: boolean | null;
   resolutionOptions: string[];
   sizeOptions: string[];
   aspectRatioOptions: string[];
+  frameSizeOptions: VideoFrameSizeOption[];
 }> {
   const wanted = normalizeKey(input.modelKey).replace(/-apimart$/, "");
   if (!wanted) throw new Error("video_model_key_required");
@@ -72,9 +76,15 @@ export async function resolveModelMediaOptions(input: {
     videoOptions.sizeOptions.map((option) => option.value),
   );
   const aspectRatioOptions = [...new Set([
-    ...videoOptions.sizeOptions.flatMap((option) => [option.value, option.aspectRatio]),
-    ...videoOptions.orientationOptions.map((option) => option.aspectRatio),
+    ...videoOptions.sizeOptions.map((option) => option.aspectRatio ?? null),
+    ...videoOptions.orientationOptions.map((option) => option.aspectRatio ?? null),
   ])];
+  const frameSizeOptions: VideoFrameSizeOption[] = [
+    ...videoOptions.sizeOptions.map((option) => ({ value: String(option.value).trim(), aspectRatio: option.aspectRatio ?? null })),
+    ...videoOptions.orientationOptions.flatMap((option) => option.aspectRatio
+      ? [{ value: option.aspectRatio, aspectRatio: option.aspectRatio }]
+      : []),
+  ];
   const normalizedAspectRatioOptions = normalizeStringList(aspectRatioOptions);
   if (
     durationOptions.length === 0 ||
@@ -86,9 +96,12 @@ export async function resolveModelMediaOptions(input: {
   return {
     durationOptions,
     maxReferenceImages: videoOptions.maxReferenceImages,
+    supportsReferenceImages: videoOptions.supportsReferenceImages,
+    supportsFirstLastFrame: videoOptions.supportsFirstLastFrame,
     resolutionOptions,
     sizeOptions,
     aspectRatioOptions: normalizedAspectRatioOptions,
+    frameSizeOptions,
   };
 }
 

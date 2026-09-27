@@ -41,7 +41,25 @@ export function resolveWorkflowAgentModelKey(input: Readonly<{
 	flowVersionData: unknown;
 	configuredModelKey?: string | null;
 }>): string {
+	const flowData = isRecord(input.flowVersionData) ? input.flowVersionData : null;
+	const hasDirectSelection = flowData !== null
+		&& Object.prototype.hasOwnProperty.call(flowData, "workflowDirectAgentModelSelection");
+	const rawDirectSelection = hasDirectSelection ? flowData.workflowDirectAgentModelSelection : undefined;
+	if (hasDirectSelection && (!isRecord(rawDirectSelection)
+		|| rawDirectSelection.source !== "user_preference"
+		|| typeof rawDirectSelection.model !== "string"
+		|| !rawDirectSelection.model.trim())) {
+		throw new Error("Frozen direct workflow Agent model selection is invalid");
+	}
+	if (hasDirectSelection && parseWorkflowInitiatingAgentExecution(input.flowVersionData)) {
+		throw new Error("Frozen workflow Agent model selections are mutually exclusive");
+	}
+	const directSelection = hasDirectSelection && isRecord(rawDirectSelection)
+		&& typeof rawDirectSelection.model === "string"
+		? rawDirectSelection.model.trim()
+		: null;
 	return parseWorkflowInitiatingAgentExecution(input.flowVersionData)?.model
+		?? directSelection
 		?? input.configuredModelKey?.trim()
 		?? "";
 }

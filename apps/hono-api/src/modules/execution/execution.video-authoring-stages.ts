@@ -1,23 +1,41 @@
+import { projectSourceUnitReferences, type SourceUnitLedger, type SourceUnitBeat } from "../../../../../packages/schemas/source-unit-ledger/index.mjs";
 import { inspectBlockingCharacterCoverage } from "../../../../../packages/schemas/blocking-plan-contract/index.mjs";
 import { inspectClipReferenceSelection } from "../../../../../packages/schemas/clip-reference-selection/index.mjs";
 import { chapterBeatPlanSchema, chapterAssetPlanSchema, clipDesignSchema } from "../../../../../packages/schemas/video-authoring-stages/schema.mjs";
+import { projectChapterAssetSources } from "./execution.chapter-asset-source";
 import { validateWorkflowToolArguments } from "./execution.json-schema-validator";
 
 /** Typed transport between independently persisted authoring stages.
  * All creative fields come from agents; this module only joins exact identities.
  */
 type Facts = Readonly<Record<string, unknown>>;
+type AdjacentBeatFacts = Readonly<Record<string, unknown> & {
+  sourceUnitRefs?: readonly Readonly<{ unitId: string }>[];
+}>;
+
+/** Keep adjacent author facts countable without copying another source allocation. */
+function projectAdjacentBeat(beat: AdjacentBeatFacts): Facts {
+  const sourceUnitRefs = beat.sourceUnitRefs;
+  if (!sourceUnitRefs) return beat;
+  const { sourceUnitRefs: _sourceUnitRefs, ...facts } = beat;
+  return {
+    ...facts,
+    sourceUnitRefSummary: {
+      count: sourceUnitRefs.length,
+      unitIds: sourceUnitRefs.map(reference => reference.unitId),
+      readPolicy: "parent_chapter_plan_source_unit_refs",
+    },
+  };
+}
 export type ChapterBeatPlan = Readonly<{
   sourceId: string;
   sourceFingerprint: string;
   chapterArc: Facts;
-  sourceCoveragePlan: Facts;
   sourceFidelityAudit: Facts;
-  beats: readonly Facts[];
+  beats: readonly SourceUnitBeat[];
 }>;
 export type ChapterAssetPlan = Readonly<{
   objectRegistry: readonly Facts[];
-  assetPlans: readonly Facts[];
   backgroundPlans: readonly Readonly<{ objectId: string; plan: Facts }>[];
 }>;
 export type ClipDesign = Readonly<{
@@ -45,29 +63,40 @@ function duration(beat: Facts, index: number): number {
   return value;
 }
 
-export function buildClipDesignInputs(plan: ChapterBeatPlan, assets: ChapterAssetPlan) {
+export function buildClipDesignInputs(plan: ChapterBeatPlan, assets: ChapterAssetPlan, ledger: SourceUnitLedger) {
   if (plan.beats.length === 0) throw new Error("chapter_plan.beats must be non-empty");
-  const speechLedger = plan.sourceCoveragePlan.speechLedger;
-  if (!Array.isArray(speechLedger)) throw new Error("chapter_plan.sourceCoveragePlan.speechLedger must be an array");
-  return plan.beats.map((beat, clipIndex) => ({
+  const projected = projectChapterSource(plan, ledger);
+  const sources = projectChapterAssetSources(assets.objectRegistry);
+  return projected.beats.map((beat, clipIndex) => ({
     clipIndex,
     sourceId: plan.sourceId,
     sourceFingerprint: plan.sourceFingerprint,
     chapterArc: plan.chapterArc,
     beat,
-    previousBeat: clipIndex > 0 ? plan.beats[clipIndex - 1] : null,
-    nextBeat: clipIndex + 1 < plan.beats.length ? plan.beats[clipIndex + 1] : null,
-    objectRegistry: assets.objectRegistry,
+    previousBeat: clipIndex > 0 ? projectAdjacentBeat(projected.beats[clipIndex - 1]!) : null,
+    nextBeat: clipIndex + 1 < plan.beats.length ? projectAdjacentBeat(projected.beats[clipIndex + 1]!) : null,
+    objectRegistry: sources.objectRegistry,
     backgroundPlans: assets.backgroundPlans.map(item => ({ objectId: item.objectId, displayName: item.plan.displayName })),
-    speechLedger: speechLedger.filter((line: unknown) =>
-      typeof line === "object" && line !== null && "clipIndex" in line && line.clipIndex === clipIndex),
+    speechLedger: projected.speechLedger.filter(line => line.clipIndex === clipIndex),
   }));
+}
+
+function projectChapterSource(plan: ChapterBeatPlan, ledger: SourceUnitLedger) {
+  if (plan.sourceId !== ledger.sourceId || plan.sourceFingerprint !== ledger.sourceFingerprint) {
+    throw new Error("Chapter source lineage must match the frozen source ledger");
+  }
+  return projectSourceUnitReferences(ledger, plan.beats);
+}
+
+export function chapterSpeechLedger(plan: ChapterBeatPlan, ledger: SourceUnitLedger) {
+  return projectChapterSource(plan, ledger).speechLedger;
 }
 
 export function assembleDesignedBeatSheet(
   plan: ChapterBeatPlan,
   assets: ChapterAssetPlan,
   designs: readonly ClipDesign[],
+  ledger: SourceUnitLedger,
 ) {
   if (plan.beats.length === 0) throw new Error("chapter_plan.beats must be non-empty");
   const byIndex = new Map<number, ClipDesign>();
@@ -78,8 +107,10 @@ export function assembleDesignedBeatSheet(
     if (byIndex.has(design.clipIndex)) throw new Error(`duplicate clip_design: ${design.clipIndex}`);
     byIndex.set(design.clipIndex, design);
   }
+  const sources = projectChapterAssetSources(assets.objectRegistry);
   let cursor = 0;
-  const assembled = plan.beats.map((beat, clipIndex) => {
+  const projected = projectChapterSource(plan, ledger);
+  const assembled = projected.beats.map((beat, clipIndex) => {
     const design = byIndex.get(clipIndex);
     if (!design) throw new Error(`missing clip_design: ${clipIndex}`);
     const collisions = Object.keys(design.beat).filter(key => Object.hasOwn(beat, key));
@@ -99,8 +130,9 @@ export function assembleDesignedBeatSheet(
       }
       return { ...directive, startSeconds: startSeconds + directive.startSeconds, endSeconds: startSeconds + directive.endSeconds };
     });
+    const { sourceUnitRefs: _sourceUnitRefs, ...beatFacts } = beat;
     return {
-      beat: { ...beat, ...design.beat, clipIndex, clipId } as Facts & { clipIndex: number; clipId: string },
+      beat: { ...beatFacts, ...design.beat, clipIndex, clipId } as Facts & { clipIndex: number; clipId: string },
       blockingPlan: { ...blockingFacts, backgroundPlan: backgrounds[0]!.plan, clipIndex, durationSeconds },
       segment: { ...design.timing, temporalDirectives, clipId, startSeconds, endSeconds: cursor },
     };
@@ -108,8 +140,13 @@ export function assembleDesignedBeatSheet(
   return {
     protocolVersion: "tapcanvas.beat-sheet/v2",
     ...plan,
-    objectRegistry: assets.objectRegistry,
-    assetPlans: assets.assetPlans,
+    sourceCoveragePlan: {
+      speechLedger: projected.speechLedger,
+      sourceUnitLedger: ledger,
+      sourceUnitAllocations: projected.beats.map((beat, clipIndex) => ({ clipIndex, sourceUnitRefs: beat.sourceUnitRefs })),
+    },
+    objectRegistry: sources.objectRegistry,
+    assetPlans: sources.assetPlans,
     beats: assembled.map(item => item.beat),
     blockingPlans: assembled.map(item => item.blockingPlan),
     sequenceControlPlan: {
@@ -130,8 +167,25 @@ function parseStageArtifact(value: unknown, schema: Record<string, unknown>, lab
 }
 export const parseChapterBeatPlan = (value: unknown): ChapterBeatPlan =>
   parseStageArtifact(value, chapterBeatPlanSchema, "chapter-plan") as ChapterBeatPlan;
+function normalizeBackgroundPlanIdentities(plan: ChapterAssetPlan): ChapterAssetPlan {
+  const counts = new Map<string, number>();
+  for (const item of plan.backgroundPlans) counts.set(item.objectId, (counts.get(item.objectId) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return {
+    ...plan,
+    backgroundPlans: plan.backgroundPlans.map(item => {
+      if ((counts.get(item.objectId) ?? 0) === 1) return item;
+      const index = seen.get(item.objectId) ?? 0;
+      seen.set(item.objectId, index + 1);
+      const assetId = typeof item.plan.assetId === "string" && item.plan.assetId.length > 0
+        ? item.plan.assetId
+        : `index-${String(index)}`;
+      return { ...item, objectId: `${item.objectId}::background::${assetId}::${String(index)}` };
+    }),
+  };
+}
 export const parseChapterAssetPlan = (value: unknown): ChapterAssetPlan =>
-  parseStageArtifact(value, chapterAssetPlanSchema, "chapter-assets") as ChapterAssetPlan;
+  normalizeBackgroundPlanIdentities(parseStageArtifact(value, chapterAssetPlanSchema, "chapter-assets") as ChapterAssetPlan);
 export const parseClipDesign = (value: unknown): ClipDesign =>
   parseStageArtifact(value, clipDesignSchema, "clip-design") as ClipDesign;
 

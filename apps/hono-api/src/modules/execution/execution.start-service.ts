@@ -29,6 +29,7 @@ import {
 	workflowRequiresPluginSemantics,
 } from "./execution.semantics-snapshot";
 import { materializeWorkflowConfigurationInheritance } from "./execution.workflow-configuration";
+import { flattenWorkflowNodeTree, mapWorkflowNodeTree, mapWorkflowNodeTreeScopes } from "./execution.node-tree";
 import {
 	inspectVideoWorkflowCanvasDefinition,
 } from "./execution.video-workflow-definition-authority";
@@ -99,6 +100,8 @@ export type StartWorkflowExecutionInput = Readonly<{
 	callerCanvasSnapshot?: WorkflowCallerCanvasSnapshot;
 	/** Actual parent Agent execution identity for model inheritance. */
 	initiatingAgentExecution?: WorkflowInitiatingAgentExecution;
+	/** User-selected enabled model for a direct, non-Agent workflow launch. */
+	directAgentModelSelection?: Readonly<{ model: string; source: "user_preference" }>;
 	/** Frozen runtime control facts derived from the public request admission. */
 	executionControl?: WorkflowExecutionControlAdmissionV2;
 	recoveryOfExecutionId?: string;
@@ -208,7 +211,7 @@ function applyWorkflowTriggerMediaOverrides(
 	const imageQuality = readPayloadString(payload, "imageQuality");
 	if (!videoModelKey && !imageModelKey && !videoResolution && !videoSize && !videoAspectRatio && !imageAspectRatio && !imageSize && !("imageQuality" in payload)) return;
 	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
-	flowData.nodes = nodes.map((rawNode) => {
+	flowData.nodes = mapWorkflowNodeTree(nodes, (rawNode) => {
 		if (!isRecord(rawNode)) return rawNode;
 		const nodeData = isRecord(rawNode.data) ? rawNode.data : null;
 		if (!nodeData) return rawNode;
@@ -241,9 +244,9 @@ function applyWorkflowTriggerMediaOverrides(
 }
 
 function applyWorkflowAuthoredConfigurationInheritance(flowData: Record<string, unknown>): void {
-	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
+	const nodes = Array.isArray(flowData.nodes) ? flattenWorkflowNodeTree(flowData.nodes) : [];
 	try {
-		flowData.nodes = materializeWorkflowConfigurationInheritance(nodes);
+		flowData.nodes = mapWorkflowNodeTreeScopes(nodes, materializeWorkflowConfigurationInheritance);
 	} catch (error: unknown) {
 		throw new WorkflowStartError(
 			error instanceof Error ? error.message : "Workflow configuration inheritance is invalid",
@@ -254,7 +257,7 @@ function applyWorkflowAuthoredConfigurationInheritance(flowData: Record<string, 
 }
 
 function assertFrozenVideoEstimateConfiguration(flowData: Record<string, unknown>): void {
-	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
+	const nodes = Array.isArray(flowData.nodes) ? flattenWorkflowNodeTree(flowData.nodes) : [];
 	for (const rawNode of nodes) {
 		if (!isRecord(rawNode) || !isRecord(rawNode.data)) continue;
 		const spec = isRecord(rawNode.data.workflowAtomicSpec) ? rawNode.data.workflowAtomicSpec : null;
@@ -292,7 +295,7 @@ async function assertLiveVideoModelConfiguration(
 	flowData: Record<string, unknown>,
 ): Promise<void> {
 	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
-	const authoredModels = nodes.flatMap((rawNode) => {
+	const authoredModels = flattenWorkflowNodeTree(nodes).flatMap((rawNode) => {
 		if (!isRecord(rawNode) || !isRecord(rawNode.data)) return [];
 		const spec = isRecord(rawNode.data.workflowAtomicSpec) ? rawNode.data.workflowAtomicSpec : null;
 		// The estimate node is the canonical model declaration for the built-in
@@ -547,6 +550,15 @@ export async function startWorkflowExecution(
 			apiStyle: input.initiatingAgentExecution.apiStyle,
 			reasoningEffort: input.initiatingAgentExecution.reasoningEffort,
 			serviceTier: input.initiatingAgentExecution.serviceTier,
+		};
+	}
+	if (input.directAgentModelSelection) {
+		if (input.trigger === "agent" || input.initiatingAgentExecution || !input.directAgentModelSelection.model.trim()) {
+			throw new WorkflowStartError("Direct workflow Agent model selection is invalid", "workflow_agent_execution_invalid", 400);
+		}
+		executableFlowData.workflowDirectAgentModelSelection = {
+			model: input.directAgentModelSelection.model.trim(),
+			source: input.directAgentModelSelection.source,
 		};
 	}
 	if (input.delivery) {

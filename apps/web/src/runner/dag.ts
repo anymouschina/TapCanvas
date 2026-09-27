@@ -7,9 +7,59 @@ import { getTaskNodeCoreType, normalizeTaskNodeKind } from '../canvas/nodes/task
 import { resolveUpstreamRefs } from './resolveUpstreamRefs'
 import { collectUpstreamComposeSources, collectUpstreamComposeAudioTracks } from './collectUpstreamComposeSources'
 import { isReferenceOnlyCanvasEdge } from '@tapcanvas/canvas-edge-semantics'
+import { requiresWorkflowMediaRecovery, usesPreparedWorkflowMediaSubmission, isUnsubmittedWorkflowMedia } from './workflowMediaExecutionState'
+import { runPreparedWorkflowMediaNode, usePreparedMediaSubmissionStore } from './preparedWorkflowMediaSubmission'
+import { resumeWorkflowMediaOutput, resumeWorkflowMediaOutputs } from './workflowMediaOutputExecution'
+import { resolveWorkflowMediaOutputSlot } from '../canvas/workflowMediaAttemptProjection'
+import { createManualMediaDerivative } from './manualMediaDerivative'
+import { getWorkflowExecution, listWorkflowNodeRuns, type WorkflowNodeRunDto } from '../api/server'
+import { pickPrimaryImageFromNode } from '../canvas/nodes/taskNode/upstreamReferences'
 
 type Getter = () => any
 type Setter = (fn: (s: any) => any) => void
+
+const MAX_WORKFLOW_RECOVERY_WAIT_MS = 15 * 60_000
+
+export class WorkflowMediaRecoveryPendingError extends Error {
+  constructor(readonly executionId: string, readonly executionStatus: string) {
+    super(`工作流恢复 ${executionId} 仍处于“${executionStatus}”；当前未重复提交媒体任务，可在执行快照中继续查看。`)
+    this.name = 'WorkflowMediaRecoveryPendingError'
+  }
+}
+
+function hasSettledTargetClipRuns(runs: readonly WorkflowNodeRunDto[], imageNodes: readonly Node[]): boolean {
+  return imageNodes.every((node) => {
+    const runtimeNodeId = asRecord(node.data)?.workflowRuntimeNodeId
+    if (typeof runtimeNodeId !== 'string') return false
+    const stepMarker = runtimeNodeId.indexOf('::step::')
+    if (stepMarker < 0) return true
+    const outerRuntimeNodeId = runtimeNodeId.slice(0, stepMarker)
+    const outerNodeId = outerRuntimeNodeId.split('::item::', 1)[0]
+    const outerRun = runs.find((run) => run.nodeId === outerNodeId)
+    const output = asRecord(outerRun?.outputRefs)
+    if (!output || !Array.isArray(output.itemRuns)) return false
+    return output.itemRuns.some((item) => asRecord(item)?.runtimeNodeId === outerRuntimeNodeId
+      && (asRecord(item)?.status === 'success' || asRecord(item)?.status === 'failed'))
+  })
+}
+
+async function waitForWorkflowRecovery(
+  executionId: string,
+  ready: (runs: readonly WorkflowNodeRunDto[]) => boolean,
+): Promise<void> {
+  const { applyWorkflowNodeRuns } = await import('../canvas/workflowExecutionProjection')
+  const deadline = Date.now() + MAX_WORKFLOW_RECOVERY_WAIT_MS
+  while (true) {
+    const [execution, runs] = await Promise.all([
+      getWorkflowExecution(executionId), listWorkflowNodeRuns(executionId),
+    ])
+    applyWorkflowNodeRuns(executionId, runs, execution.status, execution.executionFamilyId)
+    if (ready(runs)) return
+    if (execution.status === 'success' || execution.status === 'failed' || execution.status === 'canceled') return
+    if (Date.now() >= deadline) throw new WorkflowMediaRecoveryPendingError(executionId, execution.status)
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_500))
+  }
+}
 
 type Graph = {
   adj: Map<string, string[]>
@@ -25,6 +75,81 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function hasResolvedAssetUrl(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+function readRemoteAssetUrl(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const url = value.trim()
+  try {
+    const parsed = new URL(url)
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && parsed.hostname ? url : ''
+  } catch {
+    return ''
+  }
+}
+
+function readVideoDependencyIds(node: Node): string[] {
+  const data = asRecord(node.data)
+  const kind = typeof data?.kind === 'string' ? data.kind : ''
+  if (getTaskNodeCoreType(kind) !== 'video') return []
+  const ids = [data?.firstFrameFromNodeId, data?.lastFrameFromNodeId, data?.sourcePrevVideoNodeId]
+  if (Array.isArray(data?.referenceImageNodeIds)) ids.push(...data.referenceImageNodeIds)
+  return Array.from(new Set(ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim())))
+}
+
+function readExplicitVideoImageDependencyIds(node: { data?: Record<string, unknown> }): string[] {
+  const data = asRecord(node.data)
+  const ids = [data?.firstFrameFromNodeId, data?.lastFrameFromNodeId]
+  if (Array.isArray(data?.referenceImageNodeIds)) ids.push(...data.referenceImageNodeIds)
+  return Array.from(new Set(ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim())))
+}
+
+function readNodeRemoteImageUrl(node: Node): string {
+  const data = asRecord(node.data)
+  const status = typeof data?.status === 'string' ? data.status.toLowerCase() : ''
+  if (status && !['success', 'succeeded', 'completed', 'done'].includes(status)) return ''
+  const results = Array.isArray(data?.imageResults) ? data.imageResults : []
+  const cells = Array.isArray(data?.storyboardEditorCells) ? data.storyboardEditorCells : []
+  return [
+    pickPrimaryImageFromNode(node),
+    data?.imageUrl,
+    ...results.map((item) => asRecord(item)?.url),
+    ...cells.map((item) => asRecord(item)?.imageUrl),
+  ].map(readRemoteAssetUrl).find(Boolean) || ''
+}
+
+function readVideoImageDependencyIds(
+  node: { id: string; data?: Record<string, unknown> },
+  nodes: Node[],
+  edges: Edge[],
+): string[] {
+  const ids = readExplicitVideoImageDependencyIds(node)
+  const nodeById = new Map(nodes.map((item) => [item.id, item]))
+  for (const edge of edges) {
+    if (edge.target !== node.id || isReferenceOnlyCanvasEdge(edge)) continue
+    const source = nodeById.get(edge.source)
+    const data = asRecord(source?.data)
+    const coreType = getTaskNodeCoreType(typeof data?.kind === 'string' ? data.kind : '')
+    if (coreType === 'image' || coreType === 'storyboard') ids.push(edge.source)
+  }
+  return Array.from(new Set(ids))
+}
+
+function resolveVideoImageDependencies(
+  node: { id: string; data?: Record<string, unknown> },
+  nodes: Node[],
+  edges: Edge[],
+): Map<string, string> {
+  const nodeById = new Map(nodes.map((item) => [item.id, item]))
+  const urls = new Map<string, string>()
+  for (const id of readVideoImageDependencyIds(node, nodes, edges)) {
+    const source = nodeById.get(id)
+    if (!source) throw new Error(`视频节点 ${node.id} 引用的图片节点 ${id} 不存在`)
+    const url = readNodeRemoteImageUrl(source)
+    if (!url) throw new Error(`视频节点 ${node.id} 的上游图片节点 ${id} 缺少真实图片 URL`)
+    urls.set(id, url)
+  }
+  return urls
 }
 
 function hasResolvedAssetList(value: unknown): boolean {
@@ -51,16 +176,38 @@ function hasResolvedStoryboardCells(value: unknown): boolean {
 export function buildVideoUpstreamRefPatch(
   node: { id: string; data?: Record<string, unknown> },
   nodes: { id: string; data?: Record<string, unknown> }[],
-): Record<string, string | number> | null {
+  edges: Edge[] = [],
+): Record<string, string | number | string[]> | null {
   const d = node.data ?? {}
-  if (!d.firstFrameFromNodeId && !d.sourcePrevVideoNodeId) return null
+  const imageUrls = resolveVideoImageDependencies(node, nodes as Node[], edges)
+  if (!d.firstFrameFromNodeId && !d.lastFrameFromNodeId && !d.sourcePrevVideoNodeId && !d.referenceImageNodeIds) return null
   const refs = resolveUpstreamRefs(node, nodes)
-  const patch: Record<string, string | number> = {}
-  if (refs.firstFrameUrl && !d.firstFrameUrl) patch.firstFrameUrl = refs.firstFrameUrl
+  const patch: Record<string, string | number | string[]> = {}
+  const firstFrameUrl = typeof d.firstFrameFromNodeId === 'string'
+    ? imageUrls.get(d.firstFrameFromNodeId.trim()) || refs.firstFrameUrl
+    : refs.firstFrameUrl
+  if (firstFrameUrl && !d.firstFrameUrl) patch.firstFrameUrl = firstFrameUrl
   if (refs.sourceVideoUrl && !d.sourceVideoUrl) patch.sourceVideoUrl = refs.sourceVideoUrl
   if (refs.sourcePrevTaskId && !d.sourcePrevTaskId) patch.sourcePrevTaskId = refs.sourcePrevTaskId
   if (refs.referenceVideoDurationSeconds && !d.referenceVideoDurationSeconds) {
     patch.referenceVideoDurationSeconds = refs.referenceVideoDurationSeconds
+  }
+  if (imageUrls.size > 0) {
+    const referenceImageIds = Array.isArray(d.referenceImageNodeIds)
+      ? new Set(d.referenceImageNodeIds.filter((id): id is string => typeof id === 'string'))
+      : new Set<string>()
+    const referenceUrls = readExplicitVideoImageDependencyIds(node)
+      .filter((id) => referenceImageIds.has(id))
+      .map((id) => imageUrls.get(id))
+      .filter((url): url is string => Boolean(url))
+    const existing = Array.isArray(d.referenceImages)
+      ? d.referenceImages.filter((url): url is string => Boolean(readRemoteAssetUrl(url)))
+      : []
+    if (referenceUrls.length > 0) patch.referenceImages = Array.from(new Set([...existing, ...referenceUrls]))
+    if (d.lastFrameFromNodeId && !d.lastFrameUrl) {
+      const url = imageUrls.get(String(d.lastFrameFromNodeId))
+      if (url) patch.lastFrameUrl = url
+    }
   }
   return Object.keys(patch).length > 0 ? patch : null
 }
@@ -76,6 +223,7 @@ function injectVideoUpstreamRefsIfNeeded(id: string, get: Getter, set: Setter): 
   const patch = buildVideoUpstreamRefPatch(
     node as { id: string; data?: Record<string, unknown> },
     nodes as { id: string; data?: Record<string, unknown> }[],
+    (get().edges ?? []) as Edge[],
   )
   if (!patch) return
   set((state: any) => ({
@@ -101,6 +249,9 @@ export function hasExecutableNodeAsset(node: Node | null | undefined): boolean {
   if (!node) return false
   const data = asRecord(node.data)
   if (!data) return false
+  if (getTaskNodeCoreType(typeof data.kind === 'string' ? data.kind : '') === 'image') {
+    return Boolean(readNodeRemoteImageUrl(node))
+  }
   return (
     hasResolvedAssetUrl(data.imageUrl) ||
     hasResolvedAssetUrl(data.videoUrl) ||
@@ -126,14 +277,22 @@ function buildGraph(nodes: Node[], edges: Edge[]): Graph {
     indeg.set(n.id, 0)
     upstream.set(n.id, [])
   })
+  const dependencyPairs = new Set<string>()
+  const addDependency = (source: string, target: string) => {
+    if (!nodesMap.has(source) || !nodesMap.has(target)) return
+    const key = `${source}\0${target}`
+    if (dependencyPairs.has(key)) return
+    dependencyPairs.add(key)
+    adj.get(source)!.push(target)
+    indeg.set(target, (indeg.get(target) || 0) + 1)
+    upstream.get(target)!.push(source)
+  }
   edges.forEach(e => {
     if (isReferenceOnlyCanvasEdge(e)) return
     if (!e.source || !e.target) return
-    if (!nodesMap.has(e.source) || !nodesMap.has(e.target)) return
-    adj.get(e.source)!.push(e.target)
-    indeg.set(e.target, (indeg.get(e.target) || 0) + 1)
-    upstream.get(e.target)!.push(e.source)
+    addDependency(e.source, e.target)
   })
+  nodes.forEach((node) => readVideoDependencyIds(node).forEach((id) => addDependency(id, node.id)))
   return { adj, indeg, upstream, nodes: nodesMap }
 }
 
@@ -275,7 +434,7 @@ export async function runFlowDag(
   // initialize states
   set((state: any) => ({
     nodes: state.nodes.map((n: Node) =>
-      nodeIdSet.has(n.id)
+      nodeIdSet.has(n.id) && !usesPreparedWorkflowMediaSubmission(n)
         ? ({ ...n, data: { ...n.data, status: 'queued', progress: 0 } })
         : n
     )
@@ -332,7 +491,7 @@ export async function runFlowDag(
                   ...n,
                   data: {
                     ...n.data,
-                    status: 'error',
+                    status: isUnsubmittedWorkflowMedia(n) ? 'idle' : 'error',
                     lastError: (n.data as any)?.lastError || '前置节点失败，已阻塞',
                   },
                 } as Node)
@@ -363,8 +522,10 @@ export async function runFlowDag(
           } else if (coreType === 'audio') {
             await runNodeAudio(id, get, set)
           } else if (shouldRemote) {
+            if (nodeMeta && requiresWorkflowMediaRecovery(nodeMeta)) throw new Error('上游工作流媒体已有执行记录，需要按原回执恢复，不能重复提交')
             if (coreType === 'video') injectVideoUpstreamRefsIfNeeded(id, get, set)
-            await runNodeRemote(id, get, set)
+            if (nodeMeta && usesPreparedWorkflowMediaSubmission(nodeMeta)) await runPreparedWorkflowMediaNode(id, get, set)
+            else await runNodeRemote(id, get, set)
           } else {
             await runNodeMock(id, get, set)
           }
@@ -377,7 +538,7 @@ export async function runFlowDag(
                     ...n,
                     data: {
                       ...n.data,
-                      status: 'error',
+                      status: isUnsubmittedWorkflowMedia(n) ? 'idle' : 'error',
                       lastError: message || 'Execution failed',
                     },
                   } as Node)
@@ -448,7 +609,11 @@ export function collectDagRunPlan(
       requiredNodeIds.add(currentId)
     } else if (isExecutableTaskNode(currentNode)) {
       if (force || !hasExecutableNodeAsset(currentNode)) requiredNodeIds.add(currentId)
-      else skippedNodeIds.add(currentId)
+      else {
+        skippedNodeIds.add(currentId)
+        // A persisted asset satisfies this branch; its own ancestors do not need rerunning.
+        continue
+      }
     }
 
     const upstreamIds = fullGraph.upstream.get(currentId) || []
@@ -464,17 +629,70 @@ export function collectDagRunPlan(
   return { requiredNodeIds, skippedNodeIds }
 }
 
-export async function runNodeDagToTarget(
+async function executeNodeDagToTarget(
   targetId: string,
   get: Getter,
   set: Setter,
   options?: { concurrency?: number; force?: boolean },
 ) {
+  const source = (get().nodes as Node[]).find(node => node.id === targetId)
   const state = get()
   const allNodes = state.nodes as Node[]
   const allEdges = state.edges as Edge[]
   const targetNode = allNodes.find((node) => node.id === targetId)
   if (!targetNode) throw new Error('节点不存在，无法执行')
+  const targetCoreType = getTaskNodeCoreType(String(asRecord(targetNode.data)?.kind ?? ''))
+  if (targetCoreType === 'video') {
+    const { requiredNodeIds } = collectDagRunPlan(targetId, allNodes, allEdges, { force: options?.force })
+    const failedUpstreamImages = allNodes.filter((node) => node.id !== targetId
+      && requiredNodeIds.has(node.id)
+      && getTaskNodeCoreType(String(asRecord(node.data)?.kind ?? '')) === 'image'
+      && requiresWorkflowMediaRecovery(node)
+      && !hasExecutableNodeAsset(node))
+    if (failedUpstreamImages.length > 0) {
+      const execution = await resumeWorkflowMediaOutputs(allNodes, failedUpstreamImages.map((node) => node.id),
+        { exactMediaRetriesOnly: true })
+      await waitForWorkflowRecovery(execution.id, (runs) => hasSettledTargetClipRuns(runs, failedUpstreamImages)
+        && failedUpstreamImages.every((node) => hasExecutableNodeAsset(
+          (get().nodes as Node[]).find((current) => current.id === node.id),
+        )))
+      const missing = failedUpstreamImages.filter((node) => !hasExecutableNodeAsset(
+        (get().nodes as Node[]).find((current) => current.id === node.id),
+      ))
+      if (missing.length > 0) {
+        throw new Error(`上游工作流恢复 ${execution.id} 已结束，但图片节点仍缺少真实 URL：${missing.map((node) => node.id).join('、')}`)
+      }
+      const currentSlot = resolveWorkflowMediaOutputSlot(get().nodes as Node[], targetId)
+      if (currentSlot?.activeAttempt.executionId === execution.id
+        && currentSlot.activeAttempt.status === 'success' && currentSlot.activeAttempt.assetUrls.length > 0) return
+      return executeNodeDagToTarget(targetId, get, set, options)
+    }
+  }
+  if (source && requiresWorkflowMediaRecovery(source)) {
+    const slot = resolveWorkflowMediaOutputSlot(allNodes, source.id)
+    if (targetCoreType === 'video' && slot?.activeAttempt.status === 'success'
+      && slot.activeAttempt.assetUrls.length > 0) {
+      const derivative = createManualMediaDerivative(source, allEdges, `manual-media-${crypto.randomUUID()}`)
+      set((current: { nodes: Node[]; edges: Edge[] }) => ({
+        nodes: [...current.nodes.map((node) => node.id === source.id ? { ...node, selected: false } : node), derivative.node],
+        edges: [...current.edges, ...derivative.edges],
+      }))
+      return executeNodeDagToTarget(derivative.node.id, get, set, options)
+    }
+    const execution = await resumeWorkflowMediaOutput(allNodes, source.id)
+    await waitForWorkflowRecovery(execution.id, () => {
+      const current = resolveWorkflowMediaOutputSlot(get().nodes as Node[], source.id)
+      return current?.activeAttempt.executionId === execution.id
+        && current.activeAttempt.status === 'success' && current.activeAttempt.assetUrls.length > 0
+    })
+    const completedSlot = resolveWorkflowMediaOutputSlot(get().nodes as Node[], source.id)
+    if (completedSlot?.activeAttempt.executionId !== execution.id
+      || completedSlot.activeAttempt.status !== 'success'
+      || completedSlot.activeAttempt.assetUrls.length === 0) {
+      throw new Error(`工作流媒体恢复 ${execution.id} 已结束，但目标媒体没有真实资产 URL。`)
+    }
+    return
+  }
   if (!isExecutableTaskNode(targetNode)) {
     const kind = String((asRecord(targetNode.data)?.kind as string | undefined) || '').trim()
     const coreType = getTaskNodeCoreType(kind)
@@ -499,4 +717,32 @@ export async function runNodeDagToTarget(
     set,
     { only: requiredNodeIds },
   )
+  const completedTarget = (get().nodes as Node[]).find(node => node.id === targetId)
+  if (completedTarget?.data.status !== 'success') {
+    const failure = (get().nodes as Node[]).find(node => requiredNodeIds.has(node.id)
+      && node.data.status !== 'success' && typeof node.data.lastError === 'string')
+    throw new Error(typeof failure?.data.lastError === 'string' ? failure.data.lastError : '目标节点尚未执行成功')
+  }
+}
+
+const activePreparedDagRuns = new Map<string, Promise<void>>()
+export function runNodeDagToTarget(
+  targetId: string, get: Getter, set: Setter,
+  options?: { concurrency?: number; force?: boolean },
+): Promise<void> {
+  const node = (get().nodes as Node[]).find(candidate => candidate.id === targetId)
+  const prepared = Boolean(node && usesPreparedWorkflowMediaSubmission(node))
+  const recoveringVideo = Boolean(node && requiresWorkflowMediaRecovery(node)
+    && getTaskNodeCoreType(String(asRecord(node.data)?.kind ?? '')) === 'video')
+  if (!prepared && !recoveringVideo) return executeNodeDagToTarget(targetId, get, set, options)
+  const key = `${String(get().graphProvenanceKey)}:${targetId}`
+  const pending = activePreparedDagRuns.get(key)
+  if (pending) return pending
+  if (prepared) usePreparedMediaSubmissionStore.setState(state => ({ pending: new Set([...state.pending, targetId]) }))
+  const run = executeNodeDagToTarget(targetId, get, set, options).finally(() => {
+    activePreparedDagRuns.delete(key)
+    if (prepared) usePreparedMediaSubmissionStore.setState(state => ({ pending: new Set([...state.pending].filter(id => id !== targetId)) }))
+  })
+  activePreparedDagRuns.set(key, run)
+  return run
 }

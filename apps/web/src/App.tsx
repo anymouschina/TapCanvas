@@ -1160,6 +1160,11 @@ function CanvasApp({
       const triggerData = triggerNode?.data && typeof triggerNode.data === 'object'
         ? triggerNode.data as Record<string, unknown>
         : {}
+      const triggerPayload = triggerData.workflowTriggerPayload
+        && typeof triggerData.workflowTriggerPayload === 'object'
+        && !Array.isArray(triggerData.workflowTriggerPayload)
+        ? triggerData.workflowTriggerPayload as Record<string, unknown>
+        : undefined
       if (triggerData.workflowKey === AGENT_WORKFLOW_KEY) {
         compileAgentWorkflow(triggerNodeId, stopAfterNodeId)
       } else if (triggerData.workflowKey === VIDEO_PRODUCTION_WORKFLOW_KEY) {
@@ -1169,7 +1174,7 @@ function CanvasApp({
         throw new Error('触发器缺少已注册的工作流身份')
       }
 
-      if (isDirty || !useUIStore.getState().currentFlow.id) {
+      if (useUIStore.getState().isDirty || !useUIStore.getState().currentFlow.id) {
         const saved = await doSave()
         if (!saved) return
       }
@@ -1203,6 +1208,7 @@ function CanvasApp({
           }
           : {}),
         concurrency: 1,
+        ...(triggerPayload ? { triggerPayload } : {}),
       })
       setExecId(exec.id)
       setExecLogOpen(true)

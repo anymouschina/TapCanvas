@@ -30,6 +30,7 @@ function readFailureCandidate(value: unknown): ProviderTaskFailure | null {
 export function isWorkflowOwnedMediaNodeData(value: unknown): boolean {
   const data = readRecord(value)
   if (!data) return false
+  if (data.mediaTaskExecutionOwner === 'manual' || data.mediaTaskExecutionOwner === 'canvas_prepared') return false
   return [data.workflowExecutionId, data.workflowEffectId, data.workflowRuntimeNodeId]
     .some((identity) => Boolean(readText(identity)))
 }

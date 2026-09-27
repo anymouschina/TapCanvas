@@ -24,6 +24,7 @@ import {
 	readWorkflowVoicePlanningFacts,
 	runWorkflowVideoNode, prepareWorkflowVideoNode,
 } from "./execution.video-runner";
+import { materializeWorkflowClipProductionNodes, hydrateWorkflowClipReusedImageNode } from "./execution.clip-production-node-runner";
 import {
 	readWorkflowCanvasGroup,
 	readWorkflowCanvasGroupFromFlowData,
@@ -542,6 +543,8 @@ export async function handleWorkflowNodeJob(
 					materializeBlockingDiagrams: (request) => materializeWorkflowBlockingDiagrams(env, request),
 					runVideo: (request) => runWorkflowVideoNode(env, request),
           prepareVideo: (request) => prepareWorkflowVideoNode(env, request),
+					materializeClipProductionNodes: (request) => materializeWorkflowClipProductionNodes(env, request),
+					hydrateClipReusedImageNode: (request) => hydrateWorkflowClipReusedImageNode(env, request),
 					prepareVideoProductionAssets: (request) => prepareWorkflowVideoProductionAssets(env, request),
 					readVoicePlanningFacts: (request) => readWorkflowVoicePlanningFacts(env, request),
 					runVideoEstimate: (request) => estimateWorkflowVideo(env, request),

@@ -34,6 +34,7 @@
 - `publishedAssets` -> `GET /assets/published`（受保护，只读公开 TV 作品快照，用于发布后验收）
 - `capabilityBayProjectAdopt` -> `PUT /agents/capability-bay/projects/:projectId`（受保护，将一个已有且至少含一张合法已保存工作流的普通项目显式纳入工作流项目；只写 `project_kind` 与更新时间，不复制或改写 Flow）
 - `capabilityBayGet` -> `GET /agents/capability-bay`（受保护，只读当前用户可见的内置能力、Skills 与已装配工作流能力；可用 `--projectId` 精确筛选工作流项目）
+- `capabilityBayWorkflowRun` -> `POST /agents/capability-bay/workflows/run`（受保护，用户明确选择已装配工作流的手动启动入口。payload 必须含 `intent="run_selected_equipped_workflow"`、真实 `attachmentId`、`executionVariant`、`projectId`、恰好一个 `chapterId/canvasFlowId`、稳定 `idempotencyKey` 与用户已选且目录启用的 `agentModelKey`；`triggerPayload` 必须提供当前 descriptor 声明的必填来源及媒体字段，图片/视频模型与规格来自当前可执行目录并在受理时复核。可传 `onlyVideoNodes` 覆盖本次章节偏好，不修改持久 FilmSpec。此入口不接收或伪造外部父 Agent 身份。）
 - `capabilityBayInspect` -> `POST /agents/capability-bay/inspect`（受保护，依据 payload `{ "flowId": "<真实 flowId>" }` 对当前已保存 Workflow IR 生成精确的 `sourceVersionId`、`descriptorSha256`、一次性 `inspectionToken` 与冲突报告；不执行装配）
 - `capabilityBayWorkflowEquip` -> `PUT /agents/capability-bay/workflows/:flowId`（受保护，只接受同一次 `capabilityBayInspect` 返回的版本、摘要、token 及按冲突报告逐项作出的 `resolutions`，原子创建或更新当前用户的工作流能力附件；禁止猜测或复用旧检查结果）
 - `capabilityBayWorkflowUnequip` -> `DELETE /agents/capability-bay/workflows/:flowId`（受保护，只移除当前用户对该工作流能力的附件；不删除工作流、版本、执行历史或产物。仅在用户明确要求停用该路径后调用）

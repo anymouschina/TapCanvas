@@ -1,4 +1,12 @@
 import { assetBindingIdentity, assetFactIdentity } from "./execution.asset-identity";
+import { buildWorkflowClipSourceSnapshot } from "../task/workflow-clip-source-snapshot";
+import {
+	CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE,
+	type ClipProductionAssetIdentity,
+} from "../../../../../packages/schemas/clip-production-packet/index.mjs";
+import { VIDEO_CLIP_PRODUCTION_WORKFLOW_INPUT_MODES } from "./execution.clip-production";
+import { inspectGenerationReferenceBindings } from "../../../../../packages/schemas/workflow-asset-registry/generation-references.mjs";
+import { IMAGE_REFERENCE_ROLES } from "../../../../../packages/schemas/workflow-asset-registry/index.mjs";
 import { inspectSceneReferencePlan, type SceneReferenceCard } from "../../../../../packages/schemas/scene-reference-contract/index.mjs";
 import type { WorkflowReusableAssetRoleFacts } from "./execution.project-image-references";
 import { buildFrozenSequenceContext, type FrozenSequenceClip } from "./execution.video-sequence-context";
@@ -168,6 +176,8 @@ export type WorkflowCanvasProjectContextFacts = Readonly<{
 
 export type WorkflowVideoDurationPlan = Readonly<{
 	maxReferenceImages?: number | null;
+	supportsReferenceImages?: boolean | null;
+	supportsFirstLastFrame?: boolean | null;
 	targetDurationSeconds: number | null;
 	modelKey: string;
 	durationOptions: readonly number[];
@@ -509,6 +519,13 @@ function readString(value: unknown): string {
 	return typeof value === "string" ? value.trim() : "";
 }
 
+function requiredCanonicalString(value: unknown, field: string): string {
+	if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
+		throw new Error(`${field} must be a canonical non-empty string`);
+	}
+	return value;
+}
+
 function readNonNegativeInteger(value: unknown): number | null {
 	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
@@ -700,6 +717,8 @@ function positiveIntegerList(value: unknown): number[] {
  */
 export function freezeWorkflowVideoDurationPlan(input: Readonly<{
 	maxReferenceImages?: number | null;
+	supportsReferenceImages?: boolean | null;
+	supportsFirstLastFrame?: boolean | null;
 	targetDurationSeconds: number;
 	modelKey: string;
 	durationOptions: readonly number[];
@@ -728,6 +747,8 @@ export function freezeWorkflowVideoDurationPlan(input: Readonly<{
 		maxDurationSeconds: Math.max(...durationOptions),
 		policy: "agent_semantic_duration_budget",
 		...(input.maxReferenceImages !== undefined ? { maxReferenceImages: input.maxReferenceImages } : {}),
+		...(input.supportsReferenceImages !== undefined ? { supportsReferenceImages: input.supportsReferenceImages } : {}),
+		...(input.supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame: input.supportsFirstLastFrame } : {}),
 		...(input.explicitDurations?.length ? { providerSubmissionTopology: feasibility } : {}),
 	};
 }
@@ -767,8 +788,14 @@ export function parseFrozenWorkflowVideoDurationPlan(
 	)) return null;
 	if (value.maxReferenceImages !== undefined && value.maxReferenceImages !== null
 		&& (typeof value.maxReferenceImages !== "number" || !Number.isInteger(value.maxReferenceImages) || value.maxReferenceImages < 0)) return null;
+	const supportsReferenceImages = value.supportsReferenceImages;
+	const supportsFirstLastFrame = value.supportsFirstLastFrame;
+	if (supportsReferenceImages !== undefined && supportsReferenceImages !== null && typeof supportsReferenceImages !== "boolean") return null;
+	if (supportsFirstLastFrame !== undefined && supportsFirstLastFrame !== null && typeof supportsFirstLastFrame !== "boolean") return null;
 	const canonical = freezeWorkflowVideoDurationPlan({
 		...(value.maxReferenceImages !== undefined ? { maxReferenceImages: value.maxReferenceImages as number | null } : {}),
+		...(supportsReferenceImages !== undefined ? { supportsReferenceImages } : {}),
+		...(supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame } : {}),
 		targetDurationSeconds,
 		modelKey,
 		durationOptions,
@@ -1361,6 +1388,8 @@ export function buildVideoDeliveryContract(input: Readonly<{
 		generationContract: {
 			videoModel: input.durationPlan.modelKey,
 			maxReferenceImages: input.durationPlan.maxReferenceImages ?? null,
+			supportsReferenceImages: input.durationPlan.supportsReferenceImages ?? null,
+			supportsFirstLastFrame: input.durationPlan.supportsFirstLastFrame ?? null,
 			durationOptions: input.durationPlan.durationOptions,
 			maxDurationSeconds: input.durationPlan.maxDurationSeconds,
 			clipPlanningPolicy: "agent_semantic_duration_budget",
@@ -1397,6 +1426,9 @@ export function parseWorkflowVideoDeliveryDurationPlan(deliveryContract: unknown
 		? generationContract.durationOptions.filter((value): value is number => Number.isInteger(value) && Number(value) > 0)
 		: [];
 	const maxDurationSeconds = generationContract?.maxDurationSeconds;
+	const supportsReferenceImages = generationContract?.supportsReferenceImages;
+	const supportsFirstLastFrame = generationContract?.supportsFirstLastFrame;
+	const maxReferenceImages = generationContract?.maxReferenceImages;
 	const clipPlanningPolicy = readString(generationContract?.clipPlanningPolicy);
 	const providerSubmissionTopology = isRecord(generationContract?.providerSubmissionTopology)
 		? generationContract.providerSubmissionTopology
@@ -1413,6 +1445,10 @@ export function parseWorkflowVideoDeliveryDurationPlan(deliveryContract: unknown
 		|| !Number.isInteger(maxDurationSeconds)
 		|| maxDurationSeconds <= 0
 		|| clipPlanningPolicy !== "agent_semantic_duration_budget"
+		|| (supportsReferenceImages !== undefined && supportsReferenceImages !== null && typeof supportsReferenceImages !== "boolean")
+		|| (supportsFirstLastFrame !== undefined && supportsFirstLastFrame !== null && typeof supportsFirstLastFrame !== "boolean")
+		|| (maxReferenceImages !== undefined && maxReferenceImages !== null
+			&& (typeof maxReferenceImages !== "number" || !Number.isSafeInteger(maxReferenceImages) || maxReferenceImages < 0))
 	) {
 		throw new Error("Frozen delivery contract has an invalid semantic video duration window");
 	}
@@ -1443,6 +1479,9 @@ export function parseWorkflowVideoDeliveryDurationPlan(deliveryContract: unknown
 		modelKey,
 		durationOptions,
 		maxDurationSeconds,
+		...(supportsReferenceImages !== undefined ? { supportsReferenceImages: supportsReferenceImages as boolean | null } : {}),
+		...(supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame: supportsFirstLastFrame as boolean | null } : {}),
+		...(maxReferenceImages !== undefined ? { maxReferenceImages: maxReferenceImages as number | null } : {}),
 		...(providerSubmissionTopology && normalizedTargetDurationSeconds !== null ? { providerSubmissionTopology: {
 			targetDurationSeconds: normalizedTargetDurationSeconds,
 			expectedClipCount: providerSubmissionTopology.expectedClipCount as number,
@@ -2710,10 +2749,12 @@ export function buildVideoProductionPlan(input: Readonly<{
 	voiceManifest: WorkflowVoiceManifest;
 	referenceAudioPolicy?: "required" | "optional";
 }>): WorkflowCollectionV1 {
-	if (!isRecord(input.promptPackage) || !Array.isArray(input.promptPackage.clips)) {
+	const promptPackage = input.promptPackage;
+	if (!isRecord(promptPackage) || !Array.isArray(promptPackage.clips)) {
 		throw new Error("Production handoff requires a persisted prompt package");
 	}
-	const promptPackageAdmission = inspectWorkflowPromptPackageAdmission(input.promptPackage);
+	const promptClips = promptPackage.clips;
+	const promptPackageAdmission = inspectWorkflowPromptPackageAdmission(promptPackage);
 	if (!promptPackageAdmission.structurallyValid) {
 		throw new Error(`Production handoff requires structurally valid prompt package provenance: ${promptPackageAdmission.issues.join("; ")}`);
 	}
@@ -2755,6 +2796,8 @@ export function buildVideoProductionPlan(input: Readonly<{
 		imageUrl: string;
 		nodeId: string | null;
 		assetId: string | null;
+		canonicalAssetId: string | null;
+		state: string | null;
 	}>;
 	const referenceByAssetId = new Map<string, ResolvedAssetReference>();
 	for (const [index, item] of input.assetBindings.items.entries()) {
@@ -2783,9 +2826,143 @@ export function buildVideoProductionPlan(input: Readonly<{
 			imageUrl,
 			nodeId: generatedAssetId ? null : nodeId,
 			assetId: generatedAssetId || null,
+			canonicalAssetId: readString(item.value.assetPlan.canonicalAssetId) || null,
+			state: readString(item.value.assetPlan.state) || null,
 		});
 	}
-	const clips = input.promptPackage.clips.map((value, index) => {
+	if (promptPackage.authoringProtocol === CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE) {
+		const clips = promptClips.map((rawClip, index) => {
+			if (!isRecord(rawClip)) throw new Error(`Clip production prompt package clip ${index + 1} must be an object`);
+			const itemId = readString(rawClip.itemId);
+			const clipIndex = rawClip.clipIndex;
+			const durationSeconds = rawClip.durationSeconds;
+			const prompt = typeof rawClip.prompt === "string" ? rawClip.prompt : "";
+			const videoInputMode = rawClip.videoInputMode;
+			if (!itemId || itemId !== readString(rawClip.clipId ?? rawClip.itemId)
+				|| typeof clipIndex !== "number" || !Number.isInteger(clipIndex) || clipIndex < 0
+				|| typeof durationSeconds !== "number" || !Number.isFinite(durationSeconds) || durationSeconds <= 0
+				|| prompt.trim().length === 0
+				|| !VIDEO_CLIP_PRODUCTION_WORKFLOW_INPUT_MODES.includes(videoInputMode as (typeof VIDEO_CLIP_PRODUCTION_WORKFLOW_INPUT_MODES)[number])) {
+				throw new Error(`Clip production prompt package clip ${index + 1} has invalid identity, prompt, duration, or explicit videoInputMode`);
+			}
+			if (videoInputMode === "image_to_video" && generationContract?.supportsFirstLastFrame !== true) {
+				throw new Error(`Clip ${itemId} image_to_video requires the selected live model to declare supportsFirstLastFrame=true`);
+			}
+			if (videoInputMode === "reference_to_video" && generationContract?.supportsReferenceImages !== true) {
+				throw new Error(`Clip ${itemId} reference_to_video requires the selected live model to declare supportsReferenceImages=true`);
+			}
+			const referenceAssets = rawClip.referenceAssets;
+			const imageReferences = rawClip.imageReferences;
+			if (!Array.isArray(referenceAssets) || !Array.isArray(imageReferences)
+				|| (videoInputMode !== "text_to_video" && referenceAssets.length === 0)
+				|| referenceAssets.length !== imageReferences.length
+				|| (videoInputMode === "text_to_video" && referenceAssets.length !== 0)) {
+				throw new Error(`Clip ${itemId} requires a complete referenceAssets to imageReferences projection`);
+			}
+			const references = imageReferences.map((rawReference, referenceIndex) => {
+				if (!isRecord(rawReference)) throw new Error(`Clip ${itemId} imageReferences[${referenceIndex}] must be an object`);
+				const identity: ClipProductionAssetIdentity = {
+					assetId: requiredCanonicalString(rawReference.assetId, `Clip ${itemId} imageReferences[${referenceIndex}].assetId`),
+					state: requiredCanonicalString(rawReference.state, `Clip ${itemId} imageReferences[${referenceIndex}].state`),
+				};
+				const effectAssetId = requiredCanonicalString(rawReference.effectAssetId, `Clip ${itemId} imageReferences[${referenceIndex}].effectAssetId`);
+				const resolved = referenceByAssetId.get(effectAssetId);
+				if (!resolved || resolved.imageUrl !== rawReference.imageUrl
+					|| resolved.canonicalAssetId !== identity.assetId || resolved.state !== identity.state) {
+					throw new Error(`Clip ${itemId} reference ${referenceIndex + 1} lacks an exact generated-image binding`);
+				}
+				const packetIdentity = referenceAssets[referenceIndex];
+				if (!isRecord(packetIdentity) || readString(packetIdentity.assetId) !== identity.assetId || readString(packetIdentity.state) !== identity.state) {
+					throw new Error(`Clip ${itemId} reference identity differs from its materialized image binding`);
+				}
+				return { identity, effectAssetId, resolved };
+			});
+			const referenceEffectIds = references.map((reference) => reference.effectAssetId);
+			if (new Set(referenceEffectIds).size !== referenceEffectIds.length) {
+				throw new Error(`Clip ${itemId} declares duplicate materialized image references`);
+			}
+			assertExactAssetIds({
+				actual: Array.isArray(rawClip.declaredAssetIds) ? uniqueNonEmptyStrings(rawClip.declaredAssetIds) : [],
+				expected: referenceEffectIds,
+				field: `Clip ${itemId}`,
+			});
+			const firstFrameIdentity = rawClip.firstFrameAsset === null || rawClip.firstFrameAsset === undefined
+				? null
+				: isRecord(rawClip.firstFrameAsset)
+					? { assetId: readString(rawClip.firstFrameAsset.assetId), state: readString(rawClip.firstFrameAsset.state) }
+					: null;
+			let firstFrameUrl: string | null = null;
+			if (videoInputMode === "image_to_video") {
+				if (!firstFrameIdentity?.assetId || !firstFrameIdentity.state) throw new Error(`Clip ${itemId} image_to_video requires a firstFrameAsset identity`);
+				const firstReference = references.find((reference) => reference.identity.assetId === firstFrameIdentity.assetId && reference.identity.state === firstFrameIdentity.state);
+				if (!firstReference || firstReference.effectAssetId !== readString(rawClip.firstFrameEffectAssetId)) {
+					throw new Error(`Clip ${itemId} image_to_video first-frame identity has no exact generated binding`);
+				}
+				if (rawClip.firstFrameUrl !== firstReference.resolved.imageUrl) throw new Error(`Clip ${itemId} firstFrameUrl differs from its generated image URL`);
+				firstFrameUrl = firstReference.resolved.imageUrl;
+			} else if (firstFrameIdentity !== null || rawClip.firstFrameEffectAssetId !== null || rawClip.firstFrameUrl !== undefined) {
+				throw new Error(`Clip ${itemId} ${videoInputMode} must not declare a first-frame binding`);
+			}
+			if (references.some(({ resolved }) => !resolved.nodeId && !resolved.assetId)) {
+				throw new Error(`Clip ${itemId} generated image references are missing provider-facing node or asset handles`);
+			}
+			const urlByProviderHandle = new Map<string, string>();
+			for (const { resolved } of references) {
+				const handle = resolved.assetId ? `asset:${resolved.assetId}` : `node:${resolved.nodeId}`;
+				const previousUrl = urlByProviderHandle.get(handle);
+				if (previousUrl && previousUrl !== resolved.imageUrl) {
+					throw new Error(`Clip ${itemId} has conflicting image URLs for provider handle ${handle}`);
+				}
+				urlByProviderHandle.set(handle, resolved.imageUrl);
+			}
+			const referenceImageNodeIds = uniqueNonEmptyStrings(references.flatMap(({ resolved }) => resolved.nodeId ? [resolved.nodeId] : []));
+			const referenceAssetIds = uniqueNonEmptyStrings(references.flatMap(({ resolved }) => resolved.assetId ? [resolved.assetId] : []));
+			const maxReferenceImages = generationContract?.maxReferenceImages;
+			if (typeof maxReferenceImages === "number" && referenceImageNodeIds.length + referenceAssetIds.length > maxReferenceImages) {
+				throw new Error(`Clip ${itemId} exceeds the selected video model's maxReferenceImages`);
+			}
+			return {
+				itemId,
+				clipIndex,
+				prompt,
+				promptSourceProtocol: CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE,
+				durationSeconds,
+				declaredAssetIds: referenceEffectIds,
+				referenceImageNodeIds,
+				referenceAssetIds,
+				structuredClip: null,
+				sourceSnapshot: buildWorkflowClipSourceSnapshot({ clipId: itemId, sourceRanges: rawClip.sourceRanges, clipFacts: rawClip.clipFacts }),
+				videoInputMode,
+				...(firstFrameUrl ? { firstFrameUrl } : {}),
+				clipFacts: rawClip.clipFacts,
+				sourceRanges: rawClip.sourceRanges,
+			};
+		});
+		if (new Set(clips.map((clip) => clip.itemId)).size !== clips.length) throw new Error("Production plan clip identities must be unique");
+		if (new Set(clips.map((clip) => clip.clipIndex)).size !== clips.length) throw new Error("Production plan Clip indices must be unique");
+		const consumedAssetIds = new Set(clips.flatMap((clip) => clip.declaredAssetIds));
+		const missingAssetIds = [...consumedAssetIds].filter((assetId) => !referenceByAssetId.has(assetId));
+		if (missingAssetIds.length > 0) throw new Error(`Clip asset declarations were not generated: ${missingAssetIds.join(",")}`);
+		const productionPlan = createWorkflowCollection({
+			collectionId: `${input.executionId}:${input.nodeId}:production-plan`,
+			producerNodeId: input.nodeId,
+			producerPortId: "production-plan",
+			itemIds: clips.map((clip) => clip.itemId),
+			values: clips.map((clip) => ({
+				...clip,
+				videoReferencePolicy: WORKFLOW_VIDEO_REFERENCE_POLICY,
+				modelKey,
+				resolution,
+				aspectRatio,
+				estimateIdentity,
+				...(generationContract ? { generationContract } : {}),
+			})),
+			parentLineage: promptClips.map((clip) => isRecord(clip) && Array.isArray(clip.lineage) ? clip.lineage : []),
+		});
+		const unusedAssetIds = [...referenceByAssetId.keys()].filter((assetId) => !consumedAssetIds.has(assetId));
+		return { ...productionPlan, diagnostics: { unusedAssetIds, unusedVoiceSpeakers: [...voiceBySpeaker.keys()] } };
+	}
+	const clips = promptClips.map((value, index) => {
 		if (!isRecord(value)) throw new Error(`Prompt package clip ${index + 1} must be an object`);
 		const itemId = readString(value.itemId);
 		const durationSeconds = value.durationSeconds;

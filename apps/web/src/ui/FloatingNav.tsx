@@ -1,8 +1,11 @@
 import React from 'react'
+import { AsyncDialogLoading } from './AsyncLoadingFeedback'
 import { ActionIcon, Badge, Tooltip, useMantineColorScheme } from '@mantine/core'
 import { IconActivity, IconCpu, IconHistory, IconPalette, IconPlus, IconTopologyStar3, IconUsersGroup } from '@tabler/icons-react'
 
 import { useUIStore } from './uiStore'
+import { useRFStore } from '../canvas/store'
+import type { CapabilityBayLaunchScope } from './capabilities/CapabilityBayDialog'
 import { PanelCard } from './PanelCard'
 import { KeyboardShortcutsButton } from './KeyboardShortcutsButton'
 import { $ } from '../canvas/i18n'
@@ -87,6 +90,35 @@ export default function FloatingNav({ className }: { className?: string }): JSX.
   const setPanelAnchorX = useUIStore((state) => state.setPanelAnchorX)
   const userId = useAuth((state) => state.user?.sub == null ? null : String(state.user.sub))
   const currentProjectId = useUIStore((state) => state.currentProject?.id ?? '')
+  const currentFlow = useUIStore((state) => state.currentFlow)
+  const currentChapter = useUIStore((state) => state.currentChapter)
+  const canvasProvenanceKey = useRFStore((state) => state.graphProvenanceKey)
+  const launchScope = React.useMemo<CapabilityBayLaunchScope | null>(() => {
+    if (!capabilityBayOpened) return null
+    const selectedGroupIds = useRFStore.getState().nodes.flatMap((node) => (
+      node.type === 'groupNode' && node.selected ? [node.id] : []
+    ))
+    if (currentChapter) {
+      if (!currentChapter.projectId || !currentChapter.chapterId || (currentProjectId && currentChapter.projectId !== currentProjectId)) return null
+      return {
+        projectId: currentChapter.projectId,
+        chapterId: currentChapter.chapterId,
+        selectedGroupIds: canvasProvenanceKey === `chapter:${currentChapter.chapterId}` ? selectedGroupIds : [],
+      }
+    }
+    if (
+      !currentProjectId
+      || currentFlow.source !== 'server'
+      || currentFlow.ownerType !== 'project'
+      || currentFlow.ownerId !== currentProjectId
+      || !currentFlow.id
+    ) return null
+    return {
+      projectId: currentProjectId,
+      canvasFlowId: currentFlow.id,
+      selectedGroupIds: canvasProvenanceKey === `flow:${currentFlow.id}` ? selectedGroupIds : [],
+    }
+  }, [capabilityBayOpened, canvasProvenanceKey, currentChapter, currentFlow, currentProjectId])
   const taskInbox = useTaskInbox(userId, Boolean(userId))
   const { colorScheme } = useMantineColorScheme()
   const isDark = colorScheme !== 'light'
@@ -216,10 +248,11 @@ export default function FloatingNav({ className }: { className?: string }): JSX.
         </div>
       </PanelCard>
       {capabilityBayOpened ? (
-        <React.Suspense fallback={null}>
+        <React.Suspense fallback={<AsyncDialogLoading onClose={closeCapabilityBay} />}>
           <CapabilityBayDialog
             opened
             projectId={currentProjectId}
+            launchScope={launchScope}
             focusRequest={capabilityBayOpenRequest}
             onClose={closeCapabilityBay}
           />

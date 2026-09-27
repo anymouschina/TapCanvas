@@ -18,8 +18,8 @@ function collection(values: readonly Record<string, unknown>[]) {
 describe('independent chapter assets', () => {
   it('compiles explicit image plans without a BeatSheet or invented clip consumers', () => {
     const { shared } = stagedAuthoringFixture();
-    const assets = { ...shared, objectRegistry: [{ ...shared.objectRegistry[0], objectId: 'key', kind: 'prop', name: '钥匙' }],
-      assetPlans: [{ objectId: 'key', prompt: '铜钥匙', negativePrompt: '无文字', identityAnchors: ['铜'], prohibitedDrift: ['材质不变'] }] };
+    const assets = { ...shared, objectRegistry: [{ ...shared.objectRegistry[0], objectId: 'key', kind: 'prop', name: '钥匙', referenceRole: 'prop', imageSource: { mode: 'generate', referenceAssetBindings: [],
+        plan: { prompt: '铜钥匙', negativePrompt: '无文字', identityAnchors: ['铜'], prohibitedDrift: ['材质不变'] } } }] };
     const result = prepareChapterAssetCollection({ assets, projectContext: context, executionId: 'execution', nodeId: 'prepare' });
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.value).toMatchObject({ assetId: expect.stringMatching(/^planned-image:[a-f0-9]{64}$/), prompt: '铜钥匙', consumerClipIds: [] });

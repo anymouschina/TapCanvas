@@ -6,6 +6,20 @@ export type WorkflowVideoSubmissionState =
 	| "rejected_by_provider"
 	| "uncertain";
 
+export const WORKFLOW_VIDEO_EFFECT_OPERATION = "video.generate" as const;
+
+export function buildWorkflowVideoEffectV2Identity(input: Readonly<{
+	executionFamilyId: string;
+	clipId: string;
+}>): Readonly<{ canvasNodeId: string; effectId: string }> {
+	const executionFamilyId = readString(input.executionFamilyId);
+	const clipId = readString(input.clipId);
+	if (!executionFamilyId || !clipId) throw new Error("workflow video effect identity requires executionFamilyId and stable clipId");
+	const effectId = `${executionFamilyId}:${WORKFLOW_VIDEO_EFFECT_OPERATION}:${encodeURIComponent(clipId)}`;
+	const outputHash = createHash("sha256").update([executionFamilyId, WORKFLOW_VIDEO_EFFECT_OPERATION, clipId].join("\u001f")).digest("hex").slice(0, 24);
+	return { canvasNodeId: `workflow-video-${outputHash}::family::${executionFamilyId}::output::video`, effectId };
+}
+
 export type WorkflowVideoEffectReplayDecision =
 	| Readonly<{ action: "retry_pre_upstream" }>
 	| Readonly<{ action: "reuse_success" }>
@@ -117,3 +131,4 @@ export function workflowVideoSubmissionFailureData(input: Readonly<{
 		providerRejectedReferenceIds,
 	};
 }
+import { createHash } from "node:crypto";
