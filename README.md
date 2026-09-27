@@ -33,6 +33,10 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 - **项目化资产**：素材库、版本、生成历史、任务状态、交付证据与项目本地元数据持续沉淀，生成成功的资产不会被后处理丢弃。
 - **工作流与协作**：支持可复用 DAG、异步 Worker、失败恢复、分享/发布、团队作用域与实时画布状态。
 
+## 项目历史
+
+[观看 TapCanvas 项目历史视频](https://tanvas-ai.tos-cn-guangzhou.volces.com/uploads/user/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260927/41605171-4f46-4de1-ada3-2917068b5cbe.mp4)
+
 ## 更新日志
 
 默认展示最新 10 条，较早记录展开查看。
