@@ -1,3 +1,4 @@
+
 <p align="center">
   <img src="./apps/web/public/tapcanvas-app-icon.svg" width="128" alt="TapCanvas" />
 </p>
@@ -35,7 +36,7 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 
 ## 项目历史
 
-[观看 TapCanvas 项目历史视频](https://tanvas-ai.tos-cn-guangzhou.volces.com/uploads/user/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20260927/41605171-4f46-4de1-ada3-2917068b5cbe.mp4)
+https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
 
 ## 更新日志
 
