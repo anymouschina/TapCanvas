@@ -135,7 +135,13 @@ export function deriveWorkflowInvocationContract(
 	const sourceNode = resolvedStages.find((node) => {
 		return workflowExecutorRef(node) === "tapcanvas.canvas.group.read/v1";
 	});
-	const textInputNode = resolvedStages.find((node) => workflowExecutorRef(node) === "workflow.input.text/v1");
+	// Mirrors the workflow.input.text/v1 executor: authored text wins and trigger `source`
+	// is only a fallback, so a preset text node (e.g. a fixed reply) needs no caller input.
+	const textInputNode = resolvedStages.find((node) => {
+		if (workflowExecutorRef(node) !== "workflow.input.text/v1") return false;
+		const data = nodeData(node);
+		return !(stringValue(data.workflowTextInput) || stringValue(data.prompt) || stringValue(data.content));
+	});
 	const sourceMode = sourceNode
 		? stringValue(nodeData(sourceNode).workflowSourceMode) || "canvas_group"
 		: textInputNode

@@ -573,19 +573,19 @@ describe("deterministic agents bridge remote tool surface", () => {
 			},
 		}).toEqual({
 			projectOnly: {
-				before: { visibleToolCount: 64, descriptionChars: 33550, schemaChars: 81725 },
+				before: { visibleToolCount: 64, descriptionChars: 33567, schemaChars: 81937 },
 				after: { visibleToolCount: 9, descriptionChars: 2437, schemaChars: 2337 },
 				catalog: { visibleToolCount: 6, descriptionChars: 1951, schemaChars: 1432 },
 			},
 			flowWithoutBook: {
-				before: { visibleToolCount: 64, descriptionChars: 33550, schemaChars: 81725 },
+				before: { visibleToolCount: 64, descriptionChars: 33567, schemaChars: 81937 },
 				after: { visibleToolCount: 18, descriptionChars: 5140, schemaChars: 12209 },
-				catalog: { visibleToolCount: 28, descriptionChars: 22831, schemaChars: 50823 },
+				catalog: { visibleToolCount: 28, descriptionChars: 22848, schemaChars: 51035 },
 			},
 			bookFlow: {
-				before: { visibleToolCount: 64, descriptionChars: 33550, schemaChars: 81725 },
+				before: { visibleToolCount: 64, descriptionChars: 33567, schemaChars: 81937 },
 				after: { visibleToolCount: 23, descriptionChars: 6558, schemaChars: 15008 },
-				catalog: { visibleToolCount: 34, descriptionChars: 24400, schemaChars: 59728 },
+				catalog: { visibleToolCount: 34, descriptionChars: 24417, schemaChars: 59940 },
 			},
 		});
 	});
@@ -689,11 +689,11 @@ describe("deterministic agents bridge remote tool surface", () => {
 			.sort((left, right) => right.totalChars - left.totalChars);
 
 		expect(weighted.slice(0, 10)).toEqual([
-			{ name: "tapcanvas_image_generate_to_canvas", descriptionChars: 2428, schemaChars: 34924, totalChars: 37352 },
+			{ name: "tapcanvas_image_generate_to_canvas", descriptionChars: 2428, schemaChars: 35136, totalChars: 37564 },
 			{ name: "tapcanvas_flow_patch", descriptionChars: 646, schemaChars: 9591, totalChars: 10237 },
 			{ name: "tapcanvas_director_desk", descriptionChars: 9436, schemaChars: 531, totalChars: 9967 },
 			{ name: "tapcanvas_story_facts_commit", descriptionChars: 368, schemaChars: 6471, totalChars: 6839 },
-			{ name: "tapcanvas_render_blocking_diagram", descriptionChars: 1280, schemaChars: 4144, totalChars: 5424 },
+			{ name: "tapcanvas_render_blocking_diagram", descriptionChars: 1276, schemaChars: 4144, totalChars: 5420 },
 			{ name: "tapcanvas_story_preview_orchestrate", descriptionChars: 1052, schemaChars: 3902, totalChars: 4954 },
 			{ name: "tapcanvas_shot_table_critic", descriptionChars: 310, schemaChars: 3846, totalChars: 4156 },
 			{ name: "tapcanvas_video_generate_to_canvas", descriptionChars: 883, schemaChars: 3218, totalChars: 4101 },

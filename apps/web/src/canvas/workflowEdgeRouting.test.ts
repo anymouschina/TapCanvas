@@ -75,10 +75,10 @@ describe('workflow edge routing', () => {
 
   it('moves skip-layer dependencies onto unique outer rails on both sides', () => {
     const skipRoutes = [
-      routeFor('beat-sheet-format', 'asset-fan-out'),
-      routeFor('delivery-contract', 'clip-fan-out'),
-      routeFor('prompt-package', 'production-handoff'),
-      routeFor('cost-estimate', 'concat'),
+      routeFor('manual-trigger', 'clip-segmentation-agent'),
+      routeFor('delivery-contract', 'clip-production-pipeline'),
+      routeFor('clip-segmentation-project', 'clip-production-aggregate'),
+      routeFor('clip-production-aggregate', 'delivery-verify'),
     ]
     const railYs = skipRoutes.map((route) => route.labelY)
 

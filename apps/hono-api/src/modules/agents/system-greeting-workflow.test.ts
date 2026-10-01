@@ -57,7 +57,7 @@ describe("built-in greeting workflow", () => {
 
 	it("materializes a deterministic text artifact and standard workflow output", () => {
 		expect(BUILTIN_GREETING_WORKFLOW.id).toBe("tapcanvas.builtin.greeting-fixed-reply/v1");
-		expect(BUILTIN_GREETING_WORKFLOW.flowVersionId).toBe("00000000-0000-4000-8000-000000000105");
+		expect(BUILTIN_GREETING_WORKFLOW.flowVersionId).toBe("00000000-0000-4000-8000-000000000106");
 		const definition = createBuiltInGreetingWorkflowDefinition();
 		const data = JSON.parse(definition.flowData) as {
 			nodes: Array<{ id: string; data: Record<string, unknown> }>;
@@ -65,7 +65,7 @@ describe("built-in greeting workflow", () => {
 		};
 		const byId = new Map(data.nodes.map((node) => [node.id, node.data]));
 		expect(byId.get(BUILTIN_GREETING_WORKFLOW.textNodeId)).toMatchObject({
-			workflowTextInput: "我是你爹",
+			workflowTextInput: BUILTIN_GREETING_WORKFLOW.reply,
 			workflowAtomicSpec: { executorRef: "workflow.input.text/v1" },
 		});
 		expect(byId.get(BUILTIN_GREETING_WORKFLOW.outputNodeId)).toMatchObject({

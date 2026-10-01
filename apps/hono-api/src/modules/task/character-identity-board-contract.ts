@@ -2,12 +2,12 @@ import { z } from "zod";
 
 export const CharacterIdentityBoardSpecSchema = z.object({
   layout: z.literal("identity_board_four_view"),
-  faceViews: z.tuple([z.literal("front"), z.literal("three_quarter")]),
+  faceViews: z.tuple([z.literal("front"), z.literal("profile")]),
   fullBodyViews: z.tuple([z.literal("front"), z.literal("back")]),
   crossViewConsistency: z.literal(true),
   referenceRoleIsolation: z.literal(true),
   neutralReferenceBackground: z.literal(true),
-  readableTextVisible: z.literal(false),
+  readableTextVisible: z.literal(true),
   brandingVisible: z.literal(false),
   neutralBaseState: z.literal(true),
   canonicalNameVisible: z.literal(false),

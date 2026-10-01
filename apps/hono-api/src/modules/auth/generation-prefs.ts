@@ -202,8 +202,14 @@ export function buildGenerationPrefsContextBlock(
 	if (effectivePrefs.videoPreferenceEnabled && effectivePrefs.videoModel) lines.push(`- 视频模型：${effectivePrefs.videoModel}`);
 	const spec = [effectivePrefs.videoResolution, effectivePrefs.videoAspect].filter(Boolean).join("·");
 	if (effectivePrefs.videoPreferenceEnabled && spec) lines.push(`- 视频规格：${spec}`);
-	if (!effectivePrefs.imagePreferenceEnabled) lines.push("- 图片偏好未开启");
-	if (!effectivePrefs.videoPreferenceEnabled) lines.push("- 视频偏好未开启");
+	// 未开启的媒体组仍须把「新账号初始偏好」的精确值告诉 Agent：服务端未显式指定时会按这些值执行，
+	// 规则行也引用了这一优先级层；只写「未开启」会让 Agent 看不到实际兜底模型与规格。
+	if (!effectivePrefs.imagePreferenceEnabled) {
+		lines.push(`- 图片偏好未开启；新账号初始偏好：${DEFAULT_USER_GENERATION_PREFS.imageModel}（默认 ${DEFAULT_USER_GENERATION_PREFS.imageSize}）`);
+	}
+	if (!effectivePrefs.videoPreferenceEnabled) {
+		lines.push(`- 视频偏好未开启；新账号初始偏好：${DEFAULT_USER_GENERATION_PREFS.videoModel}（${DEFAULT_USER_GENERATION_PREFS.videoResolution}·${DEFAULT_USER_GENERATION_PREFS.videoAspect}）`);
+	}
 	return [
 		"【用户账号生成偏好】",
 		...lines,

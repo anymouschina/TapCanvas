@@ -23,8 +23,8 @@ function readComposeService(source: string, serviceName: string): string {
 
 describe("background worker deployment ownership", () => {
   const composePaths = [
-    "apps/hono-api/docker-compose.yml",
-    "apps/hono-api/docker-compose.prod.yml",
+    "docker-compose.yml",
+    "docker-compose.prod.yml",
   ];
 
   for (const composePath of composePaths) {

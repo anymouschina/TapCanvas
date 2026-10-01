@@ -13,6 +13,7 @@ export type PromptLibraryProjectResult = Readonly<{
 
 export class PromptLibraryCanvasSaveError extends Error {
   readonly project: ProjectDto
+  readonly cause: unknown
 
   constructor(project: ProjectDto, cause: unknown) {
     super(cause instanceof Error ? cause.message : '提示词写入画布失败')

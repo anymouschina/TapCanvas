@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { PromptLibraryCard } from '../api/promptLibrary'
-import { buildPromptLibraryCanvasNode, createPromptLibraryProject, PromptLibraryCanvasSaveError } from './promptLibraryProject'
+import { buildPromptLibraryCanvasNode, createPromptLibraryProject } from './promptLibraryProject'
 
 function entry(kind: 'image' | 'video'): PromptLibraryCard {
   return {
@@ -68,6 +68,6 @@ describe('prompt library project creation', () => {
     const bootstrapProject = vi.fn().mockResolvedValue({ status: 'partial', project, error: 'flow unavailable' })
 
     await expect(createPromptLibraryProject(entry('image'), null, { bootstrapProject }))
-      .rejects.toMatchObject<Partial<PromptLibraryCanvasSaveError>>({ project, message: 'flow unavailable' })
+      .rejects.toMatchObject({ project, message: 'flow unavailable' })
   })
 })

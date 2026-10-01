@@ -136,6 +136,7 @@ function buildProjectedData(node: CanvasNodeRecord, canvas: ProjectNodeAssetCanv
 		"displayName",
 		"canonicalName",
 		"physicalIdentityKey",
+		"assetReuseKey",
 		"characterAssetRole",
 		"characterProfileVersion",
 		"identityBoardSpec",

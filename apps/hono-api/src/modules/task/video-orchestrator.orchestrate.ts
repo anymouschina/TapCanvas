@@ -2613,12 +2613,10 @@ export async function orchestrateVideoRun(input: {
       ? (input.bodyArgs as Record<string, unknown>)
       : {};
   const modeForLock = readTrimmedString(argsForLock.mode);
-  const planForLock =
-    argsForLock.storyPlan && typeof argsForLock.storyPlan === "object"
-      ? (argsForLock.storyPlan as Record<string, unknown>)
-      : argsForLock;
+  // drive only accepts the durable runId; an inline storyPlan is rejected by the
+  // unlocked path, so it must never select a lock (or yield a lock-held "noop").
   const runIdForLock =
-    readTrimmedString(argsForLock.runId) || readTrimmedString(planForLock.runId);
+    argsForLock.storyPlan === undefined ? readTrimmedString(argsForLock.runId) : "";
   if (modeForLock !== "drive" || !runIdForLock) {
     return orchestrateVideoRunUnlocked(input);
   }

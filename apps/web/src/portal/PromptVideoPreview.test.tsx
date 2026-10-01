@@ -26,7 +26,7 @@ describe('PromptVideoPreview', () => {
   })
 
   it('does not turn a hover cancellation into a permanent preview failure', async () => {
-    let rejectPlayback: ((reason: unknown) => void) | null = null
+    let rejectPlayback = null as ((reason: unknown) => void) | null
     const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => new Promise<void>((_resolve, reject) => {
       rejectPlayback = reject
     }))
@@ -45,7 +45,7 @@ describe('PromptVideoPreview', () => {
   })
 
   it('ignores any obsolete play rejection after the pointer has left', async () => {
-    let rejectPlayback: ((reason: unknown) => void) | null = null
+    let rejectPlayback = null as ((reason: unknown) => void) | null
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => new Promise<void>((_resolve, reject) => {
       rejectPlayback = reject
     }))

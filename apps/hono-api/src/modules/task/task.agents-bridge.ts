@@ -1,4 +1,5 @@
 import { parseWorkflowSubmissionHandoff } from "./workflow-submission-handoff";
+import { IMAGE_UNDERSTANDING_MODEL_KEY } from "./media-understanding-model";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { resolvePositiveIntEnv, CONCURRENCY_DEFAULTS } from "./concurrency-limits";
@@ -7512,7 +7513,7 @@ function buildAgentsBridgeRemoteToolCatalog(
 			{
 				name: "tapcanvas_analyze_image",
 				description:
-					"图片理解(vision)：固定使用 gpt-5.6-luna 看懂一张真实图片资产并返回文字描述与无 URL 引用描述。只接受当前 flow 的 nodeId，或当前用户/项目的 assetId（含素材具体版本 ID）；服务端在受控执行边界解析真实 URL，主模型不得读取、复制或回显存储 URL。公开 /public/vision 接口另行支持直接传入 http(s) imageUrl。模型不可用或 ID 无法解析时显式失败，不自动降级。",
+					`图片理解(vision)：固定使用部署配置的 ${IMAGE_UNDERSTANDING_MODEL_KEY} 看懂一张真实图片资产并返回文字描述与无 URL 引用描述。只接受当前 flow 的 nodeId，或当前用户/项目的 assetId（含素材具体版本 ID）；服务端在受控执行边界解析真实 URL，主模型不得读取、复制或回显存储 URL。公开 /public/vision 接口另行支持直接传入 http(s) imageUrl。模型不可用或 ID 无法解析时显式失败，不自动降级。`,
 				parameters: {
 					type: "object",
 					properties: {

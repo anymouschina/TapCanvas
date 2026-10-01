@@ -44,6 +44,14 @@ vi.mock("../agents/capability-bay.service", async () => {
 	};
 });
 
+vi.mock("../../platform/node/prisma", () => ({
+	getPrismaClient: () => ({
+		users: {
+			findUnique: vi.fn().mockResolvedValue(null),
+		},
+	}),
+}));
+
 import { runAgentsBridgeChatTask } from "./task.agents-bridge";
 
 function createContext(): AppContext {

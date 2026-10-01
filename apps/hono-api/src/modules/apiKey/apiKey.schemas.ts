@@ -1081,13 +1081,13 @@ export const PublicVisionRequestSchema = z
 				"请详细分析我提供的图片，推测可用于复现它的英文提示词，包含主体、环境、镜头、光线和风格。输出必须是纯英文提示词，不要添加中文备注或翻译。",
 		}),
 		modelKey: z.string().optional().openapi({
-			description: "已停用的调用方选模字段；图片理解始终固定使用 gpt-5.6-luna，传入值不会覆盖服务端策略。",
-			example: "gpt-5.6-luna",
+			description: "已停用的调用方选模字段；图片理解始终使用部署配置的 IMAGE_UNDERSTANDING_MODEL_KEY（默认 doubao-seed-2-1-turbo-260628），传入值不会覆盖服务端策略。",
+			example: "doubao-seed-2-1-turbo-260628",
 		}),
 		modelAlias: z.string().optional().openapi({
 			description:
-				"已停用的调用方选模字段；图片理解始终固定使用 gpt-5.6-luna，传入值不会覆盖服务端策略。",
-			example: "gpt-5.6-luna",
+				"已停用的调用方选模字段；图片理解始终使用部署配置的 IMAGE_UNDERSTANDING_MODEL_KEY（默认 doubao-seed-2-1-turbo-260628），传入值不会覆盖服务端策略。",
+			example: "doubao-seed-2-1-turbo-260628",
 		}),
 		systemPrompt: z.string().optional().openapi({
 			description: "系统提示词（可选）。",

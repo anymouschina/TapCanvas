@@ -49,6 +49,8 @@ export type WorkflowProjectAssetSnapshot = Readonly<{
 		referenceType: string | null;
 		roleName: string | null;
 		physicalIdentityKey: string | null;
+		/** Stable cross-chapter reuse identity authored by the planner, when persisted. */
+		assetReuseKey?: string | null;
 		characterAssetRole: string | null;
 		characterProfileVersion: string | null;
 		identityAnchors: readonly string[];
@@ -166,6 +168,7 @@ export function projectAssetSnapshot(asset: MaterialAssetDto): WorkflowProjectAs
 		referenceType: readString(data.referenceType) || null,
 		roleName: readString(data.canonicalName) || readString(data.roleName) || readString(data.characterName) || readString(data.sceneName) || readString(data.propName) || null,
 		physicalIdentityKey: readString(data.physicalIdentityKey) || null,
+		assetReuseKey: readString(data.assetReuseKey) || null,
 		characterAssetRole: readString(data.characterAssetRole) || null,
 		characterProfileVersion: readString(data.characterProfileVersion) || null,
 		identityAnchors: uniqueStrings(Array.isArray(data.identityAnchors) ? data.identityAnchors : []),
