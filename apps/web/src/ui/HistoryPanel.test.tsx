@@ -43,6 +43,7 @@ vi.mock('@mantine/core', async (importOriginal) => {
 
 const failedExecution: apiServer.WorkflowExecutionDto = {
   id: 'execution-1',
+  executionFamilyId: 'execution-1',
   flowId: 'flow-1',
   flowName: '一键成片工作流',
   flowVersionId: 'version-1',
@@ -123,6 +124,7 @@ describe('HistoryPanel', () => {
     })
     vi.spyOn(apiServer, 'rerunWorkflowExecutionSnapshot').mockResolvedValue({
       id: 'execution-2',
+      executionFamilyId: 'execution-2',
       flowId: 'flow-1',
       flowVersionId: 'version-2',
       ownerId: 'owner-1',

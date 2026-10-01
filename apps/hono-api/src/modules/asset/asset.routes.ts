@@ -12,7 +12,7 @@ import type {
 	CharacterBible,
 	AiCharacterLibrarySyncStateDto,
 	AiCharacterLibraryUpsertPayload,
-} from "../../../../packages/schemas/character-bible-protocol";
+} from "@tapcanvas/character-bible-protocol";
 import type { AppContext, AppEnv } from "../../types";
 import {
 	authMiddleware,

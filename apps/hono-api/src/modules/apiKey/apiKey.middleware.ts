@@ -31,6 +31,7 @@ function isAgentExecutionPath(pathname: string): boolean {
 	const publicPath = pathname.startsWith("/public/") ? pathname.slice("/public".length) : pathname;
 	return publicPath === "/mcp"
 		|| publicPath.startsWith("/agents/")
+		|| publicPath.startsWith("/agent-api/")
 		|| publicPath.startsWith("/codex/")
 		|| publicPath === "/v1/agent-memory";
 }

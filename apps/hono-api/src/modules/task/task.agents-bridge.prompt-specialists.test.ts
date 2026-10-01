@@ -82,6 +82,7 @@ vi.mock("../../platform/node/prisma", () => ({
 import { runAgentsBridgeChatTask } from "./task.agents-bridge";
 import {
 	buildCanonicalAgentsBridgeFailure,
+	setCanonicalAgentsBridgeFixtureLogicalTaskId,
 	stringifyCanonicalAgentsBridgeSuccess,
 } from "./task.agents-bridge.test-fixtures";
 
@@ -256,6 +257,7 @@ function createFileNotFoundError(targetPath: string): NodeJS.ErrnoException {
 	beforeEach(() => {
 		vi.restoreAllMocks();
 		vi.clearAllMocks();
+		setCanonicalAgentsBridgeFixtureLogicalTaskId("req-prompt-specialists");
 		buildUserMemoryContext.mockResolvedValue({
 			rollups: { session: [], chapter: [], book: [], project: [] },
 			userPreferences: [],
@@ -335,14 +337,14 @@ function createFileNotFoundError(targetPath: string): NodeJS.ErrnoException {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		await expect(runAgentsBridgeChatTask(createContext(), "new-user", {
+		await runAgentsBridgeChatTask(createContext(), "new-user", {
 			kind: "chat",
 			prompt: "一条无额外上下文的用户消息",
 			extras: {
 				canvasProjectId: "project-1",
 				canvasFlowId: "flow-1",
 			},
-		})).rejects.toMatchObject({ code: "agents_bridge_logical_task_state_invalid" });
+		});
 
 		const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
 		const requestBody = JSON.parse(String(requestInit?.body || "{}")) as Record<string, unknown>;
@@ -2092,7 +2094,7 @@ function createFileNotFoundError(targetPath: string): NodeJS.ErrnoException {
 						output: {},
 						turns: [],
 					},
-				}),
+				}, { terminalAuthority: "workflow_action" }),
 				{ status: 200, headers: { "content-type": "application/json" } },
 			);
 		});
@@ -3795,7 +3797,7 @@ function createFileNotFoundError(targetPath: string): NodeJS.ErrnoException {
 						output: {},
 						turns: [],
 					},
-				}),
+				}, { terminalAuthority: "workflow_action" }),
 				{ status: 200, headers: { "content-type": "application/json" } },
 			);
 		});

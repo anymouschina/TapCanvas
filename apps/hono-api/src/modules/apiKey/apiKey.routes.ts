@@ -1889,7 +1889,7 @@ const PublicVisionOpenApiRoute = createRoute({
 	tags: [PUBLIC_TAG],
 	summary: "图像理解 /public/vision",
 	description:
-		"便捷图像理解接口：创建 image_to_prompt 任务并直接返回文本（常见用法：根据图片反推可复现的英文提示词）。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略。默认使用 gpt-5.6-luna；支持外部 prompt 透传；图片输入支持 imageUrl 或 imageData（二选一）。失败会显式返回错误，不做 draw 降级。",
+		"便捷图像理解接口：创建 image_to_prompt 任务并直接返回文本（常见用法：根据图片反推可复现的英文提示词）。服务端固定请求 new-api，外部传入 vendor/vendorCandidates 会被忽略。模型由部署配置 IMAGE_UNDERSTANDING_MODEL_KEY 决定（默认 doubao-seed-2-1-turbo-260628），调用方不可覆盖；支持外部 prompt 透传；图片输入支持 imageUrl 或 imageData（二选一）。失败会显式返回错误，不做 draw 降级。",
 	request: {
 		body: {
 			required: true,
@@ -1983,8 +1983,7 @@ publicApiRouter.openapi(PublicVisionOpenApiRoute, async (c) => {
 			details: {
 				vendor,
 				taskId: typeof result?.id === "string" ? result.id : null,
-				modelAlias:
-					typeof request.extras.modelAlias === "string" ? request.extras.modelAlias : null,
+				modelKey: request.extras.modelKey ?? null,
 			},
 		});
 	}

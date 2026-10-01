@@ -635,7 +635,8 @@ describe("registerPublicAgentsToolBridgeRoutes – equipped workflow catalog", (
 		expect(schemaBody.data?.parameters?.properties?.attachmentId).toBeUndefined();
 		expect(schemaBody.data?.parameters?.required).toEqual(["idempotencyKey"]);
 		expect(schemaBody.data?.parameters?.properties?.concurrency).toBeUndefined();
-		expect(schemaBody.data?.parameters?.oneOf?.[0]?.properties?.triggerPayload).toBeUndefined();
+		// A workflow without an inline/group source exposes optional trigger facts only; no source is required.
+		expect(schemaBody.data?.parameters?.oneOf?.[0]?.properties?.triggerPayload?.required).toBeUndefined();
 	});
 });
 

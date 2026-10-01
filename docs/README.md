@@ -9,4 +9,5 @@
 - [画布低缩放闪烁排查记录](canvas-low-zoom-flicker-investigation.md)
 - [AI/后端契约与扩展](INTELLIGENT_AI_IMPLEMENTATION.md)
 - [Prompt 参考](AI_VIDEO_REALISM_GUIDE.md)
+- [功能完整性与提示词一致性审计（2026-10）](功能完整性审计-2026-10.md)
 - [根 README 拆分的中文详细文档](README.zh-CN.md)

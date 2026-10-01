@@ -191,6 +191,7 @@ describe("workflow video runner durable effects", () => {
 			runtimeNodeId: "video-1::item::segment-1",
 		})).toEqual({
 			canvasNodeId: "video-1::item::segment-1::family::family-1::output::video",
+			clipId: null,
 			effectId: "family-1:video-1::item::segment-1:video-submit",
 		});
 	});

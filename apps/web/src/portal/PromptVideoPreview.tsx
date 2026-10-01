@@ -65,7 +65,7 @@ export function PromptVideoPreview({ media, title, onReady }: PromptVideoPreview
       {hasPoster ? (
         <ManagedImage
           className={`prompt-video-preview__poster${playing ? ' is-hidden' : ''}`}
-          src={media.thumbnailUrl}
+          src={media.thumbnailUrl ?? ''}
           alt={`${title} 视频封面`}
           priority="visible"
           onLoad={markReady}

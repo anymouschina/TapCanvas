@@ -60,12 +60,12 @@ describe('SnapshotNodeRunDetail', () => {
   it('shows the run process facts and the persisted error for a failed run', () => {
     renderDetail({ run: run({ status: 'failed', errorMessage: 'provider task rejected' }) })
 
-    expect(screen.getByText('运行过程')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '运行过程' })).toBeInTheDocument()
     expect(screen.getAllByText('失败').length).toBeGreaterThan(0)
     expect(screen.getByText('第 2 次')).toBeInTheDocument()
     expect(screen.getByText('2.0 秒')).toBeInTheDocument()
     expect(screen.getByText('provider task rejected')).toBeInTheDocument()
-    expect(screen.getByText('快照节点数据')).toBeInTheDocument()
+    expect(screen.getByText(/快照节点数据/)).toBeInTheDocument()
   })
 
   it('renders run output media assets through ManagedImage', () => {
@@ -95,7 +95,7 @@ describe('SnapshotNodeRunDetail', () => {
     })
 
     expect(screen.getByRole('img', { name: '视频生成' })).toHaveAttribute('src', 'https://cdn.example.com/result.webp')
-    expect(screen.getByText('运行结果')).toBeInTheDocument()
+    expect(screen.getByText('主要结果')).toBeInTheDocument()
   })
 
   it('shows an honest empty-output note when a successful run declares nothing', () => {
@@ -146,7 +146,7 @@ describe('SnapshotNodeRunDetail', () => {
     })
 
     expect(screen.getByText('检索异常')).toBeInTheDocument()
-    expect(screen.getByText('12 次案例检索均失败 · 本轮未读取正文')).toBeInTheDocument()
+    expect(screen.getAllByText('12 次案例检索均失败 · 本轮未读取正文').length).toBeGreaterThan(0)
     expect(screen.getByText('Agent 运行证据聚合视图，不是独立 DAG 执行节点')).toBeInTheDocument()
     expect(screen.getByText('12 次（12 次异常）')).toBeInTheDocument()
     expect(screen.queryByText('该节点在这次执行中没有运行记录')).not.toBeInTheDocument()

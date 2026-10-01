@@ -5,6 +5,8 @@ description: Import a video share link or direct video URL into the current TapC
 
 # TapCanvas video import
 
+> **可用性（开源版）**：`tapcanvas_parse_video_to_canvas` 依赖私有 Go `parse-video` 解析服务，当前开源部署未注册该远程工具。调用前先确认它出现在本轮工具列表中；若不存在，不要尝试调用或声称已导入——告知用户本部署未开放分享链接解析。用户给的是可直接访问的 `http(s)` 视频直链且只需分析时，可改用 `tapcanvas_fetch_video_from_url`。
+
 Use this skill when the user asks to download, import, save, or bring a video share link/video URL onto the current TapCanvas canvas.
 
 ## Execution contract

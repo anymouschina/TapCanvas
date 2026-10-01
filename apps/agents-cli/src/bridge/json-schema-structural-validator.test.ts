@@ -43,14 +43,38 @@ const schema = {
   required: ["mode", "beatSheetHeader"],
 } satisfies Record<string, unknown>;
 
-test("author submission rejects an out-of-range collection reference using the shared stage schema", () => {
+test("author submission rejects an out-of-range collection reference via x-indexReferences", () => {
+  const indexedSchema = {
+    type: "object",
+    properties: {
+      beats: { type: "array", items: { type: "object" } },
+      sourceCoveragePlan: {
+        type: "object",
+        properties: {
+          speechLedger: {
+            type: "array",
+            items: { type: "object", properties: { clipIndex: { type: "integer", minimum: 0 } } },
+          },
+        },
+      },
+    },
+    "x-indexReferences": [{ values: ["sourceCoveragePlan", "speechLedger", "*", "clipIndex"], collection: ["beats"] }],
+  } satisfies Record<string, unknown>;
   const value = { beats: [{}, {}], sourceCoveragePlan: { speechLedger: [{ clipIndex: 2 }] } };
-  const issues = validateJsonSchemaStructure({ schema: chapterBeatPlanSchema, value });
-  assert.ok(issues.some(issue => issue.keyword === 'x-indexReferences'
-    && issue.path === '$.sourceCoveragePlan.speechLedger[0].clipIndex'));
+  const issues = validateJsonSchemaStructure({ schema: indexedSchema, value });
+  assert.ok(issues.some(issue => issue.keyword === "x-indexReferences"
+    && issue.path === "$.sourceCoveragePlan.speechLedger[0].clipIndex"));
   value.sourceCoveragePlan.speechLedger[0].clipIndex = 1;
-  assert.ok(!validateJsonSchemaStructure({ schema: chapterBeatPlanSchema, value })
-    .some(issue => issue.keyword === 'x-indexReferences'));
+  assert.ok(!validateJsonSchemaStructure({ schema: indexedSchema, value })
+    .some(issue => issue.keyword === "x-indexReferences"));
+});
+
+test("the shared chapter beat plan schema reports every missing top-level author field", () => {
+  const issues = validateJsonSchemaStructure({ schema: chapterBeatPlanSchema, value: {} });
+  assert.deepEqual(
+    issues.filter(issue => issue.keyword === "required").map(issue => issue.path),
+    ["$.sourceId", "$.sourceFingerprint", "$.chapterArc", "$.sourceFidelityAudit", "$.beats"],
+  );
 });
 
 test("reports exact nested paths for missing and invented JSON fields", () => {

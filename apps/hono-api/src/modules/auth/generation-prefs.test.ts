@@ -43,12 +43,12 @@ describe("parseUserGenerationPrefs", () => {
 });
 
 describe("sanitizeUserGenerationPrefs", () => {
-	it("非法枚举值剔除、超长模型名剔除、空对象返回 null", () => {
+	it("控制字符/超长规格剔除、超长模型名剔除、空对象返回 null", () => {
 		expect(
 			sanitizeUserGenerationPrefs({
-				videoResolution: "8K",
-				videoAspect: "2.35:1",
-				imageSize: "16K",
+				videoResolution: "10\n80p",
+				videoAspect: "x".repeat(65),
+				imageSize: "1K\u0000",
 				imageModel: "a".repeat(200),
 			}),
 		).toBeNull();
@@ -67,7 +67,7 @@ describe("sanitizeUserGenerationPrefs", () => {
 });
 
 describe("resolveImageGenerateDefaults", () => {
-	const prefs = { imageModel: "gemini-3.1-flash-image-preview-ultra", imageSize: "1K" };
+	const prefs = { imagePreferenceEnabled: true, imageModel: "gemini-3.1-flash-image-preview-ultra", imageSize: "1K" };
 
 	it("节点显式模型/规格永远优先（画风锚 seedream 等工艺路径不受偏好影响）", () => {
 		expect(
@@ -110,23 +110,43 @@ describe("resolveImageGenerateDefaults", () => {
 				explicitImageModel: "gpt-image-2",
 				explicitSize: "",
 			}),
-		).toEqual({ modelAlias: "gpt-image-2", imageSize: "1K" });
+			// 偏好规格只属于偏好模型；显式换模型时不把其他模型的规格套过来。
+		).toEqual({ modelAlias: "gpt-image-2", imageSize: "" });
 	});
 });
 
 describe("resolveEffectiveUserGenerationPrefs", () => {
 	it("新账号采用产品初始偏好", () => {
-		expect(resolveEffectiveUserGenerationPrefs(null)).toEqual(DEFAULT_USER_GENERATION_PREFS);
+		expect(resolveEffectiveUserGenerationPrefs(null)).toEqual({
+			...DEFAULT_USER_GENERATION_PREFS,
+			imagePreferenceEnabled: false,
+			videoPreferenceEnabled: false,
+		});
 	});
 
-	it("只用账号最近选择覆盖对应字段", () => {
+	it("只用账号已开启的最近选择覆盖对应字段", () => {
 		expect(resolveEffectiveUserGenerationPrefs({
+			imagePreferenceEnabled: true,
 			imageModel: "custom-image",
+			videoPreferenceEnabled: true,
 			videoResolution: "1080p",
 		})).toEqual({
 			...DEFAULT_USER_GENERATION_PREFS,
 			imageModel: "custom-image",
 			videoResolution: "1080p",
+			imagePreferenceEnabled: true,
+			videoPreferenceEnabled: true,
+		});
+	});
+
+	it("未开启的偏好组不覆盖初始偏好", () => {
+		expect(resolveEffectiveUserGenerationPrefs({
+			imageModel: "custom-image",
+			videoResolution: "1080p",
+		})).toEqual({
+			...DEFAULT_USER_GENERATION_PREFS,
+			imagePreferenceEnabled: false,
+			videoPreferenceEnabled: false,
 		});
 	});
 });
@@ -142,7 +162,9 @@ describe("buildGenerationPrefsContextBlock", () => {
 
 	it("有偏好 → 生成上下文块，且明确禁止自动切换模型或规格", () => {
 		const block = buildGenerationPrefsContextBlock({
+			imagePreferenceEnabled: true,
 			imageModel: "gpt-image-2",
+			videoPreferenceEnabled: true,
 			videoModel: "doubao-seedance-2-0-260128",
 			videoResolution: "720p",
 			videoAspect: "16:9",

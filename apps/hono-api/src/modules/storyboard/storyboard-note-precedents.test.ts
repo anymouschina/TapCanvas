@@ -106,7 +106,7 @@ describe("storyboard note precedents", () => {
 		expect(matches[0]?.summary.title).toBe("民俗惊悚先例");
 
 		const promptBlock = buildStoryboardPrecedentPromptBlock(matches);
-		expect(promptBlock).toContain("本地 precedent 摘要库");
+		expect(promptBlock).toContain("内置 precedent 摘要库");
 		expect(promptBlock).toContain("民俗惊悚先例");
 		expect(promptBlock).not.toContain("热血升级先例");
 	});

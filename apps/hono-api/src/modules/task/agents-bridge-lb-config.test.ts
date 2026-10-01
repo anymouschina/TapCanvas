@@ -34,8 +34,8 @@ describe("agents bridge load-balancer contract", () => {
 
 	it("uses the stateful HAProxy contract in local and production Compose", () => {
 		for (const path of [
-			"docker-compose.yml",
-			"docker-compose.prod.yml",
+			"../../docker-compose.yml",
+			"../../docker-compose.prod.yml",
 		]) {
 			const compose = readRepositoryFile(path);
 			expect(compose).toContain("haproxy:3.0-alpine");
@@ -48,8 +48,8 @@ describe("agents bridge load-balancer contract", () => {
 
 	it("gives every agents bridge replica a stable internal TapCanvas callback base", () => {
 		for (const path of [
-			"docker-compose.yml",
-			"docker-compose.prod.yml",
+			"../../docker-compose.yml",
+			"../../docker-compose.prod.yml",
 		]) {
 			const compose = readRepositoryFile(path);
 			const agentsBridge = readComposeService(compose, "agents-bridge");
@@ -61,8 +61,8 @@ describe("agents bridge load-balancer contract", () => {
 
 	it("persists the canonical Agent runtime database across container replacement and replicas", () => {
 		for (const path of [
-			"docker-compose.yml",
-			"docker-compose.prod.yml",
+			"../../docker-compose.yml",
+			"../../docker-compose.prod.yml",
 		]) {
 			const compose = readRepositoryFile(path);
 			const agentsBridge = readComposeService(compose, "agents-bridge");
@@ -80,7 +80,7 @@ describe("agents bridge load-balancer contract", () => {
 	});
 
 	it("exposes the installed Office runtime dependencies to workspace scripts", () => {
-		const compose = readRepositoryFile("docker-compose.yml");
+		const compose = readRepositoryFile("../../docker-compose.yml");
 		const agentsBridge = readComposeService(compose, "agents-bridge");
 
 		expect(agentsBridge).toContain(

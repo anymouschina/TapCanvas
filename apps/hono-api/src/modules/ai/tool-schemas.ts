@@ -46,7 +46,7 @@ export type ToolExecutionSemantics = {
 export const characterIdentityBoardSpecToolSchema = {
 	type: "object",
 	description:
-		"characterAssetRole='identity_anchor' 时使用的纯结构角色身份板合同：正面脸、3/4 脸、正面全身、背面全身四个信息区。协议只验证跨视图一致性、参考职责隔离、中性参考背景、无文字/品牌等可执行结构；体型、媒介、镜头与生活痕迹必须由 agents-cli 的 tapcanvas-character-card 根据角色事实和项目画风决定，禁止协议层默认九头身、真人写实或固定焦段。",
+		"characterAssetRole='identity_anchor' 时使用的纯结构角色身份板合同（identity-board/v3）：正面脸、侧面脸、正面全身、背面全身四个信息区。协议只验证跨视图一致性、参考职责隔离、中性参考背景、仅模板角标文字（FACE FRONT / FACE SIDE / BODY FRONT / BACK）且无姓名/品牌等可执行结构；体型、媒介、镜头与生活痕迹必须由 agents-cli 的 tapcanvas-character-card 根据角色事实和项目画风决定，禁止协议层默认九头身、真人写实或固定焦段。",
 	properties: {
 		layout: { type: "string", enum: ["identity_board_four_view"] },
 		faceViews: {
@@ -54,8 +54,8 @@ export const characterIdentityBoardSpecToolSchema = {
 			minItems: 2,
 			maxItems: 2,
 			uniqueItems: true,
-			items: { type: "string", enum: ["front", "three_quarter"] },
-			description: "Exactly front then three_quarter face views.",
+			items: { type: "string", enum: ["front", "profile"] },
+			description: "Exactly front then profile (side) face views, matching the FACE FRONT / FACE SIDE panels.",
 		},
 		fullBodyViews: {
 			type: "array",
@@ -68,7 +68,7 @@ export const characterIdentityBoardSpecToolSchema = {
 		crossViewConsistency: { type: "boolean", enum: [true] },
 		referenceRoleIsolation: { type: "boolean", enum: [true] },
 		neutralReferenceBackground: { type: "boolean", enum: [true] },
-		readableTextVisible: { type: "boolean", enum: [false] },
+		readableTextVisible: { type: "boolean", enum: [true] },
 		brandingVisible: { type: "boolean", enum: [false] },
 		neutralBaseState: { type: "boolean", enum: [true] },
 		canonicalNameVisible: { type: "boolean", enum: [false] },
@@ -122,7 +122,7 @@ export const propIdentityBoardSpecToolSchema = {
 			type: "string",
 			enum: ["source_dimensions", "relative_scale_reference", "source_unspecified"],
 		},
-		readableTextVisible: { type: "boolean", enum: [false] },
+		readableTextVisible: { type: "boolean", enum: [true] },
 		brandingVisible: { type: "boolean", enum: [false] },
 		neutralBaseState: { type: "boolean", enum: [true] },
 	},
@@ -722,7 +722,7 @@ export const canvasNodeSpecs = {
 			characterProfileVersion:
 				"string (optional; 当前角色资产包结构版本；新角色卡统一为 character-card/v3)",
 			identityBoardSpec:
-				"object (characterAssetRole='identity_anchor' 时使用的 identity-board/v3 结构合同：正面脸、3/4 脸、正面全身、背面全身，锁定跨视图一致性、参考图职责隔离、中性参考背景、无文字与无品牌。体型、媒介、镜头与生活痕迹由 tapcanvas-character-card 从角色事实和项目画风编译；协议层不提供九头身、真人写实、固定焦段或随机瑕疵默认。)",
+				"object (characterAssetRole='identity_anchor' 时使用的 identity-board/v3 结构合同：正面脸、侧面脸、正面全身、背面全身，锁定跨视图一致性、参考图职责隔离、中性参考背景、仅模板角标文字且无姓名与品牌。体型、媒介、镜头与生活痕迹由 tapcanvas-character-card 从角色事实和项目画风编译；协议层不提供九头身、真人写实、固定焦段或随机瑕疵默认。)",
 			identityAnchors:
 				"string[] (optional; 3-6 个画面可验证、跨镜必须稳定的身份事实，例如骨相、发型剪影、体型、核心配饰、基准服装结构或身份道具。禁止抽象评价。)",
 			prohibitedDrift:

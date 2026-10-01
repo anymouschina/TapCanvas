@@ -11,8 +11,9 @@ export function reconcileEditableChapterNarrative(
   chapterId: string, current: CanvasFlow, incoming: CanvasFlow, revision: number,
 ): { flow: CanvasFlow; metadata: { summary?: string } } {
   const id = `chapter-seed-${chapterId}`;
-  const previous = current.nodes.find(node => node.id === id);
-  const next = incoming.nodes.find(node => node.id === id);
+  // Legacy/empty chapters persist `{}`; treat a missing node list as an empty graph.
+  const previous = (Array.isArray(current?.nodes) ? current.nodes : []).find(node => node.id === id);
+  const next = (Array.isArray(incoming?.nodes) ? incoming.nodes : []).find(node => node.id === id);
   if (!next) return { flow: incoming, metadata: {} };
   const before = dataOf(previous);
   const after = dataOf(next);

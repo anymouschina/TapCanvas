@@ -38,8 +38,22 @@ const response = {
 	id: "response-1",
 	vendor: "agents",
 	text: "交付完成",
-	trace: { requestId: "public-turn-1" },
-};
+	trace: {
+		requestId: "public-turn-1",
+		logicalTaskState: {
+			version: 1,
+			logicalTaskId: "public-turn-1",
+			reasonCode: "response_delivered",
+			taskNodeId: "root",
+			taskRevision: 0,
+			updatedAt: "2026-08-14T00:00:00.000Z",
+			continuationTicket: null,
+			status: "succeeded",
+			physicalRunStatus: "completed",
+			deliveryStatus: "satisfied",
+		},
+	},
+} as const;
 
 const result = {
 	id: "result-1",

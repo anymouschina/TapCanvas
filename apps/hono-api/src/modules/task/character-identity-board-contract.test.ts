@@ -4,16 +4,17 @@ import { describe, expect, it } from "vitest";
 
 import { characterIdentityBoardSpecToolSchema } from "../ai/tool-schemas";
 import { CharacterIdentityBoardSpecSchema } from "./character-identity-board-contract";
+import { parseCharacterIdentityBoardSpec } from "../execution/execution.character-identity-contract";
 import * as imageGenerationRuntime from "./agents-tool-bridge.generate-image-to-canvas";
 
 const completeIdentityBoard = {
   layout: "identity_board_four_view",
-  faceViews: ["front", "three_quarter"],
+  faceViews: ["front", "profile"],
   fullBodyViews: ["front", "back"],
   crossViewConsistency: true,
   referenceRoleIsolation: true,
   neutralReferenceBackground: true,
-  readableTextVisible: false,
+  readableTextVisible: true,
   brandingVisible: false,
   neutralBaseState: true,
   canonicalNameVisible: false,
@@ -53,7 +54,7 @@ describe("CharacterIdentityBoardSpecSchema", () => {
   it("requires face and full-body views in their canonical order", () => {
     const reversedFaceResult = CharacterIdentityBoardSpecSchema.safeParse({
       ...completeIdentityBoard,
-      faceViews: ["three_quarter", "front"],
+      faceViews: ["profile", "front"],
     });
     const duplicateResult = CharacterIdentityBoardSpecSchema.safeParse({
       ...completeIdentityBoard,
@@ -80,13 +81,24 @@ describe("CharacterIdentityBoardSpecSchema", () => {
     expect(imageGenerationRuntime).not.toHaveProperty("assertCharacterIdentityBoardContract");
   });
 
+  it("accepts the same identity board that the execution-side parser accepts", () => {
+    expect(parseCharacterIdentityBoardSpec(completeIdentityBoard, "identityBoardSpec")).toEqual(completeIdentityBoard);
+    expect(CharacterIdentityBoardSpecSchema.safeParse(completeIdentityBoard).success).toBe(true);
+    const toolEnums = characterIdentityBoardSpecToolSchema.properties;
+    for (const [key, value] of Object.entries(completeIdentityBoard)) {
+      const property = (toolEnums as unknown as Record<string, { enum?: unknown[]; items?: { enum?: unknown[] } }>)[key];
+      if (Array.isArray(value)) expect(property?.items?.enum).toEqual(value);
+      else expect(property?.enum).toEqual([value]);
+    }
+  });
+
   it("keeps the model-visible tool schema aligned with the runtime contract", () => {
     expect(characterIdentityBoardSpecToolSchema.properties.layout.enum).toEqual([
       "identity_board_four_view",
     ]);
     expect(characterIdentityBoardSpecToolSchema.properties.faceViews.items.enum).toEqual([
       "front",
-      "three_quarter",
+      "profile",
     ]);
     expect(characterIdentityBoardSpecToolSchema.properties.fullBodyViews.items.enum).toEqual([
       "front",
@@ -118,7 +130,7 @@ describe("CharacterIdentityBoardSpecSchema", () => {
 
     expect(skillDoc).toContain("角色卡生成方法论的唯一权威");
     expect(skillDoc).toContain("identity_board_four_view");
-    expect(skillDoc).toContain("正面脸、3/4 脸、正面全身、背面全身");
+    expect(skillDoc).toContain("正面脸、侧面脸、正面全身、背面全身");
     expect(skillDoc).toContain("参考图各自只负责身份、布局、内容或风格");
     expect(skillDoc).toContain("不强制九头身、真人写实、特定镜头焦段");
     expect(skillDoc).not.toContain("活人感随机池");

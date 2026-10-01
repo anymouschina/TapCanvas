@@ -77,8 +77,8 @@ describe('buildVideoUpstreamRefPatch', () => {
     expect(patch?.firstFrameUrl).toBeUndefined()
   })
 
-  it('上游节点不存在 → 返回 null（无可注入字段）', () => {
+  it('上游节点不存在 → 显式报错，不静默跳过首帧依赖', () => {
     const node = { id: 'v0', data: { kind: 'video', firstFrameFromNodeId: 'missing' } }
-    expect(buildVideoUpstreamRefPatch(node, [])).toBeNull()
+    expect(() => buildVideoUpstreamRefPatch(node, [])).toThrow('视频节点 v0 引用的图片节点 missing 不存在')
   })
 })

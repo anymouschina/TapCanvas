@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { IMAGE_UNDERSTANDING_MODEL_KEY } from "../task/media-understanding-model";
 import type { AppContext } from "../../types";
 
 const {
@@ -254,12 +255,12 @@ describe("buildPublicVisionTaskRequest", () => {
 			prompt: "analyze this image",
 			extras: {
 				imageUrl: "https://example.com/reference.png",
-				modelKey: "gpt-5.6-luna",
+				modelKey: IMAGE_UNDERSTANDING_MODEL_KEY,
 			},
 		});
 	});
 
-	it("accepts an http URL and uses gpt-5.6-luna when no model fields are present", () => {
+	it("accepts an http URL and uses the deployment image-understanding model when no model fields are present", () => {
 		const request = buildPublicVisionTaskRequest(
 			{
 				imageUrl: "https://example.com/reference.png",
@@ -271,7 +272,7 @@ describe("buildPublicVisionTaskRequest", () => {
 			},
 		);
 
-		expect(request.extras.modelKey).toBe("gpt-5.6-luna");
+		expect(request.extras.modelKey).toBe(IMAGE_UNDERSTANDING_MODEL_KEY);
 		expect(request.extras.modelAlias).toBeUndefined();
 	});
 });

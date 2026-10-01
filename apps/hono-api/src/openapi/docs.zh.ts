@@ -245,7 +245,6 @@ type DemoTask = {
 {
   "imageUrl": "https://github.com/dianping/cat/raw/master/cat-home/src/main/webapp/images/logo/cat_logo03.png",
   "prompt": "请详细分析我提供的图片，推测可用于复现它的英文提示词，包含主体、环境、镜头、光线和风格。输出必须是纯英文提示词，不要添加中文备注或翻译。",
-  "modelAlias": "gpt-5.6-luna",
   "temperature": 0.2
 }
 \`\`\`
@@ -253,7 +252,7 @@ type DemoTask = {
 说明：
 - 图片输入二选一：\`imageUrl\`（http(s)）或 \`imageData\`（\`data:image/*;base64,...\`）。
 - 图像理解固定请求 new-api；外部传入 \`vendor\` / \`vendorCandidates\` 会被忽略。
-- 图片理解固定使用 \`gpt-5.6-luna\`；历史 \`modelAlias\` / \`modelKey\` 字段不再允许调用方覆盖该策略。
+- 图片理解使用部署配置的 \`IMAGE_UNDERSTANDING_MODEL_KEY\`（默认 \`doubao-seed-2-1-turbo-260628\`）；历史 \`modelAlias\` / \`modelKey\` 字段不再允许调用方覆盖该策略。
 
 参考响应（200）：
 

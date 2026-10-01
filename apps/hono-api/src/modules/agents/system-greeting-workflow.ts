@@ -11,12 +11,12 @@ export const BUILTIN_GREETING_WORKFLOW = Object.freeze({
 	id: "tapcanvas.builtin.greeting-fixed-reply/v1",
 	projectId: "00000000-0000-4000-8000-000000000101",
 	flowId: "00000000-0000-4000-8000-000000000102",
-	flowVersionId: "00000000-0000-4000-8000-000000000105",
+	flowVersionId: "00000000-0000-4000-8000-000000000106",
 	attachmentId: "00000000-0000-4000-8000-000000000104",
 	triggerNodeId: "builtin-greeting:manual-trigger",
 	textNodeId: "builtin-greeting:fixed-text",
 	outputNodeId: "builtin-greeting:output",
-	reply: "我是你爹",
+	reply: "你好！我是 TapCanvas 创作助手，告诉我你想创作的内容吧。",
 	releasedAt: "2026-08-31T08:00:00.000Z",
 });
 
@@ -27,7 +27,7 @@ type BuiltInGreetingDefinition = Readonly<{
 }>;
 
 export function createBuiltInGreetingWorkflowDefinition(): BuiltInGreetingDefinition {
-	const workflowInstanceId = "builtin-greeting-fixed-reply-v2";
+	const workflowInstanceId = "builtin-greeting-fixed-reply-v3";
 	const flowData = {
 		nodes: [
 			{
@@ -40,7 +40,7 @@ export function createBuiltInGreetingWorkflowDefinition(): BuiltInGreetingDefini
 					adminWorkflow: true,
 					workflowInstanceId,
 					workflowKey: BUILTIN_GREETING_WORKFLOW.id,
-					workflowDefinitionVersion: 2,
+					workflowDefinitionVersion: 3,
 					workflowTriggerSpec: { version: 1, kind: "manual" },
 					workflowOutputPorts: ["trigger"],
 					workflowPermission: "admin",
@@ -59,7 +59,7 @@ export function createBuiltInGreetingWorkflowDefinition(): BuiltInGreetingDefini
 					adminWorkflow: true,
 					workflowInstanceId,
 					workflowKey: BUILTIN_GREETING_WORKFLOW.id,
-					workflowDefinitionVersion: 2,
+					workflowDefinitionVersion: 3,
 					workflowNodeId: "fixed-text",
 					workflowNodeKind: "text_input",
 					workflowAtomicSpec: {
@@ -91,7 +91,7 @@ export function createBuiltInGreetingWorkflowDefinition(): BuiltInGreetingDefini
 					adminWorkflow: true,
 					workflowInstanceId,
 					workflowKey: BUILTIN_GREETING_WORKFLOW.id,
-					workflowDefinitionVersion: 2,
+					workflowDefinitionVersion: 3,
 					workflowNodeId: "output",
 					workflowAtomicSpec: {
 						category: "control",

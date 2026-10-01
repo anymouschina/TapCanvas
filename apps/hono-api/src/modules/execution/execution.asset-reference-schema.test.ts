@@ -36,7 +36,8 @@ it('allows an empty selection without inventing a fallback reference', () => {
 });
 
 it('preserves one existing image used by distinct declared objects without duplicate collection identities', () => {
-  const objectRegistry = ['one','two'].map(name => ({ objectId:name, kind:'prop', referenceRole:'prop', name, referenceAssetIds:['a'], referenceImageNodeIds:[] }));
+  const objectRegistry = ['one','two'].map(name => ({ objectId:name, kind:'prop', referenceRole:'prop', name,
+    physicalIdentityKey:null, identityInvariant:`${name} 的可见身份`, imageSource:{ mode:'reuse', assetIds:['a'] } }));
   const collection = prepareChapterAssetCollection({ assets:{objectRegistry,assetPlans:[],backgroundPlans:[]}, projectContext:context,executionId:'e',nodeId:'n' });
   expect(collection.items).toHaveLength(1);
   expect(new Set(collection.items.map(item=>item.itemId)).size).toBe(1);
