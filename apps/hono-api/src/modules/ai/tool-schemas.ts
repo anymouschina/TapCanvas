@@ -956,7 +956,7 @@ export function buildCanvasCapabilityManifest(input?: {
 			)
 		: canvasNodeSpecs;
 	return {
-		version: "2026-04-03",
+		version: "2026-10-07",
 		summary:
 			"TapCanvas canvas capability manifest. Use this as the source of truth for real canvas interfaces, node kinds, flow patch constraints, and bridge-exposed remote tools. Do not invent node kinds, handles, or write paths outside this manifest.",
 		localCanvasTools: canvasToolSchemas.map((tool) => ({
@@ -978,8 +978,10 @@ export function buildCanvasCapabilityManifest(input?: {
 				prerequisiteAssetUrlFields: ["imageUrl", "imageResults[].url", "videoUrl", "videoResults[].url", "storyboardEditorCells[].imageUrl", "firstFrameUrl", "lastFrameUrl"],
 				deliveryContract: [
 					"Workflow ports carry frozen source segments, chapter asset identities, per-clip production packets and persisted execution evidence. A connection or placeholder does not prove an upstream asset exists.",
+					"The v135 executable canvas template is shared by Web and Hono. Each authored chapter sequence and clip timeline is bound to its frozen source coordinates and exact asset identities before media submission.",
+					"Media execution requires a real prerequisite asset URL. A manual retry creates an independent attempt linked to its exact failed provider receipt; an accepted or uncertain receipt is reconciled without duplicate billing.",
 					"onlyVideoNodes=true delivers saved video nodes, prompts, exact references and real URLs for required upstream images; it does not submit video generation or concatenation.",
-					"Accepted executions are not completed media. Preserve every produced asset and report missing delivery evidence explicitly.",
+					"Accepted executions are not completed media. Preserve every produced asset, node result and attempt receipt even after later failures or terminal delivery; report missing delivery evidence explicitly.",
 				],
 			},
 			flowPatch: {

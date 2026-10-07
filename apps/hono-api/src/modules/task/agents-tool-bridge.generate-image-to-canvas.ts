@@ -1,4 +1,8 @@
-import { buildWorkflowImageClaim } from "./workflow-image-effect-claim";
+import {
+  buildWorkflowImageClaim,
+  buildWorkflowImagePreUpstreamRejection,
+  buildWorkflowImageTaskId,
+} from "./workflow-image-effect-claim";
 import { persistVideoNodePatch } from "./agents-tool-bridge.generate-video-to-canvas";
 import { appendSceneCardConstraint } from "../../../../../packages/schemas/scene-card-prompt";
 import { z } from "zod";
@@ -1909,6 +1913,16 @@ async function generateSingleImageNode(
   };
 
   const workflowEffectId = readTrimmedString(nodeData.workflowEffectId);
+  const suppliedWorkflowTaskId = readTrimmedString(nodeData.workflowTaskId);
+  const workflowTaskId = workflowEffectId
+    ? buildWorkflowImageTaskId({ ownerId: input.requestUserId, effectId: workflowEffectId })
+    : "";
+  if ((workflowEffectId && suppliedWorkflowTaskId !== workflowTaskId)
+    || (!workflowEffectId && suppliedWorkflowTaskId)) {
+    throw new AppError("Workflow image task identity does not match its authorized effect", {
+      status: 400, code: "workflow_image_task_identity_mismatch",
+    });
+  }
   if (workflowEffectId) {
     const claimNodeId = readTrimmedString(taskNode.id);
     if (!claimNodeId) throw new AppError('Workflow image effect requires a stable node identity', { status: 400, code: 'workflow_image_identity_required' });
@@ -1929,7 +1943,54 @@ async function generateSingleImageNode(
   try {
     created = await runPublicTask(input.c, input.requestUserId, {
       request: taskRequest,
+      ...(workflowTaskId ? { workflowTaskId } : {}),
     });
+  } catch (error: unknown) {
+    const errorRecord = error && typeof error === "object" && !Array.isArray(error)
+      ? error as Record<string, unknown>
+      : null;
+    const errorDetails = errorRecord?.details && typeof errorRecord.details === "object"
+      && !Array.isArray(errorRecord.details)
+      ? errorRecord.details as Record<string, unknown>
+      : null;
+    if (errorRecord?.code === "workflow_image_preflight_rejected" && workflowEffectId && workflowTaskId
+      && errorDetails?.workflowTaskId === workflowTaskId
+      && errorDetails.workflowSubmissionState === "rejected_pre_upstream"
+      && errorDetails.upstreamRequestAttempted === false) {
+      const rejectionMessage = error instanceof Error ? error.message : String(error);
+      const failedAt = new Date().toISOString();
+      const rejected = await persistVideoNodePatch({
+        c: input.c, requestUserId: input.requestUserId, devBypass: input.devBypass,
+        flowId: input.flowId, fallbackRow: input.row, broadcastNodeId: readTrimmedString(taskNode.id),
+        ...(input.chapterId ? { chapterId: input.chapterId } : {}),
+        buildPatch: current => buildWorkflowImagePreUpstreamRejection({
+          current,
+          nodeId: readTrimmedString(taskNode.id),
+          effectId: workflowEffectId,
+          workflowTaskId,
+          failedAt,
+          errorMessage: rejectionMessage,
+        }),
+      });
+      if (!rejected) {
+        throw new AppError("Workflow image pre-upstream rejection could not be persisted", {
+          status: 503, code: "workflow_image_rejection_persist_failed",
+          details: { workflowTaskId, upstreamRequestAttempted: false },
+        });
+      }
+      throw new AppError(rejectionMessage, {
+        status: 422,
+        code: "workflow_image_pre_upstream_rejected",
+        details: {
+          canvasNodeId: readTrimmedString(taskNode.id),
+          workflowTaskId,
+          workflowSubmissionState: "rejected_pre_upstream",
+          upstreamRequestAttempted: false,
+          rejectionPersisted: true,
+        },
+      });
+    }
+    throw error;
   } finally {
     imageGlobalSemaphore.release();
   }
@@ -2184,7 +2245,6 @@ export async function reconcileImageNodesForFlow(input: {
     const nodeId = String(n.id ?? "");
     if (input.target && nodeId === input.target.nodeId) targetFound = true;
     const st = readTrimmedString(d.status).toLowerCase();
-    if (!isProviderTaskPendingStatus(st)) continue;
     const persistedTaskId = readTrimmedString(d.imageTaskId) || readTrimmedString(d.taskId);
     const targetTaskId = input.target && nodeId === input.target.nodeId
       ? readTrimmedString(input.target.taskId)
@@ -2192,6 +2252,15 @@ export async function reconcileImageNodesForFlow(input: {
     if (input.target && nodeId !== input.target.nodeId) continue;
     if (input.target && persistedTaskId && persistedTaskId !== targetTaskId) continue;
     const taskId = persistedTaskId || targetTaskId;
+    const submissionState = readTrimmedString(d.workflowSubmissionState).toLowerCase();
+    const confirmedTerminal = readTrimmedString(d.providerStatus).toLowerCase() === "failed"
+      || ["failed", "rejected_by_provider", "rejected_pre_upstream", "materialized"].includes(submissionState);
+    const explicitUncertainReceiptRecovery = Boolean(input.target)
+      && Boolean(persistedTaskId)
+      && persistedTaskId === targetTaskId
+      && !confirmedTerminal
+      && ["error", "failed", "canceled"].includes(st);
+    if (!isProviderTaskPendingStatus(st) && !explicitUncertainReceiptRecovery) continue;
     if (!taskId) {
       // 孤儿占位：provider pending 但从未挂上任务、也无出图 URL → 无从查上游、永远转圈。
       // 仅在 markOrphanPlaceholders（静置后台 sweep）下回收，避免误杀刚建/提交中的节点。
@@ -2232,10 +2301,12 @@ export async function reconcileImageNodesForFlow(input: {
     taskId: string;
     status: string;
     errorMessage?: string;
+    providerConfirmedFailure?: boolean;
   }> = [];
   for (const item of pending.slice(0, 24)) {
     let outcomeStatus = "running";
     let outcomeErrorMessage = "";
+    let providerConfirmedFailure = false;
     try {
       // Persist through a fresh scoped read so a terminal poll error cannot
       // leave an accepted-but-unobservable provider task spinning forever.
@@ -2277,19 +2348,20 @@ export async function reconcileImageNodesForFlow(input: {
           : {};
         const upstreamMessage = readTrimmedString(body.message) || readTrimmedString(body.error);
         if (isPermanentUpstreamTaskError(outcome.status, upstreamMessage)) {
-          const providerFailure = upstreamMessage || `Image task polling failed with HTTP ${outcome.status}`;
+          const lookupFailure = upstreamMessage || `Image task polling failed with HTTP ${outcome.status}`;
           await persist({
             ...item.d,
             status: "error",
             taskId: item.taskId,
             imageTaskId: item.taskId,
-            error: providerFailure,
-            errorMessage: providerFailure,
-            providerStatus: "failed",
+            error: lookupFailure,
+            errorMessage: lookupFailure,
           });
-          failed += 1;
-          outcomeStatus = "failed";
-          outcomeErrorMessage = providerFailure;
+          // A failed status lookup is not proof that the provider task failed.
+          // Keep the same receipt addressable so a later reconcile can inspect it.
+          stillRunning += 1;
+          outcomeStatus = "lookup_failed";
+          outcomeErrorMessage = lookupFailure;
           details.push({
             nodeId: item.nodeId,
             taskId: item.taskId,
@@ -2344,6 +2416,7 @@ export async function reconcileImageNodesForFlow(input: {
         reconciled += 1;
         outcomeStatus = "success";
       } else if (status === "failed") {
+        providerConfirmedFailure = true;
         const providerFailure =
           buildProviderTaskFailureMessage(outcome.result) ||
           "Provider image task failed without a diagnostic message";
@@ -2375,6 +2448,7 @@ export async function reconcileImageNodesForFlow(input: {
       taskId: item.taskId,
       status: outcomeStatus,
       ...(outcomeErrorMessage ? { errorMessage: outcomeErrorMessage } : {}),
+      ...(providerConfirmedFailure ? { providerConfirmedFailure: true } : {}),
     });
   }
   // 孤儿占位兜底：标 error，停掉永转 spinner（仅 markOrphanPlaceholders 下，已过静置守卫）。

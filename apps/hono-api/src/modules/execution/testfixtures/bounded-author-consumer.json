@@ -1,0 +1,1370 @@
+{
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "taskNode",
+      "data": {
+        "kind": "workflowTrigger",
+        "workflowInstanceId": "bounded-replay",
+        "workflowOutputPorts": [
+          "trigger"
+        ],
+        "adminWorkflow": true
+      },
+      "parentId": "g3",
+      "initialWidth": 56,
+      "initialHeight": 56,
+      "style": {}
+    },
+    {
+      "id": "source",
+      "type": "taskNode",
+      "data": {
+        "kind": "workflowStage",
+        "workflowInstanceId": "bounded-replay",
+        "workflowAtomicSpec": {
+          "version": 1,
+          "category": "source",
+          "operation": "canvas_source",
+          "executorRef": "tapcanvas.canvas.group.read/v1",
+          "executionMode": "once",
+          "inputPorts": [
+            "trigger"
+          ],
+          "outputPorts": [
+            "canvas-facts"
+          ]
+        },
+        "workflowInputPorts": [
+          "trigger"
+        ],
+        "workflowOutputPorts": [
+          "canvas-facts"
+        ],
+        "adminWorkflow": true,
+        "workflowOutputArtifactType": "tapcanvas.canvas-facts/v1",
+        "workflowOptionalInputPorts": []
+      },
+      "parentId": "g3",
+      "initialWidth": 56,
+      "initialHeight": 56,
+      "style": {}
+    },
+    {
+      "id": "contract",
+      "type": "taskNode",
+      "data": {
+        "kind": "workflowStage",
+        "workflowInstanceId": "bounded-replay",
+        "workflowAtomicSpec": {
+          "version": 1,
+          "category": "artifact",
+          "operation": "delivery_contract",
+          "executorRef": "agents.delivery.contract/v2",
+          "executionMode": "once",
+          "inputPorts": [
+            "canvas-facts"
+          ],
+          "optionalInputPorts": [],
+          "outputPorts": [
+            "delivery-contract"
+          ]
+        },
+        "workflowInputPorts": [
+          "canvas-facts"
+        ],
+        "workflowOutputPorts": [
+          "delivery-contract"
+        ],
+        "adminWorkflow": true,
+        "workflowOutputArtifactType": "tapcanvas.delivery-contract/v2",
+        "workflowOptionalInputPorts": []
+      },
+      "parentId": "g3",
+      "initialWidth": 56,
+      "initialHeight": 56,
+      "style": {}
+    },
+    {
+      "id": "pipeline",
+      "type": "taskNode",
+      "data": {
+        "kind": "workflowStage",
+        "workflowInstanceId": "bounded-replay",
+        "workflowAtomicSpec": {
+          "version": 1,
+          "category": "subworkflow",
+          "operation": "inline_pipeline",
+          "executorRef": "workflow.pipeline.run/v1",
+          "executionMode": "each",
+          "inputPorts": [
+            "authorization",
+            "delivery-contract",
+            "source-segments",
+            "clip-sequences",
+            "chapter-assets"
+          ],
+          "selectiveOutputPorts": [
+            "video-assets",
+            "prepared-nodes"
+          ],
+          "outputPorts": [
+            "prompt-package",
+            "estimate",
+            "video-assets",
+            "prepared-nodes"
+          ],
+          "inputArtifactTypes": {
+            "delivery-contract": [
+              "tapcanvas.delivery-contract/v2"
+            ],
+            "source-segments": [
+              "tapcanvas.clip-source-segments/v1"
+            ],
+            "clip-sequences": [
+              "tapcanvas.chapter-sequence-clips/v2"
+            ],
+            "chapter-assets": [
+              "tapcanvas.chapter-asset-plan/v3"
+            ]
+          },
+          "outputArtifactTypes": {
+            "prompt-package": [
+              "tapcanvas.prompt-package/v2"
+            ],
+            "estimate": [
+              "tapcanvas.video-estimate/v1"
+            ],
+            "video-assets": [
+              "tapcanvas.video-clips/v1"
+            ],
+            "prepared-nodes": [
+              "tapcanvas.video-node/v1"
+            ]
+          },
+          "itemConcurrency": 16
+        },
+        "workflowInputPorts": [
+          "authorization",
+          "delivery-contract",
+          "source-segments",
+          "clip-sequences",
+          "chapter-assets"
+        ],
+        "workflowOutputPorts": [
+          "prompt-package",
+          "estimate",
+          "video-assets",
+          "prepared-nodes"
+        ],
+        "workflowPipeline": {
+          "protocolVersion": "workflow.pipeline.run/v1",
+          "inputs": [
+            {
+              "portId": "authorization",
+              "mode": "value",
+              "artifactTypes": []
+            },
+            {
+              "portId": "delivery-contract",
+              "mode": "value",
+              "artifactTypes": [
+                "tapcanvas.delivery-contract/v2"
+              ]
+            },
+            {
+              "portId": "source-segments",
+              "mode": "value",
+              "artifactTypes": [
+                "tapcanvas.clip-source-segments/v1"
+              ],
+              "itemArtifactTypes": [
+                "tapcanvas.clip-source-segment/v1"
+              ]
+            },
+            {
+              "portId": "clip-sequences",
+              "mode": "value",
+              "artifactTypes": [
+                "tapcanvas.chapter-sequence-clips/v2"
+              ],
+              "itemArtifactTypes": [
+                "tapcanvas.chapter-sequence-clip/v2"
+              ]
+            },
+            {
+              "portId": "chapter-assets",
+              "mode": "value",
+              "artifactTypes": [
+                "tapcanvas.chapter-asset-plan/v3"
+              ]
+            }
+          ],
+          "steps": [
+            {
+              "stepId": "clip-production-agent",
+              "node": {
+                "id": "clip-production-agent",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "agent",
+                    "operation": "clip_production_authoring",
+                    "executorRef": "agents.logical-task/v2",
+                    "executionMode": "each",
+                    "inputPorts": [
+                      "clip-segment",
+                      "clip-sequence",
+                      "delivery-contract",
+                      "chapter-assets"
+                    ],
+                    "outputPorts": [
+                      "packets"
+                    ],
+                    "inputArtifactTypes": {
+                      "clip-segment": [
+                        "tapcanvas.clip-source-segments/v1",
+                        "tapcanvas.clip-source-segment/v1"
+                      ],
+                      "clip-sequence": [
+                        "tapcanvas.chapter-sequence-clips/v2",
+                        "tapcanvas.chapter-sequence-clip/v2"
+                      ],
+                      "delivery-contract": [
+                        "tapcanvas.delivery-contract/v2"
+                      ],
+                      "chapter-assets": [
+                        "tapcanvas.chapter-asset-plan/v3"
+                      ]
+                    },
+                    "outputArtifactTypes": {
+                      "packets": [
+                        "tapcanvas.clip-production-packet/v2"
+                      ]
+                    },
+                    "itemConcurrency": 16
+                  },
+                  "workflowInputPorts": [
+                    "clip-segment",
+                    "clip-sequence",
+                    "delivery-contract",
+                    "chapter-assets"
+                  ],
+                  "workflowOutputPorts": [
+                    "packets"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "clip-production-collect",
+              "node": {
+                "id": "clip-production-collect",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "control",
+                    "operation": "clip_production_collect",
+                    "executorRef": "video.clip-production.collect/v1",
+                    "executionMode": "collect",
+                    "inputPorts": [
+                      "packets",
+                      "clip-segments",
+                      "chapter-assets"
+                    ],
+                    "outputPorts": [
+                      "clip-production",
+                      "asset-intents"
+                    ],
+                    "inputArtifactTypes": {
+                      "packets": [
+                        "tapcanvas.clip-production-packet/v2"
+                      ],
+                      "clip-segments": [
+                        "tapcanvas.clip-source-segments/v1"
+                      ],
+                      "chapter-assets": [
+                        "tapcanvas.chapter-asset-plan/v3"
+                      ]
+                    },
+                    "outputArtifactTypes": {
+                      "clip-production": [
+                        "tapcanvas.clip-production-packets/v2"
+                      ],
+                      "asset-intents": [
+                        "tapcanvas.clip-production-asset-intents/v1"
+                      ]
+                    }
+                  },
+                  "workflowInputPorts": [
+                    "packets",
+                    "clip-segments",
+                    "chapter-assets"
+                  ],
+                  "workflowOutputPorts": [
+                    "clip-production",
+                    "asset-intents"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "clip-production-nodes-materialize",
+              "node": {
+                "id": "clip-production-nodes-materialize",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "delivery",
+                    "operation": "clip_production_nodes_materialize",
+                    "executorRef": "video.clip-production.nodes.materialize/v1",
+                    "executionMode": "once",
+                    "inputPorts": [
+                      "clip-production",
+                      "asset-intents",
+                      "delivery-contract"
+                    ],
+                    "outputPorts": [
+                      "node-plan",
+                      "prompt-package",
+                      "media-items",
+                      "prepared-nodes"
+                    ],
+                    "inputArtifactTypes": {
+                      "clip-production": [
+                        "tapcanvas.clip-production-packets/v2"
+                      ],
+                      "asset-intents": [
+                        "tapcanvas.clip-production-asset-intents/v1"
+                      ],
+                      "delivery-contract": [
+                        "tapcanvas.delivery-contract/v2"
+                      ]
+                    },
+                    "outputArtifactTypes": {
+                      "node-plan": [
+                        "tapcanvas.clip-production-node-plan/v1"
+                      ],
+                      "prompt-package": [
+                        "tapcanvas.prompt-package/v2"
+                      ],
+                      "media-items": [
+                        "tapcanvas.clip-production-media-items/v1"
+                      ],
+                      "prepared-nodes": [
+                        "tapcanvas.video-node/v1"
+                      ]
+                    }
+                  },
+                  "workflowInputPorts": [
+                    "clip-production",
+                    "asset-intents",
+                    "delivery-contract"
+                  ],
+                  "workflowOutputPorts": [
+                    "node-plan",
+                    "prompt-package",
+                    "media-items",
+                    "prepared-nodes"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "clip-production-assets-project",
+              "node": {
+                "id": "clip-production-assets-project",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "control",
+                    "operation": "clip_production_assets_project",
+                    "executorRef": "video.clip-production.assets.project/v1",
+                    "executionMode": "once",
+                    "inputPorts": [
+                      "asset-intents",
+                      "node-plan"
+                    ],
+                    "outputPorts": [
+                      "asset-items"
+                    ],
+                    "inputArtifactTypes": {
+                      "asset-intents": [
+                        "tapcanvas.clip-production-asset-intents/v1"
+                      ],
+                      "node-plan": [
+                        "tapcanvas.clip-production-node-plan/v1"
+                      ]
+                    },
+                    "outputArtifactTypes": {
+                      "asset-items": [
+                        "tapcanvas.asset-plan-items/v2"
+                      ]
+                    }
+                  },
+                  "workflowInputPorts": [
+                    "asset-intents",
+                    "node-plan"
+                  ],
+                  "workflowOutputPorts": [
+                    "asset-items"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "clip-asset-image-generate",
+              "node": {
+                "id": "clip-asset-image-generate",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "media",
+                    "operation": "image_generate",
+                    "executorRef": "tapcanvas.image.generate/v1",
+                    "executionMode": "each",
+                    "inputPorts": [
+                      "asset-items"
+                    ],
+                    "outputPorts": [
+                      "asset-bindings"
+                    ],
+                    "inputArtifactTypes": {
+                      "asset-items": [
+                        "tapcanvas.asset-plan-items/v2"
+                      ]
+                    },
+                    "outputArtifactTypes": {
+                      "asset-bindings": [
+                        "tapcanvas.asset-bindings/v1"
+                      ]
+                    },
+                    "itemConcurrency": 16
+                  },
+                  "workflowInputPorts": [
+                    "asset-items"
+                  ],
+                  "workflowOutputPorts": [
+                    "asset-bindings"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "clip-production-project",
+              "node": {
+                "id": "clip-production-project",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "delivery",
+                    "operation": "clip_production_project",
+                    "executorRef": "video.clip-production.project/v1",
+                    "executionMode": "collect",
+                    "inputPorts": [
+                      "clip-production",
+                      "asset-bindings",
+                      "delivery-contract"
+                    ],
+                    "outputPorts": [
+                      "prompt-package"
+                    ],
+                    "inputArtifactTypes": {
+                      "clip-production": [
+                        "tapcanvas.clip-production-packets/v2"
+                      ],
+                      "asset-bindings": [
+                        "tapcanvas.asset-bindings/v1"
+                      ],
+                      "delivery-contract": [
+                        "tapcanvas.delivery-contract/v2"
+                      ]
+                    },
+                    "outputArtifactTypes": {
+                      "prompt-package": [
+                        "tapcanvas.prompt-package/v2"
+                      ]
+                    }
+                  },
+                  "workflowInputPorts": [
+                    "clip-production",
+                    "asset-bindings",
+                    "delivery-contract"
+                  ],
+                  "workflowOutputPorts": [
+                    "prompt-package"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "voice-materialize",
+              "node": {
+                "id": "voice-materialize",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "control",
+                    "operation": "voice_manifest_empty",
+                    "executorRef": "video.voice-manifest.empty/v1",
+                    "executionMode": "once",
+                    "inputPorts": [
+                      "trigger"
+                    ],
+                    "outputPorts": [
+                      "voice-manifest"
+                    ]
+                  },
+                  "workflowInputPorts": [
+                    "trigger"
+                  ],
+                  "workflowOutputPorts": [
+                    "voice-manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "cost-estimate",
+              "node": {
+                "id": "cost-estimate",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "tool",
+                    "operation": "estimate",
+                    "executorRef": "video.estimate/v1",
+                    "executionMode": "collect",
+                    "inputPorts": [
+                      "prompt-package"
+                    ],
+                    "outputPorts": [
+                      "estimate"
+                    ]
+                  },
+                  "workflowInputPorts": [
+                    "prompt-package"
+                  ],
+                  "workflowOutputPorts": [
+                    "estimate"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "production-handoff",
+              "node": {
+                "id": "production-handoff",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "control",
+                    "operation": "production_handoff",
+                    "executorRef": "video.production.handoff/v1",
+                    "executionMode": "collect",
+                    "inputPorts": [
+                      "prompt-package",
+                      "estimate",
+                      "asset-bindings",
+                      "voice-manifest"
+                    ],
+                    "outputPorts": [
+                      "production-plan"
+                    ]
+                  },
+                  "workflowInputPorts": [
+                    "prompt-package",
+                    "estimate",
+                    "asset-bindings",
+                    "voice-manifest"
+                  ],
+                  "workflowOutputPorts": [
+                    "production-plan"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "video-execution-choice",
+              "node": {
+                "id": "video-execution-choice",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "control",
+                    "operation": "condition",
+                    "executorRef": "workflow.control.condition/v1",
+                    "executionMode": "once",
+                    "inputPorts": [
+                      "value",
+                      "production-plan"
+                    ],
+                    "selectiveOutputPorts": [
+                      "matched",
+                      "unmatched"
+                    ],
+                    "outputPorts": [
+                      "matched",
+                      "unmatched"
+                    ]
+                  },
+                  "workflowInputPorts": [
+                    "value",
+                    "production-plan"
+                  ],
+                  "workflowOutputPorts": [
+                    "matched",
+                    "unmatched"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "video-node-prepare",
+              "node": {
+                "id": "video-node-prepare",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "delivery",
+                    "operation": "video_prepare",
+                    "executorRef": "tapcanvas.video.prepare/v1",
+                    "executionMode": "each",
+                    "inputPorts": [
+                      "production-plan",
+                      "authorization"
+                    ],
+                    "outputPorts": [
+                      "prepared-nodes"
+                    ]
+                  },
+                  "workflowInputPorts": [
+                    "production-plan",
+                    "authorization"
+                  ],
+                  "workflowOutputPorts": [
+                    "prepared-nodes"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "video-submit",
+              "node": {
+                "id": "video-submit",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "tool",
+                    "operation": "video_submission",
+                    "executorRef": "tapcanvas.video.generate/v1",
+                    "executionMode": "each",
+                    "inputPorts": [
+                      "production-plan",
+                      "authorization"
+                    ],
+                    "outputPorts": [
+                      "provider-receipts"
+                    ],
+                    "itemConcurrency": 16
+                  },
+                  "workflowInputPorts": [
+                    "production-plan",
+                    "authorization"
+                  ],
+                  "workflowOutputPorts": [
+                    "provider-receipts"
+                  ]
+                }
+              }
+            },
+            {
+              "stepId": "video-results",
+              "node": {
+                "id": "video-results",
+                "type": "taskNode",
+                "kind": "workflowStage",
+                "data": {
+                  "kind": "workflowStage",
+                  "workflowAtomicSpec": {
+                    "version": 1,
+                    "category": "control",
+                    "operation": "video_result",
+                    "executorRef": "workflow.control.join/v1",
+                    "executionMode": "each",
+                    "inputPorts": [
+                      "provider-receipts"
+                    ],
+                    "outputPorts": [
+                      "video-assets"
+                    ]
+                  },
+                  "workflowInputPorts": [
+                    "provider-receipts"
+                  ],
+                  "workflowOutputPorts": [
+                    "video-assets"
+                  ]
+                }
+              }
+            }
+          ],
+          "bindings": [
+            {
+              "from": {
+                "kind": "input",
+                "portId": "source-segments"
+              },
+              "to": {
+                "stepId": "clip-production-agent",
+                "portId": "clip-segment"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "clip-sequences"
+              },
+              "to": {
+                "stepId": "clip-production-agent",
+                "portId": "clip-sequence"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "delivery-contract"
+              },
+              "to": {
+                "stepId": "clip-production-agent",
+                "portId": "delivery-contract"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "chapter-assets"
+              },
+              "to": {
+                "stepId": "clip-production-agent",
+                "portId": "chapter-assets"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-agent",
+                "portId": "packets"
+              },
+              "to": {
+                "stepId": "clip-production-collect",
+                "portId": "packets"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "source-segments"
+              },
+              "to": {
+                "stepId": "clip-production-collect",
+                "portId": "clip-segments"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "chapter-assets"
+              },
+              "to": {
+                "stepId": "clip-production-collect",
+                "portId": "chapter-assets"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-collect",
+                "portId": "clip-production"
+              },
+              "to": {
+                "stepId": "clip-production-nodes-materialize",
+                "portId": "clip-production"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-collect",
+                "portId": "asset-intents"
+              },
+              "to": {
+                "stepId": "clip-production-nodes-materialize",
+                "portId": "asset-intents"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "delivery-contract"
+              },
+              "to": {
+                "stepId": "clip-production-nodes-materialize",
+                "portId": "delivery-contract"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-nodes-materialize",
+                "portId": "node-plan"
+              },
+              "to": {
+                "stepId": "clip-production-assets-project",
+                "portId": "node-plan"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-collect",
+                "portId": "asset-intents"
+              },
+              "to": {
+                "stepId": "clip-production-assets-project",
+                "portId": "asset-intents"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-assets-project",
+                "portId": "asset-items"
+              },
+              "to": {
+                "stepId": "clip-asset-image-generate",
+                "portId": "asset-items"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-collect",
+                "portId": "clip-production"
+              },
+              "to": {
+                "stepId": "clip-production-project",
+                "portId": "clip-production"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-asset-image-generate",
+                "portId": "asset-bindings"
+              },
+              "to": {
+                "stepId": "clip-production-project",
+                "portId": "asset-bindings"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "delivery-contract"
+              },
+              "to": {
+                "stepId": "clip-production-project",
+                "portId": "delivery-contract"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "authorization"
+              },
+              "to": {
+                "stepId": "voice-materialize",
+                "portId": "trigger"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-project",
+                "portId": "prompt-package"
+              },
+              "to": {
+                "stepId": "cost-estimate",
+                "portId": "prompt-package"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-production-project",
+                "portId": "prompt-package"
+              },
+              "to": {
+                "stepId": "production-handoff",
+                "portId": "prompt-package"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "cost-estimate",
+                "portId": "estimate"
+              },
+              "to": {
+                "stepId": "production-handoff",
+                "portId": "estimate"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "clip-asset-image-generate",
+                "portId": "asset-bindings"
+              },
+              "to": {
+                "stepId": "production-handoff",
+                "portId": "asset-bindings"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "voice-materialize",
+                "portId": "voice-manifest"
+              },
+              "to": {
+                "stepId": "production-handoff",
+                "portId": "voice-manifest"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "production-handoff",
+                "portId": "production-plan"
+              },
+              "to": {
+                "stepId": "video-submit",
+                "portId": "production-plan"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "input",
+                "portId": "authorization"
+              },
+              "to": {
+                "stepId": "video-execution-choice",
+                "portId": "value"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "production-handoff",
+                "portId": "production-plan"
+              },
+              "to": {
+                "stepId": "video-execution-choice",
+                "portId": "production-plan"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "production-handoff",
+                "portId": "production-plan"
+              },
+              "to": {
+                "stepId": "video-node-prepare",
+                "portId": "production-plan"
+              },
+              "mode": "collection"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "video-execution-choice",
+                "portId": "matched"
+              },
+              "to": {
+                "stepId": "video-node-prepare",
+                "portId": "authorization"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "video-execution-choice",
+                "portId": "unmatched"
+              },
+              "to": {
+                "stepId": "video-submit",
+                "portId": "authorization"
+              },
+              "mode": "value"
+            },
+            {
+              "from": {
+                "kind": "step",
+                "stepId": "video-submit",
+                "portId": "provider-receipts"
+              },
+              "to": {
+                "stepId": "video-results",
+                "portId": "provider-receipts"
+              },
+              "mode": "collection"
+            }
+          ],
+          "outputs": [
+            {
+              "portId": "prompt-package",
+              "from": {
+                "stepId": "clip-production-project",
+                "portId": "prompt-package"
+              },
+              "mode": "value"
+            },
+            {
+              "portId": "estimate",
+              "from": {
+                "stepId": "cost-estimate",
+                "portId": "estimate"
+              },
+              "mode": "value"
+            },
+            {
+              "portId": "video-assets",
+              "from": {
+                "stepId": "video-results",
+                "portId": "video-assets"
+              },
+              "mode": "collection"
+            },
+            {
+              "portId": "prepared-nodes",
+              "from": {
+                "stepId": "video-node-prepare",
+                "portId": "prepared-nodes"
+              },
+              "mode": "collection"
+            }
+          ]
+        },
+        "adminWorkflow": true,
+        "workflowOptionalInputPorts": []
+      },
+      "parentId": "g3"
+    },
+    {
+      "id": "author",
+      "type": "taskNode",
+      "data": {
+        "kind": "workflowStage",
+        "workflowInstanceId": "bounded-replay",
+        "workflowAtomicSpec": {
+          "version": 1,
+          "category": "agent",
+          "operation": "chapter_sequence_authoring",
+          "executorRef": "agents.logical-task/v2",
+          "executionMode": "once",
+          "inputPorts": [
+            "trigger",
+            "delivery-contract"
+          ],
+          "outputPorts": [
+            "chapter-sequence"
+          ],
+          "inputArtifactTypes": {
+            "delivery-contract": [
+              "tapcanvas.delivery-contract/v2"
+            ]
+          },
+          "outputArtifactTypes": {
+            "chapter-sequence": [
+              "tapcanvas.chapter-sequence/v4"
+            ]
+          }
+        },
+        "workflowInputPorts": [
+          "trigger",
+          "delivery-contract"
+        ],
+        "workflowOutputPorts": [
+          "chapter-sequence"
+        ],
+        "adminWorkflow": true,
+        "workflowOutputArtifactType": "tapcanvas.chapter-sequence/v4",
+        "workflowOptionalInputPorts": []
+      },
+      "parentId": "g3"
+    },
+    {
+      "id": "project",
+      "type": "taskNode",
+      "data": {
+        "kind": "workflowStage",
+        "workflowInstanceId": "bounded-replay",
+        "workflowAtomicSpec": {
+          "version": 1,
+          "category": "control",
+          "operation": "chapter_sequence_project",
+          "executorRef": "video.chapter-sequence.project/v2",
+          "executionMode": "once",
+          "inputPorts": [
+            "chapter-sequence",
+            "delivery-contract"
+          ],
+          "outputPorts": [
+            "chapter-sequence",
+            "clip-sequences",
+            "clip-segments",
+            "source-receipt"
+          ],
+          "inputArtifactTypes": {
+            "chapter-sequence": [
+              "tapcanvas.chapter-sequence/v4"
+            ],
+            "delivery-contract": [
+              "tapcanvas.delivery-contract/v2"
+            ]
+          },
+          "outputArtifactTypes": {
+            "chapter-sequence": [
+              "tapcanvas.chapter-sequence-bound/v2"
+            ],
+            "clip-sequences": [
+              "tapcanvas.chapter-sequence-clips/v2"
+            ],
+            "clip-segments": [
+              "tapcanvas.clip-source-segments/v1"
+            ]
+          }
+        },
+        "workflowInputPorts": [
+          "chapter-sequence",
+          "delivery-contract"
+        ],
+        "workflowOutputPorts": [
+          "chapter-sequence",
+          "clip-sequences",
+          "clip-segments",
+          "source-receipt"
+        ],
+        "adminWorkflow": true,
+        "workflowOutputArtifactType": "tapcanvas.chapter-sequence-clips/v2",
+        "workflowOptionalInputPorts": []
+      },
+      "parentId": "g3"
+    },
+    {
+      "id": "assets",
+      "type": "taskNode",
+      "data": {
+        "kind": "workflowStage",
+        "workflowInstanceId": "bounded-replay",
+        "workflowAtomicSpec": {
+          "version": 1,
+          "category": "agent",
+          "operation": "chapter_asset_authoring",
+          "executorRef": "agents.logical-task/v2",
+          "executionMode": "once",
+          "inputPorts": [
+            "delivery-contract",
+            "chapter-sequence"
+          ],
+          "outputPorts": [
+            "chapter-assets"
+          ],
+          "inputArtifactTypes": {
+            "delivery-contract": [
+              "tapcanvas.delivery-contract/v2"
+            ],
+            "chapter-sequence": [
+              "tapcanvas.chapter-sequence-bound/v2"
+            ]
+          }
+        },
+        "workflowInputPorts": [
+          "delivery-contract",
+          "chapter-sequence"
+        ],
+        "workflowOutputPorts": [
+          "chapter-assets"
+        ],
+        "adminWorkflow": true,
+        "workflowOutputArtifactType": "tapcanvas.chapter-asset-plan/v3",
+        "workflowOptionalInputPorts": []
+      },
+      "parentId": "g3"
+    }
+  ],
+  "edges": [
+    {
+      "id": "xy-edge__video-workflow-fixture-identity-0:manual-triggerout-workflow:trigger-video-workflow-fixture-identity-0:canvas-sourcein-workflow:trigger",
+      "source": "trigger",
+      "target": "source",
+      "sourceHandle": "out-workflow:trigger",
+      "targetHandle": "in-workflow:trigger",
+      "type": "typed",
+      "data": {},
+      "animated": false
+    },
+    {
+      "id": "xy-edge__video-workflow-fixture-identity-0:canvas-sourceout-workflow:canvas-facts-video-workflow-fixture-identity-0:delivery-contractin-workflow:canvas-facts",
+      "source": "source",
+      "target": "contract",
+      "sourceHandle": "out-workflow:canvas-facts",
+      "targetHandle": "in-workflow:canvas-facts",
+      "type": "typed",
+      "data": {},
+      "animated": false
+    },
+    {
+      "id": "workflow-v108:video-workflow-fixture-identity-0:delivery-contract:delivery-contract:clip-production-pipeline:delivery-contract",
+      "source": "contract",
+      "target": "pipeline",
+      "sourceHandle": "out-workflow:delivery-contract",
+      "targetHandle": "in-workflow:delivery-contract"
+    },
+    {
+      "id": "workflow-v111:video-workflow-fixture-identity-0:delivery-contract:delivery-contract:chapter-sequence-agent:delivery-contract",
+      "source": "contract",
+      "target": "author",
+      "sourceHandle": "out-workflow:delivery-contract",
+      "targetHandle": "in-workflow:delivery-contract"
+    },
+    {
+      "id": "workflow-v111:video-workflow-fixture-identity-0:chapter-sequence-agent:chapter-sequence:chapter-sequence-project:chapter-sequence",
+      "source": "author",
+      "target": "project",
+      "sourceHandle": "out-workflow:chapter-sequence",
+      "targetHandle": "in-workflow:chapter-sequence"
+    },
+    {
+      "id": "workflow-v111:video-workflow-fixture-identity-0:delivery-contract:delivery-contract:chapter-sequence-project:delivery-contract",
+      "source": "contract",
+      "target": "project",
+      "sourceHandle": "out-workflow:delivery-contract",
+      "targetHandle": "in-workflow:delivery-contract"
+    },
+    {
+      "id": "workflow-v111:video-workflow-fixture-identity-0:delivery-contract:delivery-contract:chapter-assets-agent:delivery-contract",
+      "source": "contract",
+      "target": "assets",
+      "sourceHandle": "out-workflow:delivery-contract",
+      "targetHandle": "in-workflow:delivery-contract"
+    },
+    {
+      "id": "workflow-v111:video-workflow-fixture-identity-0:chapter-sequence-project:clip-sequences:clip-production-pipeline:clip-sequences",
+      "source": "project",
+      "target": "pipeline",
+      "sourceHandle": "out-workflow:clip-sequences",
+      "targetHandle": "in-workflow:clip-sequences"
+    },
+    {
+      "id": "workflow-v111:video-workflow-fixture-identity-0:chapter-assets-agent:chapter-assets:clip-production-pipeline:chapter-assets",
+      "source": "assets",
+      "target": "pipeline",
+      "sourceHandle": "out-workflow:chapter-assets",
+      "targetHandle": "in-workflow:chapter-assets"
+    },
+    {
+      "id": "workflow-v117:video-workflow-fixture-identity-0:chapter-sequence-project:chapter-sequence:chapter-assets-agent:chapter-sequence",
+      "source": "project",
+      "target": "assets",
+      "sourceHandle": "out-workflow:chapter-sequence",
+      "targetHandle": "in-workflow:chapter-sequence"
+    },
+    {
+      "id": "workflow-v119:video-workflow-fixture-identity-0:manual-trigger:trigger:chapter-sequence-agent:trigger",
+      "source": "trigger",
+      "target": "author",
+      "sourceHandle": "out-workflow:trigger",
+      "targetHandle": "in-workflow:trigger"
+    },
+    {
+      "id": "workflow-v119:video-workflow-fixture-identity-0:chapter-sequence-project:clip-segments:clip-production-pipeline:source-segments",
+      "source": "project",
+      "target": "pipeline",
+      "sourceHandle": "out-workflow:clip-segments",
+      "targetHandle": "in-workflow:source-segments"
+    },
+    {
+      "id": "workflow-v124:video-workflow-fixture-identity-0:manual-trigger:trigger:clip-production-pipeline:authorization",
+      "source": "trigger",
+      "target": "pipeline",
+      "sourceHandle": "out-workflow:trigger",
+      "targetHandle": "in-workflow:authorization"
+    }
+  ]
+}

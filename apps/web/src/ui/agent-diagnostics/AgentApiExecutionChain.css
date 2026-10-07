@@ -1,0 +1,177 @@
+.agent-api-execution-chain {
+  overflow: hidden;
+  border-radius: var(--tc-radius-md, 10px);
+  background: var(--tc-color-surface-panel, #171719);
+}
+
+.agent-api-execution-chain__header,
+.agent-api-execution-chain__selector-row,
+.agent-api-execution-chain__job-summary,
+.agent-api-execution-chain__runs {
+  padding: var(--tc-space-3, 12px);
+}
+
+.agent-api-execution-chain__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--tc-space-3, 12px);
+}
+
+.agent-api-execution-chain__heading,
+.agent-api-execution-chain__run-main {
+  min-width: 0;
+}
+
+.agent-api-execution-chain__title,
+.agent-api-execution-chain__description,
+.agent-api-execution-chain__job-goal,
+.agent-api-execution-chain__job-message {
+  letter-spacing: -0.01em;
+}
+
+.agent-api-execution-chain__description {
+  margin-top: var(--tc-space-1, 4px);
+}
+
+.agent-api-execution-chain__selector-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--tc-space-2, 8px);
+  padding-top: 0;
+}
+
+.agent-api-execution-chain__job-select {
+  width: min(760px, 100%);
+}
+
+.agent-api-execution-chain__jobs-loader,
+.agent-api-execution-chain__traces-loader {
+  margin-bottom: var(--tc-space-2, 8px);
+}
+
+.agent-api-execution-chain__error,
+.agent-api-execution-chain__empty {
+  margin: 0 var(--tc-space-3, 12px) var(--tc-space-3, 12px);
+}
+
+.agent-api-execution-chain__job-summary,
+.agent-api-execution-chain__runs,
+.agent-api-execution-chain .agent-execution-run-log {
+  border-top: 1px solid var(--tc-color-border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.agent-api-execution-chain__job-title,
+.agent-api-execution-chain__job-goal,
+.agent-api-execution-chain__job-identities,
+.agent-api-execution-chain__job-message {
+  margin-top: var(--tc-space-2, 8px);
+}
+
+.agent-api-execution-chain__job-goal,
+.agent-api-execution-chain__job-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-api-execution-chain__job-identities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--tc-space-2, 8px);
+}
+
+.agent-api-execution-chain__identity {
+  color: var(--tc-color-text-secondary, rgba(245, 245, 247, 0.62));
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.agent-api-execution-chain__runs-title {
+  display: block;
+  margin-bottom: var(--tc-space-2, 8px);
+}
+
+.agent-api-execution-chain__run-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-api-execution-chain__run {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--tc-space-2, 8px);
+  width: 100%;
+  min-height: 46px;
+  padding: 7px 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  color: var(--tc-color-text-primary, #f5f5f7);
+  text-align: left;
+}
+
+.agent-api-execution-chain__run:first-child {
+  border-top: 0;
+}
+
+.agent-api-execution-chain__run:hover,
+.agent-api-execution-chain__run--selected {
+  background: var(--tc-color-surface-inline, rgba(255, 255, 255, 0.045));
+}
+
+.agent-api-execution-chain__run--selected {
+  box-shadow: inset 2px 0 0 var(--tc-color-accent, #0071e3);
+}
+
+.agent-api-execution-chain__run-index,
+.agent-api-execution-chain__run-status,
+.agent-api-execution-chain__run-time {
+  color: var(--tc-color-text-secondary, rgba(245, 245, 247, 0.62));
+  font-size: 9px;
+  line-height: 14px;
+}
+
+.agent-api-execution-chain__run-index {
+  font-weight: 700;
+}
+
+.agent-api-execution-chain__run-main {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-api-execution-chain__run-kind {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.agent-api-execution-chain__run-id {
+  overflow: hidden;
+  color: var(--tc-color-text-secondary, rgba(245, 245, 247, 0.62));
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-api-execution-chain__run-status--failed,
+.agent-api-execution-chain__run-status--cancelled {
+  color: var(--tc-color-danger, #ff9292);
+}
+
+.agent-api-execution-chain__run-status--succeeded {
+  color: var(--tc-color-success, #7ee2aa);
+}
+
+.agent-api-execution-chain__run-status--waiting_async,
+.agent-api-execution-chain__run-status--running {
+  color: var(--tc-color-warning, #ffc876);
+}
+
+@media (max-width: 760px) {
+  .agent-api-execution-chain__run {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+  }
+
+  .agent-api-execution-chain__run-time {
+    display: none;
+  }
+}

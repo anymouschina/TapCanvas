@@ -1,3 +1,7 @@
+import { scopeWorkflowFlowData } from "./execution.flow-scope";
+import { projectWorkflowExecutionSemanticsSnapshot } from "./execution.semantics-snapshot";
+import { parseWorkflowProjectContext, type WorkflowProjectContext } from "./execution.project-context";
+
 type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -16,6 +20,7 @@ export type WorkflowExecutionSnapshotRerun = Readonly<{
 	data: JsonRecord;
 	triggerNodeId: string;
 	stopAfterNodeId?: string;
+	projectContext?: WorkflowProjectContext;
 }>;
 
 export type WorkflowDefinitionCutoverAudit = Readonly<{
@@ -73,12 +78,13 @@ function assertNodeExecutionIdentity(
 	}
 	const frozenData = isRecord(frozenNode.data) ? frozenNode.data : {};
 	const currentData = isRecord(currentNode.data) ? currentNode.data : {};
+	// Version and fingerprint identify the authored configuration being adopted.
+	// A definition cutover must be able to change them; executable identity and
+	// port topology remain fenced below.
 	for (const field of [
 		"kind",
 		"adminWorkflow",
 		"workflowInstanceId",
-		"workflowCanvasDefinitionVersion",
-		"workflowCanvasDefinitionFingerprint",
 	] as const) {
 		if (stableStructuralValue(frozenData[field]) !== stableStructuralValue(currentData[field])) {
 			throw new Error(`Workflow definition cutover changed ${field} for node ${nodeId}`);
@@ -176,6 +182,7 @@ export function applyWorkflowDefinitionCutover(input: Readonly<{
 		"workflowProjectContext",
 		"workflowCallerCanvasSnapshot",
 		"workflowInitiatingAgentExecution",
+		"workflowDirectAgentModelSelection",
 		"workflowDeliveryScope",
 		"workflowExecutionAncestry",
 		"workflowAgentModelCutovers",
@@ -196,6 +203,7 @@ export function applyWorkflowDefinitionCutover(input: Readonly<{
  */
 export function prepareWorkflowExecutionSnapshotRerun(
 	snapshot: unknown,
+	options: Readonly<{ stopAfterNodeId?: string; startFromNodeId?: string }> = {},
 ): WorkflowExecutionSnapshotRerun {
 	if (!isRecord(snapshot) || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.edges)) {
 		throw new Error("Immutable workflow snapshot must contain nodes and edges arrays");
@@ -217,11 +225,29 @@ export function prepareWorkflowExecutionSnapshotRerun(
 		} = value.data;
 		return { ...value, data: definitionData };
 	});
+	const { workflowResolvedAuthorRepair: _discardedAuthorRepair, workflowAuthorRepairSelection: _discardedSelection, workflowConsumerReplayAttempt: _discardedConsumerAttempt, workflowAuthorRepairAttempt: _discardedAuthorRepairAttempt, ...definition } = snapshot;
+	const data = { ...definition, nodes };
+	const stopAfterNodeId = options.stopAfterNodeId ?? (typeof stopAfterRaw === "string" ? stopAfterRaw.trim() : undefined);
+	// Validate and scope before admission: a bounded rerun cannot schedule any
+	// descendant of its stop boundary, while frozen invocation facts survive.
+	const boundedData = options.stopAfterNodeId !== undefined
+		? projectWorkflowExecutionSemanticsSnapshot(data, scopeWorkflowFlowData(
+			data,
+			triggerNodeId,
+			options.stopAfterNodeId,
+			options.startFromNodeId,
+		))
+		: data;
+	const projectContext = parseWorkflowProjectContext(snapshot.workflowProjectContext);
+	if (snapshot.workflowProjectContext !== undefined && !projectContext) {
+		throw new Error("Immutable workflow snapshot has invalid frozen project context");
+	}
 	return {
-		data: { ...snapshot, nodes },
+		data: boundedData,
 		triggerNodeId,
-		...(typeof stopAfterRaw === "string" && stopAfterRaw.trim()
-			? { stopAfterNodeId: stopAfterRaw.trim() }
+		...(projectContext ? { projectContext } : {}),
+		...(stopAfterNodeId
+			? { stopAfterNodeId }
 			: {}),
 	};
 }

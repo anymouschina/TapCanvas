@@ -1,48 +1,11 @@
-# Writer runtime brief and reference navigation
+# Writer 输入与职责参考
 
-This small brief is the writer's first orientation. It does not replace the
-authoring contract, the dynamic Workflow output contract, or a selected
-domain reference.
+本轮动态 artifact schema、冻结输入和 `tapcanvas-video-authoring-stages` 是结构与编译职责真源，本参考不另立字段或时钟。
 
-## Writer ownership
+读取本轮明确授予的工具、精确回执与作用域。原文、章节执行稿、当前 Clip、相邻边界、生成合同和资产各有独立身份；摘要与读取回执不等于原文正文。不要猜路径、URL、机器 ID 或上游权限。
 
-The writer owns one frozen Clip. Read the current `beat`, its frozen
-`spokenScript`, `assetObjectContracts`, and the adjacent continuity facts, then
-turn those facts into the actual `clips[].shots[]`, camera, performance,
-physical response, sound, and visual effects fields. Draft the complete action
-timeline first, replay it against the frozen entry state, event order, dialogue
-clock, and exit state, and revise in the same author context before returning
-the structured result. The writer does not create assets, alter the parent
-BeatSheet, or start a second workflow.
+作者把当前冻结剧情表达为可执行声画，保留因果、重要信息与完整发声。packet 中 `scene` 交代必要稳定事实，`shots` 按播放顺序表达动作、表演、取景和声音，并显式引用真实事件。台词由 renderer 编入一次，能跨镜接续；整段执行时长由供应商合同规定，不另建内部秒数或固定镜头数。
 
-Keep source text, canonical names, object responsibilities, spatial relations,
-speech text, and causal results at their supplied information density. A
-continuity window may contain only the current Clip and its immediate
-neighbours; the scope object tells you its total Clip count and the exact
-parent artifact read operation for a farther frozen fact. A window is a
-projection boundary, not permission to invent, summarize away, or complete a
-later event.
+参考绑定提供身份和外观，作者交代当前剧情需要的位置、关系、进出、持物和变化。诊断与来源说明不混入拍摄指令；实际画面文字和声音则按剧情需要表达。领域方法、样例和知识选择性读取，失败只追加诊断，不替换已成立事实或终止创作。
 
-## Contract and reference navigation
-
-The runtime injects the current Workflow IR facts and the typed output schema.
-Treat those fields as the source of truth for names, timing, allowed handles,
-and the required JSON shape; do not restate or recreate a chapter schema in
-the prompt. `authoring-contract-v1.json` remains the authoritative shared
-authoring dimensions and review method. Read it with `Skill.resource` when the
-current Clip needs its detailed method or a review dimension. Read
-`user-gold-standard-2026-09.md` only when an example or quality pattern is
-useful to the current facts. Domain references are likewise read on demand
-when the frozen plan exposes a relevant method gap.
-
-Knowledge and prompt-example search results are receipts. They do not contain
-trusted body text until the matching read tool succeeds. Keep the full
-candidate set reachable through its receipt and read operation; choose by
-current information gain rather than a fixed count. Retrieval failure or no
-useful evidence is a diagnostic and never a reason to stop the Clip.
-
-Before returning, perform the writer's own factual replay: every frozen event
-has a visible carrier, every speech line has one complete timed event, every
-shot has a causal change and a carry state, and the final shot reaches the
-frozen Clip exit. Fix the actual draft in this same chain; this replay is
-authoring work, not a host quality gate.
+writer 交付提示词产物，不创建资产、启动工作流或代用户重跑。权限、真实资产、协议和供应商硬边界依旧有效；已受理任务与成功产物保留。

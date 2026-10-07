@@ -1,3 +1,4 @@
+export { AUTHOR_REVIEW_POLICIES, isAuthorReviewPolicy, type AuthorReviewPolicy } from "../author-review-policy/index.mjs";
 import { parseWorkflowKnowledgeDiagnostics, type WorkflowKnowledgeDiagnostics } from "./retrieval-contract.mjs";
 import {
 	deriveWorkflowPipelinePortArtifactContractV1,
@@ -12,6 +13,8 @@ import {
 export { normalizeKnowledgeCandidateLimit } from "./retrieval-contract.mjs";
 import { isDetachedCanvasNode, projectCanvasMembership } from './canvas-lifecycle';
 export * from './canvas-lifecycle';
+export * from './flow-authoring-rebase';
+export * from './canvas-flow-delta';
 
 export const WORKFLOW_KERNEL_PROTOCOL_VERSION = "1" as const;
 export const AGENT_WORKFLOW_KEY = "agent-workflow/v1" as const;
@@ -103,7 +106,7 @@ export type WorkflowKnowledgeCandidateSetV2 = Readonly<{
 	candidateSetId: string;
 	requestHash: string;
 	createdAt: string;
-	retrievalMode: "vector";
+	retrievalMode: "vector" | "database";
 	abstained: boolean;
 	diagnostics: WorkflowKnowledgeDiagnostics;
 	candidates: readonly WorkflowKnowledgeCandidateV2[];
@@ -200,9 +203,9 @@ export function parseWorkflowKnowledgeCandidateSetV2(value: unknown): WorkflowKn
 		candidateSetId: requireKnowledgeString(record.candidateSetId, "candidateSetId"),
 		requestHash: requireKnowledgeString(record.requestHash, "requestHash"),
 		createdAt: requireKnowledgeString(record.createdAt, "createdAt"),
-		retrievalMode: record.retrievalMode === "vector"
-			? "vector"
-			: (() => { throw new Error("Workflow knowledge retrievalMode must be vector"); })(),
+		retrievalMode: record.retrievalMode === "vector" || record.retrievalMode === "database"
+			? record.retrievalMode
+			: (() => { throw new Error("Workflow knowledge retrievalMode must be vector or database"); })(),
 		abstained: typeof record.abstained === "boolean"
 			? record.abstained
 			: (() => { throw new Error("Workflow knowledge abstained must be boolean"); })(),
@@ -459,24 +462,15 @@ export const WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS = Object.freeze({
 		inputArtifactTypes: { "frame-plan": ["tapcanvas.opening-frame-plan/v1"] },
 		outputArtifactTypes: { "prompt-package": ["tapcanvas.opening-frame-prompt-package/v1"] },
 	},
-	"video.clip-segmentation.project/v1": {
+	"video.chapter-sequence.project/v2": {
 		inputArtifactTypes: {
-			segmentation: ["tapcanvas.chapter-clip-segmentation/v1"],
+			"chapter-sequence": ["tapcanvas.chapter-sequence/v4"],
 			"delivery-contract": ["tapcanvas.delivery-contract/v2"],
 		},
 		outputArtifactTypes: {
+			"chapter-sequence": ["tapcanvas.chapter-sequence-bound/v2"],
+			"clip-sequences": ["tapcanvas.chapter-sequence-clips/v2"],
 			"clip-segments": ["tapcanvas.clip-source-segments/v1"],
-		},
-	},
-	"video.chapter-sequence.project/v1": {
-		inputArtifactTypes: {
-			"chapter-sequence": ["tapcanvas.chapter-sequence/v1"],
-			"clip-segments": ["tapcanvas.clip-source-segments/v1"],
-			"delivery-contract": ["tapcanvas.delivery-contract/v2"],
-		},
-		outputArtifactTypes: {
-			"chapter-sequence": ["tapcanvas.chapter-sequence-bound/v1"],
-			"clip-sequences": ["tapcanvas.chapter-sequence-clips/v1"],
 		},
 	},
 	"video.clip-production.collect/v1": {
@@ -489,6 +483,17 @@ export const WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS = Object.freeze({
 			"clip-production": [CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE],
 			"asset-intents": [CLIP_PRODUCTION_ASSET_INTENTS_ARTIFACT_TYPE],
 		},
+	},
+	"video.chapter-assets.seeds/v1": {
+		inputArtifactTypes: { "asset-outline": ["tapcanvas.chapter-asset-outline/v2"] },
+		outputArtifactTypes: { "asset-seeds": ["tapcanvas.chapter-asset-seeds/v1"] },
+	},
+	"video.chapter-assets.collect/v1": {
+		inputArtifactTypes: {
+			"asset-parts": ["tapcanvas.chapter-asset-part/v1"],
+			"asset-seeds": ["tapcanvas.chapter-asset-seeds/v1"],
+		},
+		outputArtifactTypes: { "chapter-assets": ["tapcanvas.chapter-asset-plan/v3"] },
 	},
 	"video.clip-production.nodes.materialize/v1": {
 		inputArtifactTypes: {
@@ -514,6 +519,15 @@ export const WORKFLOW_EXECUTOR_PORT_ARTIFACT_CONTRACTS = Object.freeze({
 	"video.clip-production.assets.project/v1": {
 		inputArtifactTypes: {
 			"asset-intents": [CLIP_PRODUCTION_ASSET_INTENTS_ARTIFACT_TYPE],
+		},
+		outputArtifactTypes: {
+			"asset-items": ["tapcanvas.asset-plan-items/v2"],
+		},
+	},
+	"video.chapter-assets.preview/v1": {
+		inputArtifactTypes: {
+			"chapter-assets": ["tapcanvas.chapter-asset-plan/v3"],
+			"delivery-contract": ["tapcanvas.delivery-contract/v2"],
 		},
 		outputArtifactTypes: {
 			"asset-items": ["tapcanvas.asset-plan-items/v2"],

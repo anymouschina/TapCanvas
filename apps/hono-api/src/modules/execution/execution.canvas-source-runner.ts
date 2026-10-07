@@ -4,13 +4,42 @@ import type {
 	WorkflowCanvasGroupFacts,
 	WorkflowCanvasProjectContextFacts,
 } from "./execution.video-workflow-contract";
-import type { WorkflowAcceptedTurnSource } from "./execution.workflow-source-authority";
+import type {
+	WorkflowAcceptedTurnSource,
+	WorkflowActionableDeliverySource,
+} from "./execution.workflow-source-authority";
 import { freezeWorkflowAuthoritativeSource } from "./execution.source-lineage";
 
 type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function previousChapterExitFromSource(value: unknown): NonNullable<WorkflowCanvasProjectContextFacts["previousChapterExit"]> | null {
+	if (!isRecord(value)) return null;
+	const strings = ["chapterId", "sourceBookId", "executionId", "clipId", "state", "visual"] as const;
+	if (strings.some((field) => typeof value[field] !== "string" || !(value[field] as string).trim())) return null;
+	if (typeof value.sourceBookChapter !== "number" || !Number.isInteger(value.sourceBookChapter) || value.sourceBookChapter < 1) return null;
+	return {
+		chapterId: value.chapterId as string,
+		sourceBookId: value.sourceBookId as string,
+		sourceBookChapter: value.sourceBookChapter,
+		executionId: value.executionId as string,
+		clipId: value.clipId as string,
+		state: value.state as string,
+		visual: value.visual as string,
+	};
+}
+
+function visualContextTextRole(value: unknown): string | null {
+	if (!isRecord(value) || !isRecord(value.data)) return null;
+	if (value.data.kind !== "text") return null;
+	const roles = [
+		...(value.data.semanticKind === "projectLookBible" ? ["semanticKind=projectLookBible"] : []),
+		...(value.data.productionLayer === "anchors" ? ["productionLayer=anchors"] : []),
+	];
+	return roles.length > 0 ? roles.join(", ") : null;
 }
 
 function parseFlowData(raw: unknown): JsonRecord {
@@ -79,13 +108,16 @@ export function readWorkflowCanvasGroupFromFlowData(
 
 /**
  * Resolve a project-context source without asking the Agent to invent a canvas
- * group. Explicitly selected nodes win. For chapter scope, the frozen
- * ProjectContext carries the canonical locked chapter seed as sourceNodeId;
- * derived script/look-bible text nodes remain visible assets but are not
- * mistaken for the narrative source. A completed text-expansion workflow can
- * mark one ready node as `expanded_story_source`; when no selection or
- * canonical chapter source is provided, that structural role wins over older
- * drafts. A free-form canvas still requires one ready text source otherwise.
+ * group. Canonical and explicitly selected narrative nodes are authoritative
+ * and retain their separate node identities. For chapter scope, the frozen
+ * ProjectContext carries the canonical locked chapter seed first; explicitly
+ * selected ready narrative text nodes follow it as separate sources. An
+ * unselected draft is never promoted alongside an explicit source. On a
+ * non-chapter request, the accepted turn remains the user request when a
+ * narrative node is selected; without a selected node, it supplies the
+ * creative source. Without that brief, a completed text-expansion workflow can
+ * mark ready nodes as `expanded_story_source`; otherwise a free-form canvas
+ * requires one ready narrative text source.
  */
 export function readWorkflowCanvasProjectContextFromFlowData(
 	input: Readonly<{
@@ -94,8 +126,10 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 		projectContext: WorkflowProjectContext;
 		/** Standalone public chat may use a selected video as the only source. */
 		allowNoTextSource?: boolean;
-		/** A server-owned public turn can be the sole creative source when the caller canvas has no text node. */
+		/** The accepted turn stays a separate request and can supply creative source when no narrative node is selected or canonical. */
 		acceptedTurnSource?: WorkflowAcceptedTurnSource | null;
+		/** A selected prior delivery is an explicit narrative source, separate from the current user request. */
+		actionableDeliverySource?: WorkflowActionableDeliverySource | null;
 	}>,
 ): WorkflowCanvasProjectContextFacts {
 	const flow = parseFlowData(input.rowData);
@@ -126,19 +160,22 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 		return kind && content ? [asset.nodeId] : [];
 	}))];
 	const readyTextNodeIdSet = new Set(readyTextNodeIds);
-	const expandedStorySourceNodeIds = readyTextNodeIds.filter((nodeId) => {
+	const narrativeReadyTextNodeIds = readyTextNodeIds.filter((nodeId) => (
+		visualContextTextRole(nodesById.get(nodeId)) === null
+	));
+	const narrativeReadyTextNodeIdSet = new Set(narrativeReadyTextNodeIds);
+	const expandedStorySourceNodeIds = narrativeReadyTextNodeIds.filter((nodeId) => {
 		const node = nodesById.get(nodeId);
 		const data = node && isRecord(node.data) ? node.data : null;
 		return data?.workflowSourceRole === "expanded_story_source";
 	});
-	const selectedNodeIds = [...new Set([
-		...input.projectContext.selection.nodeIds,
-		...(input.projectContext.selection.activeNodeId
-			? [input.projectContext.selection.activeNodeId]
-			: []),
-	].map((value) => value.trim()).filter(Boolean))];
+	// Focus is UI context, not an additional source selection. In particular, a
+	// previously focused draft must not join an explicitly selected final script.
+	const selectedNodeIds = [...new Set(
+		input.projectContext.selection.nodeIds.map((value) => value.trim()).filter(Boolean),
+	)];
 	const explicitlySelectedIds = [...new Set(
-		selectedNodeIds.filter((value) => readyTextNodeIdSet.has(value)),
+		selectedNodeIds.filter((value) => narrativeReadyTextNodeIdSet.has(value)),
 	)];
 	const referenceVideoNodeIds = [...new Set(
 		selectedNodeIds.filter((value) => {
@@ -154,21 +191,40 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 		}),
 	)];
 
+	const acceptedSource = input.acceptedTurnSource;
+	const actionableDeliverySource = input.actionableDeliverySource ?? null;
+	const chapterScoped = input.projectContext.canvasId.startsWith("chapter:");
 	let sourceNodeIds: string[] = [];
 	if (input.projectContext.sourceNodeId) {
+		const canonicalNode = nodesById.get(input.projectContext.sourceNodeId);
+		const visualRole = visualContextTextRole(canonicalNode);
+		if (visualRole) {
+			throw new Error(`Project context canonical source node ${input.projectContext.sourceNodeId} is visual context (${visualRole}), not an authoritative narrative source`);
+		}
 		if (!readyTextNodeIdSet.has(input.projectContext.sourceNodeId)) {
 			throw new Error(`Project context canonical source node ${input.projectContext.sourceNodeId} is not a ready text asset`);
 		}
 		sourceNodeIds = [input.projectContext.sourceNodeId];
 	}
-	if (sourceNodeIds.length === 0) {
+	if (sourceNodeIds.length > 0) {
+		const includedSourceNodeIds = new Set(sourceNodeIds);
+		sourceNodeIds.push(...explicitlySelectedIds.filter((nodeId) => !includedSourceNodeIds.has(nodeId)));
+	} else {
 		sourceNodeIds = explicitlySelectedIds;
-		if (selectedNodeIds.length > 0 && sourceNodeIds.length === 0 && !input.allowNoTextSource) {
-			throw new Error("Project context selection does not include a ready text source node");
-		}
 	}
-	if (sourceNodeIds.length === 0) {
+	if (sourceNodeIds.length === 0 && selectedNodeIds.length > 0
+		&& !acceptedSource && !actionableDeliverySource && !input.allowNoTextSource) {
+		throw new Error("Project context selection does not include a ready text source node");
+	}
+	const acceptedTurnIsNarrativeSource = Boolean(
+		acceptedSource && !actionableDeliverySource && !chapterScoped && sourceNodeIds.length === 0,
+	);
+	if (!acceptedTurnIsNarrativeSource && sourceNodeIds.length === 0) {
 		if (input.allowNoTextSource && selectedNodeIds.length > 0) {
+			sourceNodeIds = [];
+		} else if (actionableDeliverySource && !chapterScoped) {
+			// The explicit delivery reference is the selected narrative source; do not
+			// silently supplement it with an unselected project draft.
 			sourceNodeIds = [];
 		} else if (selectedNodeIds.length === 0 && expandedStorySourceNodeIds.length > 0) {
 			// A completed text-expansion workflow is an explicit structural source
@@ -177,11 +233,11 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 			// semantic keyword routing.
 			sourceNodeIds = expandedStorySourceNodeIds;
 		} else {
-			sourceNodeIds = readyTextNodeIds;
+			sourceNodeIds = narrativeReadyTextNodeIds;
 		}
 		if (sourceNodeIds.length !== 1 && !input.allowNoTextSource) {
 			throw new Error(
-				`Project context source requires exactly one ready text node when there is no explicit canvas selection or canonical source; found ${String(sourceNodeIds.length)}`,
+				`Project context source requires exactly one ready narrative text node when there is no explicit canvas selection or canonical source; found ${String(sourceNodeIds.length)}`,
 			);
 		}
 	}
@@ -197,7 +253,9 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 		if (!kind || !content?.trim()) {
 			throw new Error(`Project context source node ${nodeId} must expose top-level kind and non-empty content facts`);
 		}
-		const frozenAsset = input.projectContext.assetSnapshot.find((asset) => asset.nodeId === nodeId);
+		const frozenAsset = input.projectContext.assetSnapshot.find((asset) => (
+			asset.flowId === input.projectContext.canvasId && asset.nodeId === nodeId
+		));
 		const declaredRevision = Number(data.sourceChapterRevision);
 		const sourceRevision = Number.isInteger(declaredRevision) && declaredRevision >= 0
 			? declaredRevision
@@ -213,23 +271,46 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 		};
 	});
 
-	const acceptedSource = input.acceptedTurnSource;
-	const authoritativeSources = sourceNodes.length > 0
-		? sourceNodes.map((node) => freezeWorkflowAuthoritativeSource({
-			nodeId: node.nodeId,
-			content: node.content,
-			...(node.label ? { label: node.label } : {}),
-			...(node.sourceRevision !== undefined ? { sourceRevision: node.sourceRevision } : {}),
-			...(node.sourceHash ? { sourceHash: node.sourceHash } : {}),
-		}))
-		: acceptedSource
-			? [{ sourceId: acceptedSource.sourceId, content: acceptedSource.text, sourceFingerprint: acceptedSource.fingerprint, kind: acceptedSource.kind }]
+	const canonicalSource = input.projectContext.sourceNodeId
+		? nodesById.get(input.projectContext.sourceNodeId) : null;
+	const canonicalData = canonicalSource && isRecord(canonicalSource.data) ? canonicalSource.data : null;
+	const previousChapterExit = input.projectContext.canvasId.startsWith("chapter:")
+		? previousChapterExitFromSource(canonicalData?.previousChapterExit) : null;
+	const canvasAuthoritativeSources = acceptedTurnIsNarrativeSource && acceptedSource
+		? [{ sourceId: acceptedSource.sourceId, content: acceptedSource.text, sourceFingerprint: acceptedSource.fingerprint, kind: acceptedSource.kind }]
+		: sourceNodes.length > 0
+			? sourceNodes.map((node) => freezeWorkflowAuthoritativeSource({
+				nodeId: node.nodeId,
+				content: node.content,
+				...(node.label ? { label: node.label } : {}),
+				...(node.sourceRevision !== undefined ? { sourceRevision: node.sourceRevision } : {}),
+				...(node.sourceHash ? { sourceHash: node.sourceHash } : {}),
+			}))
 			: [];
+	const deliveryAuthoritativeSource = actionableDeliverySource
+		? freezeWorkflowAuthoritativeSource({
+			sourceId: `actionable-delivery:${actionableDeliverySource.reference.referenceId}`,
+			sourceType: "actionable_delivery",
+			referenceId: actionableDeliverySource.reference.referenceId,
+			publicTurnId: actionableDeliverySource.reference.publicTurnId,
+			deliveredAt: actionableDeliverySource.reference.deliveredAt,
+			label: actionableDeliverySource.reference.label,
+			artifactKind: actionableDeliverySource.reference.artifactKind,
+			content: actionableDeliverySource.reference.content,
+			contentHash: actionableDeliverySource.reference.contentHash,
+		})
+		: null;
+	const authoritativeSources = deliveryAuthoritativeSource
+		? chapterScoped
+			? [...canvasAuthoritativeSources, deliveryAuthoritativeSource]
+			: [deliveryAuthoritativeSource, ...canvasAuthoritativeSources]
+		: canvasAuthoritativeSources;
 
 	return {
 		sourceMode: "project_context",
 		flowId: input.flowId,
 		sourceNodeIds,
+		...(previousChapterExit ? { previousChapterExit } : {}),
 		selectedNodeFacts: selectedNodeIds.flatMap((nodeId) => {
 			const node = nodesById.get(nodeId);
 			if (!node) return [];
@@ -244,7 +325,7 @@ export function readWorkflowCanvasProjectContextFromFlowData(
 				// visual facts or authoritative narrative. Media remains ID-bound.
 				metadata: Object.fromEntries([
 					"kind", "label", "content", "chapterText", "prompt", "description",
-					"referenceType", "roleName", "physicalIdentityKey",
+					"referenceType", "roleName", "physicalIdentityKey", "semanticKind", "productionLayer",
 				].filter((field) => !sourceNodeIds.includes(nodeId)
 					|| !["content", "chapterText", "prompt"].includes(field))
 				.flatMap((field) => typeof data[field] === "string" && data[field].trim()
@@ -276,6 +357,7 @@ export function readWorkflowCanvasProjectContextFromSnapshot(
 		projectContext: WorkflowProjectContext;
 		allowNoTextSource?: boolean;
 		acceptedTurnSource?: WorkflowAcceptedTurnSource | null;
+		actionableDeliverySource?: WorkflowActionableDeliverySource | null;
 	}>,
 ): WorkflowCanvasProjectContextFacts {
 	const root = isRecord(input.flowVersionData) ? input.flowVersionData : {};

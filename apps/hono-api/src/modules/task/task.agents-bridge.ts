@@ -1,3 +1,5 @@
+import { projectAtomicAuthorSelfCheckMetadata, type AtomicAuthorSelfCheckReceiptV1, type AtomicAuthorSelfCheckProjectionIssueV1 } from "../../../../../packages/schemas/atomic-author-selfcheck/index.cjs";
+import { projectAgentRequestContextMetrics, type AgentRequestContextMetrics } from "./agent-request-context-metrics";
 import { parseWorkflowSubmissionHandoff } from "./workflow-submission-handoff";
 import { IMAGE_UNDERSTANDING_MODEL_KEY } from "./media-understanding-model";
 import fs from "node:fs/promises";
@@ -603,6 +605,10 @@ type FlowPatchNodeFinalState = {
 };
 
 type AgentsRuntimeTraceSummary = {
+	upstreamRequestContextMetrics?: AgentRequestContextMetrics;
+	upstreamRequestContextMetricsIssue?: "invalid_request_context_metrics";
+	atomicAuthorSelfCheck?: AtomicAuthorSelfCheckReceiptV1;
+	atomicAuthorSelfCheckProjectionIssue?: AtomicAuthorSelfCheckProjectionIssueV1;
 	profile: "general" | "code" | "unknown";
 	terminalAuthority?: "user_delivery" | "workflow_action";
 	registeredToolNames: string[];
@@ -1939,6 +1945,7 @@ export function normalizeAgentsBridgeAdmissionReceiptV1(value: unknown): AgentsB
 
 export function normalizeAgentsRuntimeTraceSummary(value: unknown): AgentsRuntimeTraceSummary | null {
 	if (!isRecord(value)) return null;
+	const requestContextMetrics = projectAgentRequestContextMetrics(value.upstreamRequestContextMetrics);
 	const profileRaw = typeof value.profile === "string" ? value.profile.trim() : "";
 	const profile =
 		profileRaw === "general" || profileRaw === "code" ? profileRaw : "unknown";
@@ -2054,6 +2061,10 @@ export function normalizeAgentsRuntimeTraceSummary(value: unknown): AgentsRuntim
 			}
 			: null;
 	return {
+		...projectAtomicAuthorSelfCheckMetadata(value),
+		...(requestContextMetrics.metrics ? { upstreamRequestContextMetrics: requestContextMetrics.metrics } : {}),
+		...(requestContextMetrics.issue || value.upstreamRequestContextMetricsIssue === "invalid_request_context_metrics"
+			? { upstreamRequestContextMetricsIssue: "invalid_request_context_metrics" as const } : {}),
 		profile,
 		...(terminalAuthority ? { terminalAuthority } : {}),
 		registeredToolNames: readTrimmedStringArray(value.registeredToolNames).slice(0, 256),
@@ -9483,6 +9494,8 @@ export async function runAgentsBridgeChatTask(
 						? { outputContract }
 						: {}),
 					...(options?.directForcedAgentExecution === true ? {
+						...(typeof extras.outputArtifactType === "string" && extras.outputArtifactType.trim()
+							? { outputArtifactType: extras.outputArtifactType.trim() } : {}),
 						...(typeof extras.structuredOutputSourceContext === "string" ? { structuredOutputSourceContext: extras.structuredOutputSourceContext } : {}),
 						...(extras.resumeStructuredOutput === true ? { resumeStructuredOutput: true } : {}),
 						...(isRecord(extras.structuredOutputRepair) ? { structuredOutputRepair: extras.structuredOutputRepair } : {}),

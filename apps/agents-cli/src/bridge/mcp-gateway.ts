@@ -229,8 +229,10 @@ async function executeRemoteTool(
   if (name === STRUCTURED_OUTPUT_TOOL && runtime.outputContract) {
     const inspected = inspectStructuredSubmission(runtime.outputContract, args.output);
     runtime.structuredSubmission = inspected.submission;
-    const outputText = inspected.submission ? 'Structured output accepted. End this workflow action without rewriting the artifact.'
-      : JSON.stringify({ code: 'structured_output_contract_invalid', issues: inspected.issues, requiredAction: 'Repair these structural issues and resubmit output in this same turn.' });
+    const outputText = inspected.submission ? ['Structured output accepted. End this workflow action without rewriting the artifact.',
+      ...(inspected.observations.length ? [JSON.stringify({ observations: inspected.observations })] : [])].join('\n')
+      : JSON.stringify({ code: 'structured_output_contract_invalid', issues: inspected.issues, observations: inspected.observations,
+        requiredAction: 'Repair these structural issues and resubmit output in this same turn.' });
     appendExecution(runtime, { name, args, startedAt, startedAtMs, status: inspected.submission ? 'succeeded' : 'failed', outputText });
     return { content: [{ type: 'text', text: outputText }], ...(inspected.submission ? {} : { isError: true }) };
   }

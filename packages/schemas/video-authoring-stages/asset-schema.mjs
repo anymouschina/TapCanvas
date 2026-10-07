@@ -69,7 +69,10 @@ export function beatSheetObjectRegistrySchema(contract = {}) {
 }
 
 export function beatSheetAssetPlanVariants() {
-  const identityBoardSpec = {
+  // The four-view board is a host constant (CHARACTER_IDENTITY_BOARD_SPEC): optional for the
+  // author, never constrained, always replaced by the host. An author once wrote
+  // readableTextVisible=false and the single submission failed on a fact it does not own.
+  const identityBoardSpecShape = {
     type: "object",
     properties: {
       layout: { type: "string", enum: ["identity_board_four_view"] },
@@ -90,6 +93,10 @@ export function beatSheetAssetPlanVariants() {
       "brandingVisible", "neutralBaseState", "canonicalNameVisible", "ipSafeOriginal",
     ],
     additionalProperties: false,
+  };
+  const identityBoardSpec = {
+    type: "object",
+    description: `可省略：四视图设定板规格由宿主盖章（${Object.keys(identityBoardSpecShape.properties).join("、")} 均为宿主常量），写了也会被宿主替换。`,
   };
   const allProperties = {
     objectId: {
@@ -124,7 +131,7 @@ export function beatSheetAssetPlanVariants() {
         ...Object.fromEntries(fields.map((field) => [field, allProperties[field]])),
         referenceAssetBindings: generationReferenceBindingsSchema,
       },
-      required: fields,
+      required: fields.filter((field) => field !== "identityBoardSpec"),
       additionalProperties: false,
     };
   };

@@ -25,6 +25,7 @@ import {
   RequestMcpGateway,
   type RemoteToolExecution,
 } from "./mcp-gateway.js";
+import { loadRequiredSkillResources, outputArtifactType, renderSkillResources } from "./skill-preload.js";
 
 const require = createRequire(import.meta.url);
 const appRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -136,6 +137,7 @@ type ExternalSkillMaterialization = Readonly<{
 function structuredPrompt(
   request: AgentsChatRequest,
   externalSkillNames: ReadonlyMap<string, string>,
+  preloadedResources: string,
 ): string {
   const requiredPreFinalAction = [
     "<tapcanvas_required_pre_final_action>",
@@ -165,6 +167,7 @@ function structuredPrompt(
       ].join("\n"),
     );
   }
+  if (preloadedResources) sections.push(preloadedResources);
   if (request.referenceImages.length > 0 || request.assetInputs.length > 0) {
     sections.push(
       [
@@ -491,6 +494,11 @@ export class HarnessRuntime {
       );
     }
 
+    const preloadedResources = renderSkillResources(await loadRequiredSkillResources({
+      directory: this.skillDirectory,
+      requiredSkills: request.requiredSkills,
+      artifactType: outputArtifactType(request.turnContext),
+    }));
     const externalSkills = await materializeExternalSkills(request);
 		const remoteToolConfig = request.remoteToolConfig
 			? {
@@ -558,7 +566,7 @@ export class HarnessRuntime {
     abortSignal.addEventListener("abort", abort, { once: true });
 
     try {
-      const result = await harness.run(structuredPrompt(request, externalSkills.namesByKey), {
+      const result = await harness.run(structuredPrompt(request, externalSkills.namesByKey, preloadedResources), {
         sessionId: buildHarnessExecutionSessionId(request, randomUUID()),
         onNotification: (notification: HarnessNotification) => projector.accept(notification),
       });

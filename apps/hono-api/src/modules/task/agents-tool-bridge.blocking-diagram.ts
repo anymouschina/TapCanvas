@@ -809,3 +809,31 @@ export async function renderBlockingDiagramToCanvas(input: {
     });
   }
 }
+
+export async function storeBlockingDiagram(input: {
+  c: AppContext;
+  requestUserId: string;
+  plan: BlockingDiagram;
+  contentHash: string;
+}): Promise<{ imageUrl: string; key: string }> {
+  const storageConfig = resolveObjectStorageConfig(input.c.env);
+  if (!storageConfig) {
+    throw new AppError("对象存储未配置", { status: 500, code: "object_storage_unconfigured" });
+  }
+  const out = renderBlockingDiagram(input.plan);
+  const client = createObjectStorageClientFromConfig(storageConfig);
+  const safeUser = input.requestUserId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const key = `gen/images/${safeUser}/${datePrefix}/staging-${input.contentHash}.png`;
+  await client.send(
+    new PutObjectCommand({
+      Bucket: storageConfig.bucket,
+      Key: key,
+      Body: out,
+      ContentType: "image/png",
+      CacheControl: "public, max-age=31536000, immutable",
+    }),
+  );
+  const publicBase = storageConfig.publicBase.trim().replace(/\/+$/, "");
+  return { imageUrl: publicBase ? `${publicBase}/${key}` : `/${key}`, key };
+}

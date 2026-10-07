@@ -15,7 +15,7 @@ const chapterAssets = {
 
 function packet(source: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
 	return validateClipProductionPacket({
-		protocolVersion: "tapcanvas.clip-production-packet/v1", clipId: "clip-1", clipIndex: 0,
+		protocolVersion: "tapcanvas.clip-production-packet/v2", clipId: "clip-1", clipIndex: 0,
 		durationSeconds: 5, videoInputMode: "image_to_video",
 		firstFrameAsset: { assetId: "frame-1", state: "base" },
 		referenceAssets: [{ assetId: "frame-1", state: "base" }],
@@ -45,16 +45,24 @@ describe("Clip assets use frozen chapter identities", () => {
 		expect(() => verifyClipAssetsAgainstChapterRegistry(invalid, chapterAssets)).toThrow("must resolve one frozen background plan");
 	});
 
+	it("verifies real asset references without requiring optional staging", () => {
+		const { blockingPlan: _blockingPlan, ...withoutStaging } = packet({ mode: "reuse", existingAssetId: "ready-image-1", existingProjectId: "project-1" });
+		expect(() => verifyClipAssetsAgainstChapterRegistry(withoutStaging, chapterAssets)).not.toThrow();
+		expect(() => verifyClipAssetsAgainstChapterRegistry({ ...withoutStaging,
+			assetIntents: withoutStaging.assetIntents.map((intent) => ({ ...intent, registryObjectId: "missing" })) }, chapterAssets))
+			.toThrow("unknown chapter object");
+	});
+
 	it("binds the author schema to frozen chapter background IDs", () => {
 		const source = {
 			protocolVersion: "tapcanvas.clip-source-segment/v1", clipId: "clip-1", clipIndex: 0,
 			durationSeconds: 5, sourceId: "source", sourceFingerprint: "hash",
 			sourceRanges: [{ sourceIndex: 0, startOffset: 0, endOffset: 2, sourceId: "source", sourceFingerprint: "hash" }],
 		};
-		const bound = bindClipProductionPacketAuthoringContract({ jsonSchema: {}, allowedFields: [] }, source, undefined,
+		const bound = bindClipProductionPacketAuthoringContract({ jsonSchema: {}, allowedFields: [] }, source, ["image_to_video"],
 			"image-model", "16:9", "2K", chapterAssets);
-		const schema = bound.jsonSchema as { properties: { blockingPlan: { properties: { backgroundPlanIndex: unknown } } } };
-		expect(schema.properties.blockingPlan.properties.backgroundPlanIndex).toMatchObject({ type: "integer", minimum: 0, maximum: 0 });
+		const schema = bound.jsonSchema as { properties: { blockingPlan: { properties: { backgroundObjectId: unknown } } } };
+		expect(schema.properties.blockingPlan.properties.backgroundObjectId).toMatchObject({ type: "string", enum: ["background-main"] });
 	});
 
 	it("reads the persisted typed Agent result before binding every Clip to the chapter registry", () => {
@@ -67,9 +75,12 @@ describe("Clip assets use frozen chapter identities", () => {
 			durationSeconds: 5, sourceId: "source", sourceFingerprint: "hash",
 			sourceRanges: [{ sourceIndex: 0, startOffset: 0, endOffset: 2, sourceId: "source", sourceFingerprint: "hash" }],
 		};
-		const bound = bindClipProductionPacketAuthoringContract({ jsonSchema: {}, allowedFields: [] }, source, undefined,
+		const bound = bindClipProductionPacketAuthoringContract({ jsonSchema: {}, allowedFields: [] }, source, ["image_to_video"],
 			"image-model", "16:9", "2K", authored);
 		const schema = bound.jsonSchema as { properties: { assetIntents: { items: { properties: { registryObjectId: unknown } } } } };
-		expect(schema.properties.assetIntents.items.properties.registryObjectId).toEqual({ type: "string", enum: ["person-1"] });
+		expect(schema.properties.assetIntents.items.properties.registryObjectId).toMatchObject({ type: "string", enum: ["person-1"] });
+		// The writer reads each frozen identity from the contract instead of paging through the asset plan.
+		expect((schema.properties.assetIntents.items.properties.registryObjectId as { description: string }).description)
+			.toMatch(/^Frozen chapter objects; choose by identity[\s\S]*\nperson-1=/);
 	});
 });

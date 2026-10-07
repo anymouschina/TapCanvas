@@ -2,6 +2,7 @@ const TRANSIENT_DATABASE_ERROR_CODES = new Set([
 	"40P01", // PostgreSQL deadlock_detected
 	"40001", // PostgreSQL serialization_failure
 	"P2034", // Prisma transaction conflict / deadlock
+	"57P02", // PostgreSQL crash_shutdown
 	"57P03", // PostgreSQL cannot_connect_now / database startup
 	"08001", // PostgreSQL client unable to establish connection
 	"08003", // PostgreSQL connection does not exist

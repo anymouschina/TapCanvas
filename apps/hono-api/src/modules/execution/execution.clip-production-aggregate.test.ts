@@ -19,7 +19,7 @@ function clip(index: number) {
     displayName: '主角', referenceType: 'character', referenceAssetBindings: [],
     imageSource: { mode: 'generate', generationSpecVersion: 'v1', generationSpec: {
       prompt: 'shared exact reference', negativePrompt: 'no drift', modelKey: 'image', aspectRatio: '16:9', size: '2K' } } };
-  const packet = { protocolVersion: 'tapcanvas.clip-production-packet/v1', clipId, clipIndex: index,
+  const packet = { protocolVersion: 'tapcanvas.clip-production-packet/v2', clipId, clipIndex: index,
     durationSeconds: 5, videoInputMode: 'image_to_video', videoPrompt: `original prompt ${index}`,
     blockingPlan: clipProductionBlockingFixture(), clipFacts: { action: "source action" },
     sourceRanges: source.sourceRanges, firstFrameAsset: { assetId: intent.assetId, state: intent.state },
@@ -50,8 +50,10 @@ describe('independent Clip aggregation', () => {
     const result = aggregateClipProduction(inputs());
     expect(inspectWorkflowPromptPackageAdmission(result.ports['prompt-package']).structurallyValid).toBe(true);
     expect(result.ports['prompt-package']).toMatchObject({ clips: [
-      { itemId: 'clip-0', clipIndex: 0, index: 0, prompt: 'original prompt 0' },
-      { itemId: 'clip-1', clipIndex: 1, index: 1, prompt: 'original prompt 1' },
+      { itemId: 'clip-0', clipIndex: 0, index: 0, sourcePrompt: 'original prompt 0',
+        prompt: `参考：图1=主角。\noriginal prompt 0` },
+      { itemId: 'clip-1', clipIndex: 1, index: 1, sourcePrompt: 'original prompt 1',
+        prompt: `参考：图1=主角。\noriginal prompt 1` },
     ], deliveryEvidence: { clipCount: 2, totalDurationSeconds: 10 } });
     expect(result.ports.estimate).toMatchObject({ estimatedCredits: 4, perClip: [{ itemId: 'clip-0' }, { itemId: 'clip-1' }] });
     expect(result.ports['video-assets']).toMatchObject({ items: [{ itemId: 'clip-0' }, { itemId: 'clip-1' }] });

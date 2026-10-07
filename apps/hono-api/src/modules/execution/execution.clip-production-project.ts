@@ -6,12 +6,18 @@ import {
 	type ClipProductionAssetIdentity,
 	type ClipProductionAssetIntent,
 	type ClipProductionPacket,
+	type ClipProductionSpeechEvent,
 } from "../../../../../packages/schemas/clip-production-packet/index.mjs";
 import {
 	VIDEO_CLIP_PRODUCTION_WORKFLOW_INPUT_MODES,
 	type ClipProductionMaterializedImageReference,
 	type VideoClipProductionInputMode,
 } from "./execution.clip-production";
+import {
+	renderClipProductionReferenceHeader,
+	renderClipProductionReferencePrompt,
+	type ClipProductionReferenceBinding,
+} from "./execution.clip-production-reference-prompt";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -39,7 +45,7 @@ function persistentHttpUrl(value: unknown, field: string): string {
 
 function readPacket(value: unknown, field: string): ClipProductionPacket {
 	if (!isRecord(value)
-		|| value.protocolVersion !== "tapcanvas.clip-production-packet/v1"
+		|| value.protocolVersion !== "tapcanvas.clip-production-packet/v2"
 		|| typeof value.clipId !== "string"
 		|| typeof value.videoPrompt !== "string"
 		|| !Array.isArray(value.assetIntents)
@@ -76,6 +82,8 @@ export function projectClipProductionPromptPackage(input: Readonly<{
 	clipProductionCollection: unknown;
 	assetBindings: unknown;
 	deliveryContract: unknown;
+	/** The run's frozen style lock; it opens every Clip prompt. */
+	stylePrompt?: string | null;
 }>): Readonly<Record<string, unknown>> {
 	if (!isWorkflowCollection(input.clipProductionCollection)) {
 		throw new Error("Clip production projection requires the completed clip-production collection");
@@ -154,11 +162,22 @@ export function projectClipProductionPromptPackage(input: Readonly<{
 	}
 
 	const promptClips = clips.map((packet, index) => {
-		const imageReferences = packet.referenceAssets.map((identity) => {
-			const reference = referencesByIdentity.get(identityKey(identity));
-			if (!reference) throw new Error(`Clip ${packet.clipId} requires missing generated image URL for ${identityKey(identity)}`);
-			return reference;
+		const boundReferences = packet.referenceAssets.map((assetIdentity) => {
+			const key = identityKey(assetIdentity);
+			const reference = referencesByIdentity.get(key);
+			if (!reference) throw new Error(`Clip ${packet.clipId} requires missing generated image URL for ${key}`);
+			const intent = intentsByIdentity.get(key);
+			if (!intent) throw new Error(`Clip ${packet.clipId} has no frozen semantic identity for reference ${key}`);
+			return { reference, binding: {
+				nodeId: reference.nodeId,
+				name: intent.displayName,
+				referenceType: intent.referenceType,
+			} satisfies ClipProductionReferenceBinding };
 		});
+		const imageReferences = boundReferences.map(({ reference }) => reference);
+		const referenceBindings = boundReferences.map(({ binding }) => binding);
+		const referenceImages = imageReferences.map((reference) => ({ sourceNodeIds: [reference.nodeId] }));
+		const referenceHeader = renderClipProductionReferenceHeader({ bindings: referenceBindings, images: referenceImages });
 		if (packet.videoInputMode !== "text_to_video" && imageReferences.length === 0) {
 			throw new Error(`Clip ${packet.clipId} requires at least one generated image reference`);
 		}
@@ -174,13 +193,26 @@ export function projectClipProductionPromptPackage(input: Readonly<{
 		if (packet.videoInputMode === "text_to_video" && (firstFrame || imageReferences.length > 0)) {
 			throw new Error(`Clip ${packet.clipId} text_to_video cannot declare image inputs`);
 		}
-		const prompt = packet.videoPrompt;
+		const prompt = renderClipProductionReferencePrompt({
+			prompt: packet.videoPrompt, speechEvents: packet.speechEvents,
+			bindings: referenceBindings, images: referenceImages, stylePrompt: input.stylePrompt,
+		});
+		const speechEvents: readonly ClipProductionSpeechEvent[] | undefined = packet.speechEvents;
+		const spokenLineIds = speechEvents?.map((event) => event.speechEventId) ?? [];
+		const sourceDialogueLineIds = speechEvents
+			?.filter((event) => event.textOrigin === "source_quote")
+			.map((event) => event.speechEventId) ?? [];
 		const effectAssetIds = imageReferences.map((reference) => reference.effectAssetId);
 		return {
 			itemId: packet.clipId,
 			index,
 			clipIndex: packet.clipIndex,
 			prompt,
+			sourcePrompt: packet.videoPrompt,
+			...(input.stylePrompt ? { stylePrompt: input.stylePrompt } : {}),
+			...(speechEvents === undefined ? {} : { speechEvents }),
+			referenceBindings,
+			referenceHeader,
 			durationSeconds: packet.durationSeconds,
 			videoInputMode: packet.videoInputMode,
 			firstFrameAsset: packet.firstFrameAsset,
@@ -195,7 +227,7 @@ export function projectClipProductionPromptPackage(input: Readonly<{
 			structuredClip: null,
 			clipFacts: packet.clipFacts,
 			sourceRanges: packet.sourceRanges,
-			authoringEvidence: { sourceDialogueLineIds: [], spokenLineIds: [] },
+			authoringEvidence: { sourceDialogueLineIds, spokenLineIds },
 			promptMetrics: {
 				writerEnvelopeCharacters: Array.from(prompt).length,
 				providerPromptCharacters: Array.from(prompt).length,
@@ -206,6 +238,12 @@ export function projectClipProductionPromptPackage(input: Readonly<{
 	});
 	const promptCharacters = promptClips.reduce((total, clip) => total + clip.promptMetrics.providerPromptCharacters, 0);
 	const totalDurationSeconds = promptClips.reduce((total, clip) => total + clip.durationSeconds, 0);
+	const sourceSpeechLineCount = promptClips.reduce((total, clip) => total + clip.authoringEvidence.sourceDialogueLineIds.length, 0);
+	const executableSpeechLineCount = promptClips.reduce((total, clip) => total + clip.authoringEvidence.spokenLineIds.length, 0);
+	const boundSpeechTrackCount = clips.filter((packet) => packet.speechEvents !== undefined).length;
+	const speechEvidenceStatus = boundSpeechTrackCount === clips.length
+		? "projected_from_clip_packets"
+		: boundSpeechTrackCount === 0 ? "not_projected_from_clip_packets" : "partially_projected_from_clip_packets";
 	return {
 		protocolVersion: "2",
 		artifactType: "tapcanvas.prompt-package/v2",
@@ -218,13 +256,10 @@ export function projectClipProductionPromptPackage(input: Readonly<{
 			source: "workflow_prompt_package",
 			clipCount: promptClips.length,
 			totalDurationSeconds,
-			// This packet contract does not expose a structured speech ledger. Zero
-			// means zero ledger entries projected here; it makes no claim about
-			// dialogue that may appear in the authored videoPrompt.
-			speechEvidenceStatus: "not_projected_from_clip_packets",
-			sourceSpeechLineCount: 0,
-			narrativeSpeechLineCount: 0,
-			executableSpeechLineCount: 0,
+			speechEvidenceStatus,
+			sourceSpeechLineCount,
+			narrativeSpeechLineCount: executableSpeechLineCount - sourceSpeechLineCount,
+			executableSpeechLineCount,
 			assetBindingCount: 0,
 			embeddedAuthoringReviewCount: 0,
 			writerEnvelopeCharacters: promptCharacters,

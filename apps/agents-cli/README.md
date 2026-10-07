@@ -92,6 +92,13 @@ Bridge 在 Hono 事实型 prompt 之外固定注入唯一产品身份：面向�
 
 仓库 Skills 通过 `DSH_BUNDLED_SKILL_DIR` 交给 DeepSeek Harness 的 filesystem skill provider。`requiredSkills` 会作为本轮显式约束进入上下文，具体读取仍通过 Harness `skill` 工具完成。
 
+Bridge 只对本轮明确列出的 bundled `requiredSkills` 读取其 frontmatter 声明：
+`autoload-resources` 始终预读；`metadata.artifact-preload` 仅匹配调用方冻结的
+`outputArtifactType`，预读其明确列出的 SKILL.md 或 reference 正文。其它知识仍由
+Harness 按需选择。资源路径和 symlink 必须位于该 Skill 目录内；缺文件、空正文、
+非法元数据或总量超过 300,000 字符均返回 `skill_preload_failed`，不会截断或隐式跳过。
+该适配不包含产品阶段路由，不加载 Pro 的自研 loop、Palace 或默认全量 Skill 套餐。
+
 外部用户/商城 Skill 必须同时带有 `externalSkills`、`requiredSkillCalls` 和可信 `externalSkillResolverConfig`；缺解析器会显式拒绝请求，禁止把“未加载”伪报为成功。
 
 ### Workflow 结构化产物
@@ -99,12 +106,22 @@ Bridge 在 Hono 事实型 prompt 之外固定注入唯一产品身份：面向�
 已同步一键成片的章节编排、共享资产提取、逐 Clip 设计、逐 Clip writer 与配套技能；
 执行内核仍是 DeepSeek Harness，不加载旧自研 agent loop。
 
+一键成片 v135 使用章节 `tapcanvas.chapter-sequence/v4` 与生产包
+`tapcanvas.clip-production-packet/v2`：章级剧情和声音由作者冻结，Clip writer 用
+`scene + shots` 与事件引用交付；宿主只按真实引用编译。screenwriter、authoring-stages、
+prompt-writer 的当前合同与导演、角色卡、分镜参考随仓库分发，不预装个人资产、评测工作区
+或 Pro 运维配置。故事事实账本参考只在动态授权工具实际提供该能力时适用。
+
 声明 `outputContract` 的原子工作流节点挂载私有 `submit_structured_output`，以冻结 JSON Schema
 和显式字段、类型、数组长度约束检验提交。结构错误作为工具失败携带具体字段路径返回当前
 Harness turn，作者在同一执行链中修订后重新提交。成功提交的对象直接序列化为响应 `text`，
 并以 `structuredOutput` 返回；不从自然语言最终回答猜测或提取 JSON。
 缺少成功提交回执，即使 Harness 正常结束也明确失败。业务节点仍按其完整 typed-port 合同
 执行下游结构校验；Bridge 不判断创作内容语义、不制造默认内容。
+
+结构校验复用共享 schema 的本地 `$ref`、数组唯一性、冻结引用身份及事实相等、
+输入输出关系和来源区间合同。`$defs` 在 `output` 参数信封根保留一份，非法/循环引用
+以 `$ref` issue 拒收；未知引用事实仅作为可检索 observation，不成为语义质量门禁。
 
 ### 请求级工具与交付收口
 
@@ -155,6 +172,10 @@ pnpm --filter agents test
 ```
 
 `build` 会验证官方 `@deepseek-ai/dsh` 精确版本和可执行入口。测试覆盖请求契约、密钥隔离、延迟 schema 门禁、MCP 授权/转发、真实失败记录。
+
+生产 Bridge 镜像用本目录独立 `pnpm-lock.yaml` 做 frozen install；新增依赖必须同时更新
+根工作区锁与此锁。镜像在 builder 与 runtime 均保留 `/packages/schemas` 下 Bridge 实际
+引用的结构合同，使 `/opt/agents-cli/src/bridge` 和 `dist/bridge` 的相对导入一致。
 
 DeepSeek Harness 当前仍标记为 developer preview。TapCanvas 使用精确版本锁定；升级时必须同步升级全部 Harness 包，并重新执行 profile 握手、Bridge 测试和 Hono 集成测试，禁止只升级其中一个插件。
 

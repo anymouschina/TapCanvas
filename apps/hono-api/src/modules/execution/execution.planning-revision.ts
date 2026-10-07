@@ -1,3 +1,4 @@
+import { decodeWorkflowOutput } from "./execution.output-storage";
 import { z } from "zod";
 import type { MaterialAssetDto } from "../material/material.schemas";
 import { findWorkflowNode, resolveWorkflowNodeExecutorRef } from "./execution.node-runtime";
@@ -58,7 +59,7 @@ export function prepareWorkflowPlanningRevision(input: {
     const semantics = executor ? resolveCoreWorkflowExecutorSemantics(executor) : null;
     if (!semantics) throw new Error(`planning_revision_executor_unknown:${run.node_id}`);
     if (semantics.sideEffect === "none") continue;
-    const output: unknown = run.output_refs ? JSON.parse(run.output_refs) : null;
+    const output: unknown = decodeWorkflowOutput(run.output_refs);
     if (["success", "running", "waiting_external"].includes(run.status) || hasExternalReceipt(output)) {
       throw new Error(`planning_revision_has_external_receipt:${run.node_id}`);
     }

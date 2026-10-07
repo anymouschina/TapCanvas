@@ -20,11 +20,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    // Mirrors .env.example so modules that validate required VITE_* config at import time can load.
+    // Explicit test-only storage origins allow import-time configuration validation without production hosts.
     env: {
       VITE_OBJECT_STORAGE_PROVIDER: 'tos',
-      VITE_TOS_PUBLIC_BASE_URL: 'https://tanvas-ai.tos-cn-guangzhou.volces.com',
-      VITE_R2_PUBLIC_BASE_URL: 'https://assets.tapcanvas.uk',
+      VITE_TOS_PUBLIC_BASE_URL: 'https://tos.example.invalid',
+      VITE_R2_PUBLIC_BASE_URL: 'https://r2.example.invalid',
     },
     setupFiles: [resolve(webRoot, '_test/setup.ts')],
     poolOptions: { threads: { minThreads: 1, maxThreads: 2 } },

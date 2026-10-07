@@ -1,0 +1,164 @@
+[
+  {
+    "id": "cinematic-narrative",
+    "name": "影视叙事分镜",
+    "description": "16:9 影视级小说/漫剧忠实改编多格连贯分镜：每格=景别+机位+运镜+对白口播，电影写实、无气泡无快切",
+    "previewUrl": "/storyboard-recipes/cinematic-narrative.jpg",
+    "promptTemplatePath": "cinematic-narrative/recipe.md",
+    "gridSpec": {
+      "rows": 2,
+      "cols": 3
+    },
+    "aspect": "16:9",
+    "outputSize": "2K"
+  },
+  {
+    "id": "grid-3x3",
+    "name": "3×3 网格分镜",
+    "description": "9 格连续动作网格，单张合成，最稳的图生视频喂法",
+    "previewUrl": "/storyboard-recipes/grid-3x3.jpg",
+    "promptTemplatePath": "grid-3x3/recipe.md",
+    "gridSpec": {
+      "rows": 3,
+      "cols": 3
+    },
+    "aspect": "1:1",
+    "outputSize": "2K"
+  },
+  {
+    "id": "single-panel",
+    "name": "单张分镜",
+    "description": "单张 6 格标注分镜，品牌宣传/短剧",
+    "previewUrl": "/storyboard-recipes/single-panel.jpg",
+    "promptTemplatePath": "single-panel/recipe.md",
+    "gridSpec": {
+      "rows": 2,
+      "cols": 3
+    },
+    "aspect": "16:9",
+    "outputSize": "2K"
+  },
+  {
+    "id": "multiframe-montage",
+    "name": "多帧快切蒙太奇",
+    "description": "12 格 4×3，跟随帧序生成快切剪辑",
+    "previewUrl": "/storyboard-recipes/multiframe-montage.jpg",
+    "promptTemplatePath": "multiframe-montage/recipe.md",
+    "gridSpec": {
+      "rows": 3,
+      "cols": 4
+    },
+    "aspect": "16:9",
+    "outputSize": "2K"
+  },
+  {
+    "id": "luxury-pitchdeck",
+    "name": "奢侈品编辑分镜",
+    "description": "12 格 3×4 pitch-deck，奢侈品/编辑美学",
+    "previewUrl": "/storyboard-recipes/luxury-pitchdeck.jpg",
+    "promptTemplatePath": "luxury-pitchdeck/recipe.md",
+    "gridSpec": {
+      "rows": 4,
+      "cols": 3
+    },
+    "aspect": "9:16",
+    "outputSize": "2K"
+  },
+  {
+    "id": "editorial-8panel",
+    "name": "成本可控8格",
+    "description": "8 格 4 列 editorial 网格，真人写实，成本可控（先锁分镜再出视频）",
+    "previewUrl": "/storyboard-recipes/editorial-8panel.jpg",
+    "promptTemplatePath": "editorial-8panel/recipe.md",
+    "gridSpec": {
+      "rows": 2,
+      "cols": 4
+    },
+    "aspect": "16:9",
+    "outputSize": "2K"
+  },
+  {
+    "id": "timestamped-process",
+    "name": "时间戳分段",
+    "description": "按 [0-2s][2-4s]… 时间戳分段的工艺/美食/开箱片",
+    "previewUrl": "/storyboard-recipes/timestamped-process.jpg",
+    "promptTemplatePath": "timestamped-process/recipe.md",
+    "aspect": "9:16",
+    "outputSize": "2K"
+  },
+  {
+    "id": "anime-op",
+    "name": "动漫OP",
+    "description": "动漫 OP / 高速剪辑关键视觉",
+    "previewUrl": "/storyboard-recipes/anime-op.jpg",
+    "promptTemplatePath": "anime-op/recipe.md",
+    "aspect": "16:9",
+    "outputSize": "2K"
+  },
+  {
+    "id": "choreography-grid",
+    "name": "舞蹈编舞网格",
+    "description": "4×4 16 格连续编舞分解，舞蹈/动作序列",
+    "previewUrl": "/storyboard-recipes/choreography-grid.jpg",
+    "promptTemplatePath": "choreography-grid/recipe.md",
+    "gridSpec": {
+      "rows": 4,
+      "cols": 4
+    },
+    "aspect": "9:16",
+    "outputSize": "2K"
+  },
+  {
+    "id": "comic-page",
+    "name": "漫画页",
+    "description": "对角多格漫画页 + 对白气泡，叙事短片",
+    "previewUrl": "/storyboard-recipes/comic-page.jpg",
+    "promptTemplatePath": "comic-page/recipe.md",
+    "aspect": "4:3",
+    "outputSize": "2K"
+  },
+  {
+    "id": "product-ad",
+    "name": "电商产品广告",
+    "description": "hero 产品图 + 分镜，电商带货短视频",
+    "previewUrl": "/storyboard-recipes/product-ad.jpg",
+    "promptTemplatePath": "product-ad/recipe.md",
+    "gridSpec": {
+      "rows": 2,
+      "cols": 3
+    },
+    "aspect": "9:16",
+    "outputSize": "2K"
+  },
+  {
+    "id": "game-ui-concept",
+    "name": "游戏UI概念",
+    "description": "含 HUD 的游戏 UI 截图，伪实机/游戏概念",
+    "previewUrl": "/storyboard-recipes/game-ui-concept.jpg",
+    "promptTemplatePath": "game-ui-concept/recipe.md",
+    "aspect": "16:9",
+    "outputSize": "2K"
+  },
+  {
+    "id": "casting-grid",
+    "name": "选角试镜板",
+    "description": "4 格选角板，一次试 4 位演员省额度",
+    "previewUrl": "/storyboard-recipes/casting-grid.jpg",
+    "promptTemplatePath": "casting-grid/recipe.md",
+    "gridSpec": {
+      "rows": 1,
+      "cols": 4
+    },
+    "aspect": "16:9",
+    "outputSize": "2K"
+  },
+  {
+    "id": "character-intro",
+    "name": "角色登场卡",
+    "description": "游戏角色登场 reveal 画面 + UI 渐入",
+    "previewUrl": "/storyboard-recipes/character-intro.jpg",
+    "promptTemplatePath": "character-intro/recipe.md",
+    "aspect": "16:9",
+    "outputSize": "2K"
+  }
+]

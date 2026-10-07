@@ -1,3 +1,4 @@
+import { decodeWorkflowOutput } from "./execution.output-storage";
 import { parseWorkflowExecutionSemanticsV2 } from "@tapcanvas/workflow-kernel-protocol";
 import type { PrismaClient } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
@@ -134,7 +135,7 @@ function parseProviderReceipts(value: string | null): readonly string[] | undefi
 export function mapWorkflowNodeAttemptRow(row: WorkflowNodeAttemptRow): WorkflowNodeAttemptDto {
 	const semantics = parseWorkflowExecutionSemanticsV2(parseJson(row.semantics_snapshot, "Workflow node attempt semanticsSnapshot"));
 	const inputRefs = parseJson(row.input_refs, "Workflow node attempt inputRefs");
-	const outputRefs = parseJson(row.output_refs, "Workflow node attempt outputRefs");
+	const outputRefs = row.output_refs === null ? undefined : decodeWorkflowOutput(row.output_refs);
 	const toolCalls = parseJson(row.tool_calls, "Workflow node attempt toolCalls");
 	const providerReceipts = parseProviderReceipts(row.provider_receipts);
 	const tokenUsage = parseJson(row.token_usage, "Workflow node attempt tokenUsage");

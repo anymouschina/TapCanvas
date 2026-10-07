@@ -5,11 +5,43 @@ import {
 } from "./execution.snapshot-runtime";
 
 describe("prepareWorkflowExecutionSnapshotRerun", () => {
+	it("bounds a frozen rerun before media while preserving model and input facts", () => {
+		const node = (id: string) => ({ id, type: "taskNode", data: {
+			kind: id === "trigger" ? "workflowTrigger" : "workflowStage",
+			adminWorkflow: true, workflowInstanceId: "test",
+		} });
+		const snapshot = {
+			nodes: [node("trigger"), node("author"), node("media")],
+			edges: [{ source: "trigger", target: "author" }, { source: "author", target: "media" }],
+			workflowExecutionScope: { triggerNodeId: "trigger" },
+			workflowDirectAgentModelSelection: { model: "original-model", source: "user_preference" },
+			workflowProjectContext: { version: 3, projectId: "project", canvasId: "chapter:chapter",
+				sourceNodeId: null, permissions: {}, projectAssetIds: [], selectedAssetIds: [], assetSnapshot: [],
+				sourceText: "complete frozen source" },
+		};
+		const before = structuredClone(snapshot);
+		const result = prepareWorkflowExecutionSnapshotRerun(snapshot, { stopAfterNodeId: "author" });
+		expect(result.data.nodes).toEqual(snapshot.nodes.slice(0, 2));
+		expect(result.data.edges).toEqual(snapshot.edges.slice(0, 1));
+		expect(result.data.workflowDirectAgentModelSelection).toEqual(snapshot.workflowDirectAgentModelSelection);
+		expect(result.data.workflowProjectContext).toEqual(snapshot.workflowProjectContext);
+		expect(result.projectContext?.projectId).toBe("project");
+		expect(result.projectContext?.canvasId).toBe("chapter:chapter");
+		expect(result.stopAfterNodeId).toBe("author");
+		expect(snapshot).toEqual(before);
+		expect(() => prepareWorkflowExecutionSnapshotRerun(snapshot, { stopAfterNodeId: "unknown" })).toThrow("not reachable");
+		expect(() => prepareWorkflowExecutionSnapshotRerun(snapshot, { stopAfterNodeId: "trigger" })).toThrow("atomic node");
+	});
+
 	it("keeps the frozen graph and removes physical-run output reuse receipts", () => {
 		const frozenProjectContext = {
 			version: 3,
 			projectId: "project-1",
 			canvasId: "canvas-1",
+			sourceNodeId: null,
+			permissions: {},
+			projectAssetIds: [],
+			selectedAssetIds: [],
 			assetSnapshot: [{
 				assetId: "asset-1",
 				origin: "project_node",
@@ -90,12 +122,16 @@ describe("applyWorkflowDefinitionCutover", () => {
 	};
 
 	it("takes current authored configuration while preserving frozen invocation facts", () => {
+		const frozenTrigger = node("trigger", "old");
+		const frozenVoice = node("voice", "old");
+		const currentTrigger = node("trigger", "current");
+		const currentVoice = node("voice", "provider-native");
 		const result = applyWorkflowDefinitionCutover({
 			frozenSnapshot: {
 				nodes: [{
-					...node("trigger", "old"),
-					data: { ...node("trigger", "old").data, workflowTriggerPayload: { request: "chapter one" } },
-				}, node("voice", "old")],
+					...frozenTrigger,
+					data: { ...frozenTrigger.data, workflowCanvasDefinitionVersion: 108, workflowCanvasDefinitionFingerprint: "sha256:old", workflowTriggerPayload: { request: "chapter one" } },
+				}, { ...frozenVoice, data: { ...frozenVoice.data, workflowCanvasDefinitionVersion: 108, workflowCanvasDefinitionFingerprint: "sha256:old" } }],
 				edges: [edge],
 				workflowExecutionScope: { triggerNodeId: "trigger" },
 				workflowSourceSnapshots: { group: { frozen: true } },
@@ -103,7 +139,10 @@ describe("applyWorkflowDefinitionCutover", () => {
 				workflowDeliveryScope: { flowId: "chapter-1" },
 			},
 			currentScopedDefinition: {
-				nodes: [node("trigger", "current"), node("voice", "provider-native")],
+				nodes: [
+				{ ...currentTrigger, data: { ...currentTrigger.data, workflowCanvasDefinitionVersion: 109, workflowCanvasDefinitionFingerprint: "sha256:new" } },
+				{ ...currentVoice, data: { ...currentVoice.data, workflowCanvasDefinitionVersion: 109, workflowCanvasDefinitionFingerprint: "sha256:new" } },
+				],
 				edges: [edge],
 				workflowExecutionScope: { triggerNodeId: "trigger" },
 				workflowSourceSnapshots: { group: { mutable: true } },
@@ -112,6 +151,8 @@ describe("applyWorkflowDefinitionCutover", () => {
 		});
 		const byId = new Map((result.nodes as Array<{ id: string; data: Record<string, unknown> }>).map((value) => [value.id, value.data]));
 		expect(byId.get("voice")?.config).toBe("provider-native");
+		expect(byId.get("voice")?.workflowCanvasDefinitionVersion).toBe(109);
+		expect(byId.get("voice")?.workflowCanvasDefinitionFingerprint).toBe("sha256:new");
 		expect(byId.get("trigger")?.workflowTriggerPayload).toEqual({ request: "chapter one" });
 		expect(result.workflowProjectContext).toEqual({ projectId: "project-1", canvasId: "chapter-1" });
 		expect(result.workflowSourceSnapshots).toEqual({ group: { frozen: true } });

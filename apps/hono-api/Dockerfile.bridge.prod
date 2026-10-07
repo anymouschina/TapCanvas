@@ -9,7 +9,7 @@
 # 注：bridge 不渲染 hyperframes（剪辑包装层在 api 镜像里），故不装 chromium。
 #     ffmpeg/scenedetect 保留——bridge 也会编排出图出视频/analyze_video。
 #   skills 与 harness/tapcanvas.patch.yml 是当前 Bridge 的运行期依赖；旧自研 runtime 的
-#   knowledge、agent-definitions、packages 与配置补丁不再进入镜像。
+#   agent-definitions 与配置补丁不再进入镜像；共享结构合同保留真实相对路径。
 #
 # 构建（仓库根执行）：
 #   docker buildx build --platform linux/amd64 \
@@ -69,6 +69,12 @@ RUN --mount=type=cache,target=/pnpm/store,sharing=locked \
     pnpm install --frozen-lockfile --ignore-scripts --child-concurrency=1 --network-concurrency=1 --registry "${NPM_REGISTRY}"
 
 COPY apps/agents-cli/src ./src
+# /opt/agents-cli/src/bridge 和 dist/bridge 都以 ../../../../packages 导入共享合同。
+# 保留 /packages/schemas 路径，只复制 Bridge 实际使用的纯结构模块。
+COPY packages/schemas/json-schema-relations /packages/schemas/json-schema-relations
+COPY packages/schemas/source-unit-ledger /packages/schemas/source-unit-ledger
+# 结构校验回归测试的共享 schema 声明；运行时不执行测试文件。
+COPY packages/schemas/video-authoring-stages/schema.d.mts /packages/schemas/video-authoring-stages/schema.d.mts
 # 当前 tsconfig 是唯一编译真源；测试文件也必须通过严格类型检查。
 RUN pnpm exec tsc -p tsconfig.json
 
@@ -80,6 +86,7 @@ WORKDIR /opt/agents-cli
 COPY --from=builder /opt/agents-cli/node_modules ./node_modules
 COPY --from=builder /opt/agents-cli/dist ./dist
 COPY --from=builder /opt/agents-cli/package.json ./package.json
+COPY --from=builder /packages/schemas /packages/schemas
 COPY apps/agents-cli/harness ./harness
 COPY apps/agents-cli/skills ./skills
 COPY apps/agents-cli/knowledge ./knowledge

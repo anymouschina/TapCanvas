@@ -18,6 +18,10 @@ knowledge-domains:
   - 字幕花字包装
   - 配音口播
   - 视觉特效VFX
+metadata:
+  performance-preload:
+    flashback:
+      - SKILL.md
 ---
 
 # 无缝转场/变装爆款导演（短视频达人套路层）

@@ -1,3 +1,9 @@
+import { projectAcceptedWorkflowAuthorSource } from "../execution/execution.author-source";
+import type { HarnessAcceptedAuthorSourceV1 } from "../../../../../packages/schemas/author-source-representation/index.mjs";
+import { createHash } from "node:crypto";
+import { projectAtomicAuthorSelfCheckMetadata, type AtomicAuthorSelfCheckReceiptV1, type AtomicAuthorSelfCheckProjectionIssueV1 } from "../../../../../packages/schemas/atomic-author-selfcheck/index.cjs";
+import type { StructuredOutputReviewProjectionIssueV1, StructuredOutputReviewV1 } from "@tapcanvas/agent-observability";
+import { normalizeStructuredOutputReviewProjectionIssue, projectStructuredOutputReview } from "./structured-output-review";
 import { AppError } from "../../middleware/error";
 import type { AppContext } from "../../types";
 import {
@@ -124,6 +130,12 @@ export type AgentsChatTurnStatusSnapshot = {
 		recoveryCheckpoint: AgentsChatTurnRecoveryCheckpoint | null;
 		lastConfirmedSummary: string;
 		finalResponse: string | null;
+		acceptedAuthorSource?: HarnessAcceptedAuthorSourceV1;
+		acceptedAuthorSourceIssue?: string;
+		structuredOutputReview?: StructuredOutputReviewV1;
+		structuredOutputReviewProjectionIssue?: StructuredOutputReviewProjectionIssueV1;
+		atomicAuthorSelfCheck?: AtomicAuthorSelfCheckReceiptV1;
+		atomicAuthorSelfCheckProjectionIssue?: AtomicAuthorSelfCheckProjectionIssueV1;
 		terminalDelivery: AgentsChatDurableTerminalDelivery | null;
 		executionProvenanceHistory?: AgentExecutionProvenance[];
 		attentionProjection?: AgentsChatAttentionProjection | null;
@@ -542,6 +554,16 @@ export function parseAgentsChatTurnStatusSnapshot(
 				: null;
 		if (!terminalAuthority) throw new Error("invalid terminal authority");
 		const terminalDelivery = parseDurableTerminalDelivery(turn.terminalDelivery);
+		const structuredOutputReviewProjection = projectStructuredOutputReview(turn.structuredOutputReview);
+		const persistedReviewIssue = normalizeStructuredOutputReviewProjectionIssue(
+			turn.structuredOutputReviewProjectionIssue,
+		);
+		const structuredOutputReviewProjectionIssue = structuredOutputReviewProjection.issue
+			?? persistedReviewIssue
+			?? (turn.structuredOutputReviewProjectionIssue !== undefined
+				? { reason: "invalid_receipt" as const, droppedObservationCount: 0 }
+				: null);
+
 		// The physical phase is authoritative for transport state. A handed-off
 		// provider interruption may keep the logical task active for recovery, but
 		// it is no longer a live running stream and must remain resumable.
@@ -634,6 +656,16 @@ export function parseAgentsChatTurnStatusSnapshot(
 				finalResponse: nullableString(turn.finalResponse),
 				terminalDelivery,
 				...(executionProvenanceHistory.length > 0 ? { executionProvenanceHistory } : {}),
+				...(typeof turn.acceptedAuthorSourceIssue === "string" ? { acceptedAuthorSourceIssue: turn.acceptedAuthorSourceIssue } : {}),
+				...projectAcceptedWorkflowAuthorSource(turn.acceptedAuthorSource, typeof turn.finalResponse === "string" ? turn.finalResponse : ""),
+				...projectAtomicAuthorSelfCheckMetadata(turn, typeof turn.finalResponse === "string"
+					? `sha256:${createHash("sha256").update(turn.finalResponse, "utf8").digest("hex")}` : undefined),
+				...(structuredOutputReviewProjection.review
+					? { structuredOutputReview: structuredOutputReviewProjection.review }
+					: {}),
+				...(structuredOutputReviewProjectionIssue
+					? { structuredOutputReviewProjectionIssue }
+					: {}),
 				attentionProjection,
 				pendingUserInput: parsePendingUserInput(turn.pendingUserInput),
 				pendingQueueCount,
@@ -812,4 +844,23 @@ export async function interruptAgentsChatTurn(
 		turnId: nullableString(root.turnId),
 		status,
 	};
+}
+
+// The runtime answered, but its payload violates the Hono contract. Unlike an
+// unknown outcome, re-reading the same durable turn returns the same payload,
+// so an observer must surface it instead of scheduling another read.
+const RUNTIME_CONTRACT_VIOLATION_CODES = new Set([
+	"agents_chat_status_invalid_response",
+	"agents_chat_interrupt_invalid_response",
+]);
+
+export type AgentsChatRuntimeContractViolationCode = "agents_chat_status_invalid_response" | "agents_chat_interrupt_invalid_response";
+
+export function isAgentsChatRuntimeContractViolationCode(code: unknown): code is AgentsChatRuntimeContractViolationCode {
+	return typeof code === "string" && RUNTIME_CONTRACT_VIOLATION_CODES.has(code);
+}
+
+export function isAgentsChatRuntimeContractViolation(error: unknown): error is { code: AgentsChatRuntimeContractViolationCode } {
+	if (!error || typeof error !== "object") return false;
+	return isAgentsChatRuntimeContractViolationCode("code" in error ? error.code : null);
 }

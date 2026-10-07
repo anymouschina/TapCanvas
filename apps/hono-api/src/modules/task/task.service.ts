@@ -1,3 +1,4 @@
+import { readNewApiReceiptRecovery, readNewApiReceiptEvidence, receiptAwaitsEvidence } from "./video-receipt-recovery";
 import { prepareVideoReferenceTransport } from "./video-reference-transport";
 import { AppError } from "../../middleware/error";
 import {
@@ -2468,6 +2469,21 @@ function normalizeNewApiVideoStatus(value: unknown): "queued" | "running" | "suc
 	return "running";
 }
 
+export function resolveNewApiVideoTaskStatus(
+	payload: Record<string, unknown> | null,
+	hasAssets: boolean,
+): "queued" | "running" | "succeeded" | "failed" {
+	const providerStatus = normalizeNewApiVideoStatus(payload?.status || payload?.state || payload?.task_status);
+	const receipt = readNewApiReceiptRecovery(payload);
+	if (receiptAwaitsEvidence(receipt)) return hasAssets ? "succeeded" : "running";
+	if (receipt?.disposition === "action_failed") return "failed";
+	return providerStatus === "failed"
+		? "failed"
+		: hasAssets
+			? "succeeded"
+			: providerStatus;
+}
+
 async function resolveTaskModelKeyForNewApi(
 	c: AppContext,
 	vendorKey: string,
@@ -4481,11 +4497,9 @@ export async function fetchNewApiTaskResult(
 		TaskResultSchema.parse({
 			id: taskId.trim(),
 			kind: (input?.taskKind as TaskRequestDto["kind"]) || "text_to_video",
-			status: assets.length
-				? "succeeded"
-				: normalizeNewApiVideoStatus(
-						data?.status || data?.state || data?.task_status,
-					),
+			status: resolveNewApiVideoTaskStatus(data, assets.length > 0),
+			receiptRecovery: readNewApiReceiptRecovery(data),
+			...readNewApiReceiptEvidence(data),
 			assets,
 			raw: {
 				provider: "new_api",

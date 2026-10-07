@@ -74,7 +74,7 @@ export function aggregateClipProduction(input: Readonly<{
     if (!record(price) || price.itemId !== source.itemId || price.durationSeconds !== source.value.durationSeconds) {
       throw new Error(`Clip ${source.itemId} estimate identity or duration differs from frozen source`);
     }
-    if (firstEstimate && ['modelKey', 'resolution', 'aspectRatio', 'generationContract']
+    if (firstEstimate && ['modelKey', 'resolution', 'size', 'aspectRatio', 'generationContract']
       .some(field => canonical(estimate[field] ?? null) !== canonical(firstEstimate![field] ?? null))) {
       throw new Error('Clip estimates have conflicting provider parameters');
     }

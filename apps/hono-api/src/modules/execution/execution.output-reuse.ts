@@ -1,8 +1,23 @@
+import { resolveWorkflowAuthorRepair, workflowAuthorRepairAttempt, type WorkflowAuthorRepairRequest, type ResolvedWorkflowAuthorRepairV1 } from "./execution.author-repair";
+import { resolveWorkflowAuthorRepairTarget, readWorkflowAuthorRepairSelection, type WorkflowAuthorRepairSelection } from "./execution.author-repair-target";
+import { resolveWorkflowConsumerReplaySelection, workflowConsumerReplaySelectionAttempt, type WorkflowConsumerReplaySelectionRequest } from "./execution.consumer-replay-selection";
 import { workflowAgentRepairSource } from "./execution.agent-repair-handoff";
+import { bindWorkflowNestedAgentRepairSources } from "./execution.nested-agent-repair-source";
+import { inheritWorkflowRecoveryInvocation, assertWorkflowRecoveryObservationReceipt } from "./execution.recovery-invocation";
 import { readWorkflowAgentOutputRepair } from "./execution.agent-output-repair";
+import { bindWorkflowAcceptedAuthorRecovery, readWorkflowAcceptedAuthorRecovery } from "./execution.accepted-author-recovery";
+import { bindWorkflowAgentInitialRecovery, readWorkflowAgentInitialRecovery } from "./execution.agent-initial-recovery";
+import { admitWorkflowAuthorSource } from "./execution.author-source-admission";
+import { workflowAuthorDeliveryArtifact } from "./execution.author-repair";
 import { readWorkflowMediaRetries } from "./execution.media-retry";
-import { readWorkflowMediaAdoptions, workflowMediaAdoptionCheckpoint, type WorkflowMediaAdoption } from "./execution.media-adoption";
+import {
+	readWorkflowMediaAdoptions,
+	workflowMediaAdoptionCheckpoint,
+	workflowMediaAdoptionPipelineCheckpoint,
+	type WorkflowMediaAdoption,
+} from "./execution.media-adoption";
 import { parseWorkflowPinnedOutputSourceV1 } from "@tapcanvas/workflow-kernel-protocol";
+import { workflowInputPortFromHandle, workflowOutputPortFromHandle } from "./execution.flow-scope";
 import type { PrismaClient } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
 import { stripWorkflowAuthoringRuntimeData } from "../flow/flow-authoring-runtime";
@@ -13,6 +28,10 @@ import {
 	type WorkflowNodeOutputV1,
 } from "./execution.node-runtime";
 export type WorkflowReplayRequest = Readonly<{
+	authorRepair?: WorkflowAuthorRepairRequest;
+	consumerReplay?: WorkflowConsumerReplaySelectionRequest;
+	/** Explicit consumer replay requires settled source inputs; never resubmit an accepted ancestor. */
+	requireSuccessfulAncestors?: true;
 	sourceExecutionId: string;
 	startFromNodeId: string;
 	/** Exact dirty frontiers whose prior outputs and descendants are invalid. */
@@ -45,6 +64,8 @@ type SourceNodeRun = Readonly<{
 
 type SourceExecutionBundle = Readonly<{
 	flowData: Record<string, unknown>;
+	/** Actual source execution version, resolved by the owner-authorized repository. */
+	flowVersionId?: string;
 	nodeRuns: readonly SourceNodeRun[];
 }>;
 
@@ -82,9 +103,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function stripResolvedReuseReceipts(
 	flowData: Record<string, unknown>,
 ): Record<string, unknown> {
-	if (!Array.isArray(flowData.nodes)) return flowData;
+	const { workflowResolvedAuthorRepair: _discardedAuthorRepair, workflowAuthorRepairSelection: _discardedSelection, workflowConsumerReplayAttempt: _discardedConsumerAttempt, workflowAuthorRepairAttempt: _discardedAuthorRepairAttempt, workflowReplayAttempt: _discardedReplayAttempt, ...definition } = flowData;
+	if (!Array.isArray(flowData.nodes)) return definition;
 	return {
-		...flowData,
+		...definition,
 		nodes: flowData.nodes.map((rawNode) => {
 			if (!isRecord(rawNode) || !isRecord(rawNode.data)) return rawNode;
 			const {
@@ -139,7 +161,15 @@ function canonicalValue(value: unknown): unknown {
 }
 
 function canonicalNodeData(data: Readonly<Record<string, unknown>>): unknown {
-	return canonicalValue(stripWorkflowAuthoringRuntimeData(data));
+	// Publication stamps identify the whole released DAG, not this node's executable
+	// contract. A downstream release must not invalidate an unchanged successful ancestor.
+	// Keep them on both receipts; compare all actual node definitions and bindings below.
+	const {
+		workflowCanvasDefinitionVersion: _publicationVersion,
+		workflowCanvasDefinitionFingerprint: _publicationFingerprint,
+		...executionDefinition
+	} = stripWorkflowAuthoringRuntimeData(data);
+	return canonicalValue(executionDefinition);
 }
 
 function nodeExecutionSignature(node: GraphNode): string {
@@ -177,6 +207,16 @@ function strictAncestorIds(graph: ReturnType<typeof parseGraph>, startFromNodeId
 	return ancestors;
 }
 
+function declaredInputPortIds(node: GraphNode | undefined): ReadonlySet<string> | null {
+	if (!node) return null;
+	const atomicSpec = isRecord(node.data.workflowAtomicSpec) ? node.data.workflowAtomicSpec : null;
+	const value = atomicSpec?.inputPorts ?? node.data.workflowInputPorts;
+	if (!Array.isArray(value)) return null;
+	const ports = value.map((port) => typeof port === "string" ? port.trim() : "");
+	if (ports.some((port) => !port) || new Set(ports).size !== ports.length) return null;
+	return new Set(ports);
+}
+
 function assertReplayUpstreamUnchanged(
 	current: ReturnType<typeof parseGraph>,
 	source: ReturnType<typeof parseGraph>,
@@ -190,12 +230,42 @@ function assertReplayUpstreamUnchanged(
 			throw new Error(`Cannot replay from ${startFromNodeId}: upstream node ${currentNode.id} changed since the source execution`);
 		}
 	}
-	const boundaryIds = new Set([...ancestorIds, startFromNodeId]);
-	const relevantEdges = (graph: ReturnType<typeof parseGraph>): string[] => graph.edges
-		.filter((edge) => ancestorIds.has(edge.source) && boundaryIds.has(edge.target))
+	const ancestorEdges = (graph: ReturnType<typeof parseGraph>): string[] => graph.edges
+		.filter((edge) => ancestorIds.has(edge.source) && ancestorIds.has(edge.target))
 		.map(edgeSignature)
 		.sort();
-	if (JSON.stringify(relevantEdges(current)) !== JSON.stringify(relevantEdges(source))) {
+	if (JSON.stringify(ancestorEdges(current)) !== JSON.stringify(ancestorEdges(source))) {
+		throw new Error(`Cannot replay from ${startFromNodeId}: upstream connections changed since the source execution`);
+	}
+	const currentBoundary = current.nodes.find((node) => node.id === startFromNodeId);
+	const sourceBoundary = source.nodes.find((node) => node.id === startFromNodeId);
+	// A bounded source receipt may stop at its author. The new consumer has no historical
+	// boundary edges to compare; its explicit bindings are verified against durable ports below.
+	if (!sourceBoundary) {
+		if (!currentBoundary) throw new Error(`Replay consumer ${startFromNodeId} is missing`);
+		return;
+	}
+	const currentInputPorts = declaredInputPortIds(currentBoundary);
+	const sourceInputPorts = declaredInputPortIds(sourceBoundary);
+	const sourceBoundaryEdges = source.edges
+		.filter((edge) => edge.target === startFromNodeId)
+		.filter((edge) => {
+			const portId = workflowInputPortFromHandle(edge.targetHandle);
+			// Drop a historical boundary edge only when both frozen definitions
+			// explicitly declared its port and the current scoped definition removed it.
+			return !portId
+				|| !sourceInputPorts
+				|| !currentInputPorts
+				|| !sourceInputPorts.has(portId)
+				|| currentInputPorts.has(portId);
+		})
+		.map(edgeSignature)
+		.sort();
+	const currentBoundaryEdges = current.edges
+		.filter((edge) => edge.target === startFromNodeId)
+		.map(edgeSignature)
+		.sort();
+	if (JSON.stringify(currentBoundaryEdges) !== JSON.stringify(sourceBoundaryEdges)) {
 		throw new Error(`Cannot replay from ${startFromNodeId}: upstream connections changed since the source execution`);
 	}
 }
@@ -283,12 +353,27 @@ function replayCheckpointOutput(
 	const executorRef = resolveWorkflowNodeExecutorRef(findWorkflowNode({ nodes: [node], edges: [] }, node.id));
 	if (!executorRef || output.executorRef !== executorRef) return null;
 	if (output.executionMode === "once") {
+		const pipelineState = isRecord(output.evidence.pipelineState) ? output.evidence.pipelineState : null;
+		if (executorRef === "workflow.pipeline.run/v1"
+			&& pipelineState?.protocolVersion === "workflow.pipeline.state/v1"
+			&& isRecord(pipelineState.steps)
+			&& Object.values(pipelineState.steps).some((step) => isRecord(step))) {
+			return { ...output, ports: {}, evidence: { ...output.evidence, executorCompleted: false,
+				replayCheckpoint: { version: 1, ...provenance } } };
+		}
 		if (!preserveAgentRepair || executorRef !== "agents.logical-task/v2") return null;
+		const initialOutput = node.data.workflowAgentOutputEncoding !== "plain_text"
+			? bindWorkflowAgentInitialRecovery({ output, sourceExecutionId: provenance.sourceExecutionId,
+				sourceNodeRunId: provenance.sourceNodeRunId }) : output;
+		const acceptedOutput = node.data.workflowAgentOutputEncoding !== "plain_text"
+			? bindWorkflowAcceptedAuthorRecovery({ output: initialOutput, sourceExecutionId: provenance.sourceExecutionId,
+				sourceNodeRunId: provenance.sourceNodeRunId }) : output;
+		const acceptedRecovery = readWorkflowAcceptedAuthorRecovery(acceptedOutput.evidence);
 		const repairSource = node.data.workflowAgentOutputEncoding !== "plain_text"
-			? workflowAgentRepairSource({ evidence: output.evidence,
+			? output.evidence.agentRepairSource ?? workflowAgentRepairSource({ evidence: output.evidence,
 				sourceExecutionId: provenance.sourceExecutionId, nodeId: node.id }) : null;
-		if (!readWorkflowAgentOutputRepair(output.evidence) && !repairSource) return null;
-		return { ...output, ports: {}, evidence: { ...output.evidence, executorCompleted: false,
+		if (!readWorkflowAgentOutputRepair(output.evidence) && !repairSource && !acceptedRecovery && !readWorkflowAgentInitialRecovery(acceptedOutput.evidence)) return null;
+		return { ...acceptedOutput, ports: acceptedRecovery ? acceptedOutput.ports : {}, evidence: { ...acceptedOutput.evidence, executorCompleted: false,
 			...(repairSource ? { agentRepairSource: repairSource } : {}),
 			replayCheckpoint: { version: 1, ...provenance } } };
 	}
@@ -395,9 +480,25 @@ function recoverySnapshotOutputReuse(input: Readonly<{
 		}
 
 		const checkpointProvenance = { kind: "replay_checkpoint" as const, ...provenance };
-		const amended = input.mediaAdoptions.some((item) => item.nodeId === node.id);
-		const rawCheckpoint = replayCheckpointOutput(node, amended ? { ...run, status: "failed" } : run, checkpointProvenance, preserveAgentRepair);
-		const checkpoint = rawCheckpoint ? workflowMediaAdoptionCheckpoint(rawCheckpoint, input.mediaAdoptions) : null;
+		const sourceOutput = parseWorkflowNodeOutputV1(run.outputRefs);
+		const runtimeNode = findWorkflowNode({ nodes: [node], edges: [] }, node.id);
+		const hasNestedAdoption = sourceOutput !== null
+			&& workflowMediaAdoptionPipelineCheckpoint({ node: runtimeNode, output: sourceOutput, adoptions: input.mediaAdoptions }) !== sourceOutput;
+		const amended = hasNestedAdoption || input.mediaAdoptions.some((item) => item.nodeId === node.id);
+		const repairBoundOutput = sourceOutput ? bindWorkflowNestedAgentRepairSources({
+			node: findWorkflowNode({ nodes: [node], edges: [] }, node.id), output: sourceOutput,
+			sourceExecutionId: input.sourceExecutionId, sourceNodeRunId: run.id, preserveAgentRepair,
+		}) : null;
+		const checkpointRun = { ...run, ...(repairBoundOutput ? { outputRefs: repairBoundOutput } : {}),
+			...(amended ? { status: "failed" } : {}) };
+		const rawCheckpoint = replayCheckpointOutput(node, checkpointRun, checkpointProvenance, preserveAgentRepair);
+		const checkpoint = rawCheckpoint
+			? workflowMediaAdoptionPipelineCheckpoint({
+				node: runtimeNode,
+				output: workflowMediaAdoptionCheckpoint(rawCheckpoint, input.mediaAdoptions),
+				adoptions: input.mediaAdoptions,
+			})
+			: null;
 		if (checkpoint) {
 			input.replayCheckpointByNodeId.set(node.id, {
 				version: 1,
@@ -483,6 +584,8 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 	flowData: Record<string, unknown>;
 	flowId: string;
 	ownerId: string;
+	/** The real independent attempt identity; never synthesized from a source receipt. */
+	attemptExecutionId?: string;
 	replay?: WorkflowReplayRequest;
 	repository: WorkflowOutputReuseRepository;
 }>): Promise<Record<string, unknown>> {
@@ -497,6 +600,9 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 		bundleCache.set(executionId, loaded);
 		return loaded;
 	};
+	let authorRepair: ResolvedWorkflowAuthorRepairV1 | undefined;
+	let authorRepairSelection: WorkflowAuthorRepairSelection | undefined;
+	let recoveryInvocation: Record<string, unknown> = {};
 	const resolvedByNodeId = new Map<string, ResolvedWorkflowOutputReuseV1>();
 	const replayCheckpointByNodeId = new Map<string, ResolvedWorkflowReplayCheckpointV1>();
 
@@ -524,9 +630,67 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 		if (!sourceExecutionId || !startFromNodeId) throw new Error("Workflow replay requires source execution and start node identities");
 		const sourceBundle = await loadBundle(sourceExecutionId);
 		const sourceGraph = parseGraph(sourceBundle.flowData);
+		if (input.replay.authorRepair) {
+			if (input.replay.scope === "recovery_snapshot") throw new Error("workflow_author_repair_requires_new_replay");
+			const target = currentGraph.nodes.find(node => node.id === startFromNodeId);
+			const sourceTarget = sourceGraph.nodes.find(node => node.id === startFromNodeId);
+			const repairRequest = input.replay.authorRepair;
+			const run = sourceBundle.nodeRuns.find(run => run.id === repairRequest.sourceNodeRunId);
+			if (!target || !sourceTarget || !run || !replayBoundaryIsUnchanged(currentGraph, sourceGraph, startFromNodeId)) {
+				throw new Error("workflow_author_repair_frozen_contract_changed");
+			}
+			if (parseWorkflowPinnedOutputSourceV1(target.data.workflowPinnedOutputSource)) throw new Error("workflow_author_repair_target_is_pinned");
+			const sourceEvidence = (output: WorkflowNodeOutputV1) => {
+				if (output.evidence.authorSource === undefined) return undefined;
+				if (!input.attemptExecutionId || !sourceBundle.flowVersionId) throw new Error("workflow_author_source_attempt_or_version_identity_missing");
+				const attempt = workflowAuthorRepairAttempt(repairRequest, sourceExecutionId, startFromNodeId);
+				const result = admitWorkflowAuthorSource({ output, ownerId: input.ownerId, flowId: input.flowId,
+					flowVersionId: sourceBundle.flowVersionId, sourceExecutionId, rootNodeId: startFromNodeId, rootNodeRunId: run.id,
+					savedDelivery: workflowAuthorDeliveryArtifact(output), attempt: { executionId: input.attemptExecutionId,
+						targetNodeId: output.nodeId, idempotencyKey: attempt.idempotencyKey, requestHash: attempt.requestHash } });
+				if (result.status !== "verified") throw new Error(`workflow_author_source_admission_invalid: ${JSON.stringify(result.diagnostic)}`);
+				return { source: result.source, sourceEvidenceHash: result.sourceEvidenceHash, attemptBinding: result.attemptBinding };
+			};
+			if (repairRequest.targetPath) {
+				const sourceOutput = parseWorkflowNodeOutputV1(run.outputRefs);
+				if (run.nodeId !== startFromNodeId || !sourceOutput) throw new Error("workflow_author_repair_source_run_invalid");
+				const nested = resolveWorkflowAuthorRepairTarget(findWorkflowNode(sourceBundle.flowData, startFromNodeId), sourceOutput, repairRequest.targetPath);
+				authorRepair = resolveWorkflowAuthorRepair({ request: repairRequest, sourceExecutionId,
+					targetNodeId: nested.node.id, nodeData: nested.node.data,
+					authorSource: sourceEvidence(nested.output),
+					run: { ...run, nodeId: nested.node.id, status: "success", outputRefs: nested.output } });
+				authorRepairSelection = { version: 1, mode: "author_revision", deliveryExecutorRef: "agents.logical-task/v2", rootNodeId: startFromNodeId, sourceExecutionId, sourceNodeRunId: run.id,
+					targetNodeId: nested.node.id, deliveryHash: authorRepair.deliveryHash, route: nested.route, inputLineage: [...nested.inputLineage] };
+				replayCheckpointByNodeId.set(startFromNodeId, { version: 1, kind: "replay_checkpoint",
+					sourceExecutionId, sourceNodeRunId: run.id, outputRefs: nested.checkpoint });
+			} else {
+				authorRepair = resolveWorkflowAuthorRepair({ request: repairRequest, sourceExecutionId,
+					targetNodeId: startFromNodeId, nodeData: target.data, run,
+					...(parseWorkflowNodeOutputV1(run.outputRefs) ? { authorSource: sourceEvidence(parseWorkflowNodeOutputV1(run.outputRefs)!) } : {}) });
+			}
+		}
+		if (input.replay.consumerReplay) {
+			if (input.replay.authorRepair || input.replay.scope === "recovery_snapshot") throw new Error("workflow_consumer_replay_requires_new_attempt");
+			const request = input.replay.consumerReplay;
+			const target = currentGraph.nodes.find(node => node.id === startFromNodeId);
+			if (target && parseWorkflowPinnedOutputSourceV1(target.data.workflowPinnedOutputSource)) throw new Error("workflow_consumer_replay_target_is_pinned");
+			const run = sourceBundle.nodeRuns.find(candidate => candidate.id === request.sourceNodeRunId && candidate.nodeId === startFromNodeId);
+			const sourceOutput = parseWorkflowNodeOutputV1(run?.outputRefs);
+			if (!sourceOutput || !run || !replayBoundaryIsUnchanged(currentGraph, sourceGraph, startFromNodeId)) throw new Error("workflow_consumer_replay_frozen_contract_changed");
+			const resolved = resolveWorkflowConsumerReplaySelection({ node: findWorkflowNode(sourceBundle.flowData, startFromNodeId),
+				output: sourceOutput, request, sourceExecutionId, flowData: sourceBundle.flowData });
+			authorRepairSelection = resolved.selection;
+			replayCheckpointByNodeId.set(startFromNodeId, { version: 1, kind: "replay_checkpoint", sourceExecutionId,
+				sourceNodeRunId: run.id, outputRefs: resolved.checkpoint });
+		}
 		if (input.replay.scope === "recovery_snapshot") {
 			if (!currentGraph.nodes.some((node) => node.id === startFromNodeId)) {
 				throw new Error(`Replay start node ${startFromNodeId} is outside the frozen workflow graph`);
+			}
+			recoveryInvocation = inheritWorkflowRecoveryInvocation({ source: sourceBundle.flowData, current: cleanFlowData });
+			if (Object.keys(recoveryInvocation).length > 0 && !replayBoundaryIsUnchanged(currentGraph, sourceGraph,
+				readWorkflowAuthorRepairSelection(recoveryInvocation)?.rootNodeId ?? startFromNodeId)) {
+				throw new Error("workflow_recovery_bounded_definition_changed");
 			}
 			recoverySnapshotOutputReuse({
 				currentGraph,
@@ -538,9 +702,15 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 				explicitInvalidatedNodeIds: input.replay.invalidatedNodeIds ?? [],
 				mediaAdoptions: [
 					...(cleanFlowData.workflowMediaAdoptionSourceExecutionId === sourceExecutionId ? readWorkflowMediaAdoptions(cleanFlowData) : []),
-					...(cleanFlowData.workflowMediaRetrySourceExecutionId === sourceExecutionId ? readWorkflowMediaRetries(cleanFlowData) : []),
+					...(cleanFlowData.workflowMediaRetrySourceExecutionId === sourceExecutionId
+						? readWorkflowMediaRetries(cleanFlowData).flatMap((retry) => retry.itemId !== null
+							? [{ nodeId: retry.nodeId, itemId: retry.itemId }] : []) : []),
 				],
 			});
+			if (Object.keys(recoveryInvocation).length > 0) for (const [nodeId, checkpoint] of replayCheckpointByNodeId) {
+				assertWorkflowRecoveryObservationReceipt({ node: findWorkflowNode(cleanFlowData, nodeId),
+					output: checkpoint.outputRefs, sourceExecutionId, invocation: recoveryInvocation });
+			}
 		} else {
 			const ancestors = strictAncestorIds(currentGraph, startFromNodeId);
 			assertReplayUpstreamUnchanged(currentGraph, sourceGraph, startFromNodeId, ancestors);
@@ -566,6 +736,24 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 				}
 				const output = validateReusableOutput(node, run);
 				reusableOutputs.set(node.id, { run, output });
+			}
+			if (authorRepair && currentContractFailures.size > 0) throw new Error("workflow_author_repair_upstream_receipts_incomplete");
+			if (input.replay.consumerReplay && currentContractFailures.size > 0) throw new Error("workflow_consumer_replay_upstream_receipts_incomplete");
+			if (input.replay.requireSuccessfulAncestors && currentContractFailures.size > 0) throw new Error("workflow_replay_upstream_receipt_not_settled");
+			if (!sourceGraph.nodes.some(node => node.id === startFromNodeId)) {
+				const boundary = currentGraph.nodes.find(node => node.id === startFromNodeId);
+				const inputPorts = declaredInputPortIds(boundary);
+				for (const edge of currentGraph.edges.filter(edge => edge.target === startFromNodeId)) {
+					const sourcePort = workflowOutputPortFromHandle(edge.sourceHandle);
+					const targetPort = workflowInputPortFromHandle(edge.targetHandle);
+					const sourceNode = currentGraph.nodes.find(node => node.id === edge.source);
+					const durable = reusableOutputs.get(edge.source);
+					if (!sourcePort || !targetPort || !inputPorts?.has(targetPort) || !sourceNode
+						|| !declaredOutputPorts(sourceNode).includes(sourcePort) || !durable
+						|| !Object.prototype.hasOwnProperty.call(durable.output.ports, sourcePort)) {
+						throw new Error(`workflow_replay_new_consumer_binding_invalid:${edge.source}:${startFromNodeId}`);
+					}
+				}
 			}
 			const invalidNodeIds = new Set(currentContractFailures.keys());
 			const minimalInvalidNodeIds = new Set([...invalidNodeIds].filter((nodeId) => (
@@ -608,7 +796,7 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 					outputRefs: withReuseEvidence(reusable.output, provenance),
 				});
 			}
-			if (!resolvedByNodeId.has(startFromNodeId) && replayBoundaryIsUnchanged(currentGraph, sourceGraph, startFromNodeId)) {
+			if (!replayCheckpointByNodeId.has(startFromNodeId) && !resolvedByNodeId.has(startFromNodeId) && replayBoundaryIsUnchanged(currentGraph, sourceGraph, startFromNodeId)) {
 				const boundaryNode = currentGraph.nodes.find((node) => node.id === startFromNodeId);
 				const boundaryRun = sourceBundle.nodeRuns.find((candidate) => candidate.nodeId === startFromNodeId);
 				if (boundaryNode && boundaryRun) {
@@ -630,10 +818,15 @@ export async function prepareWorkflowOutputReuse(input: Readonly<{
 		}
 	}
 
-	if (resolvedByNodeId.size === 0 && replayCheckpointByNodeId.size === 0) return cleanFlowData;
+	if (resolvedByNodeId.size === 0 && replayCheckpointByNodeId.size === 0 && !authorRepair && Object.keys(recoveryInvocation).length === 0) return cleanFlowData;
 	const originalNodes = Array.isArray(cleanFlowData.nodes) ? cleanFlowData.nodes : [];
 	return {
 		...cleanFlowData,
+		...recoveryInvocation,
+		...(authorRepairSelection ? { workflowAuthorRepairSelection: authorRepairSelection } : {}),
+		...(input.replay?.consumerReplay ? { workflowConsumerReplayAttempt: workflowConsumerReplaySelectionAttempt(input.replay.consumerReplay, input.replay.sourceExecutionId, input.replay.startFromNodeId) } : {}),
+		...(authorRepair && input.replay?.authorRepair ? { workflowResolvedAuthorRepair: authorRepair,
+			workflowAuthorRepairAttempt: workflowAuthorRepairAttempt(input.replay.authorRepair, input.replay.sourceExecutionId, input.replay.startFromNodeId) } : {}),
 		nodes: originalNodes.map((rawNode) => {
 			if (!isRecord(rawNode)) return rawNode;
 			const nodeId = text(rawNode.id);
@@ -685,6 +878,7 @@ export function createWorkflowOutputReuseRepository(
 			if (!isRecord(flowData)) throw new Error(`Output source execution ${executionId} has invalid frozen workflow data`);
 			return {
 				flowData,
+				flowVersionId: execution.flow_version_id,
 				nodeRuns: rows.map((row) => ({
 					id: row.id,
 					nodeId: row.node_id,

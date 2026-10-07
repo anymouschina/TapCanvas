@@ -62,7 +62,7 @@ function validSpec(): JsonRecord {
 					optionalInputPorts: ["feedback"],
 					outputPorts: ["packet"],
 					inputArtifactTypes: { "clip-segment": ["tapcanvas.clip-source-segment/v1"] },
-					outputArtifactTypes: { packet: ["tapcanvas.clip-production-packet/v1"] },
+					outputArtifactTypes: { packet: ["tapcanvas.clip-production-packet/v2"] },
 				}),
 			},
 			{
@@ -72,10 +72,10 @@ function validSpec(): JsonRecord {
 					inputPorts: ["packets", "segments"],
 					outputPorts: ["production"],
 					inputArtifactTypes: {
-						packets: ["tapcanvas.clip-production-packet/v1"],
+						packets: ["tapcanvas.clip-production-packet/v2"],
 						segments: ["tapcanvas.clip-source-segments/v1"],
 					},
-					outputArtifactTypes: { production: ["tapcanvas.clip-production-packets/v1"] },
+					outputArtifactTypes: { production: ["tapcanvas.clip-production-packets/v2"] },
 				}),
 			},
 		],
@@ -103,7 +103,7 @@ describe("Workflow inline pipeline protocol", () => {
 	it("derives the generic executor's typed boundary from declared input and output mappings", () => {
 		expect(deriveWorkflowPipelinePortArtifactContractV1(validSpec())).toEqual({
 			inputArtifactTypes: { "source-segments": ["tapcanvas.clip-source-segments/v1"] },
-			outputArtifactTypes: { "clip-production": ["tapcanvas.clip-production-packets/v1"] },
+			outputArtifactTypes: { "clip-production": ["tapcanvas.clip-production-packets/v2"] },
 		});
 	});
 

@@ -16,6 +16,8 @@ const transactionClient = {
 	$queryRawUnsafe: vi.fn(),
 	workflow_executions: {
 		create: vi.fn(),
+		findFirst: vi.fn(),
+		count: vi.fn(),
 	},
 	workflow_execution_events: {
 		findFirst: vi.fn(),
@@ -262,6 +264,74 @@ describe("workflow recovery admission", () => {
 		});
 		expect(transactionClient.workflow_executions.create).not.toHaveBeenCalled();
 	});
+
+	it("admits an exact media retry from a terminal success source only when it is latest and inactive", async () => {
+		transactionClient.$queryRawUnsafe.mockResolvedValue([{
+			id: "execution-source", owner_id: "user-1", status: "success",
+			execution_family_id: "execution-family", created_at: "2026-08-29T03:15:00.000Z",
+		}]);
+		transactionClient.workflow_executions.findFirst
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce({ id: "execution-source" });
+		transactionClient.workflow_executions.count.mockResolvedValue(0);
+
+		await createExecution({} as never, {
+			...recoveryInput,
+			recoveryAdmission: "media_retry",
+		});
+
+		expect(transactionClient.workflow_executions.findFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({
+			where: { execution_family_id: "execution-family", owner_id: "user-1" },
+			orderBy: [{ created_at: "desc" }, { id: "desc" }],
+		}));
+		expect(transactionClient.workflow_executions.count).toHaveBeenCalledWith(expect.objectContaining({
+			where: expect.objectContaining({ status: { in: ["queued", "running"] } }),
+		}));
+		expect(transactionClient.workflow_executions.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+			recovery_of_execution_id: "execution-source", execution_family_id: "execution-family",
+		}) });
+	});
+
+	it("admits an exact media retry from the latest inactive canceled source", async () => {
+		transactionClient.$queryRawUnsafe.mockResolvedValue([{
+			id: "execution-source", owner_id: "user-1", status: "canceled",
+			execution_family_id: "execution-family", created_at: "2026-08-29T03:15:00.000Z",
+		}]);
+		transactionClient.workflow_executions.findFirst
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce({ id: "execution-source" });
+		transactionClient.workflow_executions.count.mockResolvedValue(0);
+
+		await createExecution({} as never, {
+			...recoveryInput,
+			recoveryAdmission: "media_retry",
+		});
+
+		expect(transactionClient.workflow_executions.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+			recovery_of_execution_id: "execution-source", execution_family_id: "execution-family",
+		}) });
+	});
+
+	it("rejects media retry admission if a family member became active or newer", async () => {
+		transactionClient.$queryRawUnsafe.mockResolvedValue([{
+			id: "execution-source", owner_id: "user-1", status: "success",
+			execution_family_id: "execution-family", created_at: "2026-08-29T03:15:00.000Z",
+		}]);
+		transactionClient.workflow_executions.findFirst
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce({ id: "newer-member" });
+		transactionClient.workflow_executions.count.mockResolvedValue(1);
+
+		await expect(createExecution({} as never, { ...recoveryInput, recoveryAdmission: "media_retry" }))
+			.rejects.toMatchObject({ name: "WorkflowRecoveryAdmissionError", reason: "recovery_family_not_latest" });
+		expect(transactionClient.workflow_executions.create).not.toHaveBeenCalled();
+
+		transactionClient.workflow_executions.findFirst.mockReset()
+			.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "execution-source" });
+		await expect(createExecution({} as never, { ...recoveryInput, recoveryAdmission: "media_retry" }))
+			.rejects.toMatchObject({ name: "WorkflowRecoveryAdmissionError", reason: "recovery_family_active" });
+		expect(transactionClient.workflow_executions.create).not.toHaveBeenCalled();
+	});
 });
 
 describe("workflow execution metrics", () => {
@@ -296,9 +366,9 @@ describe("workflow execution metrics", () => {
 describe("equipped workflow execution history projection", () => {
 	it("pages all executions for the authenticated owner when no flow filter is provided", async () => {
 		prismaMock.workflow_executions.findMany.mockResolvedValue([
-			{ id: "run-3" },
-			{ id: "run-2" },
-			{ id: "run-1" },
+			{ id: "run-3", workflow_node_runs: [] },
+			{ id: "run-2", workflow_node_runs: [] },
+			{ id: "run-1", workflow_node_runs: [] },
 		]);
 
 		const page = await listExecutionHistoryPageForOwner({} as never, {
@@ -312,7 +382,7 @@ describe("equipped workflow execution history projection", () => {
 			cursor: { id: "run-4" },
 			skip: 1,
 			take: 3,
-			include: expect.objectContaining({ flows: { select: { name: true } } }),
+			select: expect.objectContaining({ flows: { select: { name: true } } }),
 		}));
 		expect(page.items.map((item) => item.id)).toEqual(["run-3", "run-2"]);
 		expect(page.nextCursor).toBe("run-2");
@@ -353,5 +423,111 @@ describe("equipped workflow execution history projection", () => {
 			},
 			take: 1,
 		}));
+	});
+
+	it("projects history metadata before Prisma materializes frozen project and asset payloads", async () => {
+		prismaMock.workflow_executions.findMany.mockResolvedValue([]);
+		await listExecutionHistoryForOwnerFlow({} as never, { ownerId: "user-1", flowId: "flow-1" });
+		await listExecutionHistoryPageForOwner({} as never, { ownerId: "user-1" });
+		for (const [query] of prismaMock.workflow_executions.findMany.mock.calls) {
+			expect(query.include).toBeUndefined();
+			expect(query.select).toMatchObject({ id: true, status: true, execution_family_id: true, user_input: true,
+				workflow_node_runs: { select: { node_id: true, status: true } },
+			});
+			expect(query.select.flow_versions).toBeUndefined();
+			expect(query.select.workflow_node_runs.select.output_refs).toBeUndefined();
+			expect(query.select.project_context).toBeUndefined();
+			expect(query.select.asset_snapshot).toBeUndefined();
+		}
+	});
+});
+
+describe("exclusive caller-canvas delivery admission", () => {
+	const scope = { projectId: "project-1", canvasId: "chapter:book-1-ch1" };
+	const freshInput = {
+		id: "execution-agent-launch",
+		flowId: "flow-1",
+		flowVersionId: "version-agent-launch",
+		ownerId: "user-1",
+		concurrency: 16,
+		trigger: "agent",
+		projectId: scope.projectId,
+		canvasId: scope.canvasId,
+		executionFamilyId: "execution-agent-launch",
+		exclusiveDeliveryScope: scope,
+		nowIso: "2026-10-03T02:23:53.277Z",
+	};
+
+	it("rejects a second full run into a chapter canvas that another family is already delivering", async () => {
+		// Observed: AI chat launched a fresh one-click run 19s after a manual recovery of
+		// the same chapter; both families authored and wrote the same canvas.
+		transactionClient.$queryRawUnsafe.mockResolvedValue([]);
+		transactionClient.workflow_executions.findFirst.mockResolvedValue({ id: "execution-manual-recovery" });
+
+		await expect(createExecution({} as never, freshInput)).rejects.toMatchObject({
+			name: "WorkflowDeliveryScopeBusyError",
+			activeExecutionId: "execution-manual-recovery",
+		});
+		expect(transactionClient.$queryRawUnsafe).toHaveBeenCalledWith(
+			expect.stringContaining("pg_advisory_xact_lock"),
+			"workflow-delivery-scope:user-1:flow-1:project-1:chapter:book-1-ch1",
+		);
+		expect(transactionClient.workflow_executions.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+			where: expect.objectContaining({
+				owner_id: "user-1",
+				flow_id: "flow-1",
+				project_id: "project-1",
+				canvas_id: "chapter:book-1-ch1",
+				status: { in: ["queued", "running"] },
+				NOT: { execution_family_id: "execution-agent-launch" },
+			}),
+		}));
+		expect(transactionClient.workflow_executions.create).not.toHaveBeenCalled();
+		expect(prismaMock.workflow_executions.create).not.toHaveBeenCalled();
+	});
+
+	it("admits the run when the canvas is idle", async () => {
+		transactionClient.$queryRawUnsafe.mockResolvedValue([]);
+		transactionClient.workflow_executions.findFirst.mockResolvedValue(null);
+
+		await createExecution({} as never, freshInput);
+
+		expect(transactionClient.workflow_executions.create).toHaveBeenCalledWith({
+			data: expect.objectContaining({ id: "execution-agent-launch", canvas_id: "chapter:book-1-ch1" }),
+		});
+	});
+
+	it("applies the same scope fence to a recovery child before its source checks", async () => {
+		transactionClient.$queryRawUnsafe.mockImplementation(async (sql: string) => (
+			sql.includes("FOR UPDATE")
+				? [{
+					id: "execution-source",
+					owner_id: "user-1",
+					status: "failed",
+					execution_family_id: "execution-family",
+					created_at: "2026-10-03T01:54:33.963Z",
+				}]
+				: []
+		));
+		transactionClient.workflow_executions.findFirst.mockResolvedValue({ id: "execution-other-family" });
+
+		await expect(createExecution({} as never, {
+			...freshInput,
+			id: "execution-recovery",
+			recoveryOfExecutionId: "execution-source",
+			recoveryAdmission: "failed_source" as const,
+			executionFamilyId: "execution-family",
+		})).rejects.toMatchObject({ name: "WorkflowDeliveryScopeBusyError", activeExecutionId: "execution-other-family" });
+		expect(transactionClient.workflow_executions.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+			where: expect.objectContaining({ NOT: { execution_family_id: "execution-family" } }),
+		}));
+		expect(transactionClient.workflow_executions.create).not.toHaveBeenCalled();
+	});
+
+	it("keeps runs without a delivery scope on the unfenced insert path", async () => {
+		const { exclusiveDeliveryScope: _scope, ...unscoped } = freshInput;
+		await createExecution({} as never, unscoped);
+		expect(prismaMock.$transaction).not.toHaveBeenCalled();
+		expect(prismaMock.workflow_executions.create).toHaveBeenCalledTimes(1);
 	});
 });

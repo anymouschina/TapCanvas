@@ -3,6 +3,7 @@ import { createWorkflowCollection } from "@tapcanvas/workflow-kernel-protocol";
 import { projectClipProductionPackets } from "./execution.clip-production";
 import { projectClipProductionMediaItem, projectClipProductionNodePlan } from "./execution.clip-production-nodes";
 import { projectClipProductionPromptPackage } from "./execution.clip-production-project";
+import { renderClipProductionReferencePrompt } from "./execution.clip-production-reference-prompt";
 import { clipProductionBlockingFixture } from "./test-fixtures/clip-production-blocking";
 
 function source(index: number) {
@@ -16,7 +17,7 @@ function source(index: number) {
 
 function packet(index: number) {
 	const segment = source(index);
-	return { protocolVersion: "tapcanvas.clip-production-packet/v1", clipId: segment.clipId,
+	return { protocolVersion: "tapcanvas.clip-production-packet/v2", clipId: segment.clipId,
 		clipIndex: index, durationSeconds: 5, videoInputMode: "image_to_video",
 		firstFrameAsset: { assetId: "shared", state: "base" },
 		referenceAssets: [{ assetId: "shared", state: "base" }], sourceRanges: segment.sourceRanges,
@@ -47,11 +48,70 @@ describe("Clip node planning before media", () => {
 		expect(projected.nodePlan.videoNodes[0]?.sourceSnapshot).toEqual({ clipId: "clip-0",
 			sourceRanges: packet(0).sourceRanges, clipFacts: packet(0).clipFacts });
 		expect(projected.nodePlan.videoNodes[0]?.referenceImageNodeIds).toEqual(projected.nodePlan.videoNodes[1]?.referenceImageNodeIds);
+		expect(projected.nodePlan.videoNodes[0]).toMatchObject({
+			sourcePrompt: packet(0).videoPrompt,
+			referenceBindings: [{ nodeId: projected.nodePlan.imageNodes[0]?.nodeId, name: "主角", referenceType: "character" }],
+			referenceHeader: "参考：图1=主角。",
+			prompt: `参考：图1=主角。\n${packet(0).videoPrompt}`,
+		});
+		expect((projected.promptPackage.clips as Record<string, unknown>[])[0]).toMatchObject({
+			sourcePrompt: packet(0).videoPrompt,
+			referenceHeader: "参考：图1=主角。",
+			prompt: `参考：图1=主角。\n${packet(0).videoPrompt}`,
+		});
 		expect(projected.mediaItems.items.map((item) => item.itemId)).toEqual(["clip-0", "clip-1"]);
 		expect(projected.mediaItems.items[0]?.value.assetItems[0]?.effectAssetId)
 			.toBe(projected.mediaItems.items[1]?.value.assetItems[0]?.effectAssetId);
 		expect(JSON.stringify(projected.nodePlan)).not.toContain("imageUrl");
 		expect(projected.promptPackage).not.toHaveProperty("deliveryVerification");
+	});
+
+	it("preserves a non-zero chapter Clip index when materializing one per-Clip pipeline item", () => {
+		const segment = source(1);
+		const sourceSegments = createWorkflowCollection({ collectionId: "single-segment", producerNodeId: "segments",
+			producerPortId: "clip-segments", itemIds: [segment.clipId], values: [segment] });
+		const collected = projectClipProductionPackets({ executionId: "execution", nodeId: "collect",
+			packets: [packet(1)], sourceSegmentCollection: sourceSegments });
+		const projected = projectClipProductionNodePlan({ executionId: "execution", executionFamilyId: "family",
+			nodeId: "materialize", workflowKey: "workflow", clipProductionCollection: collected.clipProductionCollection,
+			assetIntentCollection: collected.assetIntentCollection,
+			deliveryContract: { protocolVersion: "2", workflowKey: "workflow" } });
+
+		expect(projected.nodePlan.videoNodes).toHaveLength(1);
+		expect(projected.nodePlan.videoNodes[0]).toMatchObject({ clipId: "clip-1", clipIndex: 1 });
+		expect(projected.mediaItems.items.map((item) => item.itemId)).toEqual(["clip-1"]);
+		expect((projected.promptPackage.clips as Record<string, unknown>[])[0]).toMatchObject({
+			itemId: "clip-1", index: 0, clipIndex: 1,
+		});
+	});
+
+	it("includes the host-bound chapter speech track in both the prepared node and node prompt package", () => {
+		const segment = source(0);
+		const speechEvents = [{ speechEventId: "speech-1", speaker: "阿乔", delivery: "on_screen", text: "  我来。\n",
+			textOrigin: "authored" as const, eventIndex: 0, clipId: "clip-0", sceneId: "scene", scope: "scene" as const, sourceRanges: [] }];
+		const segments = createWorkflowCollection({ collectionId: "speech-segments", producerNodeId: "segments",
+			producerPortId: "clip-segments", itemIds: [segment.clipId], values: [segment] });
+		const collected = projectClipProductionPackets({ executionId: "execution", nodeId: "collect",
+			packets: [{ ...packet(0), speechEvents }], sourceSegmentCollection: segments });
+		const projected = projectClipProductionNodePlan({ executionId: "execution", executionFamilyId: "family",
+			nodeId: "materialize", workflowKey: "workflow", clipProductionCollection: collected.clipProductionCollection,
+			assetIntentCollection: collected.assetIntentCollection,
+			deliveryContract: { protocolVersion: "2", workflowKey: "workflow" } });
+		const video = projected.nodePlan.videoNodes[0]!;
+		const expectedPrompt = renderClipProductionReferencePrompt({ prompt: packet(0).videoPrompt, speechEvents,
+			bindings: video.referenceBindings, images: [{ sourceNodeIds: video.referenceImageNodeIds[0]
+				? [video.referenceImageNodeIds[0]] : [] }] });
+		expect(video.speechEvents).toEqual(speechEvents);
+		expect(video.prompt).toBe(expectedPrompt);
+		expect((projected.promptPackage.clips as Record<string, unknown>[])[0]).toMatchObject({
+			prompt: expectedPrompt,
+			speechEvents,
+			authoringEvidence: { sourceDialogueLineIds: [], spokenLineIds: ["speech-1"] },
+		});
+		expect(projected.promptPackage.deliveryEvidence).toMatchObject({
+			speechEvidenceStatus: "projected_from_clip_packets", narrativeSpeechLineCount: 1,
+			sourceSpeechLineCount: 0, executableSpeechLineCount: 1,
+		});
 	});
 
 	it("projects each Clip media item into its own exact packet and shared asset item", () => {

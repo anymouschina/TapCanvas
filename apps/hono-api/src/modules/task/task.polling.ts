@@ -1,3 +1,4 @@
+import { hostHistoricalVideoReceiptAssets } from "./video-receipt-assets";
 import type { AppContext } from "../../types";
 import { TaskResultSchema, type TaskKind, type TaskResultDto } from "./task.schemas";
 import { getTaskResultByTaskId, upsertTaskResult } from "./task-result.repo";
@@ -34,19 +35,8 @@ export const STORED_TERMINAL_ASSET_RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
  * 4xx 客户端错（参数错/权限/任务不存在或过期）与内容审核硬拒=永久；429/5xx/网络错=暂时。
  */
 export function isPermanentUpstreamTaskError(errStatus: number, errMessage: string): boolean {
-	const text = (errMessage || "").toLowerCase();
-	const isContentModeration =
-		text.includes("inputtextsensitive") ||
-		text.includes("sensitive") ||
-		text.includes("content moderation") ||
-		text.includes("审核");
-	return (
-		errStatus === 400 ||
-		errStatus === 403 ||
-		errStatus === 404 ||
-		errStatus === 422 ||
-		isContentModeration
-	);
+	void errMessage;
+	return errStatus === 400 || errStatus === 403 || errStatus === 404 || errStatus === 422;
 }
 
 export type StoredTerminalAction =
@@ -98,6 +88,8 @@ export async function fetchTaskResultForPolling(
 		timeoutMs?: number;
 		/** Explicit receipt reconciliation verifies a cached failure with its provider. */
 		refreshFailedResult?: boolean;
+		/** Reconcile the same original provider receipt after terminal delivery. */
+		refreshProviderResult?: boolean;
 	},
 ): Promise<TaskPollingOutcome> {
 	const taskId = (input.taskId || "").trim();
@@ -106,6 +98,7 @@ export async function fetchTaskResultForPolling(
 
 	// 1) Stored result fast-path: only terminal results should short-circuit polling.
 	let storedRow: any | null = null;
+	let storedResult: TaskResultDto | null = null;
 	let storedVendor = "";
 	try {
 		storedRow = await getTaskResultByTaskId(c.env.DB, userId, taskId);
@@ -117,11 +110,13 @@ export async function fetchTaskResultForPolling(
 			const payload = JSON.parse(storedRow.result);
 			const parsed = TaskResultSchema.safeParse(payload);
 			if (parsed.success) {
+				storedResult = parsed.data;
 				const storedCompletedAt =
 					typeof storedRow?.completed_at === "string" && storedRow.completed_at.trim()
 						? String(storedRow.completed_at).trim()
 						: null;
-				const refreshCachedFailure = input.refreshFailedResult === true && parsed.data.status === "failed";
+				const refreshCachedFailure = (input.refreshFailedResult === true && parsed.data.status === "failed")
+					|| (input.refreshProviderResult === true && (parsed.data.status === "succeeded" || parsed.data.status === "failed"));
 				const terminalAction =
 					refreshCachedFailure ? "bypass_poll_upstream" :
 					parsed.data.status === "succeeded" || parsed.data.status === "failed"
@@ -299,6 +294,23 @@ export async function fetchTaskResultForPolling(
 					});
 				}
 			}
+		}
+		parsedResult = await hostHistoricalVideoReceiptAssets({ result: parsedResult, stored: storedResult,
+			hostAssets: async (assets) => {
+				const hosted = await hostTaskAssetsSynchronously({ c, userId,
+					result: { ...parsedResult, status: "succeeded", assets, receiptAssets: undefined },
+					meta: { taskId, taskKind: parsedResult.kind, vendor: resolved.vendor, prompt,
+						generationContext: readGenerationAssetContextFromRaw(parsedResult.raw) },
+					traceTaskKind: parsedResult.kind, traceVendor: resolved.vendor,
+				});
+				return hosted.assets;
+			},
+		});
+		// A later observation updates receipt evidence without invalidating assets already delivered.
+		if (storedResult?.status === "succeeded" && storedResult.assets.length > 0) {
+			const assetsByUrl = new Map([...storedResult.assets, ...parsedResult.assets]
+				.map((asset) => [`${asset.type}:${asset.url}`, asset] as const));
+			parsedResult = { ...parsedResult, status: "succeeded", assets: [...assetsByUrl.values()] };
 		}
 		if (persistResult && (storedRow || inferredFromVendorRef)) {
 			const nowIso = new Date().toISOString();

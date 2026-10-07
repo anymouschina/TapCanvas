@@ -68,6 +68,34 @@ describe("fetchTaskResultForPolling", () => {
 		mockedHostTaskAssetsSynchronously.mockImplementation(async (input: { result: unknown }) => input.result);
 	});
 
+	it("reconciles an explicit original receipt without losing an already delivered asset", async () => {
+		const original = { id: "task-retained", kind: "text_to_video", status: "succeeded",
+			assets: [{ type: "video", url: "https://assets.test/original.mp4" }], raw: { provider: "new_api" } };
+		mockedGetTaskResultByTaskId.mockResolvedValueOnce({ vendor: "newapi", result: JSON.stringify(original) });
+		mockedFetchNewApiTaskResult.mockResolvedValueOnce({ ...original, status: "failed", assets: [],
+			receiptRecovery: { disposition: "action_failed", failureKind: "poll_action" } });
+		const outcome = await fetchTaskResultForPolling(createMockContext(), "user-1", {
+			taskId: original.id, taskKind: "text_to_video", mode: "internal", refreshProviderResult: true,
+		});
+		expect(mockedFetchNewApiTaskResult).toHaveBeenCalledTimes(1);
+		expect(outcome).toMatchObject({ ok: true, result: { status: "succeeded", assets: original.assets,
+			receiptRecovery: { disposition: "action_failed" } } });
+	});
+
+	it("retains old and newly observed assets on the same explicitly reconciled task", async () => {
+		const original = { id: "task-additive", kind: "text_to_video", status: "succeeded",
+			assets: [{ type: "video", url: "https://assets.test/original.mp4" }], raw: { provider: "new_api" } };
+		mockedGetTaskResultByTaskId.mockResolvedValueOnce({ vendor: "newapi", result: JSON.stringify(original) });
+		mockedFetchNewApiTaskResult.mockResolvedValueOnce({ ...original,
+			assets: [{ type: "video", url: "https://assets.test/later.mp4" }] });
+		const outcome = await fetchTaskResultForPolling(createMockContext(), "user-1", {
+			taskId: original.id, taskKind: "text_to_video", mode: "internal", refreshProviderResult: true,
+		});
+		expect(outcome).toMatchObject({ ok: true, result: { status: "succeeded", assets: [
+			{ type: "video", url: "https://assets.test/original.mp4" }, { type: "video", url: "https://assets.test/later.mp4" },
+		] } });
+	});
+
 	// fd77b558f(2026-05-29) 起 task_store 管理的 running 行短路返回、不再打上游；
 	// 本测试此前仍断言继续轮询，红了 7 周无人发现（vitest 不在门禁）——按现行语义修正。
 	it("short-circuits running task_store results without new-api polling", async () => {
@@ -253,9 +281,9 @@ describe("isPermanentUpstreamTaskError", () => {
 		}
 	});
 
-	it("treats moderation rejections as permanent regardless of status", () => {
-		expect(isPermanentUpstreamTaskError(0, "InputTextSensitiveContentDetected")).toBe(true);
-		expect(isPermanentUpstreamTaskError(500, "内容审核不通过")).toBe(true);
+	it("uses the HTTP error boundary without inferring a terminal verdict from prose", () => {
+		expect(isPermanentUpstreamTaskError(0, "InputTextSensitiveContentDetected")).toBe(false);
+		expect(isPermanentUpstreamTaskError(500, "内容审核不通过")).toBe(false);
 	});
 
 	it("treats rate limits and 5xx as transient", () => {

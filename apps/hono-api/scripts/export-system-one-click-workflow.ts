@@ -8,7 +8,7 @@ const outputDirectory = resolve(__dirname, "../sql/releases");
 mkdirSync(outputDirectory, { recursive: true });
 const videoProduction = process.argv.includes("--video-production");
 const outputPath = resolve(outputDirectory, videoProduction
-  ? "20260924_video_production_v114.sql"
+  ? "20261007_video_production_v135.sql"
   : "20260908_one_click_video_nodes_v1.sql");
 writeFileSync(outputPath, videoProduction ? builtInVideoProductionWorkflowSql() : builtInOneClickWorkflowSql());
 console.log(outputPath);

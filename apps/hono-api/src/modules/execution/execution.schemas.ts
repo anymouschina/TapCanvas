@@ -1,5 +1,7 @@
+import { WorkflowAuthorRepairRequestSchema } from "./execution.author-repair";
 import { WorkflowMediaAdoptionsSchema } from "./execution.media-adoption";
 import { WorkflowPlanningRevisionSchema } from "./execution.planning-revision";
+import { WorkflowNodeAgentProgressSchema } from "./execution.agent-progress";
 import { z } from "zod";
 import {
 	WORKFLOW_CONCURRENCY_MAX,
@@ -33,6 +35,7 @@ export const ExecutionEventLevelSchema = z.enum([
 ]);
 
 export const ExecutionEventTypeSchema = z.enum([
+	"agent_preferences_changed",
 	"execution_created",
 	"execution_started",
 	"node_queued",
@@ -45,6 +48,7 @@ export const ExecutionEventTypeSchema = z.enum([
 	"node_retry_scheduled",
 	"node_restart_interrupted",
 	"node_progress",
+	"node_agent_activity",
 	"node_log",
 	"node_succeeded",
 	"node_failed",
@@ -57,7 +61,26 @@ export const ExecutionEventTypeSchema = z.enum([
 	"node_not_selected",
 ]);
 
+import { WorkflowConsumerReplaySelectionRequestSchema } from "./execution.consumer-replay-selection";
+export const WorkflowSnapshotRerunRequestSchema = z.object({
+	authorRepair: WorkflowAuthorRepairRequestSchema.optional(),
+	consumerReplay: WorkflowConsumerReplaySelectionRequestSchema.optional(),
+	stopAfterNodeId: z.string().trim().min(1).optional(),
+	startFromNodeId: z.string().trim().min(1).optional(),
+}).strict().refine(value => !value.startFromNodeId || Boolean(value.stopAfterNodeId), {
+	message: "A checkpoint replay must declare its stopAfterNodeId boundary",
+	path: ["stopAfterNodeId"],
+}).refine(value => !value.authorRepair || Boolean(value.startFromNodeId && value.startFromNodeId === value.stopAfterNodeId), {
+	message: "An author repair must run only its explicitly named author node",
+	path: ["authorRepair"],
+}).refine(value => !value.consumerReplay || Boolean(value.startFromNodeId && value.startFromNodeId === value.stopAfterNodeId && !value.authorRepair), {
+	message: "A selected consumer replay requires one explicit root boundary and excludes author repair",
+	path: ["consumerReplay"],
+});
+
 export const RunFlowExecutionRequestSchema = z.object({
+	idempotencyKey: z.string().trim().min(1).optional(),
+	refreshAssetIds: z.array(z.string().trim().min(1)).describe("Explicit canvas/material handles or registered generation IDs; each identity is owner/project validated without substitution").optional(),
 	flowId: z.string().min(1),
 	triggerNodeId: z.string().min(1),
 	stopAfterNodeId: z.string().min(1).optional(),
@@ -66,7 +89,10 @@ export const RunFlowExecutionRequestSchema = z.object({
 	concurrency: z.number().int().min(WORKFLOW_CONCURRENCY_MIN).max(WORKFLOW_CONCURRENCY_MAX).optional(),
 	trigger: z.enum(["manual", "api", "schedule", "agent"]).optional(),
 	triggerPayload: z.record(z.string(), z.unknown()).optional(),
-}).superRefine((value, context) => {
+}).strict().superRefine((value, context) => {
+	if (value.replayFromExecutionId && !value.idempotencyKey) context.addIssue({ code: z.ZodIssueCode.custom, message: "A replay requires an explicit attempt idempotencyKey", path: ["idempotencyKey"] });
+	if (value.refreshAssetIds !== undefined && !value.replayFromExecutionId) context.addIssue({ code: z.ZodIssueCode.custom, message: "refreshAssetIds requires an explicit source execution replay", path: ["refreshAssetIds"] });
+	if (value.replayFromExecutionId && (!value.stopAfterNodeId || value.triggerPayload !== undefined)) context.addIssue({ code: z.ZodIssueCode.custom, message: "A source execution replay requires an explicit stop boundary and inherits its frozen trigger payload", path: ["replayFromExecutionId"] });
 	if (Boolean(value.replayFromExecutionId) === Boolean(value.startFromNodeId)) return;
 	context.addIssue({
 		code: z.ZodIssueCode.custom,
@@ -197,6 +223,7 @@ export const WorkflowNodeRunSchema = z.object({
 	failureStage: z.string().nullable().optional(),
 	inputRefs: z.unknown().optional(),
 	outputRefs: z.unknown().optional(),
+	agentProgress: WorkflowNodeAgentProgressSchema.optional(),
 	toolCalls: z.unknown().optional(),
 	retryCount: z.number().int().min(0).optional(),
 	nodeType: z.string().nullable().optional(),

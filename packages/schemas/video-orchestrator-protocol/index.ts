@@ -1,4 +1,5 @@
 export * from "./canvas-output-ownership";
+export * from "./canvas-video-receipt-status";
 export const VIDEO_ORCHESTRATOR_PROTOCOL_VERSION = "1" as const;
 export const VIDEO_AUTHORING_GRAPH_PROTOCOL_VERSION = "2" as const;
 export const VIDEO_RUN_STATUS_PROTOCOL_VERSION = "2" as const;
@@ -11,7 +12,7 @@ export const VIDEO_ATOMIC_WORKFLOW_PROTOCOL_VERSION = "2" as const;
  * canvas. The editor, capability equipment boundary, and durable executor must
  * compare the same structural fact.
  */
-export const VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION = 114 as const;
+export const VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION = 135 as const;
 
 /**
  * SHA-256 of the canonical executable canvas template with instance-specific
@@ -21,7 +22,7 @@ export const VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION = 114 as const;
  * structurally different definitions can never both masquerade as the same version.
  */
 export const VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT =
-	"sha256:e1ef5f3fa343c832b4d0bbb8e0ac1bc8fffa407dca32e40abf3a777c36a6cb74" as const;
+	"sha256:6d24ad34ffb3520ae8bf6c87f9a60cb32516722bf65c0d2b5a0e27dd25d3faed" as const;
 
 /**
  * Editable one-click-production operations. These IDs are the stable bridge
@@ -32,8 +33,8 @@ export const VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT =
 export const VIDEO_ATOMIC_WORKFLOW_NODE_IDS = [
 	"canvas-source",
 	"delivery-contract",
-	"clip-segmentation-agent",
-	"clip-segmentation-project",
+	"chapter-sequence-agent",
+	"chapter-sequence-project",
 	"clip-production-pipeline",
 	"node-only-verify",
 	"clip-media-pipeline",

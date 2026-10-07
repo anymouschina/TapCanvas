@@ -1,12 +1,18 @@
-import { assetBindingIdentity, assetFactIdentity } from "./execution.asset-identity";
 import { buildWorkflowClipSourceSnapshot } from "../task/workflow-clip-source-snapshot";
+import { assetBindingIdentity, assetFactIdentity } from "./execution.asset-identity";
 import {
 	CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE,
 	type ClipProductionAssetIdentity,
+	type ClipProductionSpeechEvent,
 } from "../../../../../packages/schemas/clip-production-packet/index.mjs";
 import { VIDEO_CLIP_PRODUCTION_WORKFLOW_INPUT_MODES } from "./execution.clip-production";
-import { inspectGenerationReferenceBindings } from "../../../../../packages/schemas/workflow-asset-registry/generation-references.mjs";
+import {
+	parseClipProductionReferenceBindings,
+	renderClipProductionReferenceHeader,
+	renderClipProductionReferencePrompt,
+} from "./execution.clip-production-reference-prompt";
 import { IMAGE_REFERENCE_ROLES } from "../../../../../packages/schemas/workflow-asset-registry/index.mjs";
+import { inspectGenerationReferenceBindings } from "../../../../../packages/schemas/workflow-asset-registry/generation-references.mjs";
 import { inspectSceneReferencePlan, type SceneReferenceCard } from "../../../../../packages/schemas/scene-reference-contract/index.mjs";
 import type { WorkflowReusableAssetRoleFacts } from "./execution.project-image-references";
 import { buildFrozenSequenceContext, type FrozenSequenceClip } from "./execution.video-sequence-context";
@@ -68,7 +74,7 @@ import {
 	WorkflowInputContractError,
 } from "./execution.input-contract";
 import {
-	parseCharacterIdentityBoardSpec,
+	characterIdentityBoardSpec,
 	type CharacterIdentityBoardSpec,
 } from "./execution.character-identity-contract";
 
@@ -151,6 +157,16 @@ export type WorkflowCanvasProjectContextFacts = Readonly<{
 	sourceMode: "project_context";
 	flowId: string;
 	sourceNodeIds: readonly string[];
+	/** Read-only exit state from the latest successful workflow of the preceding bound-book chapter. */
+	previousChapterExit?: Readonly<{
+		chapterId: string;
+		sourceBookId: string;
+		sourceBookChapter: number;
+		executionId: string;
+		clipId: string;
+		state: string;
+		visual: string;
+	}>;
 	/** Selected material descriptions, distinct from authoritative narrative. */
 	selectedNodeFacts?: readonly Readonly<{
 		nodeId: string;
@@ -176,9 +192,16 @@ export type WorkflowCanvasProjectContextFacts = Readonly<{
 
 export type WorkflowVideoDurationPlan = Readonly<{
 	maxReferenceImages?: number | null;
+	supportsTextToVideo?: boolean | null;
 	supportsReferenceImages?: boolean | null;
 	supportsFirstLastFrame?: boolean | null;
 	targetDurationSeconds: number | null;
+	/**
+	 * "opening": the user asked for the first targetDurationSeconds of a longer source
+	 * (a chapter's opening), so the author adapts the source from its start for as long as
+	 * that duration carries. Absent, the whole source is delivered in targetDurationSeconds.
+	 */
+	sourceExtent?: "opening";
 	modelKey: string;
 	durationOptions: readonly number[];
 	maxDurationSeconds: number;
@@ -206,6 +229,8 @@ export type WorkflowVideoAssetPlan = Readonly<{
 	prompt?: string;
 	negativePrompt?: string;
 	consumerClipIds: readonly string[];
+	/** Inputs used to author a new image; never references to its generated output. */
+	referenceAssetBindings?: readonly Readonly<{ assetId: string; role: typeof IMAGE_REFERENCE_ROLES[number]; strength?: number }>[];
 	referenceType?: "character" | "scene";
 	sceneCard?: SceneReferenceCard;
 	roleName?: string;
@@ -717,9 +742,11 @@ function positiveIntegerList(value: unknown): number[] {
  */
 export function freezeWorkflowVideoDurationPlan(input: Readonly<{
 	maxReferenceImages?: number | null;
+	supportsTextToVideo?: boolean | null;
 	supportsReferenceImages?: boolean | null;
 	supportsFirstLastFrame?: boolean | null;
 	targetDurationSeconds: number;
+	sourceExtent?: "opening";
 	modelKey: string;
 	durationOptions: readonly number[];
 	explicitDurations?: readonly number[];
@@ -728,6 +755,10 @@ export function freezeWorkflowVideoDurationPlan(input: Readonly<{
 	const durationOptions = positiveIntegerList(input.durationOptions);
 	if (!modelKey || durationOptions.length === 0) {
 		throw new Error("workflow_video_duration_plan_catalog_invalid");
+	}
+	if ([input.supportsTextToVideo, input.supportsReferenceImages, input.supportsFirstLastFrame]
+		.some((value) => value !== undefined && value !== null && typeof value !== "boolean")) {
+		throw new Error("workflow_video_duration_plan_capabilities_invalid");
 	}
 	const feasibility = resolveVideoProviderDurationTopology({
 		targetDurationSeconds: input.targetDurationSeconds,
@@ -742,11 +773,13 @@ export function freezeWorkflowVideoDurationPlan(input: Readonly<{
 	return {
 		protocolVersion: "tapcanvas.workflow-video-duration-plan/v2",
 		targetDurationSeconds: feasibility.targetDurationSeconds,
+		...(input.sourceExtent === "opening" ? { sourceExtent: "opening" as const } : {}),
 		modelKey,
 		durationOptions,
 		maxDurationSeconds: Math.max(...durationOptions),
 		policy: "agent_semantic_duration_budget",
 		...(input.maxReferenceImages !== undefined ? { maxReferenceImages: input.maxReferenceImages } : {}),
+		...(input.supportsTextToVideo !== undefined ? { supportsTextToVideo: input.supportsTextToVideo } : {}),
 		...(input.supportsReferenceImages !== undefined ? { supportsReferenceImages: input.supportsReferenceImages } : {}),
 		...(input.supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame: input.supportsFirstLastFrame } : {}),
 		...(input.explicitDurations?.length ? { providerSubmissionTopology: feasibility } : {}),
@@ -771,6 +804,7 @@ export function parseFrozenWorkflowVideoDurationPlan(
 		|| durationOptions.length === 0
 		|| typeof maxDurationSeconds !== "number"
 		|| maxDurationSeconds !== Math.max(...durationOptions)
+		|| (value.sourceExtent !== undefined && value.sourceExtent !== "opening")
 	) return null;
 	const rawTopology = isRecord(value.providerSubmissionTopology)
 		? value.providerSubmissionTopology
@@ -788,15 +822,15 @@ export function parseFrozenWorkflowVideoDurationPlan(
 	)) return null;
 	if (value.maxReferenceImages !== undefined && value.maxReferenceImages !== null
 		&& (typeof value.maxReferenceImages !== "number" || !Number.isInteger(value.maxReferenceImages) || value.maxReferenceImages < 0)) return null;
-	const supportsReferenceImages = value.supportsReferenceImages;
-	const supportsFirstLastFrame = value.supportsFirstLastFrame;
-	if (supportsReferenceImages !== undefined && supportsReferenceImages !== null && typeof supportsReferenceImages !== "boolean") return null;
-	if (supportsFirstLastFrame !== undefined && supportsFirstLastFrame !== null && typeof supportsFirstLastFrame !== "boolean") return null;
+	if ([value.supportsTextToVideo, value.supportsReferenceImages, value.supportsFirstLastFrame]
+		.some((capability) => capability !== undefined && capability !== null && typeof capability !== "boolean")) return null;
 	const canonical = freezeWorkflowVideoDurationPlan({
 		...(value.maxReferenceImages !== undefined ? { maxReferenceImages: value.maxReferenceImages as number | null } : {}),
-		...(supportsReferenceImages !== undefined ? { supportsReferenceImages } : {}),
-		...(supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame } : {}),
+		...(value.supportsTextToVideo !== undefined ? { supportsTextToVideo: value.supportsTextToVideo as boolean | null } : {}),
+		...(value.supportsReferenceImages !== undefined ? { supportsReferenceImages: value.supportsReferenceImages as boolean | null } : {}),
+		...(value.supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame: value.supportsFirstLastFrame as boolean | null } : {}),
 		targetDurationSeconds,
+		...(value.sourceExtent === "opening" ? { sourceExtent: "opening" as const } : {}),
 		modelKey,
 		durationOptions,
 		...(explicitDurations.length ? { explicitDurations } : {}),
@@ -1368,12 +1402,8 @@ export function buildVideoDeliveryContract(input: Readonly<{
 				requestedClipCount: input.requestedClipCount ?? null,
 			});
 	const canvasFacts = projectCanvasFactsForDeliveryContract(input.canvasFacts);
-	// 原文人声容量事实：宿主在受理边界一次性推导，Agent 与交付校验共用同一份事实，
-	// 避免「Agent 自行估时长、宿主事后才发现整章被压成摘要」的双份判断。
-	const sourceProfile = deriveBeatSheetSourceProfile(
-		{ canvasFacts },
-		{ maxDurationSeconds: input.durationPlan.maxDurationSeconds },
-	);
+	// Freeze quote addresses only. The author determines which source passages are speech.
+	const sourceProfile = deriveBeatSheetSourceProfile({ canvasFacts });
 	return {
 		protocolVersion: "2",
 		executionId: input.executionId,
@@ -1384,10 +1414,14 @@ export function buildVideoDeliveryContract(input: Readonly<{
 		...(sourceProfile ? { sourceProfile } : {}),
 		...(input.durationPlan.targetDurationSeconds === null
 			? {}
-			: { targetDurationSeconds: input.durationPlan.targetDurationSeconds }),
+			: {
+				targetDurationSeconds: input.durationPlan.targetDurationSeconds,
+				...(input.durationPlan.sourceExtent === "opening" ? { sourceExtent: "opening" } : {}),
+			}),
 		generationContract: {
 			videoModel: input.durationPlan.modelKey,
 			maxReferenceImages: input.durationPlan.maxReferenceImages ?? null,
+			supportsTextToVideo: input.durationPlan.supportsTextToVideo ?? null,
 			supportsReferenceImages: input.durationPlan.supportsReferenceImages ?? null,
 			supportsFirstLastFrame: input.durationPlan.supportsFirstLastFrame ?? null,
 			durationOptions: input.durationPlan.durationOptions,
@@ -1398,7 +1432,7 @@ export function buildVideoDeliveryContract(input: Readonly<{
 				: { requestedClipCount: input.requestedClipCount }),
 			...(providerSubmissionTopology ? { providerSubmissionTopology } : {}),
 		},
-		expectedDelivery: input.onlyVideoNodes === true ? { artifactType: "tapcanvas.video-node/v1", requiresMediaSideEffects: true, requirements: ["all_clip_nodes_persisted", "prompts_persisted", "asset_bindings_ready", "durable_workflow_output"] } : scope === "prompt_only"
+		expectedDelivery: input.onlyVideoNodes === true ? { artifactType: "tapcanvas.video-node/v1", requiresMediaSideEffects: true, requirements: ["all_clip_nodes_persisted", "prompts_persisted", "image_dependencies_ready", "durable_workflow_output"] } : scope === "prompt_only"
 			? {
 				artifactType: "tapcanvas.prompt-package/v2",
 				requiresMediaSideEffects: false,
@@ -1426,9 +1460,9 @@ export function parseWorkflowVideoDeliveryDurationPlan(deliveryContract: unknown
 		? generationContract.durationOptions.filter((value): value is number => Number.isInteger(value) && Number(value) > 0)
 		: [];
 	const maxDurationSeconds = generationContract?.maxDurationSeconds;
+	const supportsTextToVideo = generationContract?.supportsTextToVideo;
 	const supportsReferenceImages = generationContract?.supportsReferenceImages;
 	const supportsFirstLastFrame = generationContract?.supportsFirstLastFrame;
-	const maxReferenceImages = generationContract?.maxReferenceImages;
 	const clipPlanningPolicy = readString(generationContract?.clipPlanningPolicy);
 	const providerSubmissionTopology = isRecord(generationContract?.providerSubmissionTopology)
 		? generationContract.providerSubmissionTopology
@@ -1444,11 +1478,9 @@ export function parseWorkflowVideoDeliveryDurationPlan(deliveryContract: unknown
 		|| typeof maxDurationSeconds !== "number"
 		|| !Number.isInteger(maxDurationSeconds)
 		|| maxDurationSeconds <= 0
+		|| [supportsTextToVideo, supportsReferenceImages, supportsFirstLastFrame]
+			.some((capability) => capability !== undefined && capability !== null && typeof capability !== "boolean")
 		|| clipPlanningPolicy !== "agent_semantic_duration_budget"
-		|| (supportsReferenceImages !== undefined && supportsReferenceImages !== null && typeof supportsReferenceImages !== "boolean")
-		|| (supportsFirstLastFrame !== undefined && supportsFirstLastFrame !== null && typeof supportsFirstLastFrame !== "boolean")
-		|| (maxReferenceImages !== undefined && maxReferenceImages !== null
-			&& (typeof maxReferenceImages !== "number" || !Number.isSafeInteger(maxReferenceImages) || maxReferenceImages < 0))
 	) {
 		throw new Error("Frozen delivery contract has an invalid semantic video duration window");
 	}
@@ -1474,14 +1506,22 @@ export function parseWorkflowVideoDeliveryDurationPlan(deliveryContract: unknown
 	const normalizedTargetDurationSeconds = typeof targetDurationSeconds === "number"
 		? targetDurationSeconds
 		: null;
+	const sourceExtent = deliveryContract.sourceExtent;
+	if (sourceExtent !== undefined && (sourceExtent !== "opening" || normalizedTargetDurationSeconds === null)) {
+		throw new Error("Frozen delivery contract sourceExtent must be opening and requires a target duration");
+	}
 	return {
 		targetDurationSeconds: normalizedTargetDurationSeconds,
+		...(sourceExtent === "opening" ? { sourceExtent } : {}),
 		modelKey,
 		durationOptions,
 		maxDurationSeconds,
+		...(supportsTextToVideo !== undefined ? { supportsTextToVideo: supportsTextToVideo as boolean | null } : {}),
 		...(supportsReferenceImages !== undefined ? { supportsReferenceImages: supportsReferenceImages as boolean | null } : {}),
 		...(supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame: supportsFirstLastFrame as boolean | null } : {}),
-		...(maxReferenceImages !== undefined ? { maxReferenceImages: maxReferenceImages as number | null } : {}),
+		...(generationContract && Object.hasOwn(generationContract, "maxReferenceImages")
+			? { maxReferenceImages: generationContract.maxReferenceImages as number | null }
+			: {}),
 		...(providerSubmissionTopology && normalizedTargetDurationSeconds !== null ? { providerSubmissionTopology: {
 			targetDurationSeconds: normalizedTargetDurationSeconds,
 			expectedClipCount: providerSubmissionTopology.expectedClipCount as number,
@@ -1734,6 +1774,22 @@ function clipIdsFromBeatSheet(beatSheetAgentResult: unknown): readonly string[] 
 	return clipIds;
 }
 
+/** Preserve explicit image-generation inputs independently of output asset reuse. */
+function parseGenerationReferenceBindings(value: unknown, field: string): WorkflowVideoAssetPlan["referenceAssetBindings"] {
+	if (value === undefined) return undefined;
+	const issue = inspectGenerationReferenceBindings(value, field);
+	if (issue) throw new Error(issue);
+	if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
+	const bindings = value.map((item, index) => {
+		if (!isRecord(item)) throw new Error(`${field}[${index}] must be an object`);
+		const assetId = readString(item.assetId);
+		const role = readString(item.role) as typeof IMAGE_REFERENCE_ROLES[number];
+		const strength = item.strength;
+		return { assetId, role, ...(typeof strength === "number" ? { strength } : {}) };
+	});
+	return bindings;
+}
+
 /**
  * BeatSheet v20 owns the creative image-reference brief. This projection adds
  * only machine identities and a provisional consumer set; the existing asset
@@ -1814,8 +1870,9 @@ export function compileWorkflowAssetPlanDrafts(
 			throw new Error(`BeatSheet assetPlans[${index}] requires identityAnchors and prohibitedDrift`);
 		}
 		const identityBoardSpec = parsedRole.kind === "character"
-			? parseCharacterIdentityBoardSpec(value.identityBoardSpec, `BeatSheet assetPlans[${index}].identityBoardSpec`)
+			? characterIdentityBoardSpec(value.identityBoardSpec, `BeatSheet assetPlans[${index}].identityBoardSpec`)
 			: undefined;
+		const referenceAssetBindings = parseGenerationReferenceBindings(value.referenceAssetBindings, `BeatSheet assetPlans[${index}].referenceAssetBindings`);
 		return {
 			assetId: assetFactIdentity("planned-image", { objectId: value.objectId, specification: value }),
 			objectId: readString(value.objectId),
@@ -1824,6 +1881,7 @@ export function compileWorkflowAssetPlanDrafts(
 			prompt,
 			negativePrompt,
 			consumerClipIds: clipIds,
+			...(referenceAssetBindings !== undefined ? { referenceAssetBindings } : {}),
 			...(parsedRole.kind === "scene" ? {
 				referenceType: "scene" as const,
 				sceneCard: value.sceneCard as SceneReferenceCard,
@@ -1921,6 +1979,7 @@ function parseAssetPlan(value: unknown, index: number, knownClipIds: ReadonlySet
 	const existingNodeId = readString(value.existingNodeId);
 	const existingAssetId = readString(value.existingAssetId);
 	const existingProjectId = readString(value.existingProjectId);
+	const referenceAssetBindings = parseGenerationReferenceBindings(value.referenceAssetBindings, `Asset plan ${assetId}.referenceAssetBindings`);
 	if (!existingAssetId) {
 		const sceneError = inspectSceneReferencePlan(value, `Asset plan ${assetId}`, "projected");
 		if (sceneError) throw new Error(sceneError);
@@ -1930,7 +1989,7 @@ function parseAssetPlan(value: unknown, index: number, knownClipIds: ReadonlySet
 	const characterAssetRole = readString(value.characterAssetRole);
 	const characterProfileVersion = readString(value.characterProfileVersion);
 	const identityBoardSpec = parsedRole.kind === "character"
-		? parseCharacterIdentityBoardSpec(value.identityBoardSpec, `Asset plan ${assetId}.identityBoardSpec`)
+		? characterIdentityBoardSpec(value.identityBoardSpec, `Asset plan ${assetId}.identityBoardSpec`)
 		: undefined;
 	const identityAnchors = Array.isArray(value.identityAnchors)
 		? uniqueNonEmptyStrings(value.identityAnchors)
@@ -1970,6 +2029,7 @@ function parseAssetPlan(value: unknown, index: number, knownClipIds: ReadonlySet
 		prompt,
 		negativePrompt,
 		consumerClipIds,
+		...(referenceAssetBindings !== undefined ? { referenceAssetBindings } : {}),
 		...(parsedRole.kind === "scene" && !existingAssetId ? {
 			referenceType: "scene" as const,
 			sceneCard: value.sceneCard as SceneReferenceCard,
@@ -2169,7 +2229,7 @@ function optionalAssetPlans(assetPlanCollection: unknown): readonly WorkflowVide
 		const characterAssetRole = readString(item.value.characterAssetRole);
 		const characterProfileVersion = readString(item.value.characterProfileVersion);
 		const identityBoardSpec = referenceType === "character"
-			? parseCharacterIdentityBoardSpec(item.value.identityBoardSpec, `Validated asset plan item ${assetId}.identityBoardSpec`)
+			? characterIdentityBoardSpec(item.value.identityBoardSpec, `Validated asset plan item ${assetId}.identityBoardSpec`)
 			: undefined;
 		const identityAnchors = Array.isArray(item.value.identityAnchors)
 			? uniqueNonEmptyStrings(item.value.identityAnchors)
@@ -2250,7 +2310,7 @@ export function buildVideoClipContexts(input: Readonly<{
 		constraints: {
 			durationOptions: durationPlan.durationOptions,
 			targetDurationSeconds: durationPlan.targetDurationSeconds,
-			maximumClipCount: 64,
+			maximumClipCount: 80,
 			requiresStableClipIds: true,
 			requiresSpeechLedgerConservation: true,
 			requiresObjectContinuity: true,
@@ -2288,8 +2348,8 @@ export function buildVideoClipContexts(input: Readonly<{
 		}
 		: null;
 	const beats = beatSheet.beats;
-	if (beats.length === 0 || beats.length > 64) {
-		throw new Error(`BeatSheet must contain 1..64 semantic clips; actual=${beats.length}`);
+	if (beats.length === 0 || beats.length > 80) {
+		throw new Error(`BeatSheet must contain 1..80 semantic clips; actual=${beats.length}`);
 	}
 	assertWorkflowSpeechLedgerConservation({ context: beatSheet.context, beats });
 	const chapterArc = workflowChapterArc(beatSheet.context);
@@ -2405,6 +2465,15 @@ export function buildVideoClipContexts(input: Readonly<{
 					sequenceControlPlan,
 					sequenceTimeline: sequenceBeats,
 					clips: frozenClips,
+					// The complete frozen parent BeatSheet is persisted as the first
+					// value on this node's beat-sheet input port. Keep a precise
+					// parent-artifact reader so a writer can inspect a non-adjacent
+					// frozen segment without carrying the whole chapter in every item.
+					sequenceSource: {
+						executionId: input.executionId,
+						nodeId: input.nodeId,
+						path: ["beat-sheet", "0"],
+					},
 				}),
 				spokenScript,
 				sourceDialogueLineIds: sourceDialogue.map((line) => line.lineId),
@@ -2748,7 +2817,9 @@ export function buildVideoProductionPlan(input: Readonly<{
 	assetBindings: unknown;
 	voiceManifest: WorkflowVoiceManifest;
 	referenceAudioPolicy?: "required" | "optional";
-}>): WorkflowCollectionV1 {
+}>): WorkflowCollectionV1 & Readonly<{
+	diagnostics: Readonly<{ unusedAssetIds: readonly string[]; unusedVoiceSpeakers: readonly string[] }>;
+}> {
 	const promptPackage = input.promptPackage;
 	if (!isRecord(promptPackage) || !Array.isArray(promptPackage.clips)) {
 		throw new Error("Production handoff requires a persisted prompt package");
@@ -2762,6 +2833,7 @@ export function buildVideoProductionPlan(input: Readonly<{
 	const estimateIdentity = readString(input.estimate.estimateIdentity);
 	const modelKey = readString(input.estimate.modelKey);
 	const resolution = readString(input.estimate.resolution);
+	const size = readString(input.estimate.size);
 	const aspectRatio = readString(input.estimate.aspectRatio);
 	const estimateGenerationContract = parseVideoGenerationContract(input.estimate.generationContract);
 	const configuredGenerationContract = parseVideoGenerationContract(input.generationContract);
@@ -2878,6 +2950,30 @@ export function buildVideoProductionPlan(input: Readonly<{
 				return { identity, effectAssetId, resolved };
 			});
 			const referenceEffectIds = references.map((reference) => reference.effectAssetId);
+			const sourcePrompt = rawClip.sourcePrompt;
+			const referenceHeader = rawClip.referenceHeader;
+			// The run's style lock opens the prompt; the package carries it so the prompt can be re-derived.
+			const stylePrompt = typeof rawClip.stylePrompt === "string" ? rawClip.stylePrompt : null;
+			const referenceBindings = parseClipProductionReferenceBindings(rawClip.referenceBindings);
+			const speechEvents = rawClip.speechEvents === undefined
+				? undefined
+				: Array.isArray(rawClip.speechEvents) ? rawClip.speechEvents as ClipProductionSpeechEvent[] : null;
+			if (typeof sourcePrompt !== "string" || !sourcePrompt.trim()
+				|| typeof referenceHeader !== "string"
+				|| speechEvents === null
+				|| referenceBindings.length !== references.length
+				|| referenceBindings.some((binding, referenceIndex) => binding.nodeId !== readString((imageReferences[referenceIndex] as Record<string, unknown>).nodeId))
+				|| referenceHeader !== renderClipProductionReferenceHeader({
+					bindings: referenceBindings,
+					images: references.map((_, referenceIndex) => ({ sourceNodeIds: [referenceBindings[referenceIndex]!.nodeId] })),
+				})
+				|| prompt !== renderClipProductionReferencePrompt({
+					prompt: sourcePrompt, speechEvents, bindings: referenceBindings,
+					images: references.map((_, referenceIndex) => ({ sourceNodeIds: [referenceBindings[referenceIndex]!.nodeId] })),
+					stylePrompt,
+				})) {
+				throw new Error(`Clip ${itemId} has an inconsistent reference prompt binding contract`);
+			}
 			if (new Set(referenceEffectIds).size !== referenceEffectIds.length) {
 				throw new Error(`Clip ${itemId} declares duplicate materialized image references`);
 			}
@@ -2903,6 +2999,8 @@ export function buildVideoProductionPlan(input: Readonly<{
 			} else if (firstFrameIdentity !== null || rawClip.firstFrameEffectAssetId !== null || rawClip.firstFrameUrl !== undefined) {
 				throw new Error(`Clip ${itemId} ${videoInputMode} must not declare a first-frame binding`);
 			}
+			// Several effect identities may intentionally reuse one materialized image.
+			// Check each binding before deduplicating provider handles for submission.
 			if (references.some(({ resolved }) => !resolved.nodeId && !resolved.assetId)) {
 				throw new Error(`Clip ${itemId} generated image references are missing provider-facing node or asset handles`);
 			}
@@ -2915,16 +3013,28 @@ export function buildVideoProductionPlan(input: Readonly<{
 				}
 				urlByProviderHandle.set(handle, resolved.imageUrl);
 			}
-			const referenceImageNodeIds = uniqueNonEmptyStrings(references.flatMap(({ resolved }) => resolved.nodeId ? [resolved.nodeId] : []));
-			const referenceAssetIds = uniqueNonEmptyStrings(references.flatMap(({ resolved }) => resolved.assetId ? [resolved.assetId] : []));
+			// Clip packets freeze reference identities to their materialized canvas nodes.
+			// A generatedAssetId is a storage lookup handle, not a replacement for the
+			// planned node identity used by the prompt's reference bindings.
+			const referenceImageNodeIds = uniqueNonEmptyStrings(imageReferences.map((reference) =>
+				readString((reference as Record<string, unknown>).nodeId)));
+			const referenceAssetIds: string[] = [];
+			if (referenceImageNodeIds.length !== references.length) {
+				throw new Error(`Clip ${itemId} image reference nodes are missing or duplicated`);
+			}
 			const maxReferenceImages = generationContract?.maxReferenceImages;
-			if (typeof maxReferenceImages === "number" && referenceImageNodeIds.length + referenceAssetIds.length > maxReferenceImages) {
+			if (typeof maxReferenceImages === "number"
+				&& new Set(references.map(({ resolved }) => resolved.imageUrl)).size > maxReferenceImages) {
 				throw new Error(`Clip ${itemId} exceeds the selected video model's maxReferenceImages`);
 			}
 			return {
 				itemId,
 				clipIndex,
 				prompt,
+				sourcePrompt,
+				...(speechEvents === undefined ? {} : { speechEvents }),
+				referenceBindings,
+				referenceHeader,
 				promptSourceProtocol: CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE,
 				durationSeconds,
 				declaredAssetIds: referenceEffectIds,
@@ -2953,6 +3063,7 @@ export function buildVideoProductionPlan(input: Readonly<{
 				videoReferencePolicy: WORKFLOW_VIDEO_REFERENCE_POLICY,
 				modelKey,
 				resolution,
+				...(size ? { size } : {}),
 				aspectRatio,
 				estimateIdentity,
 				...(generationContract ? { generationContract } : {}),
@@ -3067,10 +3178,7 @@ export function buildVideoProductionPlan(input: Readonly<{
 		throw new Error("Production plan clip identities must be unique");
 	}
 	const consumedAssetIds = new Set(clips.flatMap((clip) => clip.declaredAssetIds));
-	const orphanAssetIds = [...referenceByAssetId.keys()].filter((assetId) => !consumedAssetIds.has(assetId));
-	if (orphanAssetIds.length > 0) {
-		throw new Error(`Generated assets have no Clip consumer: ${orphanAssetIds.join(",")}`);
-	}
+	const unusedAssetIds = [...referenceByAssetId.keys()].filter((assetId) => !consumedAssetIds.has(assetId));
 	const missingAssetIds = [...consumedAssetIds].filter((assetId) => !referenceByAssetId.has(assetId));
 	if (missingAssetIds.length > 0) {
 		throw new Error(`Clip asset declarations were not generated: ${missingAssetIds.join(",")}`);
@@ -3082,11 +3190,11 @@ export function buildVideoProductionPlan(input: Readonly<{
 			))
 			: []
 	)));
-	const orphanVoiceSpeakers = [...voiceBySpeaker.keys()].filter((speakerName) => !consumedSpeakerNames.has(speakerName));
-	if (orphanVoiceSpeakers.length > 0) {
-		throw new Error(`Voice manifest contains speakers with no Clip consumer: ${orphanVoiceSpeakers.join(",")}`);
-	}
-	return createWorkflowCollection({
+	const unusedVoiceSpeakers = [...voiceBySpeaker.keys()].filter((speakerName) => !consumedSpeakerNames.has(speakerName));
+	// Unused accepted assets are diagnostic facts, not missing prerequisites.
+	// Keep the source bindings/voice manifest in their ledger and continue with
+	// the author's explicit clip references; never invent consumers or discard assets.
+	const productionPlan = createWorkflowCollection({
 		collectionId: `${input.executionId}:${input.nodeId}:production-plan`,
 		producerNodeId: input.nodeId,
 		producerPortId: "production-plan",
@@ -3096,9 +3204,11 @@ export function buildVideoProductionPlan(input: Readonly<{
 			videoReferencePolicy: WORKFLOW_VIDEO_REFERENCE_POLICY,
 			modelKey,
 			resolution,
+			...(size ? { size } : {}),
 			aspectRatio,
 			estimateIdentity,
 			...(generationContract ? { generationContract } : {}),
 		})),
 	});
+	return { ...productionPlan, diagnostics: { unusedAssetIds, unusedVoiceSpeakers } };
 }

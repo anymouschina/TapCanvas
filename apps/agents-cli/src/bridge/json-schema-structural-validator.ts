@@ -1,5 +1,11 @@
 import { inspectFieldRelations, FIELD_RELATIONS_KEYWORD } from "../../../../packages/schemas/json-schema-relations/index.mjs";
 import { inspectIndexReferences, INDEX_REFERENCES_KEYWORD } from "../../../../packages/schemas/json-schema-relations/index-references.mjs";
+import { resolveLocalJsonSchemaReferences } from "../../../../packages/schemas/json-schema-relations/local-references.mjs";
+import { inspectReferenceMembership, FROZEN_REFERENCE_CATALOGS_KEYWORD, REFERENCE_SOURCE_KEYWORD } from "../../../../packages/schemas/json-schema-relations/reference-membership.mjs";
+import { inspectReferenceFactEquality, FROZEN_REFERENCE_FACTS_KEYWORD, REFERENCE_FACT_EQUALITY_KEYWORD, type ReferenceFactObservation } from "../../../../packages/schemas/json-schema-relations/reference-facts.mjs";
+import { inspectUniqueBy, inspectUniqueItems, UNIQUE_BY_KEYWORD } from "../../../../packages/schemas/json-schema-relations/array-uniqueness.mjs";
+import { inspectInputOutputRelations, INPUT_OUTPUT_RELATIONS_KEYWORD } from "../../../../packages/schemas/json-schema-relations/input-output.mjs";
+import { inspectSourceRelations } from "../../../../packages/schemas/source-unit-ledger/index.mjs";
 export type JsonSchemaStructuralIssue = {
   path: string;
   keyword: string;
@@ -99,6 +105,7 @@ function validateNode(
   path: string,
   issues: JsonSchemaStructuralIssue[],
   schemaPath = "$",
+  parentReferences: Readonly<{ catalogs?: unknown; facts?: unknown; observations?: ReferenceFactObservation[] }> = {},
 ): void {
   if (schemaValue === true || issues.length >= MAX_ISSUES) return;
   if (schemaValue === false) {
@@ -107,16 +114,35 @@ function validateNode(
   }
   const schema = readRecord(schemaValue);
   if (!schema) return;
+  const references = {
+    catalogs: Object.hasOwn(schema, FROZEN_REFERENCE_CATALOGS_KEYWORD) ? schema[FROZEN_REFERENCE_CATALOGS_KEYWORD] : parentReferences.catalogs,
+    facts: Object.hasOwn(schema, FROZEN_REFERENCE_FACTS_KEYWORD) ? schema[FROZEN_REFERENCE_FACTS_KEYWORD] : parentReferences.facts,
+    observations: parentReferences.observations,
+  };
+  for (const issue of inspectReferenceMembership(schema, value, path, references.catalogs)) {
+    pushIssue(issues, { ...issue, keyword: REFERENCE_SOURCE_KEYWORD, schemaPath });
+  }
+  const factResult = inspectReferenceFactEquality(schema, value, path, references.facts);
+  references.observations?.push(...factResult.observations);
+  for (const issue of factResult.issues) {
+    pushIssue(issues, { ...issue, keyword: REFERENCE_FACT_EQUALITY_KEYWORD, schemaPath });
+  }
+  for (const issue of inspectInputOutputRelations(schema, value, path)) {
+    pushIssue(issues, { ...issue, keyword: INPUT_OUTPUT_RELATIONS_KEYWORD, schemaPath });
+  }
+  for (const issue of inspectSourceRelations(schema, value, path)) {
+    pushIssue(issues, { ...issue, keyword: 'x-sourceRelations', schemaPath });
+  }
 
   if (Array.isArray(schema.allOf)) {
-    schema.allOf.forEach((branch, index) => validateNode(branch, value, path, issues, `${schemaPath}.allOf[${index}]`));
+    schema.allOf.forEach((branch, index) => validateNode(branch, value, path, issues, `${schemaPath}.allOf[${index}]`, references));
   }
   for (const keyword of ["anyOf", "oneOf"] as const) {
     const branches = Array.isArray(schema[keyword]) ? schema[keyword] : [];
     if (branches.length === 0) continue;
     const results = branches.map((branch, index) => {
       const branchIssues: JsonSchemaStructuralIssue[] = [];
-      validateNode(branch, value, path, branchIssues, `${schemaPath}.${keyword}[${index}]`);
+      validateNode(branch, value, path, branchIssues, `${schemaPath}.${keyword}[${index}]`, references);
       return branchIssues;
     });
     const matches = results.filter((result) => result.length === 0).length;
@@ -207,10 +233,12 @@ function validateNode(
   }
 
   if (Array.isArray(value)) {
+    for (const issue of inspectUniqueItems(schema, value, path)) pushIssue(issues, { ...issue, keyword: 'uniqueItems', schemaPath });
+    for (const issue of inspectUniqueBy(schema, value, path)) pushIssue(issues, { ...issue, keyword: UNIQUE_BY_KEYWORD, schemaPath });
     if (schema.contains !== undefined) {
       const matches = value.filter((item, index) => {
         const candidateIssues: JsonSchemaStructuralIssue[] = [];
-        validateNode(schema.contains, item, `${path}[${index}]`, candidateIssues, `${schemaPath}.contains`);
+        validateNode(schema.contains, item, `${path}[${index}]`, candidateIssues, `${schemaPath}.contains`, references);
         return candidateIssues.length === 0;
       }).length;
       const minimum = typeof schema.minContains === "number" ? schema.minContains : 1;
@@ -227,7 +255,7 @@ function validateNode(
       pushIssue(issues, { path, keyword: "maxItems", message: `${path} must contain at most ${schema.maxItems} items` });
     }
     if (schema.items !== undefined) {
-      value.forEach((item, index) => validateNode(schema.items, item, `${path}[${index}]`, issues, `${schemaPath}.items`));
+      value.forEach((item, index) => validateNode(schema.items, item, `${path}[${index}]`, issues, `${schemaPath}.items`, references));
     }
     return;
   }
@@ -253,7 +281,7 @@ function validateNode(
   for (const [key, childValue] of Object.entries(record)) {
     const propertySchema = properties[key];
     if (propertySchema !== undefined) {
-      validateNode(propertySchema, childValue, childPath(path, key), issues, childPath(`${schemaPath}.properties`, key));
+      validateNode(propertySchema, childValue, childPath(path, key), issues, childPath(`${schemaPath}.properties`, key), references);
       continue;
     }
     if (schema.additionalProperties === false) {
@@ -263,7 +291,7 @@ function validateNode(
         message: `${childPath(path, key)} is not allowed; expected fields: ${Object.keys(properties).join(", ") || "none"}`,
       });
     } else if (readRecord(schema.additionalProperties)) {
-      validateNode(schema.additionalProperties, childValue, childPath(path, key), issues, `${schemaPath}.additionalProperties`);
+      validateNode(schema.additionalProperties, childValue, childPath(path, key), issues, `${schemaPath}.additionalProperties`, references);
     }
   }
 }
@@ -271,9 +299,14 @@ function validateNode(
 export function validateJsonSchemaStructure(input: {
   schema: Record<string, unknown>;
   value: unknown;
+  observations?: ReferenceFactObservation[];
 }): JsonSchemaStructuralIssue[] {
   const issues: JsonSchemaStructuralIssue[] = [];
-  validateNode(input.schema, input.value, "$", issues);
+  let resolved: Record<string, unknown> | boolean;
+  try { resolved = resolveLocalJsonSchemaReferences(input.schema); }
+  catch (error: unknown) {
+    return [{ path: '$', keyword: '$ref', message: error instanceof Error ? error.message : String(error) }];
+  }
+  validateNode(resolved, input.value, "$", issues, '$', { observations: input.observations });
   return issues;
 }
-

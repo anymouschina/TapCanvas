@@ -26,9 +26,9 @@ describe('PromptVideoPreview', () => {
   })
 
   it('does not turn a hover cancellation into a permanent preview failure', async () => {
-    let rejectPlayback = null as ((reason: unknown) => void) | null
+    const pendingPlayback: { reject?: (reason: unknown) => void } = {}
     const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => new Promise<void>((_resolve, reject) => {
-      rejectPlayback = reject
+      pendingPlayback.reject = reject
     }))
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
     const { container } = render(<PromptVideoPreview media={media} title="视频提示词" />)
@@ -37,7 +37,8 @@ describe('PromptVideoPreview', () => {
     expect(preview).not.toBeNull()
     fireEvent.mouseEnter(preview as HTMLElement)
     fireEvent.mouseLeave(preview as HTMLElement)
-    rejectPlayback?.(new DOMException('The play() request was interrupted by a call to pause().', 'AbortError'))
+    if (!pendingPlayback.reject) throw new Error('Expected a pending playback request')
+    pendingPlayback.reject(new DOMException('The play() request was interrupted by a call to pause().', 'AbortError'))
 
     await waitFor(() => expect(screen.queryByText('预览不可用')).toBeNull())
     expect(play).toHaveBeenCalledTimes(1)
@@ -45,9 +46,9 @@ describe('PromptVideoPreview', () => {
   })
 
   it('ignores any obsolete play rejection after the pointer has left', async () => {
-    let rejectPlayback = null as ((reason: unknown) => void) | null
+    const pendingPlayback: { reject?: (reason: unknown) => void } = {}
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => new Promise<void>((_resolve, reject) => {
-      rejectPlayback = reject
+      pendingPlayback.reject = reject
     }))
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -56,7 +57,8 @@ describe('PromptVideoPreview', () => {
 
     fireEvent.mouseEnter(preview as HTMLElement)
     fireEvent.mouseLeave(preview as HTMLElement)
-    rejectPlayback?.(new DOMException('The element has no supported sources.', 'NotSupportedError'))
+    if (!pendingPlayback.reject) throw new Error('Expected a pending playback request')
+    pendingPlayback.reject(new DOMException('The element has no supported sources.', 'NotSupportedError'))
 
     await waitFor(() => expect(screen.queryByText('预览不可用')).toBeNull())
     expect(consoleError).not.toHaveBeenCalled()

@@ -8,7 +8,6 @@ const inputPath = process.env.WORKFLOW_AUTHORING_REPLAY_INPUT;
 it.skipIf(!inputPath)('exports the actual authoring invocation for an offline text evaluation', () => {
   const input = JSON.parse(fs.readFileSync(inputPath!, 'utf8')) as {
     request: WorkflowAgentRunRequest; outputPath: string; suiteId: string;
-    memoryCoreIdentity: { teamId: string; agentId: string };
   };
   const structured = workflowAgentStructuredOutput(input.request);
   expect(structured?.outputContract).toBeDefined();
@@ -22,7 +21,6 @@ it.skipIf(!inputPath)('exports the actual authoring invocation for an offline te
       outputContract: structured!.outputContract, compactPrelude: true,
       expectation: { terminalStatuses: ['succeeded'], output: 'required', allowFailedToolCalls: true, requireProductiveProgress: false, completionDispositions: ['succeeded'] },
       metadata: { taskType: 'workflow_agent_node', modelKey: input.request.modelKey,
-        memoryCoreIdentity: input.memoryCoreIdentity,
         retrievalUserRequest: workflowAgentRetrievalUserRequest(input.request),
         retrievalContext: workflowAgentRetrievalContext(input.request),
         promptExampleRetrievalScope: input.request.promptExampleRetrievalScope,

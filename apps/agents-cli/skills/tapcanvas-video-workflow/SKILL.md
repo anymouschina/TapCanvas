@@ -20,7 +20,7 @@ knowledge-domains:
 knowledge-retrieval-policy: required_non_blocking
 metadata:
   contracts:
-    - tapcanvas/video-prompt-authoring@4.0.0
+    - tapcanvas/video-prompt-authoring@4.1.0
     - UserIntentContract@2
     - StageExecutionPacket@1
 consumes:
@@ -37,6 +37,8 @@ required-evidence:
 side-effects:
   - 可提交付费图片、音频与视频任务；必须遵守用户授权、幂等与中断合同
 self-check:
+  - 对话启动前判断来源是否足够；需要创作时加载 screenwriter，在本作者链完成正文与导演设计。主代理回读实际整稿，对照用户目标落实必要修订，不能把子代理完成、自评通过或摘要当作导演定稿；已有完整稿直接保留
+  - 新交接稿追加保存到真实文本节点并回读，project_context 通过 triggerPayload.selectedNodeIds 显式绑定；章节原文与派生稿分别保留身份，不覆盖旧稿，不只传旧简报；具体保存和交接读取正文“前置定稿的真实落点”
   - 所有项目、章节、素材、attachment 与 execution 身份均来自真实工具事实
   - 工作流只启动一次，受理后不更换幂等键重复提交
   - 按冻结交付范围验证：成片要求目标视频 URL 持久化；只生成视频节点要求全部节点、提示词和引用持久化后才宣称完成
@@ -46,21 +48,24 @@ requires-skills:
 
 当前已装配紧凑一键成片图以冻结来源分段、章级共享资产注册表、全章连续性/对白规划、逐 Clip packet 作者、节点投影和媒体执行为主线。每个 Clip 对应一个视频节点，章内重复资产按精确注册身份共用；跨章节历史资产由通用图片节点执行时依据稳定身份在项目记忆中查询并验证真实 URL，不向章级作者一次性注入历史目录。触发视频时先验真其上游图片 URL。作者从 Skill 与同媒体知识候选按需获取创作证据，模型沿用户本轮配置继承。旧版多节点 BeatSheet 与独立站位图生产合同只在当前 Workflow IR 实际包含对应 artifact/执行器时适用，不能从历史描述补出额外节点或声称紧凑版已经上传站位图。
 
-完整章节生产的持久 Workflow 已拆分职责：`tapcanvas.source-unit-ledger/v1`、`tapcanvas.chapter-beat-plan/v3`、`tapcanvas.chapter-asset-plan/v3`、`tapcanvas.clip-design/v2` 分别按 `tapcanvas-video-authoring-stages` 交付；原文单位独立持久化，章节只分配引用，对白及说话人由冻结来源投影；不能要求其中任何一个节点再写整份 BeatSheet。最终 BeatSheet 由确定性组装器生成，现有来源、对象与下游 writer 合同继续有效。首 Clip 快速验证的独立单 Clip 合同保持按其声明的 artifact 执行。
+只有冻结 Workflow IR 实际声明 `tapcanvas.source-unit-ledger/v1`、`tapcanvas.chapter-beat-plan/v3`、`tapcanvas.chapter-asset-plan/v3`、`tapcanvas.clip-design/v2` 的执行，才按这些旧分阶段 artifact 分别交付并由组装器生成 BeatSheet。它们不是当前紧凑图的前置步骤；当前图由单个章作者交 `tapcanvas.chapter-sequence/v3`，作者自主选择准备工作，再交共享资产与逐 Clip 生产。首 Clip 路径同样以其实际冻结 IR 和 artifact 为准。
 
-完整 `full_video` 图直接以 `canvas-source` 的 canonical 原文启动 delivery-contract、source ledger、章节资产与章节编排；该变体不插入 text-expansion 节点，也不因此减少来源覆盖、对白/声音合同、共享资产身份或逐 Clip 提示词要求。保留 text-expansion 的 `expanded-source` 只属于 `first_video` 快速验证变体，且仅在显式连线时作为非权威草稿输入。
+当前完整 `full_video` 图以 `canvas-source` 的 canonical 来源进入 delivery-contract 与全章作者，再投影同一章序列、准备共享资产并执行逐 Clip 生产。对话发起生产时，来源准备由主代理在启动前按 screenwriter 的 source-readiness 判断：完整章节可直接保留；仅有简报或存在具体因果缺口时，先完成必要创作、自审修订与定稿持久化，再显式绑定交接稿。手动直接启动仍按真实输入执行，不因缺定稿标签增加拦截，也不固定插入 source-ledger 或 text-expansion。历史快照若显式连线 `expanded-source`，它才作为对应节点的草稿输入，不能从本文描述补出不存在的阶段，也不减少来源、声音和资产合同。
 
 
 # TapCanvas 视频 Workflow IR
 
 ## 使命
 
-把用户的视频目标交给一条可观察、可拆分、可中断、可恢复的持久 Workflow IR。根代理负责冻结用户范围、读取真实项目事实并启动工作流；BeatSheet、逐 Clip writer、资产验真与补齐、配音清单、生产交接、视频生成、合成和交付验证都由已保存 DAG 的明确节点承担。
+把用户的视频目标交给一条可观察、可拆分、可中断、可恢复的持久 Workflow IR。根代理负责冻结用户范围、读取真实项目事实、完成必要的前置编剧与导演定稿并绑定真实来源后启动工作流；BeatSheet、逐 Clip writer、资产验真与补齐、配音清单、生产交接、视频生成、合成和交付验证都由已保存 DAG 的明确节点承担。
+
+工作流受理不等于剧本已定稿。对话主代理先按 `tapcanvas-screenwriter/references/source-readiness.md` 判断：来源足够时保留原稿，存在缺口时在当前作者链完成必要创作、导演设计、回读与实际修订，再交生产。无需固定经过大纲、初稿、审稿等全部步骤，也不额外要求用户批准一次。导演选择写入同一份可拍正文，服务人物行动、观众认知和情绪变化，不另造与剧本冲突的设计稿。章序列作者依据该交接稿落实有序事件、完整对白、连续性与动态 Clip 窗口，不分配单镜和发声秒数，不因物理切段另编故事或重置状态；发现自身改编造成的偏差，在当前作者链直接修正。`authoringRecord` 只记录实际工作，不能冒充独立审核回执。主代理以真实正文、保存及回读回执报告定稿，不能用视觉圣经、计划或工作流受理冒充完成。
 
 系统只有这一条一键成片路径：
 
 ```text
 真实项目/章节/素材事实
+-> Agent 判断必要准备，完成可拍交接稿并绑定其真实来源
 -> 当前已装配 Workflow IR
 -> typed ports 与逐节点持久状态
 -> 真实媒体任务与资产 URL
@@ -90,7 +95,7 @@ requires-skills:
 - 结果通过 `expectedDelivery -> deliveryEvidence -> deliveryVerification` 验收；脚本、提示词、估价、节点数量或供应商受理回执不能冒充视频。
 - 已生成媒体始终保留。后续诊断或语义复盘只能追加证据或新版本，不得回滚、覆盖或丢弃资产。
 
-`acceptedAsync=true` 只表示工作流已由持久执行器接管，不表示视频已经生成。拿到受理回执后不得换 idempotency key 重提；后续通过 execution/family/attempt 的权威事实恢复或交付。
+`acceptedAsync=true` 只表示工作流已由持久执行器接管，不表示视频已经生成。回执明确声明 `completionBoundary=submission` 与 `executionOwner=durable_executor` 时，当前对话完成提交交接并准确告知媒体待产出，不轮询或注册对话 continuation；持久执行器继续按冻结 `expectedDelivery` 验收最终媒体。未声明此边界时保持等待真实交付证据，不能因单个节点受理标记整片成功。失败先核对原回执、已有资产和当前允许的修复动作，不自动重提付费媒体、换模型或建立另一条生产链。拿到受理回执后不得换 idempotency key 重提；后续通过 execution/family/attempt 的权威事实恢复或交付。
 
 ## 工作流
 
@@ -124,15 +129,27 @@ requires-skills:
 
 优先复用宿主本轮已经提供的项目、章节、当前选择与用户显式资产 ID。`sourceMode=project_context` 的服务端会冻结 canonical 章文、画布与资产快照，根代理不再为抄写这些事实串行调用章节列表、章节详情、画布和素材清单。
 
-仅在作用域确实不明确或需要主动选择已有资产时，读取能消除该缺口的对应工具；已选稳定资产 ID 原样传入。根代理只负责启动与交接，不先写一版剧本、镜头表、角色卡或视频提示词，也不预载编剧、writer、reviewer、角色卡与场景卡整套 Skill。各节点依赖在 Workflow IR 内装配一次，由所属节点完成。
+仅在作用域不明确、来源需要回读或需要主动选择已有资产时，读取能消除该缺口的对应工具；已选稳定资产 ID 原样传入。需要前置创作时按需加载 screenwriter 及其导演方法，在当前作者链完成可拍正文；不要预载下游 writer、reviewer、角色卡与场景卡整套 Skill，也不在对话里重复生成工作流负责的媒体资产或视频提示词。来源已足够时直接交接，不为了显示过程重写已确认故事。
 
 用户上传或明确选中的图片是本轮对象身份的一手证据。BeatSheet 作者按冻结 selectedAssetSnapshot / selection 核对原物；若现有文字事实不足以知道图片里的产品、外观或用途，由当前 Agent 调用 `tapcanvas_analyze_image` 取得视觉事实后再创作，不能从文件名、通用“产品主体”或电商套路编造品类、屏幕、按钮与功能。单个对象可绑定多张原图，按动态 schema 在 objectRegistry 的 referenceAssetIds / 当前画布 referenceImageNodeIds 中保留全部所需视角，禁止为了单图合同重画替代产品。镜头与背景可以创作，对象身份与功能必须来自输入事实。已有明确引用的对象沿同一资产链复用；确实缺少的独立对象才提交其创作计划，role 与已声明对象的精确身份一致。结构性缺项在同一逻辑任务内按 outputRepair 修订；不得要求用户重新上传或以无参考文生图补位。
 
 实际产出 assetPlans 的 BeatSheet 创作节点首次编译场景图片时遵循 `tapcanvas-scene-card` 的“首轮生图：空间职责与洁净材质”：把剧情调度转为空间事实，按场景职责消费项目画风，生成无人且保留自然材质的空间资产。完整场景合同与图片 prompt 按节点输出 schema 一起交付；不以标题代替合同，不整包复制人物/视频风格，不把出图后去人去噪或自动付费编辑设为工作流步骤。该方法由资产作者在同一节点消费；场景合同按角色类型贯穿计划、展开和生图元数据，人物与人群继续由现有 clip writer 按 Beat 内容写入视频，根代理不另起场景设计或补人物流程。
 
+### 前置定稿的真实落点
+
+已确认章节正文可直接作为来源，无需复制或覆盖。需要原创或修订时先交付完整可拍正文，连同必要的导演安排和真实修订说明；不要只交大纲、动作列表、风格词或“自审通过”。按事实需要选择现有保存路径：
+
+主代理承担整片导演判断。委派编剧后，要读取实际整稿，结合用户目标与事实判断核心行动、成立条件、结果和观众体验是否在正文中实现；子代理完成通知和自评不能替代这次判断。发现具体矛盾时，把对应正文与失败事实交回同一创作链修订，再回读受影响部分；可以自行修订或按需委派，不固定增加一个独立 reviewer 阶段。此责任属于 Agent 创作，不赋予本地语义检查或工作流提交边界终止权，也不拦截用户直接手动执行现稿。
+
+- 新创作或派生改编稿：通过 `tapcanvas_flow_patch` 在当前授权画布追加独立 `kind=text` 正文节点，保留原简报、章节和历史版本；用 `tapcanvas_flow_get` 按真实 nodeId 回读完整 `content`，确认与刚交付正文一致。作者与调用者共享这个 nodeId，不能只凭节点名称识别定稿。
+- 用户明确要求更新章节正文本身：走 API Skill 的 `tapcanvas_project_chapter_get` / `tapcanvas_project_chapter_update` revision 合同；生成改编稿不自动授权覆盖原章文。
+- 已有对话交付被用户明确选中：使用本轮真实 `referenceResolution` 及宿主冻结的 actionable delivery，不能自造历史回执。
+
+启动 `project_context` 时，把本轮采用的正文节点 ID 显式放进 `triggerPayload.selectedNodeIds`，同时保留用户选中的参考节点与资产；不能只保存后遗漏参数，也不能让旧简报冒充新定稿。章节作用域保留 canonical 原文作为来源事实，显式选中的派生稿作为本次演出设计一并交接，不能改写原文权威。`inline_text` 则按当前 schema 用 `source` 交精确正文。只有对话要求本轮创作时才做上述准备，用户手动执行、重跑或明确要求使用现稿时沿其授权直接执行，不用语义评分、记录数量或定稿标签设闸。
+
 ### 3. 选择当前已装配工作流
 
-画布素材可见性与用户显式选择是两种事实：未手动点选不表示没有可用素材。用户要求使用画布素材时，工作流内的创作 Agent 根据已冻结的图片候选与真实理解结果决定对象归并和引用；根代理仍只启动和交接，不建立第二套看图/写稿流水线。素材驱动的原创、产品演示与口播按 `tapcanvas-dramatic-adapter/references/media-grounded-creation.md` 的证据方法完成。图片理解失败只提供失败证据，不能说成已看懂、改用文件名猜测或反复调用同一不可用模型。
+画布素材可见性与用户显式选择是两种事实：未手动点选不表示没有可用素材。用户要求使用画布素材时，工作流内的创作 Agent 根据已冻结的图片候选与真实理解结果决定对象归并和引用；根代理按当前创作缺口决定是否需要先理解素材并写成可拍正文，不把材料理解推迟后又宣称已完成前置导演设计；同一作品只维护一份当前交接稿。素材驱动的原创、产品演示与口播按 `tapcanvas-dramatic-adapter/references/media-grounded-creation.md` 的证据方法完成。图片理解失败只提供失败证据，不能说成已看懂、改用文件名猜测或反复调用同一不可用模型。
 
 查询 `tapcanvas_equipped_workflow_run` 的动态 schema，只能从 enum 中选择当前用户真实装配的 `attachmentId`，并遵守该 attachment 声明的 `sourceMode` 与必填输入合同。
 
@@ -254,3 +271,13 @@ Clip 提示词质量是独立 prompt-only 集成评测：只审章节忠实、�
 本章入口的 `onlyVideoNodes=true` 是交付范围事实。章节 film-spec 在受理时读取并冻结到 trigger；使用同一 `full_video` Workflow IR 中的条件分支，不另起提示词专用工作流。仍完成章节规划、参考资产准备和逐段提示词；分支只调用 `tapcanvas.video.prepare/v1`，把完整 prompt、精确资产 ID、模型规格、真实片段序号写入画布并回读。此时以全部 `tapcanvas.video-node/v1` 持久化回执为完成证据，不要求视频 URL，不继续提交视频任务或合成。不要把“待手动生成”描述为失败、阻塞或已生成视频。关闭开关时沿原视频提交、合成与视频 URL 验证分支执行。已受理执行保留冻结选择，不受之后修改开关影响。
 
 逐段素材消费采用 BeatSheet v22：objectRegistry 保存全局引用池，objectStates 显式选择本段 referenceAssetIds/referenceImageNodeIds 子集。素材复用集合逐图记录 consumerClipIds，不能按同角色把全局多图重新注入每个片段。完整素材覆盖按整片核对；writer 只消费本段冻结绑定，不自行丢图或补入其他段图片。
+
+
+### 逐 Clip 推进的执行证据
+
+`full_video` 的 Workflow IR 以每个冻结 Clip 为独立生产项：作者、结构投影、节点物化、图片依赖与视频提交在同一项内推进，不等待全章所有作者。全章共享来源和资产身份仍由冻结合同提供；共享图片沿同一 execution family 与资产规格回执去重。判断“正在生成视频”必须有真实供应商受理回执，不能用作者运行、图片准备或占位节点替代。`first_video` 仍先完成全章规划后只提交首片；`onlyVideoNodes=true` 仍只准备节点，不提交视频。新配置仅作用于新受理执行，不修改已冻结历史。
+
+
+章节序列作者按本轮实际提供的作者 schema 提交来源范围：`sourceIndex` 与 UTF-16 `startOffset/endOffset` 由作者选择，`sourceId/sourceFingerprint` 由宿主依据冻结来源映射绑定，不重复手抄。最终持久产物仍保留完整来源身份；逐字引用、完整来源覆盖与范围边界验证保持原样。不得将字段编译当作剧情或对白自动补写。
+
+章序列作者以本次实际投影 schema 为准：若宿主声明确定性时间线派生，作者保留事件与边界身份、正文、事件绝对时间、Clip 时长及来源选择；总时长、边界累计时间、相邻边界引用及各 Clip 事件引用由宿主从这些决策唯一计算。无需在作者正文重复补写已从 schema 移除的机器字段；最终落库仍是完整 chapter-sequence/v3。对白跨物理窗口时仍由作者同链修订，宿主不拆句或改时间。

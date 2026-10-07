@@ -217,6 +217,7 @@ const TURN_CONTEXT_KEYS = [
   "publicTurnId",
   "responseFormat",
   "outputContract",
+  "outputArtifactType",
   "structuredOutputSubmissionPolicy",
   "structuredOutputSourceContext",
   "resumeStructuredOutput",

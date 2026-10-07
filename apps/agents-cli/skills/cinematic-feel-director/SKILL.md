@@ -4,6 +4,10 @@ description: 图片与视频的通用视觉导演方法。无指定影调或参�
 disable-model-invocation: false
 autoload-resources:
   - references/visual-authoring-floor.md
+metadata:
+  artifact-preload:
+    tapcanvas.clip-production-packet/v2:
+      - SKILL.md
 knowledge-role: director
 knowledge-domains:
   - 视听语言演出
@@ -24,11 +28,18 @@ knowledge-domains:
 
 ## 分工
 
-- 本 Skill 负责视觉判断与可执行表达，在现有作者上下文内完成，不新增子代理或生产阶段。
+- 本 Skill 负责视觉判断与可执行表达，可由当前作者或明确受派的导演、摄影执行者使用；Skill 本身不派生子代理，不创建生产阶段或第二条工作流。
 - `tapcanvas-style-pack` 负责项目级风格提炼、原创视觉方向整理与视觉圣经版本；本 Skill 不自动确认或覆盖项目资产。
 - 角色、场景、道具 Skill 负责对象身份与用途；身份板、技术底图不套成片戏剧光。
 - 正式视频 writer 的 `lighting_material_and_atmosphere`、`camera_composition_and_lens` 和 `embedded_review_evidence` 负责同一方法的镜头投影与复盘；本 Skill 不另立输出字段、评分或终态。
 - 真实图像/视频生成、异步收取与付费仍由已授权工具和当前工作流负责，不因追求风格额外生成候选图或重打资产。
+
+## 按受派任务读取
+
+- [场面导演与表演调度](references/scene-direction.md)：需要把确切剧本落实为表演、走位、观众信息与声画段落时读取。
+- [摄影机与光线设计](references/camera-and-light.md)：需要决定机位距离、透视、构图、焦点、运动与空间布光，或修订已有摄影方案时读取。
+
+两份方法不要求一起加载。独立执行者只消费受派目标、选定稿件、必要前后状态与明确约束；主代理的完整闲聊、旧稿和其他角色工作过程不是默认上下文。交付父任务要求的实际正文或方案，创作解释按需提供，不用角色口吻或自评代替结果。
 
 ## 表达示例的使用边界
 

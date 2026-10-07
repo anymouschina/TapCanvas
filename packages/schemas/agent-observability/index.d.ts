@@ -119,6 +119,32 @@ export type AgentAttentionProjectionV1 = {
 	};
 };
 
+/** Compact, non-blocking receipt for structured-output author observations. */
+export type StructuredOutputReviewV1 = Readonly<{
+	version: 1;
+	blocking: false;
+	contractHash: string;
+	candidateHash: string;
+	feedbackDelivered: boolean;
+	status: "observations_remaining" | "no_remaining_observations";
+	observations: readonly Readonly<{
+		code: "model_authored_consistency";
+		message: string;
+		observationKey?: string;
+	}>[];
+}>;
+
+/** Structural projection issue; it never changes a task or artifact outcome. */
+export type StructuredOutputReviewProjectionIssueV1 = Readonly<{
+	reason: "invalid_receipt" | "invalid_observation_rows";
+	droppedObservationCount: number;
+}>;
+
+export type StructuredOutputReviewProjectionV1 = Readonly<{
+	review: StructuredOutputReviewV1 | null;
+	issue: StructuredOutputReviewProjectionIssueV1 | null;
+}>;
+
 /** Cross-runtime replay input/output envelope shared by agents-cli and Hono tests. */
 export type AgentReplayFixtureV1 = {
 	version: 1;
@@ -288,6 +314,22 @@ export type AgentCanonicalPersistenceHealthV1 = {
 	errorCode: string | null;
 };
 
+export type AgentPromptObservationV1 = {
+	version: 1;
+	cacheScope: string;
+	hasStableBoundary: boolean;
+	stableHash: string;
+	systemHash: string;
+	toolsHash: string;
+	stableChars: number;
+	systemChars: number;
+	toolsChars: number;
+	messageChars: number;
+	stableChanged: boolean | null;
+	systemChanged: boolean | null;
+	toolsChanged: boolean | null;
+};
+
 export type AgentRuntimeLlmSpanV1 = {
 	spanId: string;
 	parentSpanId: string;
@@ -299,6 +341,7 @@ export type AgentRuntimeLlmSpanV1 = {
 	status: "succeeded" | "failed";
 	stopReason: string | null;
 	providerStopReason: string | null;
+	prompt?: AgentPromptObservationV1;
 	usage: AgentTokenUsageV1;
 };
 

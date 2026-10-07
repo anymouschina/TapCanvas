@@ -19,6 +19,7 @@ export type VideoGenerationContract = {
   maxDurationSeconds: number;
   maxShotDurationSeconds?: number;
   referenceAudioPolicy: VideoReferenceAudioPolicy;
+  supportsTextToVideo?: boolean | null;
   supportsReferenceImages?: boolean | null;
   supportsFirstLastFrame?: boolean | null;
   maxReferenceImages?: number | null;
@@ -232,6 +233,11 @@ export function parseVideoGenerationContract(value: unknown): VideoGenerationCon
   const maxShotDurationRaw = record.maxShotDurationSeconds;
   const maxShotDurationSeconds = maxShotDurationRaw === undefined ? undefined : Number(maxShotDurationRaw);
   const referenceAudioPolicy = parseReferenceAudioPolicy(record.referenceAudioPolicy);
+  const supportsTextToVideo = record.supportsTextToVideo === undefined
+    ? undefined
+    : record.supportsTextToVideo === null || typeof record.supportsTextToVideo === "boolean"
+      ? record.supportsTextToVideo
+      : Number.NaN;
   const supportsReferenceImages = record.supportsReferenceImages === undefined
     ? undefined
     : record.supportsReferenceImages === null || typeof record.supportsReferenceImages === "boolean"
@@ -255,6 +261,7 @@ export function parseVideoGenerationContract(value: unknown): VideoGenerationCon
     maxDurationSeconds <= 0 ||
     maxDurationSeconds !== durationOptions[durationOptions.length - 1] ||
     !referenceAudioPolicy ||
+    (typeof supportsTextToVideo === "number" && Number.isNaN(supportsTextToVideo)) ||
     (typeof supportsReferenceImages === "number" && Number.isNaN(supportsReferenceImages)) ||
     (typeof supportsFirstLastFrame === "number" && Number.isNaN(supportsFirstLastFrame)) ||
     (typeof maxReferenceImages === "number" && Number.isNaN(maxReferenceImages)) ||
@@ -268,8 +275,9 @@ export function parseVideoGenerationContract(value: unknown): VideoGenerationCon
     maxDurationSeconds,
     ...(maxShotDurationSeconds !== undefined ? { maxShotDurationSeconds } : {}),
     referenceAudioPolicy,
-    ...(supportsReferenceImages !== undefined ? { supportsReferenceImages } : {}),
-    ...(supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame } : {}),
+    ...(supportsTextToVideo !== undefined ? { supportsTextToVideo: supportsTextToVideo as boolean | null } : {}),
+    ...(supportsReferenceImages !== undefined ? { supportsReferenceImages: supportsReferenceImages as boolean | null } : {}),
+    ...(supportsFirstLastFrame !== undefined ? { supportsFirstLastFrame: supportsFirstLastFrame as boolean | null } : {}),
     ...(maxReferenceImages !== undefined ? { maxReferenceImages } : {}),
   };
 }
@@ -296,6 +304,10 @@ export function videoGenerationContractsEqual(
     left.videoModel === right.videoModel &&
     left.maxDurationSeconds === right.maxDurationSeconds &&
     JSON.stringify(left.referenceAudioPolicy) === JSON.stringify(right.referenceAudioPolicy) &&
+    (left.supportsTextToVideo ?? null) === (right.supportsTextToVideo ?? null) &&
+    (left.supportsReferenceImages ?? null) === (right.supportsReferenceImages ?? null) &&
+    (left.supportsFirstLastFrame ?? null) === (right.supportsFirstLastFrame ?? null) &&
+    (left.maxReferenceImages ?? null) === (right.maxReferenceImages ?? null) &&
     left.durationOptions.length === right.durationOptions.length &&
     left.durationOptions.every((value, index) => value === right.durationOptions[index])
   );
@@ -339,7 +351,7 @@ export async function resolveStoryPlanGenerationContract(input: {
 export async function resolveVideoGenerationContract(input: {
   c: AppContext;
   videoModel: string;
-  videoInputModes?: readonly ("image_to_video" | "reference_to_video")[];
+  videoInputModes?: readonly ("image_to_video" | "reference_to_video" | "text_to_video")[];
 }): Promise<VideoGenerationContract> {
   const videoModel = input.videoModel.trim();
   if (!videoModel) throw new Error("video_generation_model_required");
@@ -364,6 +376,9 @@ export async function resolveVideoGenerationContract(input: {
       field: "durationOptions", code: "video_generation_duration_options_missing", observed: rawDurations ?? null });
   }
   const referenceAudioPolicy = readReferenceAudioPolicy(videoOptions);
+  const supportsTextToVideo = typeof videoOptions.supportsTextToVideo === "boolean"
+    ? videoOptions.supportsTextToVideo
+    : null;
   const supportsReferenceImages = typeof videoOptions.supportsReferenceImages === "boolean"
     ? videoOptions.supportsReferenceImages
     : null;
@@ -390,7 +405,10 @@ export async function resolveVideoGenerationContract(input: {
     durationOptions,
     maxDurationSeconds: durationOptions[durationOptions.length - 1],
     referenceAudioPolicy,
-    ...(videoInputModes.length > 0 ? { supportsReferenceImages, supportsFirstLastFrame, maxReferenceImages } : {}),
+    supportsTextToVideo,
+    supportsReferenceImages,
+    supportsFirstLastFrame,
+    maxReferenceImages,
   };
 }
 

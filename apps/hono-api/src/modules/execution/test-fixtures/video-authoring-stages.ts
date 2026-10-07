@@ -1,6 +1,6 @@
-import { parseChapterBeatPlan, parseChapterAssetPlan, parseClipDesign } from "../execution.video-authoring-stages";
 import { parseSourceUnitLedger } from "../execution.source-unit-ledger";
 import { sceneReferenceFixture } from "../execution.scene-reference-fixture";
+import { parseChapterBeatPlan, parseChapterAssetPlan, parseClipDesign } from "../execution.video-authoring-stages";
 
 export function stagedAuthoringFixture() {
   const ledger = parseSourceUnitLedger({ sourceId: "chapter", sourceFingerprint: "source-hash", units: [{
@@ -14,8 +14,7 @@ export function stagedAuthoringFixture() {
       storyEvents: [{ sourceBeatId: "event-1", event: "门打开", exitState: "门打开", startSeconds: 0, endSeconds: 10 }] }],
   });
   const shared = parseChapterAssetPlan({ objectRegistry: [{ objectId: "scene", kind: "scene", name: "房间", physicalIdentityKey: null,
-    imageSource: { mode: "generate", referenceAssetBindings: [], plan: { sceneCard: sceneReferenceFixture, identityAnchors: ["同一房间"], prohibitedDrift: ["空间保持一致"] } },
-    referenceRole: "environment", identityInvariant: "同一房间" }], backgroundPlans: [{ objectId: "scene", plan: { assetId: "floor", displayName: "房间底图", prompt: "无人房间", negativePrompt: "无标记", referenceAssetBindings: [] } }] });
+    imageSource: { mode: "generate", referenceAssetBindings: [], plan: { sceneCard: sceneReferenceFixture, identityAnchors: ["同一房间"], prohibitedDrift: ["空间保持一致"] } }, referenceRole: "environment", identityInvariant: "同一房间" }], backgroundPlans: [{ objectId: "scene", plan: { assetId: "floor", displayName: "房间底图", prompt: "无人房间", negativePrompt: "无标记", referenceAssetBindings: [] } }] });
   const clip = parseClipDesign({ clipIndex: 0, beat: {
     visualIntent: "展示出口",
     narrativeAudioPlan: { strategy: "visual_only", rationale: "无人发声", lines: [] },

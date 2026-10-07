@@ -1,3 +1,4 @@
+import { activeVideoTaskId, isCurrentVideoTask, videoNodeDataInGraph } from "./video-task-identity";
 import type { AppContext } from "../../types";
 import { AppError } from "../../middleware/error";
 import { PublicFlowGraphSchema } from "../flow/flow.public.schemas";
@@ -82,6 +83,7 @@ export async function writeFinalNodeToChapterCanvas(input: {
   nodeId: string;
   finalNode: Record<string, unknown>;
   finalNodeData: Record<string, unknown>;
+  expectedVideoTaskId?: string;
   conflictTimeoutMs?: number;
 }): Promise<{ stats: Record<string, number> }> {
   return withChapterCanvasWriteQueue(input.chapterId, async () => {

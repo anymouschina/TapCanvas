@@ -26,7 +26,8 @@ export async function reconcileWorkflowMediaReceipt(
 		}
 		if (!outcome.ok) {
 			const message = `Accepted media receipt query failed (HTTP ${outcome.status})`;
-			if (outcome.status === 429 || outcome.status >= 500) {
+			// 409 = another poller holds the upstream lease; the receipt is still being observed, not rejected.
+			if (outcome.status === 409 || outcome.status === 429 || outcome.status >= 500) {
 				console.error(JSON.stringify({ message: "workflow_media_receipt_query_failed", nodeId, taskId, media, observedAt, failureReason: message }));
 				return { status: "waiting_external", nodeId, taskId, reused: true, observationFailure: { observedAt, message } };
 			}

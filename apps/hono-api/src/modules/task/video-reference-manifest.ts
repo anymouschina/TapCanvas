@@ -528,3 +528,28 @@ export function mediaManifestMatchesRequest(input: {
     )
   );
 }
+
+/** Bind exact resolved canvas identities after URL normalization and deduplication. */
+export function bindResolvedVideoImageNodeIds(
+  manifest: VideoReferenceMediaManifest,
+  references: readonly Readonly<{ nodeId: string | null; url: string }>[],
+): VideoReferenceMediaManifest {
+  const nodeIdsByUrl = new Map<string, string[]>();
+  const manifestUrls = new Set(manifest.images.map((image) => image.url));
+  for (const reference of references) {
+    if (!reference.nodeId) continue;
+    if (!manifestUrls.has(reference.url)) {
+      throw new Error(`Resolved image node ${reference.nodeId} has no matching provider image URL`);
+    }
+    const nodeIds = nodeIdsByUrl.get(reference.url) ?? [];
+    if (!nodeIds.includes(reference.nodeId)) nodeIds.push(reference.nodeId);
+    nodeIdsByUrl.set(reference.url, nodeIds);
+  }
+  return {
+    ...manifest,
+    images: manifest.images.map((image) => {
+      const nodeIds = nodeIdsByUrl.get(image.url);
+      return nodeIds ? { ...image, sourceNodeIds: nodeIds } : image;
+    }),
+  };
+}

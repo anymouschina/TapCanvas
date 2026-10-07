@@ -3,6 +3,10 @@ import type { WorkerEnv } from "../../types";
 import { buildWorkflowVideoEffectV2Identity } from "../task/workflow-video-effect-claim";
 import { workflowImageEffectIdentity } from "./execution.image-runner";
 import type { ClipProductionNodePlan } from "./execution.clip-production-nodes";
+import {
+	renderClipProductionReferenceHeader,
+	renderClipProductionReferencePrompt,
+} from "./execution.clip-production-reference-prompt";
 
 const mocks = vi.hoisted(() => ({ freshReadFlowRow: vi.fn(), persistFlowPatch: vi.fn() }));
 vi.mock("../task/video-orchestrator.flow-io", () => ({
@@ -15,6 +19,11 @@ import { workflowVideoEffectIdentity } from "./execution.video-runner";
 const imageId = workflowImageEffectIdentity({ executionFamilyId: "family", runtimeNodeId: "plan",
 	assetIdentity: { assetId: "effect", generationSpecVersion: "v1" } }).canvasNodeId;
 const videoId = buildWorkflowVideoEffectV2Identity({ executionFamilyId: "family", clipId: "clip-0" }).canvasNodeId;
+const referenceBindings = [{ nodeId: imageId, name: "张羽", referenceType: "character" }] as const;
+const referenceImages = [{ sourceNodeIds: [imageId] }] as const;
+const referenceHeader = renderClipProductionReferenceHeader({ bindings: referenceBindings, images: referenceImages });
+const sourcePrompt = "video prompt";
+const renderedPrompt = renderClipProductionReferencePrompt({ prompt: sourcePrompt, bindings: referenceBindings, images: referenceImages });
 const nodePlan: ClipProductionNodePlan = {
 	protocolVersion: "tapcanvas.clip-production-node-plan/v1", executionId: "execution", workflowKey: "workflow",
 	imageNodes: [{ nodeId: imageId, assetItem: {
@@ -29,8 +38,9 @@ const nodePlan: ClipProductionNodePlan = {
 		prompt: "image prompt", negativePrompt: "negative", modelKey: "image-model", aspectRatio: "16:9", size: "2K",
 		consumerClipIds: ["clip-0"],
 	} }],
-	videoNodes: [{ sourceSnapshot: { clipId: "clip-0", sourceRanges: [{ sourceId: "chapter", sourceFingerprint: "hash", sourceIndex: 0, startOffset: 0, endOffset: 10 }], clipFacts: {} }, nodeId: videoId, clipId: "clip-0", clipIndex: 0, prompt: "video prompt", durationSeconds: 5,
-		videoInputMode: "image_to_video", firstFrameImageNodeId: imageId, referenceImageNodeIds: [imageId] }],
+	videoNodes: [{ sourceSnapshot: { clipId: "clip-0", sourceRanges: [{ sourceId: "chapter", sourceFingerprint: "hash", sourceIndex: 0, startOffset: 0, endOffset: 10 }], clipFacts: {} }, nodeId: videoId, clipId: "clip-0", clipIndex: 0, prompt: renderedPrompt, sourcePrompt, durationSeconds: 5,
+		videoInputMode: "image_to_video", firstFrameImageNodeId: imageId, referenceImageNodeIds: [imageId],
+		referenceBindings, referenceHeader }],
 };
 
 describe("Clip node canvas materialization", () => {
@@ -56,12 +66,36 @@ describe("Clip node canvas materialization", () => {
 			referenceAssetBindings: [{ assetId: "existing-face", role: "identity" }],
 		});
 		expect((graph.nodes[1]!.data as Record<string, unknown>)).toMatchObject({
-			workflowPreparedOnly: true, prompt: "video prompt", firstFrameFromNodeId: imageId,
+			workflowPreparedOnly: true, prompt: renderedPrompt, workflowSourcePrompt: sourcePrompt,
+			workflowReferenceBindings: referenceBindings, workflowReferenceHeader: referenceHeader,
+			firstFrameFromNodeId: imageId,
 			workflowEffectSourceSnapshot: nodePlan.videoNodes[0]!.sourceSnapshot,
 			referenceImageNodeIds: [imageId],
 		});
 		await materializeWorkflowClipProductionNodes({} as WorkerEnv, request);
 		expect(mocks.persistFlowPatch).toHaveBeenCalledTimes(1);
+	});
+
+	it("re-renders the host-bound speech track at node materialization and freezes its evidence", async () => {
+		const graph: { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } = { nodes: [], edges: [] };
+		mocks.freshReadFlowRow.mockImplementation(async () => ({ id: "flow", data: JSON.stringify(graph) }));
+		mocks.persistFlowPatch.mockImplementation(async (input: { patch: {
+			createNodes: Record<string, unknown>[]; createEdges: Record<string, unknown>[];
+		} }) => { graph.nodes.push(...input.patch.createNodes); graph.edges.push(...input.patch.createEdges); });
+		const speechEvents = [{ speechEventId: "speech-1", speaker: "阿乔", delivery: "on_screen", text: "  我来。\n",
+			textOrigin: "authored" as const, eventIndex: 0, clipId: "clip-0", sceneId: "scene", scope: "scene" as const, sourceRanges: [] }];
+		const video = nodePlan.videoNodes[0]!;
+		const referenceImages = video.referenceImageNodeIds.map((nodeId) => ({ sourceNodeIds: [nodeId] }));
+		const prompt = renderClipProductionReferencePrompt({ prompt: video.sourcePrompt, speechEvents,
+			bindings: video.referenceBindings, images: referenceImages });
+		const speechPlan: ClipProductionNodePlan = { ...nodePlan, videoNodes: [{ ...video, speechEvents, prompt }] };
+		await materializeWorkflowClipProductionNodes({} as WorkerEnv, {
+			executionId: "execution", executionFamilyId: "family", runtimeNodeId: "plan", ownerId: "owner", flowId: "flow",
+			nodePlan: speechPlan, videoModelKey: "video-model", videoResolution: "720p", videoAspectRatio: "16:9",
+			imageModelKey: "image-model", imageAspectRatio: "16:9", imageSize: "2K", imageQuality: "",
+		});
+		const videoNode = graph.nodes.find((node) => node.id === videoId);
+		expect(videoNode?.data).toMatchObject({ prompt, workflowSpeechEvents: speechEvents, workflowSourcePrompt: video.sourcePrompt });
 	});
 
 	it("uses the same Clip identity at planning and provider submission", () => {
@@ -77,7 +111,9 @@ describe("Clip node canvas materialization", () => {
 			createNodes: Record<string, unknown>[]; createEdges: Record<string, unknown>[];
 		} }) => { graph.nodes.push(...input.patch.createNodes); graph.edges.push(...input.patch.createEdges); });
 		const textPlan: ClipProductionNodePlan = { ...nodePlan, imageNodes: [], videoNodes: [{ ...nodePlan.videoNodes[0]!,
-			videoInputMode: "text_to_video", firstFrameImageNodeId: null, referenceImageNodeIds: [] }] };
+			prompt: renderClipProductionReferencePrompt({ prompt: sourcePrompt, bindings: [], images: [] }),
+			videoInputMode: "text_to_video", firstFrameImageNodeId: null,
+			referenceImageNodeIds: [], referenceBindings: [], referenceHeader: "" }] };
 		const result = await materializeWorkflowClipProductionNodes({} as WorkerEnv, {
 			executionId: "execution", executionFamilyId: "family", runtimeNodeId: "plan", ownerId: "owner", flowId: "flow",
 			nodePlan: textPlan, videoModelKey: "video-model", videoResolution: "720p", videoAspectRatio: "16:9", imageQuality: "",
@@ -91,9 +127,34 @@ describe("Clip node canvas materialization", () => {
 		});
 	});
 
+	it("draws the story order between adjacent Clips as reference-only edges, once", async () => {
+		const graph: { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } = { nodes: [], edges: [] };
+		mocks.freshReadFlowRow.mockImplementation(async () => ({ id: "flow", data: JSON.stringify(graph) }));
+		mocks.persistFlowPatch.mockImplementation(async (input: { patch: {
+			createNodes: Record<string, unknown>[]; createEdges: Record<string, unknown>[];
+		} }) => { graph.nodes.push(...input.patch.createNodes); graph.edges.push(...input.patch.createEdges); });
+		const nextId = buildWorkflowVideoEffectV2Identity({ executionFamilyId: "family", clipId: "clip-1" }).canvasNodeId;
+		const text = { ...nodePlan.videoNodes[0]!,
+			prompt: renderClipProductionReferencePrompt({ prompt: sourcePrompt, bindings: [], images: [] }), videoInputMode: "text_to_video" as const,
+			firstFrameImageNodeId: null, referenceImageNodeIds: [], referenceBindings: [], referenceHeader: "" };
+		const twoClips: ClipProductionNodePlan = { ...nodePlan, imageNodes: [], videoNodes: [text,
+			{ ...text, nodeId: nextId, clipId: "clip-1", clipIndex: 1, sourceSnapshot: { ...text.sourceSnapshot, clipId: "clip-1" } }] };
+		const request = { executionId: "execution", executionFamilyId: "family", runtimeNodeId: "plan", ownerId: "owner", flowId: "flow",
+			nodePlan: twoClips, videoModelKey: "video-model", videoResolution: "720p", videoAspectRatio: "16:9", imageQuality: "",
+			imageModelKey: "image-model", imageAspectRatio: "16:9", imageSize: "2K" };
+		await materializeWorkflowClipProductionNodes({} as WorkerEnv, request);
+		await materializeWorkflowClipProductionNodes({} as WorkerEnv, request);
+		expect(graph.edges).toEqual([{ id: `e-seq-${videoId}-${nextId}`, source: videoId, target: nextId,
+			sourceHandle: "out-video", targetHandle: "in-any", label: "下一段",
+			data: { executionRole: "reference_only", relationKind: "clip_sequence", label: "下一段" } }]);
+	});
+
 	it("hydrates an existing project asset into the exact planned semantic node without creating a duplicate", async () => {
 		const reuseImageId = workflowImageEffectIdentity({ executionFamilyId: "family", runtimeNodeId: "plan",
 			assetIdentity: { assetId: "reuse-effect", generationSpecVersion: "project-asset-reuse/v1" } }).canvasNodeId;
+		const reuseBindings = [{ nodeId: reuseImageId, name: "张羽", referenceType: "character" }] as const;
+		const reuseImages = [{ sourceNodeIds: [reuseImageId] }] as const;
+		const reuseHeader = renderClipProductionReferenceHeader({ bindings: reuseBindings, images: reuseImages });
 		const reusePlan: ClipProductionNodePlan = {
 			...nodePlan,
 			imageNodes: [{ nodeId: reuseImageId, assetItem: {
@@ -105,7 +166,8 @@ describe("Clip node canvas materialization", () => {
 				consumerClipIds: ["clip-0"],
 			} }],
 			videoNodes: [{ ...nodePlan.videoNodes[0]!, firstFrameImageNodeId: reuseImageId,
-				referenceImageNodeIds: [reuseImageId] }],
+				prompt: renderClipProductionReferencePrompt({ prompt: sourcePrompt, bindings: reuseBindings, images: reuseImages }),
+				referenceImageNodeIds: [reuseImageId], referenceBindings: reuseBindings, referenceHeader: reuseHeader }],
 		};
 		const graph: { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } = { nodes: [], edges: [] };
 		mocks.freshReadFlowRow.mockImplementation(async () => ({ id: "flow", data: JSON.stringify(graph) }));

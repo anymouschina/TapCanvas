@@ -1,4 +1,5 @@
 import { sha256Hex } from "../asset/book-content-hash";
+import { buildWorkflowSourceCoordinates } from "./execution.source-coordinates";
 
 type SourceRecord = Record<string, unknown>;
 export type WorkflowSourceIdentity = Readonly<{ sourceId: string; sourceFingerprint: string }>;
@@ -10,9 +11,10 @@ function text(value: unknown): string {
 /** Canonicalize source metadata at the producer boundary; preserve the source body verbatim. */
 export function freezeWorkflowAuthoritativeSource(source: SourceRecord): SourceRecord {
 	const sourceId = text(source.sourceId) || text(source.nodeId);
-	const content = text(source.content);
+	const content = typeof source.content === "string" ? source.content : "";
 	return {
 		...source,
+		...(typeof source.content === "string" ? { sourceCoordinates: buildWorkflowSourceCoordinates(source.content) } : {}),
 		...(sourceId ? { sourceId } : {}),
 		...(content ? { sourceFingerprint: text(source.sourceFingerprint) || sha256Hex(content) } : {}),
 	};
@@ -31,8 +33,8 @@ export function resolveWorkflowAuthoritativeSourceLineage(sources: readonly Sour
 		const normalized = freezeWorkflowAuthoritativeSource(source);
 		const sourceId = text(normalized.sourceId);
 		const sourceFingerprint = text(normalized.sourceFingerprint);
-		const content = text(normalized.content);
-		if (!sourceId || !content) throw new Error(`authoritativeSources[${index}] requires sourceId and content`);
+		const content = typeof normalized.content === "string" ? normalized.content : "";
+		if (!sourceId || !content.trim()) throw new Error(`authoritativeSources[${index}] requires sourceId and content`);
 		if (sourceFingerprint !== sha256Hex(content)) {
 			throw new Error(`authoritativeSources[${index}] sourceFingerprint does not match content`);
 		}

@@ -7,13 +7,19 @@ import {
 	parseWorkflowNodeJob,
 	type WorkflowNodeJob,
 } from "./execution.node-attempt";
+import {
+	CLAIM_DISPATCH_SCRIPT,
+	DISPATCH_PUBLICATION_LEASE_MS,
+	RELEASE_UNPUBLISHED_DISPATCH_SCRIPT,
+	RESERVE_DISPATCH_SCRIPT,
+} from "./execution.redis-queue-reservation";
+
+export { CLAIM_DISPATCH_SCRIPT, RESERVE_DISPATCH_SCRIPT } from "./execution.redis-queue-reservation";
 
 const { Queue, Worker } = bullmq;
 
 export const WORKFLOW_NODE_QUEUE_NAME = "tapcanvas-workflow-node-dispatch";
 const WORKFLOW_NODE_QUEUE_DEDUPE_PREFIX = "tapcanvas:workflow-node-dispatch:pending:v2";
-const MINIMUM_DEDUPE_TTL_MS = 120_000;
-const DEDUPE_DELAY_PADDING_MS = 60_000;
 
 type WorkflowNodeQueueSendOptions = Readonly<{
 	delaySeconds?: number;
@@ -59,34 +65,18 @@ function createBullMqConnection(redisUrl: string): IORedis {
 	});
 }
 
-export const RESERVE_DISPATCH_SCRIPT = `
-local current = redis.call('GET', KEYS[1])
-if current then
-  local receipt = cjson.decode(current)
-  if receipt.dueAt <= tonumber(ARGV[2]) then return 0 end
-end
-redis.call('SET', KEYS[1], cjson.encode({token=ARGV[1], dueAt=tonumber(ARGV[2])}), 'PX', ARGV[3])
-return 1
-`;
-
-export const CLAIM_DISPATCH_SCRIPT = `
-local current = redis.call('GET', KEYS[1])
-if current and cjson.decode(current).token == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0
-`;
-
 /**
  * Cross-process workflow dispatch producer.
  *
- * The short-lived Redis key represents only a pending delivery, not node
+ * The Redis receipt represents only a pending delivery, not node
  * ownership. An earlier due time replaces a pending delivery atomically. Only the exact
  * reservation token may claim and release it; superseded BullMQ deliveries are
  * acknowledged without executing. The worker claims it before executing. That preserves
  * the local runtime's important re-entrant property: an active external-wait
  * check can schedule its next exact check while duplicate pending deliveries
- * from reconcilers still collapse to one queue item.
+ * from reconcilers still collapse to one queue item. Once published, the actual
+ * BullMQ job keeps the receipt valid for its entire queue wait. An unpublished
+ * receipt can be replaced after its publication lease by the durable reconciler.
  */
 export function createRedisWorkflowNodeQueueProducer(
 	redisUrl: string,
@@ -99,13 +89,10 @@ export function createRedisWorkflowNodeQueueProducer(
 			const delayMs = normalizeDelayMs(options.delaySeconds);
 			const dedupeKey = workflowNodeDedupeKey(job);
 			const dedupeToken = `workflow-node-${randomUUID()}`;
-			const dedupeTtlMs = Math.max(
-				MINIMUM_DEDUPE_TTL_MS,
-				delayMs + DEDUPE_DELAY_PADDING_MS,
-			);
+			const now = Date.now();
 			const accepted = await connection.eval(
 				RESERVE_DISPATCH_SCRIPT, 1, dedupeKey, dedupeToken,
-				Date.now() + delayMs, dedupeTtlMs,
+				now + delayMs, now, now + DISPATCH_PUBLICATION_LEASE_MS, queue.toKey(""),
 			);
 			if (accepted !== 1) return;
 			try {
@@ -117,8 +104,16 @@ export function createRedisWorkflowNodeQueueProducer(
 					removeOnFail: { age: 86_400 },
 				});
 			} catch (error) {
-				await connection.eval(CLAIM_DISPATCH_SCRIPT, 1, dedupeKey, dedupeToken)
-					.catch(() => undefined);
+				try {
+					await connection.eval(
+						RELEASE_UNPUBLISHED_DISPATCH_SCRIPT, 2, dedupeKey, queue.toKey(dedupeToken), dedupeToken,
+					);
+				} catch (reservationError) {
+					throw new AggregateError(
+						[error, reservationError],
+						"Workflow dispatch publication failed; reservation status could not be verified",
+					);
+				}
 				throw error;
 			}
 		},

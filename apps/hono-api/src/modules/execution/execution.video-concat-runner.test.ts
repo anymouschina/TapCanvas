@@ -17,15 +17,14 @@ const mockConcatVideosToCanvas = vi.fn(async () => ({
 		colorMatch: false,
 	},
 }));
-type RegisterGeneratedMediaAssetInput = Parameters<typeof import("../asset/asset.hosting").registerGeneratedMediaAsset>[0];
-const mockRegisterGeneratedMediaAsset = vi.fn(async (_input: RegisterGeneratedMediaAssetInput) => "asset-master-1");
+const mockRegisterGeneratedMediaAsset = vi.fn(async (_input: Parameters<typeof import("../asset/asset.hosting").registerGeneratedMediaAsset>[0]) => "asset-master-1");
 
 vi.mock("../task/agents-tool-bridge.video-concat", () => ({
 	concatVideosToCanvas: (...args: unknown[]) => mockConcatVideosToCanvas(...(args as Parameters<typeof mockConcatVideosToCanvas>)),
 }));
 
 vi.mock("../asset/asset.hosting", () => ({
-	registerGeneratedMediaAsset: (input: RegisterGeneratedMediaAssetInput) => mockRegisterGeneratedMediaAsset(input),
+	registerGeneratedMediaAsset: (input: Parameters<typeof import("../asset/asset.hosting").registerGeneratedMediaAsset>[0]) => mockRegisterGeneratedMediaAsset(input),
 }));
 
 function makeRequest(overrides: Partial<WorkflowVideoConcatRequest> = {}): WorkflowVideoConcatRequest {

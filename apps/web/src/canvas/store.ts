@@ -40,7 +40,7 @@ import { createDefaultDirectorConsoleData } from './nodes/directorConsole/types'
 import { shouldVirtualizeCanvas } from './canvasPerformancePolicy'
 import { prepareVirtualizedTaskNodes } from './prepareVirtualizedTaskNodes'
 import { readWorkflowCanvasPorts, workflowPortHandleId } from './workflowCanvasPorts'
-import { remapImportedWorkflowInstanceData } from './reusableWorkflowGraph'
+import { transformCopiedGraph } from './copyGraphTransform'
 import {
   WORKFLOW_EDGE_RAIL_GUTTER,
   WORKFLOW_ICON_NODE_FLOW_GAP_X,
@@ -3198,26 +3198,13 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
   pasteFromClipboard: () => set((s) => {
     if (!s.clipboard || !s.clipboard.nodes.length) return {}
     const offset = { x: 24, y: 24 }
-    const idMap = new Map<string, string>()
-    const newNodes: Node[] = s.clipboard.nodes.map((n) => {
-      const newId = genNodeId()
-      idMap.set(n.id, newId)
-      return {
-        ...n,
-        id: newId,
-        selected: false,
-        position: { x: n.position.x + offset.x, y: n.position.y + offset.y },
-      }
+    const preparedNodes = s.clipboard.nodes.map((node) => normalizeNodeParentId(upgradeVideoKind(upgradeImageFissionModel(node))))
+    const copied = transformCopiedGraph(preparedNodes, s.clipboard.edges, {
+      createNodeId: () => genNodeId(),
+      offset,
     })
-    const newEdges: Edge[] = s.clipboard.edges
-      .map((e) => ({
-        ...e,
-        id: `${idMap.get(e.source)}-${idMap.get(e.target)}-${Math.random().toString(36).slice(2, 6)}`,
-        source: idMap.get(e.source) || e.source,
-        target: idMap.get(e.target) || e.target,
-        selected: false,
-      }))
-      .filter((e) => e.source !== e.target)
+    const newNodes = copied.nodes.map(enforceNodeSelectability)
+    const newEdges = copied.edges
 
     const nextNodesRaw = [...s.nodes, ...newNodes.map(enforceNodeSelectability)]
     const nextNodes = ensureParentFirstOrder(nextNodesRaw)
@@ -3343,14 +3330,30 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
   duplicateNode: (id) => set((s) => {
     const n = s.nodes.find(n => n.id === id)
     if (!n) return {}
-    const newId = genNodeId()
-    const dup: Node = {
-      ...n,
-      id: newId,
+    const copied = transformCopiedGraph([n], [], {
+      createNodeId: () => genNodeId(),
+      offset: { x: 24, y: 24 },
+    })
+    const dup = copied.nodes[0]
+    if (!dup) return {}
+    const sourceParentId = getNodeParentId(n)
+    const parentGroup = sourceParentId
+      ? s.nodes.find((node) => node.id === sourceParentId && node.type === 'groupNode')
+      : undefined
+    const sourceWorkflowInstanceId = getNodeDataRecord(n).workflowInstanceId
+    const parentWorkflowInstanceId = parentGroup ? getNodeDataRecord(parentGroup).workflowInstanceId : undefined
+    const duplicateData = typeof sourceWorkflowInstanceId === 'string'
+      && sourceWorkflowInstanceId
+      && sourceWorkflowInstanceId === parentWorkflowInstanceId
+      ? { ...getNodeDataRecord(dup), workflowInstanceId: parentWorkflowInstanceId }
+      : dup.data
+    const duplicateInCanvas: Node = {
+      ...dup,
+      ...(parentGroup && sourceParentId ? { parentId: sourceParentId, ...(n.extent !== undefined ? { extent: n.extent } : {}) } : {}),
       position: { x: n.position.x + 24, y: n.position.y + 24 },
-      selected: false,
+      data: duplicateData,
     }
-    const nextNodesRaw = [...s.nodes, enforceNodeSelectability(dup)]
+    const nextNodesRaw = [...s.nodes, enforceNodeSelectability(duplicateInCanvas)]
     const nextNodes = ensureParentFirstOrder(nextNodesRaw)
     return { nodes: nextNodes, nextId: s.nextId + 1, historyPast: [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50), historyFuture: [] }
   }),
@@ -3361,31 +3364,13 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
       ? { x: importBounds.x, y: importBounds.y }
       : { x: 0, y: 0 }
     const shift = { x: pos.x - anchor.x, y: pos.y - anchor.y }
-    const idMap = new Map<string, string>()
-    const newNodes: Node[] = s.clipboard.nodes.map((n) => {
-      const newId = genNodeId()
-      idMap.set(n.id, newId)
-      const upgraded = normalizeNodeParentId(upgradeVideoKind(upgradeImageFissionModel(n)))
-      const oldParentId = getNodeParentId(upgraded)
-      const mappedParentId = oldParentId ? idMap.get(oldParentId) : undefined
-      const basePos = upgraded.position || { x: 0, y: 0 }
-      return enforceNodeSelectability({
-        ...upgraded,
-        id: newId,
-        parentId: mappedParentId,
-        selected: false,
-        position: mappedParentId
-          ? { x: basePos.x, y: basePos.y }
-          : { x: basePos.x + shift.x, y: basePos.y + shift.y },
-      })
+    const preparedNodes = s.clipboard.nodes.map((node) => normalizeNodeParentId(upgradeVideoKind(upgradeImageFissionModel(node))))
+    const copied = transformCopiedGraph(preparedNodes, s.clipboard.edges, {
+      createNodeId: () => genNodeId(),
+      offset: shift,
     })
-    const newEdges: Edge[] = s.clipboard.edges.map((e) => ({
-      ...e,
-      id: `${idMap.get(e.source)}-${idMap.get(e.target)}-${Math.random().toString(36).slice(2, 6)}`,
-      source: idMap.get(e.source) || e.source,
-      target: idMap.get(e.target) || e.target,
-      selected: false,
-    }))
+    const newNodes = copied.nodes.map(enforceNodeSelectability)
+    const newEdges = copied.edges
     const nextNodes = ensureParentFirstOrder([...s.nodes, ...newNodes])
 
     return {
@@ -3408,55 +3393,14 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
       ? { x: importBounds.x, y: importBounds.y }
       : { x: 0, y: 0 }
     const shift = { x: pos.x - anchor.x, y: pos.y - anchor.y }
-
-    const idMap = new Map<string, string>()
-    const workflowInstanceIds = new Map<string, string>()
-    for (const node of sanitized.nodes) {
-      const data = node.data && typeof node.data === 'object' && !Array.isArray(node.data)
-        ? node.data as Record<string, unknown>
-        : {}
-      const workflowInstanceId = typeof data.workflowInstanceId === 'string'
-        ? data.workflowInstanceId.trim()
-        : ''
-      if (workflowInstanceId && !workflowInstanceIds.has(workflowInstanceId)) {
-        workflowInstanceIds.set(workflowInstanceId, `workflow-${genNodeId()}`)
-      }
-    }
-    const newNodes: Node[] = sanitized.nodes.map((n) => {
-      const newId = genNodeId()
-      idMap.set(n.id, newId)
-      const upgraded = normalizeNodeParentId(upgradeVideoKind(upgradeImageFissionModel(n)))
-      const oldParentId = getNodeParentId(upgraded)
-      const mappedParentId = oldParentId ? idMap.get(oldParentId) || undefined : undefined
-      const basePos = upgraded.position || { x: 0, y: 0 }
-      return enforceNodeSelectability({
-        ...upgraded,
-        id: newId,
-        parentId: mappedParentId,
-        selected: false,
-        dragging: false,
-        position: mappedParentId
-          ? { x: basePos.x, y: basePos.y }
-          : { x: basePos.x + shift.x, y: basePos.y + shift.y },
-        // 清理状态相关的数据
-        data: {
-          ...remapImportedWorkflowInstanceData(upgraded.data, workflowInstanceIds),
-          status: undefined,
-          progress: undefined,
-          logs: undefined,
-          canceled: undefined,
-          lastError: undefined
-        }
-      })
+    const preparedNodes = sanitized.nodes.map((node) => normalizeNodeParentId(upgradeVideoKind(upgradeImageFissionModel(node))))
+    const copied = transformCopiedGraph(preparedNodes, sanitized.edges, {
+      createNodeId: () => genNodeId(),
+      offset: shift,
+      animated: false,
     })
-    const newEdges: Edge[] = sanitized.edges.map((e) => ({
-      ...e,
-      id: `${idMap.get(e.source)}-${idMap.get(e.target)}-${Math.random().toString(36).slice(2, 6)}`,
-      source: idMap.get(e.source) || e.source,
-      target: idMap.get(e.target) || e.target,
-      selected: false,
-      animated: false
-    }))
+    const newNodes: Node[] = copied.nodes.map(enforceNodeSelectability)
+    const newEdges = copied.edges
     const nextNodes = ensureParentFirstOrder([...s.nodes, ...newNodes])
 
     return {

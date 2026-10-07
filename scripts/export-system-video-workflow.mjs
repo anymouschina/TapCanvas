@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(new URL('../apps/hono-api/package.json', import.meta.url));
 const { build } = require('esbuild');
 const result = await build({
-  entryPoints: [path.join(root, 'apps/web/src/canvas/videoWorkflowDefinition.ts')],
+  entryPoints: [path.join(root, 'packages/schemas/video-workflow-canvas-template/index.ts')],
   bundle: true, write: false, platform: 'node', format: 'esm',
   alias: {
     '@tapcanvas/video-orchestrator-protocol': path.join(root, 'packages/schemas/video-orchestrator-protocol/index.ts'),
@@ -48,3 +48,27 @@ if (process.argv.includes('--check')) {
   await writeFile(output, serialized);
 }
 console.log(`System video workflow v${version}: ${graph.nodes.length} nodes, ${graph.edges.length} edges (${process.argv.includes('--check') ? 'verified' : 'exported'})`);
+
+if (process.argv.includes('--sql')) {
+  const tsconfig = JSON.parse(await readFile(path.join(root, 'apps/hono-api/tsconfig.json'), 'utf8'));
+  const alias = Object.fromEntries(Object.entries(tsconfig.compilerOptions.paths)
+    .map(([name, entries]) => [name, path.resolve(root, 'apps/hono-api', entries[0])]));
+  const compiled = await build({
+    entryPoints: [path.join(root, 'apps/hono-api/src/modules/agents/system-video-production-workflow.ts')],
+    bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', alias,
+  });
+  const publicationModule = { exports: {} };
+  new Function('require', 'module', 'exports', compiled.outputFiles[0].text)(
+    require, publicationModule, publicationModule.exports,
+  );
+  const publication = publicationModule.exports;
+  const date = publication.BUILTIN_VIDEO_PRODUCTION_WORKFLOW.releasedAt.slice(0, 10).replaceAll('-', '');
+  const sqlPath = path.join(root, `apps/hono-api/sql/releases/${date}_video_production_v${version}.sql`);
+  const sql = publication.builtInVideoProductionWorkflowSql();
+  if (process.argv.includes('--check')) {
+    if (await readFile(sqlPath, 'utf8') !== sql) throw new Error('System video publication SQL differs from the canonical definition');
+  } else {
+    await writeFile(sqlPath, sql);
+  }
+  console.log(`System video publication SQL ${process.argv.includes('--check') ? 'verified' : 'exported'}: ${path.basename(sqlPath)}`);
+}

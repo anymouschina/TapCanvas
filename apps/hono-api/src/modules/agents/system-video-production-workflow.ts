@@ -4,12 +4,12 @@ import graph from "./system-video-production-workflow.graph.json";
 import { builtInOneClickWorkflowSql } from "./system-one-click-workflow";
 
 export const BUILTIN_VIDEO_PRODUCTION_WORKFLOW = Object.freeze({
-	id: "tapcanvas.builtin.video-production/v114",
-	projectId: "00000000-0000-4000-8000-000000000131",
-	flowId: "00000000-0000-4000-8000-000000000132",
-	flowVersionId: "00000000-0000-4000-8000-000000000133",
-	attachmentId: "00000000-0000-4000-8000-000000000134",
-	releasedAt: "2026-09-24T00:00:00.000Z",
+	id: "tapcanvas.builtin.video-production/v135",
+	projectId: "00000000-0000-4000-8000-000000000141",
+	flowId: "00000000-0000-4000-8000-000000000142",
+	flowVersionId: "00000000-0000-4000-8000-000000000143",
+	attachmentId: "00000000-0000-4000-8000-000000000144",
+	releasedAt: "2026-10-07T00:00:00.000Z",
 });
 
 export function createBuiltInVideoProductionWorkflowDefinition() {
@@ -33,7 +33,7 @@ export function builtInVideoProductionWorkflowSql(): string {
 		identity: BUILTIN_VIDEO_PRODUCTION_WORKFLOW,
 		definition: createBuiltInVideoProductionWorkflowDefinition(),
 		description: "章节规划、共享资产、逐段视觉设计与持久成片；保留已生成资产和真实交付证据。",
-		definitionSource: "system-video-production-workflow.ts (graph generated from videoWorkflowDefinition.ts)",
+		definitionSource: "system-video-production-workflow.ts (graph generated from packages/schemas/video-workflow-canvas-template)",
 	});
 }
 

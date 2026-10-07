@@ -1,4 +1,5 @@
 import { DEFAULT_TARGET_DURATION_MS } from "../../../../../packages/schemas/logical-task-budget/index.cjs";
+import { flattenWorkflowNodeTree } from "./execution.node-tree";
 
 export const WORKFLOW_VIDEO_PROVIDER_EXECUTOR_REF = "tapcanvas.video.generate/v1";
 
@@ -57,9 +58,15 @@ function controlledUpstreamNodeIds(
 	targetExecutorRef: string,
 ): readonly string[] {
 	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
+	const nestedTargetParents = new Set<string>();
 	const targetNodeIds = nodes.flatMap((node) => {
-		if (!isRecord(node) || workflowNodeExecutorRef(node) !== targetExecutorRef) return [];
+		if (!isRecord(node)) return [];
 		const nodeId = readNonEmptyString(node.id);
+		if (workflowNodeExecutorRef(node) !== targetExecutorRef) {
+			const containsTarget = flattenWorkflowNodeTree([node]).some(inner => inner !== node && workflowNodeExecutorRef(inner) === targetExecutorRef);
+			if (!nodeId || !containsTarget) return [];
+			nestedTargetParents.add(nodeId);
+		}
 		return nodeId ? [nodeId] : [];
 	});
 	if (targetNodeIds.length === 0) {
@@ -80,7 +87,7 @@ function controlledUpstreamNodeIds(
 		sources.push(source);
 		reverse.set(target, sources);
 	}
-	const controlled = new Set<string>();
+	const controlled = new Set<string>(nestedTargetParents);
 	const frontier = [...targetNodeIds];
 	while (frontier.length > 0) {
 		const target = frontier.pop();

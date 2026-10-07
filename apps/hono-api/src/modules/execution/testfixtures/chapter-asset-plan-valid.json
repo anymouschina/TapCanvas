@@ -1,0 +1,432 @@
+{
+  "objectRegistry": [
+    {
+      "objectId": "fixture-object-1",
+      "kind": "character",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": "fixture-object-2",
+      "referenceRole": "identity",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+          "negativePrompt": "不添加人物、品牌或无关道具。",
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "identityBoardSpec": {
+            "layout": "identity_board_four_view",
+            "faceViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "fullBodyViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "crossViewConsistency": true,
+            "referenceRoleIsolation": true,
+            "neutralReferenceBackground": true,
+            "readableTextVisible": true,
+            "brandingVisible": false,
+            "neutralBaseState": true,
+            "canonicalNameVisible": false,
+            "ipSafeOriginal": true
+          }
+        }
+      }
+    },
+    {
+      "objectId": "fixture-object-3",
+      "kind": "character",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": "fixture-object-4",
+      "referenceRole": "identity",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+          "negativePrompt": "不添加人物、品牌或无关道具。",
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "identityBoardSpec": {
+            "layout": "identity_board_four_view",
+            "faceViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "fullBodyViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "crossViewConsistency": true,
+            "referenceRoleIsolation": true,
+            "neutralReferenceBackground": true,
+            "readableTextVisible": true,
+            "brandingVisible": false,
+            "neutralBaseState": true,
+            "canonicalNameVisible": false,
+            "ipSafeOriginal": true
+          }
+        }
+      }
+    },
+    {
+      "objectId": "fixture-object-5",
+      "kind": "character",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": "fixture-object-6",
+      "referenceRole": "identity",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+          "negativePrompt": "不添加人物、品牌或无关道具。",
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "identityBoardSpec": {
+            "layout": "identity_board_four_view",
+            "faceViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "fullBodyViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "crossViewConsistency": true,
+            "referenceRoleIsolation": true,
+            "neutralReferenceBackground": true,
+            "readableTextVisible": true,
+            "brandingVisible": false,
+            "neutralBaseState": true,
+            "canonicalNameVisible": false,
+            "ipSafeOriginal": true
+          }
+        }
+      }
+    },
+    {
+      "objectId": "fixture-object-7",
+      "kind": "character",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": "fixture-object-8",
+      "referenceRole": "identity",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+          "negativePrompt": "不添加人物、品牌或无关道具。",
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "identityBoardSpec": {
+            "layout": "identity_board_four_view",
+            "faceViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "fullBodyViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "crossViewConsistency": true,
+            "referenceRoleIsolation": true,
+            "neutralReferenceBackground": true,
+            "readableTextVisible": true,
+            "brandingVisible": false,
+            "neutralBaseState": true,
+            "canonicalNameVisible": false,
+            "ipSafeOriginal": true
+          }
+        }
+      }
+    },
+    {
+      "objectId": "fixture-object-9",
+      "kind": "character",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": "fixture-object-10",
+      "referenceRole": "identity",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+          "negativePrompt": "不添加人物、品牌或无关道具。",
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "identityBoardSpec": {
+            "layout": "identity_board_four_view",
+            "faceViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "fullBodyViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "crossViewConsistency": true,
+            "referenceRoleIsolation": true,
+            "neutralReferenceBackground": true,
+            "readableTextVisible": true,
+            "brandingVisible": false,
+            "neutralBaseState": true,
+            "canonicalNameVisible": false,
+            "ipSafeOriginal": true
+          }
+        }
+      }
+    },
+    {
+      "objectId": "fixture-object-11",
+      "kind": "character",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": "fixture-object-12",
+      "referenceRole": "identity",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+          "negativePrompt": "不添加人物、品牌或无关道具。",
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "identityBoardSpec": {
+            "layout": "identity_board_four_view",
+            "faceViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "fullBodyViews": [
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+            ],
+            "crossViewConsistency": true,
+            "referenceRoleIsolation": true,
+            "neutralReferenceBackground": true,
+            "readableTextVisible": true,
+            "brandingVisible": false,
+            "neutralBaseState": true,
+            "canonicalNameVisible": false,
+            "ipSafeOriginal": true
+          }
+        }
+      }
+    },
+    {
+      "objectId": "fixture-object-13",
+      "kind": "scene",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": null,
+      "referenceRole": "environment",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "sceneCard": {
+            "spacePrompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+            "negativePrompt": "不添加人物、品牌或无关道具。",
+            "sceneProfileVersion": "scene-card/v1",
+            "sceneAssetRole": "space_anchor",
+            "sceneOccupancy": "none",
+            "sceneLightingSpec": {
+              "version": "scene-lighting/v1",
+              "narrativeIntent": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "keySource": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "direction": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "colorTemperature": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "lightQuality": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "shadowBehavior": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "atmosphereInteraction": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "reflectiveBehavior": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+              "practicalSources": [
+                "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+                "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+                "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+              ],
+              "continuityLocks": [
+                "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+                "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+                "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+                "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "objectId": "fixture-object-14",
+      "kind": "composition",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": null,
+      "referenceRole": "composition",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+          "negativePrompt": "不添加人物、品牌或无关道具。",
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ]
+        }
+      }
+    },
+    {
+      "objectId": "fixture-object-15",
+      "kind": "prop",
+      "name": "原创工坊样例资产",
+      "physicalIdentityKey": null,
+      "referenceRole": "prop",
+      "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+      "imageSource": {
+        "mode": "generate",
+        "referenceAssetBindings": [],
+        "plan": {
+          "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+          "negativePrompt": "不添加人物、品牌或无关道具。",
+          "identityAnchors": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ],
+          "prohibitedDrift": [
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+            "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+          ]
+        }
+      }
+    }
+  ],
+  "backgroundPlans": [
+    {
+      "objectId": "fixture-object-16",
+      "plan": {
+        "assetId": "fixture-object-16",
+        "displayName": "原创工坊样例资产",
+        "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+        "negativePrompt": "不添加人物、品牌或无关道具。",
+        "referenceAssetBindings": []
+      }
+    },
+    {
+      "objectId": "fixture-object-17",
+      "plan": {
+        "assetId": "fixture-object-17",
+        "displayName": "原创工坊样例资产",
+        "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+        "negativePrompt": "不添加人物、品牌或无关道具。",
+        "referenceAssetBindings": []
+      }
+    }
+  ]
+}

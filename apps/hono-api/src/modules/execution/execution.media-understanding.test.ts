@@ -30,27 +30,45 @@ describe("workflow media evidence handoff", () => {
 
   it("hydrates an existing frozen run and preserves the receipt across subsequent physical retries", async () => {
     const resolver = createWorkflowAssetResolver({ context, loadVisibleAssets: async () => [asset] });
-    const first = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context, resolver });
+    const first = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context, resolver, assetIds: [asset.id] });
     expect(first.mediaUnderstanding).toEqual([evidence]);
     expect(first.selectedAssetIds).toBe(context.selectedAssetIds);
     expect(first.assetSnapshot).toBe(context.assetSnapshot);
     expect(context.mediaUnderstanding).toBeUndefined();
     expect(loadImageUnderstandingEvidence).toHaveBeenCalledWith({ db: {}, ownerId: "owner-1",
       references: [{ referenceId: "asset-1", url: "https://owned.example/image.png" }], before: context.capturedAt });
-    expect(await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: first, resolver })).toBe(first);
+    expect(await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: first, resolver, assetIds: [asset.id] })).toBe(first);
     expect(loadImageUnderstandingEvidence).toHaveBeenCalledTimes(1);
   });
 
   it("loads observations for visible images without inventing an explicit selection", async () => {
     const unselected = { ...context, selectedAssetIds: [], mediaUnderstanding: [] };
     const resolver = createWorkflowAssetResolver({ context: unselected, loadVisibleAssets: async () => [asset] });
-    const result = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: unselected, resolver });
+    const result = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: unselected, resolver, assetIds: [asset.id] });
     expect(result.mediaUnderstanding).toEqual([evidence]);
     expect(result.selectedAssetIds).toEqual([]);
     expect(result.assetSnapshot).toBe(unselected.assetSnapshot);
     expect(loadImageUnderstandingEvidence).toHaveBeenCalledWith(expect.objectContaining({
       references: [{ referenceId: asset.id, url: asset.latestVersion!.data.imageUrl }], before: context.capturedAt,
     }));
+  });
+
+  it("reads only exact requested asset IDs for an on-demand inspection", async () => {
+    const secondAsset = { ...asset, id: "asset-2", latestVersion: {
+      ...asset.latestVersion!, id: "version-2", assetId: "asset-2",
+    } };
+    const scoped = createWorkflowProjectContext({ projectId: "project-1", canvasId: "flow-1", principalId: "owner-1",
+      canvasData: { nodes: [], edges: [] }, assets: [asset, secondAsset], now: new Date("2026-09-08T10:02:00Z") });
+    const resolver = createWorkflowAssetResolver({ context: scoped, loadVisibleAssets: async () => [asset, secondAsset] });
+    const secondEvidence = { ...evidence, referenceId: secondAsset.id,
+      provenance: { ...evidence.provenance, referenceId: secondAsset.id } };
+    loadImageUnderstandingEvidence.mockResolvedValue([secondEvidence]);
+    const result = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: scoped,
+      resolver, assetIds: [secondAsset.id] });
+    expect(loadImageUnderstandingEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      references: [{ referenceId: secondAsset.id, url: secondAsset.latestVersion!.data.imageUrl }],
+    }));
+    expect(result.mediaUnderstanding).toEqual([secondEvidence]);
   });
 
   it("rechecks previously missing receipts for every visible identity after an authorized revision", async () => {
@@ -68,7 +86,8 @@ describe("workflow media evidence handoff", () => {
       provenance: { ...evidence.provenance, referenceId: otherAsset.id } };
     loadImageUnderstandingEvidence.mockResolvedValue([evidence, secondEvidence]);
     const resolver = createWorkflowAssetResolver({ context: revised, loadVisibleAssets: async () => [asset, otherAsset] });
-    const result = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: revised, resolver });
+    const result = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: revised, resolver,
+      assetIds: [asset.id, otherAsset.id] });
     expect(loadImageUnderstandingEvidence).toHaveBeenCalledWith(expect.objectContaining({
       before: revised.capturedAt,
       references: [asset, otherAsset].map((item) => ({ referenceId: item.id, url: item.latestVersion!.data.imageUrl })),
@@ -86,12 +105,14 @@ describe("workflow media evidence handoff", () => {
     const resolveAssetResource = vi.fn().mockResolvedValue({ url: "https://owned.example/second.png" });
     loadImageUnderstandingEvidence.mockResolvedValue([]);
     const result = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: partial,
+      assetIds: [asset.id, second.assetId],
       resolver: { resolveAssetResource } as unknown as Parameters<typeof enrichWorkflowMediaUnderstanding>[0]["resolver"] });
     expect(resolveAssetResource).toHaveBeenCalledTimes(1);
     expect(resolveAssetResource).toHaveBeenCalledWith("asset-2", "image");
     expect(result.mediaUnderstanding).toEqual([evidence]);
     expect(result.mediaUnderstandingDiagnostics).toEqual([{ referenceId: "asset-2", code: "no_successful_analysis_receipt" }]);
     expect(await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: result,
+      assetIds: [asset.id, second.assetId],
       resolver: { resolveAssetResource } as unknown as Parameters<typeof enrichWorkflowMediaUnderstanding>[0]["resolver"] })).toBe(result);
   });
 
@@ -102,7 +123,8 @@ describe("workflow media evidence handoff", () => {
       selectedAssetIds: [asset.id, "foreign", "preview"] };
     const resolver = createWorkflowAssetResolver({ context: excluded, loadVisibleAssets: async () => [asset] });
     loadImageUnderstandingEvidence.mockResolvedValue([]);
-    await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: excluded, resolver });
+    await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context: excluded, resolver,
+      assetIds: [asset.id, "foreign", "preview"] });
     expect(loadImageUnderstandingEvidence).toHaveBeenCalledWith(expect.objectContaining({ references: [] }));
   });
 
@@ -111,7 +133,7 @@ describe("workflow media evidence handoff", () => {
     const resolver = createWorkflowAssetResolver({ context, loadVisibleAssets: async () => mode === "other-owner" ? [] : [{
       ...asset, currentVersion: 2, latestVersion: { ...asset.latestVersion!, id: "version-2", version: 2, data: { imageUrl: "https://owned.example/changed.png" } },
     }] });
-    const enriched = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context, resolver });
+    const enriched = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context, resolver, assetIds: [asset.id] });
     expect(enriched.mediaUnderstanding).toEqual([]);
     expect(enriched.mediaUnderstandingDiagnostics).toEqual([expect.objectContaining({ referenceId: asset.id })]);
     expect(loadImageUnderstandingEvidence).toHaveBeenCalledWith(expect.objectContaining({ references: [] }));
@@ -120,7 +142,7 @@ describe("workflow media evidence handoff", () => {
   it("reports unavailable evidence without blocking authoring or changing frozen facts", async () => {
     loadImageUnderstandingEvidence.mockRejectedValue(new Error("database offline"));
     const resolver = createWorkflowAssetResolver({ context, loadVisibleAssets: async () => [asset] });
-    const enriched = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context, resolver });
+    const enriched = await enrichWorkflowMediaUnderstanding({ c, ownerId: "owner-1", context, resolver, assetIds: [asset.id] });
     expect(enriched.mediaUnderstandingDiagnostics).toContainEqual({ referenceId: null, code: "analysis_receipt_lookup_failed" });
     expect(enriched.mediaUnderstanding).toBeUndefined();
     expect(enriched.assetSnapshot).toBe(context.assetSnapshot);

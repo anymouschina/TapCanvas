@@ -1,6 +1,6 @@
 ---
 name: tapcanvas-generate-scene-references
-description: TapCanvas 章节场景与人物参考资产的轻量编排 Skill。仅用于 `generate_scene_references` intent：读取章节和真实画布，识别本章需要稳定视觉身份的场景与人物，差量调用 tapcanvas-scene-card / tapcanvas-character-card 编译完整节点，再通过允许的工具落画布。本 Skill 不维护任何场景 prompt、灯光模板、角色模板、固定模型、URL 复用或语义关键词规则。
+description: TapCanvas 章节场景与人物参考资产的轻量编排 Skill。仅用于 `generate_scene_references` intent：读取章节和真实画布，识别本章需要稳定视觉身份的场景、人物与群体，差量调用 tapcanvas-scene-card / tapcanvas-character-card 编译完整节点，再通过允许的工具落画布。本 Skill 不维护任何场景 prompt、灯光模板、角色或群演模板、固定模型、URL 复用或语义关键词规则。
 disable-model-invocation: false
 requires-skills:
   - tapcanvas-api
@@ -17,10 +17,10 @@ requires-skills:
 1. 读取当前章节、项目和画布事实；
 2. 识别本章需要稳定视觉资产的 canonical 场景与角色；
 3. 用结构化身份和真实 ID 做差量对账；
-4. 把场景逐项交给 `tapcanvas-scene-card`，把人物逐项交给 `tapcanvas-character-card`；
+4. 把场景逐项交给 `tapcanvas-scene-card`，把人物及群体视觉参考逐项交给 `tapcanvas-character-card`；
 5. 逐项提交实际生图，保留真实节点与任务回执，核对完整资产清单。
 
-场景空间设计、材质生态、去同质化、灯光设计与 prompt 只来自 `tapcanvas-scene-card`；角色设计、身份板、状态派生与 prompt 只来自 `tapcanvas-character-card`。本 Skill 不得修改两者编译结果，只补 `sourceNodeId`、`chapterId`、`chapterTitle`、`creationStage` 和画布布局字段。
+场景空间设计、材质生态、去同质化、灯光设计与 prompt 只来自 `tapcanvas-scene-card`；角色与群演视觉设计、资产投入判断、身份板、状态派生与 prompt 只来自 `tapcanvas-character-card`。本 Skill 不得修改两者编译结果，只补 `sourceNodeId`、`chapterId`、`chapterTitle`、`creationStage` 和画布布局字段。
 
 ## 输出工具合同
 
@@ -35,7 +35,7 @@ requires-skills:
 需要读取用户真实项目、画布、节点或素材时，只通过 `tapcanvas-api`。至少取得：
 
 - `sourceTextNodeId`、`chapterId`、章节标题和全文/视频脚本；
-- 当前画布节点的 `id/kind/referenceType/roleName/sceneName/characterAssetRole/sceneAssetRole/stateKey/stateVersionId/status`；
+- 当前画布节点的 `id/kind/referenceType/roleName/ensembleTitle/characterRoleNames/sceneName/characterAssetRole/sceneAssetRole/stateKey/stateVersionId/status`；
 - 可复用素材的 node/material/version ID 与确认状态；
 - 当前 project style lock；
 - 当前启用图片模型、规格和账号偏好。
@@ -47,7 +47,7 @@ requires-skills:
 由 agent 直接理解章节语义，列出：
 
 - **场景清单**：每个需要跨镜复用空间身份的 canonical setting；同一地点只有在空间状态或光相需要独立复用时才新增 variant。
-- **人物清单**：每个需要跨镜保持身份的角色；没有稳定视觉复用需求的背景人群不强制建单体角色卡。
+- **人物与群体清单**：读取本轮已给定人物、群体组成、出镜用途与既有身份来源，交 `tapcanvas-character-card` 判断单人卡、群体选角参考、证据帧或状态版本的资产表达；没有稳定视觉复用需求的背景人群不强制建单体角色卡。用户明确要群演参考或冻结合同要求群体真实图时，不因匿名而漏项。
 
 不得使用关键词表、正则、固定数量、字数档位、主角/配角枚举或 top-N 截断做语义选择。工具单批上限只允许拆批，不得丢弃清单项。
 
@@ -57,6 +57,7 @@ requires-skills:
 
 - 人物：`referenceType=character`、精确 `roleName`、正确 `characterAssetRole`，并有 ready/approved 的 canonical node/material/version ID；
 - 场景：`referenceType=scene`、精确 `sceneName`、正确 `sceneAssetRole`，并有 ready/approved 的 canonical node/material/version ID。
+- 群体：`referenceType=ensemble`、精确 `ensembleTitle`、已核对的实际成员/组成及真实就绪 node/material/version ID；`characterRoleNames` 仅列真实有名成员。群像不替代任何单人的 canonical 身份卡。
 
 跨章节复用同样只接受已验真的 ID。历史 URL、label、文本 prompt、占位状态和“看起来同名”不构成覆盖，也不得直接复制成新角色卡或场景卡。
 
@@ -88,14 +89,16 @@ requires-skills:
 
 ### 人物
 
-把完整角色组、章节事实、关系、已有角色 descriptor、style lock、时期与状态一次性交给 `tapcanvas-character-card`。逐字采用其：
+把完整人物与群体清单、章节事实、关系、出镜用途、已有角色/群体 descriptor、style lock、时期与状态一次性交给 `tapcanvas-character-card`。逐字采用其：
 
 - `characterAssetRole` 决策；
-- `character-card/v3` 与 `identity_board_four_view`；
+- 单人卡的 `character-card/v3` 与 `identity_board_four_view`，或群体参考的 `referenceType=ensemble + ensembleTitle`；
 - `identityAnchors` / `prohibitedDrift`；
 - 基态/variant 精确引用 ID；
 - 动态模型与规格；
 - 可执行图片 prompt。
+
+群体参考不填单人 identity_anchor、characterProfileVersion 或 identityBoardSpec；同名基态卡、状态卡、证据帧和群体图按真实职责分别对账，不把群像复制登记为多人各自的身份锚。
 
 不得追加 Face DNA 随机表、性格到骨相映射、缺陷池、same-face 禁词、固定写实/九头身/焦段或 role-portrait fallback。
 
@@ -106,6 +109,7 @@ requires-skills:
 ```text
 场景：agent-generate_scene_references-<batchUlid>-scene-<twoDigitIndex>
 人物：agent-generate_scene_references-<batchUlid>-char-<twoDigitIndex>
+群体：agent-generate_scene_references-<batchUlid>-ensemble-<twoDigitIndex>
 ```
 
 `batchUlid` 同批共享；索引从当前同类最大编号继续，避免冲突。默认布局只决定可读位置，不表达语义：场景放源节点左上，人物放源节点左侧；前端可后续重排。
@@ -137,7 +141,7 @@ requires-skills:
 }
 ```
 
-人物 data 至少包含：
+单人规范化卡 data 至少包含：
 
 ```json
 {
@@ -165,16 +169,18 @@ requires-skills:
 }
 ```
 
-项目画风由服务端 style lock 自动注入。角色与场景身份只传 ID，禁止将 URL 写入 prompt、`referenceImages`、`anchorBindings` 或 `assetInputs`。`label` 只用于展示，不承担身份匹配。
+群体节点沿当前图片工具 schema 写 `kind=image`、`referenceType=ensemble`、精确 `ensembleTitle`、权威 Skill 的完整 `prompt`、本轮真实模型/规格、来源追溯及真实引用 ID；`characterRoleNames` 只列实际有名成员，不为匿名成员虚构名称。字段和引用职责由当前工具 schema 确认，不将 ensemble 分类写成 Workflow artifact 的 composition 用途枚举。
+
+项目画风由服务端 style lock 自动注入。角色、群体与场景身份只传 ID，禁止将 URL 写入 prompt、`referenceImages`、`anchorBindings` 或 `assetInputs`。`label` 只用于展示，不承担身份匹配。
 
 ## 6. 交付对账
 
 最终交付说明必须基于真实操作列出：
 
 - 本章应有的 canonical 场景清单；
-- 本章应有的 canonical 人物清单；
+- 本章应有的 canonical 人物清单，以及有真实参考需求的群体清单；
 - 每项对应的现有或新增 node ID；
-- `sceneAssetRole` / `characterAssetRole` 与状态；
+- 单人/场景的 `sceneAssetRole` / `characterAssetRole`，或群体的 `ensembleTitle` 与参考职责、状态；
 - 本轮实际新增数、复用数和仍待真实生成数。
 
 不得把 reusable descriptor、prompt、节点创建成功或子任务完成直接说成真实图片已生成。清单项缺少对应完整节点时继续同链补齐；只有当前权限确实不能取得必要事实/授权时才显式报告缺口。

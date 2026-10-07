@@ -1,8 +1,11 @@
 import { readMediaDeliveryPolicy } from "./execution.media-delivery-policy";
+import { workflowAuthorRepairRouteAt, projectWorkflowAuthorRepairOutput } from "./execution.author-repair-target";
+import { createCheckpointWriter } from "./execution.checkpoint-writer";
 import { readItemContinuation, previousItemContinuation } from "./execution.item-continuation";
 import {
 	createWorkflowCollection,
 	isWorkflowCollection,
+	parseWorkflowExecutionSemanticsV2,
 	type WorkflowCollectionItemV1,
 	type WorkflowCollectionV1,
 	type WorkflowItemLineageV1,
@@ -26,6 +29,7 @@ import type {
 import { isRetryableTerminalMediaItemRun } from "./execution.terminal-media-retry";
 import { readWorkflowDurableRetryDirective } from "./execution.durable-retry";
 import { readWorkflowAgentOutputRepair } from "./execution.agent-output-repair";
+import { readWorkflowMediaRetries } from "./execution.media-retry";
 import { resolveCoreWorkflowExecutorSemantics } from "./execution.core-semantics";
 import {
 	canonicalWorkflowOutputPortIds,
@@ -79,6 +83,15 @@ function isStructuredOutputTerminalFailure(run: WorkflowNodeItemRunV1): boolean 
 	return run.evidence.retryableFailure === "structured_output_invalid";
 }
 
+function hasAuthorizedAuthoringRevision(context: WorkflowNodeExecutionContext): boolean {
+	if (!context.recoveryOfExecutionId || !context.flowVersionData
+		|| typeof context.flowVersionData !== "object" || Array.isArray(context.flowVersionData)) return false;
+	const frontier = (context.flowVersionData as Record<string, unknown>).workflowRecoveryFrontier;
+	return Boolean(frontier && typeof frontier === "object" && !Array.isArray(frontier)
+		&& (frontier as Record<string, unknown>).mode === "authorized_planning_revision"
+		&& (frontier as Record<string, unknown>).failedNodeId === context.node.id);
+}
+
 type CollectionInput = Readonly<{
 	portId: string;
 	inputIndex: number;
@@ -93,6 +106,29 @@ type CollectionAlignment = Readonly<{
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function collectionExecutionSemantics(
+	context: WorkflowNodeExecutionContext,
+	executorRef: string | null,
+): ReturnType<typeof resolveCoreWorkflowExecutorSemantics> {
+	if (!executorRef) return null;
+	const flowData = context.flowVersionData;
+	const snapshot = isRecord(flowData) ? flowData.workflowExecutionSemantics : null;
+	const nodes = isRecord(snapshot) ? snapshot.nodes : null;
+	const frozen = isRecord(nodes) ? nodes[context.node.id] : null;
+	if (isRecord(frozen)) {
+		if (frozen.executorRef !== executorRef) {
+			throw new Error(`Workflow collection ${context.node.id} frozen executor semantics do not match ${executorRef}`);
+		}
+		return parseWorkflowExecutionSemanticsV2(frozen.semantics);
+	}
+	return resolveCoreWorkflowExecutorSemantics(executorRef);
+}
+
+function hasPipelineCheckpoint(run: WorkflowNodeItemRunV1): boolean {
+	const state = run.evidence.pipelineState;
+	return isRecord(state) && state.protocolVersion === "workflow.pipeline.state/v1" && isRecord(state.steps);
 }
 
 function readAtomicSpecRecord(
@@ -316,6 +352,15 @@ function aggregatePortBindings(input: Readonly<{
 	}));
 }
 
+function selectiveOutputPorts(context: WorkflowNodeExecutionContext): ReadonlySet<string> {
+	const data = context.node.data;
+	const spec = isRecord(data.workflowAtomicSpec) ? data.workflowAtomicSpec : null;
+	const configured = spec?.selectiveOutputPorts ?? data.workflowSelectiveOutputPorts;
+	return new Set(Array.isArray(configured)
+		? configured.flatMap((value) => typeof value === "string" && value.trim() ? [value.trim()] : [])
+		: []);
+}
+
 function executorRef(context: WorkflowNodeExecutionContext): string {
 	const raw = context.node.data.workflowAtomicSpec;
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "";
@@ -328,9 +373,12 @@ function aggregateOutput(input: Readonly<{
 	primary: WorkflowCollectionV1;
 	itemRuns: readonly WorkflowNodeItemRunV1[];
 	itemConcurrency: number;
+	configuredItemConcurrency: number;
 	concurrencyState: WorkflowCollectionConcurrencySnapshot;
 	finalized: boolean;
 }>): WorkflowNodeOutputV1 {
+	const restriction = workflowAuthorRepairRouteAt(input.context.flowVersionData, input.context.node.id);
+	const selectedRuns = restriction?.kind === "item" ? input.itemRuns.filter(run => run.itemId === restriction.itemId) : input.itemRuns;
 	const successfulRuns = input.itemRuns.filter((run) => run.status === "success");
 	// Item execution is the runtime authority for the ports it actually produced.
 	// Persisted Workflow IR may omit the optional atomicSpec.outputPorts metadata
@@ -342,7 +390,8 @@ function aggregateOutput(input: Readonly<{
 		context: input.context,
 		successfulRuns,
 	});
-	const ports = Object.fromEntries(portBindings.map(({ outputPortId, itemPortId }) => {
+	const selectivePorts = selectiveOutputPorts(input.context);
+	const portEntries = portBindings.flatMap(({ outputPortId, itemPortId }) => {
 		const values: unknown[] = [];
 		const itemIds: string[] = [];
 		const parentLineage: WorkflowItemLineageV1[][] = [];
@@ -352,16 +401,21 @@ function aggregateOutput(input: Readonly<{
 			itemIds.push(run.itemId);
 			parentLineage.push([...run.lineage]);
 		}
-		return [outputPortId, createWorkflowCollection({
+		// Selective ports carry branch activation. An empty collection is still a
+		// present port, so emitting one here would activate an unselected branch in
+		// the downstream graph scheduler.
+		if (selectivePorts.has(outputPortId) && values.length === 0) return [];
+		return [[outputPortId, createWorkflowCollection({
 			collectionId: `${input.context.executionId}:${input.context.node.id}:${outputPortId}`,
 			producerNodeId: input.context.node.id,
 			producerPortId: outputPortId,
 			values,
 			itemIds,
 			parentLineage,
-		})] as const;
-	}));
-	return {
+		})] as const];
+	});
+	const ports = Object.fromEntries(portEntries);
+	return projectWorkflowAuthorRepairOutput(input.context.flowVersionData, {
 		protocolVersion: "1",
 		executorRef: executorRef(input.context),
 		nodeId: input.context.node.id,
@@ -369,13 +423,13 @@ function aggregateOutput(input: Readonly<{
 		ports,
 		artifacts: successfulRuns.flatMap((run) => run.artifacts),
 		evidence: {
-			executorCompleted: input.finalized && (input.itemRuns.every((run) => run.status === "success")
-                || (readMediaDeliveryPolicy(input.context.node.data) !== null && successfulRuns.length > 0
+			executorCompleted: input.finalized && (selectedRuns.every((run) => run.status === "success")
+                || (!restriction && readMediaDeliveryPolicy(input.context.node.data) !== null && successfulRuns.length > 0
                     && input.itemRuns.every(run => run.status === "success" || run.status === "failed"))),
             partial: input.itemRuns.some(run => run.status === "failed"),
 			collectionId: input.primary.collectionId,
 			itemConcurrency: input.itemConcurrency,
-			configuredItemConcurrency: input.itemConcurrency,
+			configuredItemConcurrency: input.configuredItemConcurrency,
 			activeItems: input.concurrencyState.activeItemIds.length,
 			activeItemIds: input.concurrencyState.activeItemIds,
 			startedItems: input.concurrencyState.startedItemIds.length,
@@ -388,11 +442,11 @@ function aggregateOutput(input: Readonly<{
 			totalItems: input.primary.items.length,
 		},
 		itemRuns: input.itemRuns,
-		...(input.itemRuns.some((run) => run.status === "waiting_external")
+		...(selectedRuns.some((run) => run.status === "waiting_external")
 			? {
 				externalCheck: mergeWorkflowExternalCheckSchedules(
 					input.itemRuns
-						.filter((run) => run.status === "waiting_external")
+				.filter((run) => run.status === "waiting_external" && (!restriction || (restriction.kind === "item" && run.itemId === restriction.itemId)))
 						.map((run) => {
 							if (!run.externalCheck) {
 								throw new Error(`Workflow waiting item ${run.itemId} is missing its external check receipt`);
@@ -402,7 +456,7 @@ function aggregateOutput(input: Readonly<{
 				),
 			}
 			: {}),
-	};
+	});
 }
 
 type WorkflowCollectionConcurrencySnapshot = Readonly<{
@@ -461,6 +515,15 @@ class CollectionCheckpointFailure extends Error {
 	}
 }
 
+export function effectiveWorkflowItemConcurrency(configured: number, rawLimit: string | undefined): number {
+	if (rawLimit === undefined) return configured;
+	const limit = Number(rawLimit);
+	if (!Number.isSafeInteger(limit) || limit < 1) {
+		throw new Error("WORKFLOW_ITEM_CONCURRENCY_LIMIT must be a positive integer");
+	}
+	return Math.min(configured, limit);
+}
+
 async function mapItemsWithConcurrency<T>(
 	items: readonly T[],
 	concurrency: number,
@@ -477,7 +540,6 @@ async function mapItemsWithConcurrency<T>(
 	const results: Array<WorkflowNodeItemRunV1 | undefined> = new Array(items.length);
 	let cursor = 0;
 	let schedulingPaused = false;
-	let checkpointChain = Promise.resolve();
 	let checkpointError: unknown = null;
 	const worker = async (): Promise<void> => {
 		while (
@@ -504,9 +566,11 @@ async function mapItemsWithConcurrency<T>(
 			if (onSettled) {
 				const settledSnapshot = results.filter((result): result is WorkflowNodeItemRunV1 => result !== undefined);
 				const concurrencyState = snapshotCollectionConcurrency(tracker);
-				checkpointChain = checkpointChain.then(() => onSettled(settledSnapshot, concurrencyState));
 				try {
-					await checkpointChain;
+					// The shared checkpoint writer serializes durable writes and merges
+					// cumulative frontiers. Queueing callbacks here prevents that merge
+					// and writes every intermediate snapshot in a completion burst.
+					await onSettled(settledSnapshot, concurrencyState);
 				} catch (error: unknown) {
 					checkpointError = error;
 				}
@@ -552,10 +616,12 @@ export async function executeWorkflowNodeByMode(
 		};
 	}
 	let itemConcurrency: number;
+	let configuredItemConcurrency: number;
 	let itemContinuation: ReturnType<typeof readItemContinuation>;
 	try {
-		itemConcurrency = resolveWorkflowNodeItemConcurrency(context.node);
-		itemContinuation = readItemContinuation(context.node, itemConcurrency);
+		configuredItemConcurrency = resolveWorkflowNodeItemConcurrency(context.node);
+		itemContinuation = readItemContinuation(context.node, configuredItemConcurrency);
+		itemConcurrency = effectiveWorkflowItemConcurrency(configuredItemConcurrency, process.env.WORKFLOW_ITEM_CONCURRENCY_LIMIT);
 		if (itemContinuation && (context.inputs[itemContinuation.inputPort]?.length ?? 0) > 0) {
 			throw new Error(`Item continuation input ${itemContinuation.inputPort} is owned by the collection, not an external binding`);
 		}
@@ -582,7 +648,10 @@ export async function executeWorkflowNodeByMode(
 			errorMessage: error instanceof Error ? error.message : String(error),
 		};
 	}
+	const restriction = workflowAuthorRepairRouteAt(context.flowVersionData, context.node.id);
+	if (restriction && restriction.kind !== "item") throw new Error("workflow_author_repair_collection_route_invalid");
 	if (!alignment.primary) {
+		if (restriction) throw new Error("workflow_author_repair_collection_primary_missing");
 		const result = await executeOnce(context, dependencies);
 		if (!result.ok) return result;
 		return {
@@ -591,12 +660,12 @@ export async function executeWorkflowNodeByMode(
 		};
 	}
 	const primary = alignment.primary;
+	const executionItems = restriction ? primary.items.filter(item => item.itemId === restriction.itemId) : primary.items;
+	if (restriction && executionItems.length !== 1) throw new Error("workflow_author_repair_collection_item_missing");
 
 	const previousItemRuns = matchingPreviousItemRuns(context, primary);
 	const collectionExecutorRef = executorRef(context);
-	const collectionExecutorSemantics = collectionExecutorRef
-		? resolveCoreWorkflowExecutorSemantics(collectionExecutorRef)
-		: null;
+	const collectionExecutorSemantics = collectionExecutionSemantics(context, collectionExecutorRef);
 	const pauseAfterExternalWait = itemContinuation
 		? (run: WorkflowNodeItemRunV1) => run.status !== "success"
 		: collectionExecutorSemantics?.retrySafety !== "idempotency_key_required"
@@ -609,19 +678,19 @@ export async function executeWorkflowNodeByMode(
 	};
 	const itemIdentity = (item: WorkflowCollectionItemV1): string => item.itemId;
 	let checkpointItems = previousItemRuns;
-	let checkpointWrites = Promise.resolve();
+	const writeCheckpoint = createCheckpointWriter<WorkflowNodeOutputV1>(async (output) => {
+		await context.checkpointOutputRefs?.(output);
+	});
 	const checkpointItemsOutput = async (
 		updates: readonly WorkflowNodeItemRunV1[],
 		concurrencyState: WorkflowCollectionConcurrencySnapshot,
 	): Promise<void> => {
 		checkpointItems = mergeItemRunCheckpoints(checkpointItems, updates);
-		const output = aggregateOutput({
-			context, primary, itemRuns: checkpointItems, itemConcurrency,
-			concurrencyState, finalized: false,
-		});
-		checkpointWrites = checkpointWrites.then(() => context.checkpointOutputRefs?.(output));
 		try {
-			await checkpointWrites;
+			await writeCheckpoint(() => aggregateOutput({
+				context, primary, itemRuns: checkpointItems, itemConcurrency, configuredItemConcurrency,
+				concurrencyState, finalized: false,
+			}));
 		} catch (error: unknown) {
 			throw new CollectionCheckpointFailure(
 				error instanceof CollectionCheckpointFailure ? error.failure : error,
@@ -638,12 +707,15 @@ export async function executeWorkflowNodeByMode(
 		.filter((run) => run.status === "waiting_external"
 			|| canRefreshPersistedItemReceipt(context.recoveryOfExecutionId, collectionExecutorSemantics, run))
 		.map((run) => run.runtimeNodeId));
-	const waitingItems = primary.items.filter((item) => (
+	const waitingItems = executionItems.filter((item) => (
 		waitingRuntimeNodeIds.has(runtimeItemNodeId(context.node.id, item))
 	));
-	const untouchedItems = primary.items.filter((item) => (
+	const untouchedItems = executionItems.filter((item) => (
 		!waitingRuntimeNodeIds.has(runtimeItemNodeId(context.node.id, item))
 	));
+	const exactPipelineRetryItems = new Set(readWorkflowMediaRetries(context.flowVersionData)
+		.filter((retry) => retry.nodeId.startsWith(`${context.node.id}::item::`))
+		.map((retry) => retry.nodeId.split("::step::", 1)[0]));
 	const executeItem = async (item: WorkflowCollectionItemV1): Promise<WorkflowNodeItemRunV1> => {
 		const selectedCollections = alignment.perPrimaryItem[item.index];
 		const primaryInputKey = (() => {
@@ -657,6 +729,11 @@ export async function executeWorkflowNodeByMode(
 		const previousRun = context.resumeOutputRefs?.itemRuns.find(
 			(run) => run.itemId === item.itemId && run.runtimeNodeId === runtimeNodeId,
 		);
+		if (!restriction && collectionExecutorRef === "workflow.pipeline.run/v1" && exactPipelineRetryItems.size > 0
+			&& !exactPipelineRetryItems.has(runtimeNodeId)) {
+			if (!previousRun) throw new Error(`workflow_media_retry_untargeted_pipeline_item_missing_receipt:${runtimeNodeId}`);
+			return previousRun;
+		}
 		const structuredOutputTerminalFailure = previousRun
 			? isStructuredOutputTerminalFailure(previousRun)
 			: false;
@@ -678,9 +755,10 @@ export async function executeWorkflowNodeByMode(
 		const executorSemantics = collectionExecutorSemantics;
 		const replayFailedItem = context.recoveryOfExecutionId != null
 			&& previousRun?.status === "failed"
-			&& !structuredOutputTerminalFailure
+			&& (!structuredOutputTerminalFailure || hasAuthorizedAuthoringRevision(context))
 			&& (
 				currentExecutorRef === "agents.logical-task/v2"
+				|| (currentExecutorRef === "workflow.pipeline.run/v1" && hasPipelineCheckpoint(previousRun))
 				|| executorSemantics?.sideEffect === "none"
 				|| (
 					executorSemantics?.retrySafety === "idempotency_key_required"
@@ -691,6 +769,16 @@ export async function executeWorkflowNodeByMode(
 		const reconcileFailedItem = previousRun
 			? canRefreshPersistedItemReceipt(context.recoveryOfExecutionId, executorSemantics, previousRun)
 			: false;
+		if (context.recoveryOfExecutionId && previousRun?.status === "failed" && context.runtimeParentNodeIds?.length) {
+			console.info(JSON.stringify({ message: "workflow_nested_collection_failed_item_recovery_decision",
+				executionId: context.executionId, collectionNodeId: context.node.id,
+				itemId: item.itemId, executorRef: currentExecutorRef,
+				resumeOnly: context.resumeOnly === true, replayFailedItem, reconcileFailedItem,
+				previousRuntimeNodeId: previousRun.runtimeNodeId,
+				hasDurableReceipt: hasDurableResultLookupReceipt(executorSemantics, previousRun),
+				previousEvidenceKeys: Object.keys(previousRun.evidence),
+			}));
+		}
 		if (
 			context.resumeOnly === true
 			&& previousRun
@@ -708,7 +796,13 @@ export async function executeWorkflowNodeByMode(
 		}
 		let result: WorkflowNodeExecutionResult;
 		try {
+			const retryObservationByIdentity = previousRun?.status === "waiting_external"
+				&& isRecord(previousRun.evidence.observationFailure)
+				&& !hasDurableResultLookupReceipt(collectionExecutorSemantics, previousRun)
+				&& (collectionExecutorSemantics?.retrySafety === "safe"
+					|| collectionExecutorSemantics?.retrySafety === "idempotency_key_required");
 			const resumeCurrentItem = context.resumeOnly === true
+				&& !retryObservationByIdentity
 				&& !replayFailedItem
 				&& (
 					previousRun?.status === "waiting_external"
@@ -727,6 +821,7 @@ export async function executeWorkflowNodeByMode(
 			} : {};
 			result = await executeOnce({
 				...context,
+				...(restriction && !previousRun ? { resumeOutputRefs: undefined } : {}),
 				node: { ...context.node, id: runtimeNodeId },
 				checkpointOutputRefs: context.checkpointOutputRefs ? async (output) => {
 					if (output.nodeId !== runtimeNodeId || !output.externalCheck) {
@@ -753,6 +848,31 @@ export async function executeWorkflowNodeByMode(
 				// The rejected checkpoint queue still reaches the collection boundary,
 				// where the database failure is diagnosed and recovery is scheduled.
 				return lastCheckpoint;
+			}
+			const retrySafeDatabaseFailure = isTransientDatabaseReadError(error)
+				&& (collectionExecutorSemantics?.retrySafety === "safe"
+					|| collectionExecutorSemantics?.retrySafety === "idempotency_key_required");
+			const observationCheckpoint: WorkflowNodeItemRunV1 = lastCheckpoint ?? {
+				itemId: item.itemId, index: item.index, runtimeNodeId, lineage,
+				status: "waiting_external" as const, ports: {}, artifacts: [], evidence: {},
+			};
+			if (retrySafeDatabaseFailure || (lastCheckpoint?.status === "waiting_external"
+				&& hasDurableResultLookupReceipt(collectionExecutorSemantics, lastCheckpoint))) {
+				// A failed lookup says nothing about the accepted task's outcome. Keep
+				// the same receipt owned and schedule another observation, never submit.
+				const previousFailure = observationCheckpoint.evidence.observationFailure;
+				const previousCount = isRecord(previousFailure) && typeof previousFailure.consecutiveFailures === "number"
+					&& Number.isSafeInteger(previousFailure.consecutiveFailures) && previousFailure.consecutiveFailures > 0
+					? previousFailure.consecutiveFailures : 0;
+				const consecutiveFailures = previousCount + 1;
+				const delayMs = Math.min(60_000, 5_000 * 2 ** Math.min(previousCount, 4));
+				return { ...observationCheckpoint, status: "waiting_external", externalCheck: workflowExternalPollAfter(delayMs),
+					evidence: { ...observationCheckpoint.evidence, observationFailure: {
+						consecutiveFailures,
+						observedAt: new Date().toISOString(),
+						message: error instanceof Error ? error.message : String(error),
+						errorCodes: readDatabaseErrorCodes(error),
+					} } };
 			}
 			return {
 				itemId: item.itemId,
@@ -822,9 +942,8 @@ export async function executeWorkflowNodeByMode(
 	let itemRuns: readonly WorkflowNodeItemRunV1[];
 	try {
 		if (waitingItems.length > 0) {
-			// Reconcile the complete accepted frontier as a barrier. A concurrent
-			// worker cannot claim untouched work until every older external wait has
-			// settled and none remains waiting.
+			// Reconcile accepted work first, then fill only the slots it has freed.
+			// An explicit itemContinuation still owns its sequential dependency.
 			const reconciledWaitingRuns = await mapItemsWithConcurrency(
 				waitingItems,
 				itemConcurrency,
@@ -834,12 +953,16 @@ export async function executeWorkflowNodeByMode(
 				checkpointSettledRuns,
 			);
 			settledPriorPhases = reconciledWaitingRuns;
-			if (reconciledWaitingRuns.some((run) => run.status === "waiting_external")) {
+			const outstanding = reconciledWaitingRuns.filter((run) => run.status === "waiting_external").length;
+			const independent = !itemContinuation && collectionExecutorSemantics?.retrySafety === "idempotency_key_required";
+			const availableSlots = outstanding === 0 ? itemConcurrency
+				: independent ? Math.max(0, itemConcurrency - outstanding) : 0;
+			if (availableSlots === 0) {
 				itemRuns = reconciledWaitingRuns;
 			} else {
 				const newlyScheduledRuns = await mapItemsWithConcurrency(
 					untouchedItems,
-					itemConcurrency,
+					availableSlots,
 					executeItem,
 					concurrencyTracker,
 					itemIdentity,
@@ -850,7 +973,7 @@ export async function executeWorkflowNodeByMode(
 			}
 		} else {
 			itemRuns = await mapItemsWithConcurrency(
-				primary.items,
+				 executionItems,
 				itemConcurrency,
 				executeItem,
 				concurrencyTracker,
@@ -875,7 +998,7 @@ export async function executeWorkflowNodeByMode(
 			stack: error.failure instanceof Error ? error.failure.stack : null,
 		}));
 		const preservedOutput = aggregateOutput({ context, primary, itemRuns: preservedRuns,
-			itemConcurrency, concurrencyState: snapshotCollectionConcurrency(concurrencyTracker), finalized: false });
+			itemConcurrency, configuredItemConcurrency, concurrencyState: snapshotCollectionConcurrency(concurrencyTracker), finalized: false });
 		const outputRefs = { ...preservedOutput,
 			evidence: { ...preservedOutput.evidence, checkpointPersistenceFailure: failure } };
 		// This schedules reconciliation of receipts, never replay of a provider action.
@@ -892,11 +1015,13 @@ export async function executeWorkflowNodeByMode(
 		primary,
 		itemRuns: mergedItemRuns,
 		itemConcurrency,
+		configuredItemConcurrency,
 		concurrencyState: snapshotCollectionConcurrency(concurrencyTracker),
-		finalized: mergedItemRuns.length === primary.items.length,
+		finalized: restriction ? itemRuns.length === executionItems.length : mergedItemRuns.length === primary.items.length,
 	});
-	const failedRuns = mergedItemRuns.filter((run) => run.status === "failed");
-	const waitingRuns = mergedItemRuns.filter((run) => run.status === "waiting_external");
+	const actionRuns = restriction ? mergedItemRuns.filter(run => run.itemId === restriction.itemId) : mergedItemRuns;
+	const failedRuns = actionRuns.filter((run) => run.status === "failed");
+	const waitingRuns = actionRuns.filter((run) => run.status === "waiting_external");
 	// Accepted sibling work remains owned by this collection until it settles.
 	// Failures stay explicit in itemRuns/evidence; waiting never claims success.
 	if (waitingRuns.length > 0) {
@@ -905,7 +1030,7 @@ export async function executeWorkflowNodeByMode(
 		}
 		return workflowNodeWaiting(outputRefs, outputRefs.externalCheck);
 	}
-	if (failedRuns.length > 0 && !(readMediaDeliveryPolicy(context.node.data)
+	if (failedRuns.length > 0 && !(!restriction && readMediaDeliveryPolicy(context.node.data)
         && mergedItemRuns.some(run => run.status === "success"))) {
 		const firstFailure = failedRuns[0];
 		const exactFailure = firstFailure?.errorMessage?.trim();

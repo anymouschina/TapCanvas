@@ -1,11 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
 	freezeWorkflowExecutionSemanticsSnapshot,
+	projectWorkflowExecutionSemanticsSnapshot,
 	readWorkflowExecutionSemanticsSnapshot,
 	readWorkflowNodeExecutionSemantics,
 } from "./execution.semantics-snapshot";
 
 describe("workflow execution semantics snapshot", () => {
+	it("projects existing contracts onto a bounded graph without recomputing semantics", () => {
+		const nodes = ["source", "other"].map(id => ({ id, type: "taskNode", data: {
+			kind: "workflowStage", workflowAtomicSpec: { executorRef: "workflow.input.text/v1" },
+		} }));
+		const original = freezeWorkflowExecutionSemanticsSnapshot({ nodes, edges: [] });
+		const before = structuredClone(original);
+		const projected = projectWorkflowExecutionSemanticsSnapshot(original, { ...original, nodes: nodes.slice(0, 1) });
+		expect(readWorkflowExecutionSemanticsSnapshot(projected).nodes).toEqual({
+			source: readWorkflowExecutionSemanticsSnapshot(original).nodes.source,
+		});
+		expect(freezeWorkflowExecutionSemanticsSnapshot(projected)).toEqual(projected);
+		expect(original).toEqual(before);
+		expect(() => projectWorkflowExecutionSemanticsSnapshot(original, { nodes: [{ ...nodes[0], id: "unknown" }] })).toThrow("no frozen execution semantics");
+	});
 	it("freezes every built-in node contract into the immutable execution version", () => {
 		const frozen = freezeWorkflowExecutionSemanticsSnapshot({
 			nodes: [
@@ -39,6 +54,21 @@ describe("workflow execution semantics snapshot", () => {
 		const frozen = freezeWorkflowExecutionSemanticsSnapshot({ nodes: [node("tapcanvas.video.generate/v1")], edges: [] });
 		expect(readWorkflowNodeExecutionSemantics(frozen, "configured")).toMatchObject({ maxAutomaticAttempts: 3, recoveryMode: "reconcile" });
 		expect(() => freezeWorkflowExecutionSemanticsSnapshot({ nodes: [node("agents.tool.invoke/v1")], edges: [] })).toThrow(/idempotency identity/);
+	});
+
+	it("freezes inline step semantics and rejects snapshots that omit those steps", () => {
+		const image = { id: "inner-image", type: "taskNode", kind: "workflowStage", data: { kind: "workflowStage", workflowAtomicSpec: {
+			version: 1, category: "media", operation: "generate", executorRef: "tapcanvas.image.generate/v1", executionMode: "once", inputPorts: ["input"], outputPorts: ["result"],
+		} } };
+		const pipeline = { protocolVersion: "workflow.pipeline.run/v1", inputs: [{ portId: "input", mode: "value", artifactTypes: [] }],
+			steps: [{ stepId: "image", node: image }], bindings: [{ from: { kind: "input", portId: "input" }, to: { stepId: "image", portId: "input" }, mode: "value" }],
+			outputs: [{ portId: "result", from: { stepId: "image", portId: "result" }, mode: "value" }],
+		};
+		const frozen = freezeWorkflowExecutionSemanticsSnapshot({ nodes: [{ id: "pipeline", data: { kind: "workflowStage", workflowAtomicSpec: { executorRef: "workflow.pipeline.run/v1" }, workflowPipeline: pipeline } }] });
+		const snapshot = readWorkflowExecutionSemanticsSnapshot(frozen);
+		expect(Object.keys(snapshot.nodes).sort()).toEqual(["inner-image", "pipeline"]);
+		expect(snapshot.nodes.pipeline.semantics).toMatchObject({ sideEffect: "paid_generation", recoveryMode: "reconcile", resultLookup: { outputField: "providerReceiptRefs" } });
+		expect(() => readWorkflowExecutionSemanticsSnapshot({ ...frozen, workflowExecutionSemantics: { ...snapshot, nodes: { pipeline: snapshot.nodes.pipeline } } })).toThrow(/cover every/);
 	});
 
 	it("preserves a valid frozen snapshot", () => {
