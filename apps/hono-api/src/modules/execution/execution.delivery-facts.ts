@@ -38,7 +38,10 @@ export function preparedNodeDelivery(receipt: WorkflowVideoPreparationReceipt) {
   const requiredFacts = ['persisted', 'promptPersisted', 'dependenciesReady'];
   const deliveryEvidence = {
     nodeId: receipt.nodeId, persisted: receipt.persisted, promptPersisted: receipt.promptPersisted,
-    requiredDependencyIds: [...new Set([...receipt.referenceImageNodeIds, ...receipt.referenceAssetIds])],
+    requiredDependencyIds: [
+      ...receipt.referenceImageNodeIds.map((id) => `node:${id}`),
+      ...receipt.referenceAssetIds.map((id) => `asset:${id}`),
+    ],
     dependencies: receipt.imageDependencies, videoSubmitted: false,
   };
   const verification = verifyDeliveryFacts({ deliveryEvidence }, requiredFacts);

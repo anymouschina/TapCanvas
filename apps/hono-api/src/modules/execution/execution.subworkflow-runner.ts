@@ -1,3 +1,4 @@
+import { decodeWorkflowOutput } from "./execution.output-storage";
 import type { WorkerEnv } from "../../types";
 import type { FlowRow } from "../flow/flow.repo";
 import { startWorkflowExecution } from "./execution.start-service";
@@ -19,15 +20,6 @@ export type WorkflowSubworkflowRunResult =
 	| Readonly<{ status: "waiting_external"; childExecutionId: string; childFlowVersionId: string }>
 	| Readonly<{ status: "success"; childExecutionId: string; childFlowVersionId: string; nodeRuns: readonly Readonly<{ nodeId: string; status: string; outputRefs: unknown }>[] }>
 	| Readonly<{ status: "failed"; childExecutionId: string | null; errorMessage: string }>;
-
-function parseStoredJson(value: unknown): unknown {
-	if (typeof value !== "string") return value;
-	try {
-		return JSON.parse(value) as unknown;
-	} catch {
-		return null;
-	}
-}
 
 export async function runWorkflowSubworkflow(
 	env: WorkerEnv,
@@ -54,7 +46,7 @@ export async function runWorkflowSubworkflow(
 			status: "success",
 			childExecutionId: child.id,
 			childFlowVersionId: child.flow_version_id,
-			nodeRuns: nodeRuns.map((run) => ({ nodeId: run.node_id, status: run.status, outputRefs: parseStoredJson(run.output_refs) })),
+			nodeRuns: nodeRuns.map((run) => ({ nodeId: run.node_id, status: run.status, outputRefs: decodeWorkflowOutput(run.output_refs) })),
 		};
 	}
 

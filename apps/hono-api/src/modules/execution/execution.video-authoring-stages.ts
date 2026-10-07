@@ -10,22 +10,27 @@ import { validateWorkflowToolArguments } from "./execution.json-schema-validator
  */
 type Facts = Readonly<Record<string, unknown>>;
 type AdjacentBeatFacts = Readonly<Record<string, unknown> & {
-  sourceUnitRefs?: readonly Readonly<{ unitId: string }>[];
+	sourceUnitRefs?: readonly Readonly<{ unitId: string }>[];
 }>;
 
-/** Keep adjacent author facts countable without copying another source allocation. */
+/**
+ * Source allocation references are host lineage, not adjacent Clip design
+ * facts. The current beat keeps its complete references; neighbouring beats
+ * retain an exact, countable identity summary so a Clip author can see the
+ * handoff boundary without receiving another copy of the chapter ledger.
+ */
 function projectAdjacentBeat(beat: AdjacentBeatFacts): Facts {
-  const sourceUnitRefs = beat.sourceUnitRefs;
-  if (!sourceUnitRefs) return beat;
-  const { sourceUnitRefs: _sourceUnitRefs, ...facts } = beat;
-  return {
-    ...facts,
-    sourceUnitRefSummary: {
-      count: sourceUnitRefs.length,
-      unitIds: sourceUnitRefs.map(reference => reference.unitId),
-      readPolicy: "parent_chapter_plan_source_unit_refs",
-    },
-  };
+	const sourceUnitRefs = beat.sourceUnitRefs;
+	if (!sourceUnitRefs) return beat;
+	const { sourceUnitRefs: _sourceUnitRefs, ...facts } = beat;
+	return {
+		...facts,
+		sourceUnitRefSummary: {
+			count: sourceUnitRefs.length,
+			unitIds: sourceUnitRefs.map((reference) => reference.unitId),
+			readPolicy: "parent_chapter_plan_source_unit_refs",
+		},
+	};
 }
 export type ChapterBeatPlan = Readonly<{
   sourceId: string;
@@ -66,6 +71,7 @@ function duration(beat: Facts, index: number): number {
 export function buildClipDesignInputs(plan: ChapterBeatPlan, assets: ChapterAssetPlan, ledger: SourceUnitLedger) {
   if (plan.beats.length === 0) throw new Error("chapter_plan.beats must be non-empty");
   const projected = projectChapterSource(plan, ledger);
+  const speechLedger = projected.speechLedger;
   const sources = projectChapterAssetSources(assets.objectRegistry);
   return projected.beats.map((beat, clipIndex) => ({
     clipIndex,
@@ -73,14 +79,15 @@ export function buildClipDesignInputs(plan: ChapterBeatPlan, assets: ChapterAsse
     sourceFingerprint: plan.sourceFingerprint,
     chapterArc: plan.chapterArc,
     beat,
-    previousBeat: clipIndex > 0 ? projectAdjacentBeat(projected.beats[clipIndex - 1]!) : null,
-    nextBeat: clipIndex + 1 < plan.beats.length ? projectAdjacentBeat(projected.beats[clipIndex + 1]!) : null,
+		previousBeat: clipIndex > 0 ? projectAdjacentBeat(projected.beats[clipIndex - 1]!) : null,
+		nextBeat: clipIndex + 1 < plan.beats.length ? projectAdjacentBeat(projected.beats[clipIndex + 1]!) : null,
     objectRegistry: sources.objectRegistry,
     backgroundPlans: assets.backgroundPlans.map(item => ({ objectId: item.objectId, displayName: item.plan.displayName })),
-    speechLedger: projected.speechLedger.filter(line => line.clipIndex === clipIndex),
+    speechLedger: speechLedger.filter(line => line.clipIndex === clipIndex),
   }));
 }
 
+/** Source speech is projected from an independently persisted source artifact. */
 function projectChapterSource(plan: ChapterBeatPlan, ledger: SourceUnitLedger) {
   if (plan.sourceId !== ledger.sourceId || plan.sourceFingerprint !== ledger.sourceFingerprint) {
     throw new Error("Chapter source lineage must match the frozen source ledger");
@@ -140,11 +147,10 @@ export function assembleDesignedBeatSheet(
   return {
     protocolVersion: "tapcanvas.beat-sheet/v2",
     ...plan,
-    sourceCoveragePlan: {
-      speechLedger: projected.speechLedger,
-      sourceUnitLedger: ledger,
-      sourceUnitAllocations: projected.beats.map((beat, clipIndex) => ({ clipIndex, sourceUnitRefs: beat.sourceUnitRefs })),
-    },
+    // Allocations carry the host-derived complete ranges (startOffset cursor),
+    // never the author's reduced submission form, so persisted BeatSheets stay
+    // self-contained for every downstream consumer.
+    sourceCoveragePlan: { speechLedger: projected.speechLedger, sourceUnitLedger: ledger, sourceUnitAllocations: projected.beats.map((beat, clipIndex) => ({ clipIndex, sourceUnitRefs: beat.sourceUnitRefs })) },
     objectRegistry: sources.objectRegistry,
     assetPlans: sources.assetPlans,
     beats: assembled.map(item => item.beat),
@@ -167,25 +173,8 @@ function parseStageArtifact(value: unknown, schema: Record<string, unknown>, lab
 }
 export const parseChapterBeatPlan = (value: unknown): ChapterBeatPlan =>
   parseStageArtifact(value, chapterBeatPlanSchema, "chapter-plan") as ChapterBeatPlan;
-function normalizeBackgroundPlanIdentities(plan: ChapterAssetPlan): ChapterAssetPlan {
-  const counts = new Map<string, number>();
-  for (const item of plan.backgroundPlans) counts.set(item.objectId, (counts.get(item.objectId) ?? 0) + 1);
-  const seen = new Map<string, number>();
-  return {
-    ...plan,
-    backgroundPlans: plan.backgroundPlans.map(item => {
-      if ((counts.get(item.objectId) ?? 0) === 1) return item;
-      const index = seen.get(item.objectId) ?? 0;
-      seen.set(item.objectId, index + 1);
-      const assetId = typeof item.plan.assetId === "string" && item.plan.assetId.length > 0
-        ? item.plan.assetId
-        : `index-${String(index)}`;
-      return { ...item, objectId: `${item.objectId}::background::${assetId}::${String(index)}` };
-    }),
-  };
-}
 export const parseChapterAssetPlan = (value: unknown): ChapterAssetPlan =>
-  normalizeBackgroundPlanIdentities(parseStageArtifact(value, chapterAssetPlanSchema, "chapter-assets") as ChapterAssetPlan);
+  parseStageArtifact(value, chapterAssetPlanSchema, "chapter-assets") as ChapterAssetPlan;
 export const parseClipDesign = (value: unknown): ClipDesign =>
   parseStageArtifact(value, clipDesignSchema, "clip-design") as ClipDesign;
 

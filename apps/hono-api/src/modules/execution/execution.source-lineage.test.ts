@@ -1,14 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { sha256Hex } from "../asset/book-content-hash";
 import { freezeWorkflowAuthoritativeSource, resolveWorkflowAuthoritativeSourceLineage } from "./execution.source-lineage";
+import { buildWorkflowSourceCoordinates } from "./execution.source-coordinates";
 
 describe("canonical Workflow source lineage", () => {
 	it("freezes canvas and chapter identities without altering source text or version metadata", () => {
 		const source = { nodeId: "chapter-seed-1", content: "  原文章节\n", sourceRevision: 7, sourceHash: "book-version-hash" };
 		const frozen = freezeWorkflowAuthoritativeSource(source);
-		expect(frozen).toEqual({ ...source, sourceId: source.nodeId, sourceFingerprint: sha256Hex("原文章节") });
-		expect(resolveWorkflowAuthoritativeSourceLineage([frozen])).toEqual({ sourceId: source.nodeId, sourceFingerprint: sha256Hex("原文章节") });
+		expect(frozen).toEqual({ ...source, sourceId: source.nodeId, sourceFingerprint: sha256Hex(source.content), sourceCoordinates: buildWorkflowSourceCoordinates(source.content) });
+		expect(resolveWorkflowAuthoritativeSourceLineage([frozen])).toEqual({ sourceId: source.nodeId, sourceFingerprint: sha256Hex(source.content) });
 		expect(source).not.toHaveProperty("sourceFingerprint");
+	});
+
+	it("hashes the exact delivered text including boundary whitespace", () => {
+		const source = { sourceId: "delivery-1", content: "\n正文原文\n" };
+		const frozen = freezeWorkflowAuthoritativeSource(source);
+		expect(frozen.sourceFingerprint).toBe(sha256Hex(source.content));
+		expect(resolveWorkflowAuthoritativeSourceLineage([frozen])).toEqual({
+			sourceId: source.sourceId,
+			sourceFingerprint: sha256Hex(source.content),
+		});
 	});
 
 	it("uses the same ordered collection identity for every source consumer", () => {

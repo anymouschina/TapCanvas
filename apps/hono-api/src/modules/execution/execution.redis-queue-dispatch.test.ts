@@ -10,7 +10,7 @@ vi.mock("ioredis", () => ({ default: class {
 	quit = fake.quit;
 } }));
 vi.mock("bullmq", () => ({
-	Queue: class { add = fake.add; close = fake.close; },
+	Queue: class { add = fake.add; close = fake.close; toKey = (suffix: string) => `configured:queue:${suffix}`; },
 	Worker: class {
 		constructor(_name: string, processor: NonNullable<typeof fake.processor>) { fake.processor = processor; }
 		on = vi.fn(); close = fake.close;
@@ -30,6 +30,9 @@ describe("Redis dispatch reservation integration", () => {
 		const reserveCall = fake.reserve.mock.calls[0]!;
 		expect(reserveCall[0]).toBe(RESERVE_DISPATCH_SCRIPT);
 		expect(reserveCall[4]).toBe(601_000);
+		expect(reserveCall[5]).toBe(1_000);
+		expect(reserveCall[6]).toBe(121_000);
+		expect(reserveCall[7]).toBe("configured:queue:");
 		expect(fake.add).toHaveBeenCalledWith("dispatch", job, expect.objectContaining({ jobId: reserveCall[3], delay: 600_000 }));
 		await producer.close();
 	});

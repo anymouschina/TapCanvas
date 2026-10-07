@@ -511,6 +511,7 @@ export const ApiKeyBillingOptionsResponseSchema = z.object({
 export type ApiKeyBillingOptionDto = z.infer<typeof ApiKeyBillingOptionSchema>;
 
 const AgentsChatRequestSchemaBase = z.object({
+	outputArtifactType: z.string().trim().min(1).max(200).optional(),
 	reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
 	vendor: z.string().optional().openapi({
 		description:

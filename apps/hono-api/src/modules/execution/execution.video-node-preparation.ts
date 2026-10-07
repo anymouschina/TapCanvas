@@ -4,6 +4,7 @@ type NodeData = Readonly<Record<string, unknown>>;
 
 const frozenFields = [
 	"kind", "prompt", "workflowVideoInputMode", "modelKey", "videoModel",
+	"workflowPromptSourceProtocol", "workflowSourcePrompt", "workflowSpeechEvents", "workflowReferenceHeader", "workflowReferenceBindings",
 	"videoDurationSeconds", "videoResolution", "videoSize", "aspectRatio",
 	"workflowEffectId", "workflowExecutionFamilyId", "workflowClipId",
 	"referenceImageNodeIds", "referenceAssetIds",

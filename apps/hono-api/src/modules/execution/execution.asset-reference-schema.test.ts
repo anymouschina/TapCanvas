@@ -3,12 +3,15 @@ import { expect, it } from 'vitest';
 import { bindRegisteredAssetReferenceSchema } from './execution.asset-reference-schema';
 import type { WorkflowProjectContext, WorkflowProjectAssetSnapshot } from './execution.project-context';
 import { validateWorkflowToolArguments } from './execution.json-schema-validator';
+import { imageMediaIdentityKey } from './execution.image-media-identity';
+import { projectRuntimeBoundJsonSchema } from '../../../../../packages/schemas/json-schema-runtime-bindings/index.mjs';
 const image = (assetId: string, flowId: string): WorkflowProjectAssetSnapshot => ({
   assetId, flowId, nodeId: `${assetId}-node`, projectId: 'p', assetVersion: 1, assetVersionId: 'v', contentFingerprint: 'hash',
   name: assetId, canonicalName: assetId, kind: 'scene', referenceType: 'scene', approvalStatus: null,
   origin: 'project_node', mediaKind: 'image', state: 'ready', assetUsage: 'production', assetPurpose: null,
   productionEligible: true, productionExclusionReason: null, styleFingerprint: null, updatedAt: '2026-09-20',
-  sourceFacts: { referenceType: null, roleName: null, physicalIdentityKey: null, characterAssetRole: null,
+  sourceFacts: { referenceType: null, roleName: null, physicalIdentityKey: null,
+    mediaIdentityKey: imageMediaIdentityKey({ imageUrl: `https://assets.test/${assetId}.png` }), characterAssetRole: null,
     characterProfileVersion: null, identityAnchors: [], prohibitedDrift: [], sourceNodeId: null,
     workflowExecutionId: null, taskId: null, prompt: null },
 });
@@ -36,12 +39,14 @@ it('allows an empty selection without inventing a fallback reference', () => {
 });
 
 it('preserves one existing image used by distinct declared objects without duplicate collection identities', () => {
-  const objectRegistry = ['one','two'].map(name => ({ objectId:name, kind:'prop', referenceRole:'prop', name,
-    physicalIdentityKey:null, identityInvariant:`${name} 的可见身份`, imageSource:{ mode:'reuse', assetIds:['a'] } }));
-  const collection = prepareChapterAssetCollection({ assets:{objectRegistry,assetPlans:[],backgroundPlans:[]}, projectContext:context,executionId:'e',nodeId:'n' });
+  const objectRegistry = ['one','two'].map(name => ({ objectId:name, kind:'prop', referenceRole:'prop', name, physicalIdentityKey:null, identityInvariant:name, imageSource:{mode:'reuse',assetIds:['a']} }));
+  const collection = prepareChapterAssetCollection({ assets:{objectRegistry,backgroundPlans:[]}, projectContext:context,executionId:'e',nodeId:'n' });
   expect(collection.items).toHaveLength(1);
   expect(new Set(collection.items.map(item=>item.itemId)).size).toBe(1);
-  expect(collection.items.map(item=>item.value)).toEqual([expect.objectContaining({existingAssetId:'a'})]);
+  expect(collection.items.map(item => {
+    if (!('existingAssetId' in item.value) || typeof item.value.existingAssetId !== 'string') throw new Error('Missing frozen existing asset identity');
+    return item.value.existingAssetId;
+  })).toEqual(['a']);
   expect(collection.items[0]!.value).toMatchObject({ bindings: [expect.objectContaining({objectId:'one',assetId:'a'}), expect.objectContaining({objectId:'two',assetId:'a'})] });
 });
 
@@ -58,5 +63,27 @@ it('binds nested background references with the same frozen handles as object re
   expect(check('b')).toEqual([]);
   expect(check('invented-reference')).toHaveLength(1);
   expect(check('unready')).toHaveLength(1);
-  expect(JSON.stringify(bound)).not.toContain('x-referenceSource');
+  expect(JSON.stringify(bound)).toContain('x-referenceSource');
+  expect(JSON.stringify(bound)).not.toContain('"enum"');
+});
+
+it('keeps frozen membership and identity facts in runtime while author schemas expose no complete catalog', () => {
+  const identitySchema = { type: 'object', properties: {
+    physicalIdentityKey: { type: 'string' },
+    assetId: { type: 'string', 'x-referenceSource': 'project_image' },
+  }, 'x-referenceFactEquality': [{ ownerField: 'physicalIdentityKey', referencePath: ['assetId'],
+    catalog: 'project_image', factField: 'physicalIdentityKey', unknownFact: 'observe' }] };
+  const body = { ...context.assetSnapshot[0]!, sourceFacts: { ...context.assetSnapshot[0]!.sourceFacts,
+    physicalIdentityKey: 'body-a' } };
+  const bound = bindRegisteredAssetReferenceSchema(identitySchema, { ...context, assetSnapshot: [body, context.assetSnapshot[1]!] });
+  const author = projectRuntimeBoundJsonSchema(bound);
+  expect(author).not.toHaveProperty('x-frozenReferenceCatalogs');
+  expect(author).not.toHaveProperty('x-frozenReferenceFacts');
+  expect(author).not.toHaveProperty('x-runtimeOnlyKeywords');
+  expect(JSON.stringify(author)).not.toContain('body-a');
+  expect(JSON.stringify(author)).not.toContain('"b"');
+  expect(validateWorkflowToolArguments(bound, { physicalIdentityKey: 'body-a', assetId: 'a' })).toEqual([]);
+  expect(validateWorkflowToolArguments(bound, { physicalIdentityKey: 'other-body', assetId: 'a' })).not.toEqual([]);
+  expect(validateWorkflowToolArguments(bound, { physicalIdentityKey: 'body-a', assetId: 'forged' })).not.toEqual([]);
+  expect(validateWorkflowToolArguments(bound, { physicalIdentityKey: 'unknown', assetId: 'b' })).toEqual([]);
 });

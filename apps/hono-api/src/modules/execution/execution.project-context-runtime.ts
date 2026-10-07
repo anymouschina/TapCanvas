@@ -4,6 +4,7 @@ import type { AppContext } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
 import { getFlowForOwner } from "../flow/flow.repo";
 import { loadChapterWorkflowSource } from "../chapter/chapter.workflow-source";
+import { loadPreviousChapterExitEvidence } from "./execution.chapter-continuity";
 import { projectNodeAssetsFromCanvases } from "../material/material.project-node-assets";
 import {
 	listMaterialAssetsForOwner,
@@ -24,12 +25,12 @@ import {
 } from "../task/authoring-style-provenance";
 import type { MaterialAssetDto } from "../material/material.schemas";
 import { getAssetByIdForUser } from "../asset/asset.repo";
+import { resolveExplicitWorkflowAssets, selectedGeneratedAssetAsMaterialAsset } from "./execution.explicit-asset-identity";
 import {
 	extractObjectStorageObjectKey,
 	resolveObjectStorageConfig,
 } from "../asset/rustfs.client";
 import { createWorkflowAssetResolver, type WorkflowAssetResolver } from "./execution.asset-resolver";
-import { enrichWorkflowMediaUnderstanding } from "./execution.media-understanding";
 import {
 	createWorkflowCallerCanvasSnapshot,
 	createWorkflowProjectContext,
@@ -109,54 +110,6 @@ function mergeAssets(...collections: readonly (readonly MaterialAssetDto[])[]): 
 	return [...byId.values()];
 }
 
-export function selectedGeneratedAssetAsMaterialAsset(
-	row: Awaited<ReturnType<typeof getAssetByIdForUser>>,
-	projectId: string,
-): MaterialAssetDto | null {
-	if (!row || row.project_id !== projectId || typeof row.data !== "string") return null;
-	let data: Record<string, unknown>;
-	try {
-		const parsed = JSON.parse(row.data) as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-		data = parsed as Record<string, unknown>;
-	} catch {
-		return null;
-	}
-	const mediaType = typeof data.type === "string" ? data.type.trim() : "";
-	if (mediaType !== "image") return null;
-	const generatedUrl = typeof data.url === "string" ? data.url.trim() : "";
-	if (!generatedUrl) return null;
-	const normalizedData: Record<string, unknown> = {
-		...data,
-		imageUrl: typeof data.imageUrl === "string" && data.imageUrl.trim() ? data.imageUrl : generatedUrl,
-		imageResults: Array.isArray(data.imageResults) ? data.imageResults : [{ url: generatedUrl }],
-	};
-	const roleType = typeof data.referenceType === "string" ? data.referenceType.trim() : "";
-	const kind = roleType === "character" || roleType === "scene" || roleType === "prop" ? roleType : "text";
-	return {
-		id: row.id,
-		projectId,
-		teamId: null,
-		folderId: null,
-		scope: "project",
-		kind,
-		name: row.name,
-		favorite: false,
-		currentVersion: 1,
-		latestVersion: {
-			id: `${row.id}:generation`,
-			assetId: row.id,
-			projectId,
-			version: 1,
-			data: normalizedData,
-			note: null,
-			createdAt: row.created_at,
-		},
-		createdAt: row.created_at,
-		updatedAt: row.updated_at,
-	};
-}
-
 function refreshInternalAssetUrls(asset: MaterialAssetDto, env: AppContext["env"]): MaterialAssetDto {
 	const data = asset.latestVersion?.data;
 	if (!data) return asset;
@@ -205,6 +158,7 @@ export async function loadVisibleWorkflowProjectAssets(
 async function loadWorkflowProjectAssetScope(c: AppContext, ownerId: string, projectId: string): Promise<{
 	assets: MaterialAssetDto[];
 	deprecation: CanvasDeprecationScope;
+	identityCandidates: MaterialAssetDto[];
 }> {
 	const [scope, materials] = await Promise.all([
 		loadProjectCanvasAssetScopeForOwner(c, ownerId, { projectId }),
@@ -215,7 +169,19 @@ async function loadWorkflowProjectAssetScope(c: AppContext, ownerId: string, pro
 	if (excluded.length) console.info(JSON.stringify({ event: "workflow_deleted_materials_excluded", projectId,
 		assetIds: excluded.map((asset) => asset.id) }));
 	return { assets: mergeAssets(scope.assets, materials.filter((asset) => !isDeprecatedCanvasAsset(asset, scope.deprecation)))
-		.filter((asset) => asset.projectId === projectId), deprecation: scope.deprecation };
+		.filter((asset) => asset.projectId === projectId), deprecation: scope.deprecation,
+		identityCandidates: [...scope.assets, ...materials] };
+}
+
+/** Resolve only explicitly requested identities through the existing permission and deletion contracts. */
+export async function loadExplicitWorkflowProjectAssets(
+	c: AppContext, ownerId: string, projectId: string, assetIds: readonly string[],
+): Promise<MaterialAssetDto[]> {
+	const scope = await loadWorkflowProjectAssetScope(c, ownerId, projectId);
+	return resolveExplicitWorkflowAssets({
+		ownerId, projectId, assetIds, candidates: scope.identityCandidates, deprecation: scope.deprecation,
+		loadGeneratedAsset: (assetId, principalId) => getAssetByIdForUser(getPrismaClient(), assetId, principalId),
+	});
 }
 
 export async function enrichRuntimeWorkflowProjectAssets(input: Readonly<{
@@ -271,8 +237,16 @@ export async function buildWorkflowProjectContextForRun(input: Readonly<{
 	const chapterId = input.chapterId?.trim() || "";
 	const chapterSource = chapterId
 		? await loadChapterWorkflowSource(input.c, input.ownerId, input.projectId, chapterId) : null;
+	const previousChapterExit = chapterSource
+		? await loadPreviousChapterExitEvidence({ c: input.c, ownerId: input.ownerId,
+			projectId: input.projectId, currentChapter: chapterSource.chapter }) : null;
+	const chapterFlow = chapterSource && previousChapterExit
+		? { ...chapterSource.flow, nodes: chapterSource.flow.nodes.map((node) => node.id === `chapter-seed-${chapterId}`
+			? { ...node, data: { ...readRecord(node.data), previousChapterExit } }
+			: node) }
+		: chapterSource?.flow;
 	const canvas = chapterSource
-		? { data: JSON.stringify(chapterSource.flow), project_id: chapterSource.chapter.projectId }
+		? { data: JSON.stringify(chapterFlow), project_id: chapterSource.chapter.projectId }
 		: await getFlowForOwner(input.c.env.DB, input.canvasId, input.ownerId);
 	if (!canvas || canvas.project_id !== input.projectId) {
 		throw new AppError("Caller canvas is not available in the requested project", {
@@ -293,7 +267,7 @@ export async function buildWorkflowProjectContextForRun(input: Readonly<{
 		...scope.assets.filter((asset) => asset.origin?.flowId !== `chapter:${chapterId}`),
 		...projectNodeAssetsFromCanvases([{ projectId: input.projectId, ownerType: "chapter",
 			ownerId: chapterId, flowId: `chapter:${chapterId}`, ownerLabel: chapterSource.chapter.title,
-			data: chapterSource.flow, canvasRevision: chapterSource.revision,
+			data: chapterFlow, canvasRevision: chapterSource.revision,
 			createdAt: chapterSource.chapter.createdAt, updatedAt: chapterSource.chapter.updatedAt }]),
 	] : scope.assets;
 	const selectedAssetIds = readStrings(payload.selectedAssetIds);
@@ -364,9 +338,7 @@ export async function buildWorkflowProjectContextForRun(input: Readonly<{
 		unresolvedAssetIds: selectedAssetIds.filter((id) => !acceptedAssetIds.has(id)),
 	}));
 	return {
-		projectContext: await enrichWorkflowMediaUnderstanding({ c: input.c, ownerId: input.ownerId,
-			context: projectContext, resolver: createWorkflowAssetResolver({ context: projectContext,
-				loadVisibleAssets: async () => enrichedAssets }) }),
+		projectContext,
 		callerCanvasSnapshot: createWorkflowCallerCanvasSnapshot(canvas.data),
 	};
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bindWorkflowUserIntentToTrigger, freezeWorkflowUserIntent, readWorkflowUserIntent } from "./execution.workflow-user-intent";
+import { freezeWorkflowUserIntent, readWorkflowUserIntent } from "./execution.workflow-user-intent";
 import { workflowIntentFixture as intent } from "./test-fixtures/workflow-user-intent";
 
 describe("workflow user intent handoff", () => {
@@ -22,27 +22,5 @@ describe("workflow user intent handoff", () => {
 		const frozen = freezeWorkflowUserIntent({ ownerId: "owner", contract });
 		expect(() => readWorkflowUserIntent(frozen, "different-owner")).toThrow("workflow_user_intent_invalid");
 		expect(() => readWorkflowUserIntent({ version: 1, ownerId: "owner" }, "owner")).toThrow("workflow_user_intent_invalid");
-	});
-});
-
-
-describe("bridge machine contract admission", () => {
-	it("binds authenticated ownership and preserves trigger facts", () => {
-		const contract = intent();
-		expect(bindWorkflowUserIntentToTrigger({ ownerId: "owner", contract,
-			expectedContractHash: String(contract.contractHash), args: {}, triggerPayload: { text: "source" },
-		})).toEqual({ text: "source", workflowUserIntent: { version: 1, ownerId: "owner", contract } });
-	});
-	it("rejects incomplete machine fields, tampering and model-authored overrides", () => {
-		const contract = intent();
-		const input = { ownerId: "owner", contract, expectedContractHash: String(contract.contractHash), args: {} };
-		expect(() => bindWorkflowUserIntentToTrigger({ ...input, expectedContractHash: undefined }))
-			.toThrow("machine_fields_incomplete");
-		expect(() => bindWorkflowUserIntentToTrigger({ ...input, expectedContractHash: "changed" }))
-			.toThrow("provenance_mismatch");
-		expect(() => bindWorkflowUserIntentToTrigger({ ...input, args: { userIntentContract: contract } }))
-			.toThrow("machine_field_override");
-		expect(() => bindWorkflowUserIntentToTrigger({ ...input, triggerPayload: { workflowUserIntent: {} } }))
-			.toThrow("machine_field_override");
 	});
 });

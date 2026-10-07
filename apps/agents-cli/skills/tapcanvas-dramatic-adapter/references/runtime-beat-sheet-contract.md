@@ -5,8 +5,8 @@
 ## 权威输入与范围
 
 - `delivery-contract.canvasFacts.authoritativeSources` 保留正文或创作简报的来源身份；逐项服从 `sourceId/content/sourceFingerprint`。用户基于真实素材要求原创时，结合同次冻结的用户目标、projectAssetCandidates 和带 provenance 的媒体观察确定对象与可证实的事实；没有现成剧情不代表可以忽略图片。素材使用遵循已自动加载的 material-grounding.md；不从 Skill 示例、历史会话、资产名或机器 ID 补事实。
-- `delivery-contract.sourceProfile` 是宿主从 canonical 原文确定性推导的人声容量事实：`sourceSpeechUnits[]`（逐字原文人声段落）、`sourceSpeechChars`、`minimumPlannedSeconds`、`minimumClipCount`、`speechMaxCharsPerSecond`。直接按它规划整章 Clip 数；不要自行把估算上界、旧 run 结果或单 Clip 上限当成压缩目标。宿主会在提交时按同一份事实校验，`sourceProfile` 缺失时才由本 Agent 自行盘点。
-- `scope=full_chapter` 且用户没有指定总时长时，完整保留人物、事件因果、明确人声、关键物件和不可逆结果；章节钩子只有用户或权威来源明确要求时才保留。供应商单 Clip 上限不是整章总时长，不得据此把整章压成一段摘要。宿主按提交 schema、原文逐字人声、原文人声覆盖与物理时长容量四项确定性校验本产物；任一项不满足会把可执行原因回灌到本节点继续修订，而不是交给用户重试。
+- `delivery-contract.sourceProfile` 的 `tapcanvas.beat-sheet-source-profile/v2` 只提供原文排版事实：`sourceQuotedUnits[]` 的逐字引文、UTF-16 范围与来源身份，以及 `sourceQuotedChars/sourceChars` 字符统计。引号内可能是对白、消息、拟声或非发声叙述；该目录不判断声音类型、说话人、是否应读出，也不推导人声时长或 Clip 下限。无论目录是否存在，本作者都须依据完整原文语义自主判断实际人声；真正发声进入 `speechEvents` 或当前合同的 `speechLedger/dialogueScript`，环境与动作音效进入现有可执行 `action/sound`。引文范围只提供追溯，不要求每个引文成为人声事件。
+- `scope=full_chapter` 且用户没有指定总时长时，完整保留人物、事件因果、明确人声、关键物件和不可逆结果；章节钩子只有用户或权威来源明确要求时才保留。供应商单 Clip 上限不是整章总时长，不得据此把整章压成一段摘要。宿主验证提交 schema、作者已登记引文的来源真实性、真实供应商时长与用户明确总时长；未登记引号片段不产生人声覆盖拒绝，语速估计只形成非阻塞诊断。语义完整性由本作者自主自检并同链修订，不能以排版目录证明实际人声守恒。
 - `generationContract.durationOptions` 是每个物理 Clip 的合法时长集合，`maxDurationSeconds` 是硬上限。没有冻结 `providerSubmissionTopology` 时，由 Agent 根据完整来源的因果、动作相位、对白容量和转场边界决定 Clip 数量；每段时长必须属于合法集合且不超过硬上限。
 - 若存在冻结 `providerSubmissionTopology`，严格采用其数量、顺序和逐段时长，不再做第二套语义拓扑。
 

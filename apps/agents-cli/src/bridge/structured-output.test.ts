@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { RequestMcpGateway } from './mcp-gateway.js';
 import { buildHarnessDeliveryClosure } from './delivery-contract.js';
-import { inspectStructuredSubmission } from './structured-output.js';
+import { inspectStructuredSubmission, structuredOutputTool } from './structured-output.js';
+import { validateJsonSchemaStructure } from './json-schema-structural-validator.js';
 
 const contract = { kind: 'json', jsonSchema: { type: 'object', required: ['beats'], additionalProperties: false,
   properties: { beats: { type: 'array', minItems: 1, items: { type: 'object', properties: { durationSeconds: { enum: [5, 10] } }, required: ['durationSeconds'], additionalProperties: false } } } } };
@@ -33,4 +34,16 @@ test('legacy transport structural fields still enforce exact lengths and top-lev
   assert.equal(inspectStructuredSubmission(envelope, { items: [{}] }).submission, null);
   assert.equal(inspectStructuredSubmission(envelope, { items: [{}, {}], extra: true }).submission, null);
   assert.ok(inspectStructuredSubmission(envelope, { items: [{}, {}] }).submission);
+});
+
+test('keeps local schema definitions at the transport root and enforces their exact identities', () => {
+  const referenced = { jsonSchema: { type: 'object', required: ['assetId'], additionalProperties: false,
+    $defs: { assetId: { type: 'string', enum: ['asset-a', 'asset-b'] } },
+    properties: { assetId: { $ref: '#/$defs/assetId' } } } };
+  assert.ok(inspectStructuredSubmission(referenced, { assetId: 'asset-a' }).submission);
+  assert.equal(inspectStructuredSubmission(referenced, { assetId: 'invented' }).submission, null);
+  const parameters = structuredOutputTool(referenced).parameters;
+  assert.deepEqual(validateJsonSchemaStructure({ schema: parameters, value: { output: { assetId: 'asset-b' } } }), []);
+  assert.ok(validateJsonSchemaStructure({ schema: parameters, value: { output: { assetId: 'invented' } } }).length);
+  assert.ok(inspectStructuredSubmission({ jsonSchema: { properties: { id: { $ref: '#/$defs/missing' } } } }, { id: 'x' }).issues.some(issue => issue.keyword === '$ref'));
 });

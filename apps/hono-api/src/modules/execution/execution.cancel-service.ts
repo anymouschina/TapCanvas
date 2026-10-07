@@ -1,4 +1,5 @@
 import { cancelCanceledWorkflowAgentContinuations } from "../task/async-agent-continuation";
+import { refreshEquippedWorkflowExecutionFamilyProjection } from "../task/equipped-workflow-execution-projection";
 import type { AppContext } from "../../types";
 import {
 	cancelWorkflowAgentTurns,
@@ -97,6 +98,22 @@ async function cancelExactWorkflowExecutionForOwner(
 			userId: input.userId,
 			executionId: input.executionId,
 		});
+		// No node settles after a cancel, so the queue's refresh never runs; without
+		// this the canvas status surface keeps showing the canceled run as running.
+		try {
+			await refreshEquippedWorkflowExecutionFamilyProjection({
+				c: input.context,
+				ownerId: input.userId,
+				executionId: input.executionId,
+			});
+		} catch (error: unknown) {
+			console.error(JSON.stringify({
+				message: "workflow_execution_family_projection_refresh_failed",
+				executionId: input.executionId,
+				phase: "cancel",
+				error: error instanceof Error ? error.message : String(error),
+			}));
+		}
 	}
 	return {
 		execution: mapExecutionRow(refreshed),

@@ -57,6 +57,19 @@ describe("workflow Agent cancellation", () => {
 		]);
 	});
 
+	it("finds waiting inner Agent receipts while excluding completed steps", () => {
+		const agent = (id: string) => ({ nodeId: `pipeline::item::clip::step::${id}`, evidence: { deliveryEvidence: { sessionKey: id, logicalTaskId: `turn-${id}` } } });
+		const output = { itemRuns: [{ status: "waiting_external", runtimeNodeId: "pipeline::item::clip", evidence: {
+			pipelineState: { protocolVersion: "workflow.pipeline.state/v1", steps: {
+				completed: { status: "success", outputRefs: agent("old") },
+				author: { status: "waiting_external", outputRefs: agent("active") },
+			} },
+		} }] };
+		expect(collectWorkflowAgentTurnIdentities([row({ node_id: "pipeline", status: "waiting_external", output_refs: JSON.stringify(output) })])).toEqual([
+			{ nodeId: "pipeline", runtimeNodeId: "pipeline::item::clip::step::active", sessionId: "active", turnId: "turn-active" },
+		]);
+	});
+
 	it("reports interrupted, already inactive and failed turns independently", async () => {
 		vi.spyOn(continuations, "cancelActiveSessionAgentContinuations").mockResolvedValue(0);
 		const spy = vi.spyOn(runtime, "interruptAgentsChatTurn")

@@ -1,5 +1,9 @@
+import { encodeWorkflowOutput, decodeWorkflowOutput } from "./execution.output-storage";
+import { applyWorkflowOutputCheckpointPacket, parseWorkflowOutputCheckpointPacket,
+	workflowOutputRootHash } from "./execution.output-checkpoint-packet";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerEnv } from "../../types";
+import { WorkflowPersistenceError } from "./execution.persistence-error";
 
 const {
 	createTrustedWorkflowPluginOwnerAdapters,
@@ -41,6 +45,9 @@ type CompletionPayload = {
 	errorCode?: unknown;
 	errorMessage?: unknown;
 	outputRefs?: unknown;
+	progressKind?: unknown;
+	outputCheckpoint?: unknown;
+	expectedOutputRootHash?: unknown;
 };
 
 function createEnvironment(input: {
@@ -54,12 +61,20 @@ function createEnvironment(input: {
 	recoveryOfExecutionId?: string | null;
 }) {
 	const requests: Array<{ path: string; payload: CompletionPayload }> = [];
+	let persisted = input.currentOutput == null ? null : encodeWorkflowOutput(decodeWorkflowOutput(input.currentOutput));
 	const durableFetch = vi.fn(
 		async (requestInput: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(String(requestInput));
 			const rawBody = typeof init?.body === "string" ? init.body : "{}";
 			const payload = JSON.parse(rawBody) as CompletionPayload;
 			requests.push({ path: url.pathname, payload });
+			if (url.pathname === "/nodeProgress" && payload.progressKind === "output_checkpoint") {
+				persisted = applyWorkflowOutputCheckpointPacket(persisted, parseWorkflowOutputCheckpointPacket(payload.outputCheckpoint));
+			}
+			if (url.pathname === "/nodeComplete" || url.pathname === "/nodeWaiting") {
+				expect(payload).not.toHaveProperty("outputRefs");
+				expect(payload.expectedOutputRootHash).toBe(persisted === null ? null : workflowOutputRootHash(persisted));
+			}
 			if (url.pathname === "/nodeStarted" && input.startedResponse) {
 				return input.startedResponse;
 			}
@@ -92,12 +107,15 @@ function createEnvironment(input: {
 				})),
 			},
 			flows: { findUnique: vi.fn(async () => ({ project_id: "project-1" })) },
+			workflow_execution_events: { findMany: vi.fn(async () => []) },
 			workflow_node_runs: {
 				findMany: vi.fn(async () => (input.upstreamRuns ?? []).map((run, index) => ({
 					id: run.id ?? `upstream-run-${index + 1}`,
 					...run,
+					output_refs: JSON.stringify(encodeWorkflowOutput(decodeWorkflowOutput(run.output_refs))),
 				}))),
-				findUnique: vi.fn(async () => ({ id: "node-run-1", attempt: 1, output_refs: input.currentOutput ?? null })),
+				findUnique: vi.fn(async () => ({ id: "node-run-1", attempt: 1, output_refs: persisted === null
+					? null : JSON.stringify(persisted) })),
 			},
 		},
 		EXECUTION_DO: {
@@ -106,10 +124,24 @@ function createEnvironment(input: {
 		},
 		WORKFLOW_NODE_QUEUE: { send: queueSend },
 	} as unknown as WorkerEnv;
-	return { env, requests, findExecution, queueSend };
+	const lifecycleResult = () => ({
+		...requests.find(request => request.path === "/nodeComplete" || request.path === "/nodeWaiting")?.payload,
+		outputRefs: persisted === null ? undefined : decodeWorkflowOutput(persisted),
+	});
+	return { env, requests, findExecution, queueSend, lifecycleResult };
 }
 
 describe("workflow node queue handler", () => {
+	it("leaves a failed database write to durable recovery without reporting executor failure", async () => {
+		const fixture = createEnvironment({ node: { id: "text-1", type: "taskNode", data: {
+			kind: "workflowStage", workflowAtomicSpec: { executorRef: "workflow.input.text/v1" },
+		} } });
+		const failure = new WorkflowPersistenceError(Object.assign(new Error("transaction expired"), { code: "P2028" }));
+		updateNodeRun.mockRejectedValueOnce(failure);
+		await expect(handleWorkflowNodeJob(fixture.env, workflowJob("execution-1", "text-1"))).rejects.toBe(failure);
+		expect(fixture.requests.map((request) => request.path)).toEqual(["/nodeStarted"]);
+		expect(runWorkflowAgentNode).not.toHaveBeenCalled();
+	});
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -123,9 +155,10 @@ describe("workflow node queue handler", () => {
 
 		expect(fixture.requests.map((request) => request.path)).toEqual([
 			"/nodeStarted",
+			"/nodeProgress",
 			"/nodeComplete",
 		]);
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			nodeId: "text-1",
 			ok: true,
 			outputRefs: {
@@ -202,7 +235,7 @@ describe("workflow node queue handler", () => {
 			executionId: "execution-plugin",
 			nodeId: "plugin-1",
 		}));
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			ok: true,
 			outputRefs: { ports: { result: "plugin-result" } },
 		});
@@ -237,7 +270,7 @@ describe("workflow node queue handler", () => {
 			],
 		});
 		await handleWorkflowNodeJob(fixture.env, workflowJob("execution-1", "join"));
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			ok: true,
 			outputRefs: { ports: { joined: "active-value" } },
 		});
@@ -250,12 +283,12 @@ describe("workflow node queue handler", () => {
 
 		await handleWorkflowNodeJob(fixture.env, workflowJob("execution-1", "image-1"));
 
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			nodeId: "image-1",
 			ok: false,
 			errorCode: "workflow_node_executor_missing",
 		});
-		expect(String(fixture.requests[1]?.payload.errorMessage)).toContain(
+		expect(String(fixture.lifecycleResult().errorMessage)).toContain(
 			"no registered server executor",
 		);
 	});
@@ -267,12 +300,12 @@ describe("workflow node queue handler", () => {
 
 		await handleWorkflowNodeJob(fixture.env, workflowJob("execution-1", "missing-node"));
 
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			nodeId: "missing-node",
 			ok: false,
 			errorCode: "workflow_node_runtime_failed",
 		});
-		expect(String(fixture.requests[1]?.payload.errorMessage)).toContain(
+		expect(String(fixture.lifecycleResult().errorMessage)).toContain(
 			"does not exist in the immutable flow version",
 		);
 	});
@@ -311,7 +344,7 @@ describe("workflow node queue handler", () => {
 
 		await handleWorkflowNodeJob(fixture.env, workflowJob("execution-terminal-failure", "agent-failure"));
 
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			nodeId: "agent-failure",
 			ok: false,
 			errorCode: "workflow_node_runtime_failed",
@@ -381,7 +414,7 @@ describe("workflow node queue handler", () => {
 			"/nodeExternalCheckStarted",
 			"/nodeComplete",
 		]);
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			nodeId: "video-1",
 			ok: false,
 			errorCode: "workflow_node_runtime_failed",
@@ -439,9 +472,10 @@ describe("workflow node queue handler", () => {
 		);
 		expect(fixture.requests.map((request) => request.path)).toEqual([
 			"/nodeRecoveryStarted",
+			"/nodeProgress",
 			"/nodeComplete",
 		]);
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			nodeId: "agent-1",
 			ok: true,
 		});
@@ -500,6 +534,7 @@ describe("workflow node queue handler", () => {
 		);
 		expect(fixture.requests.map((request) => request.path)).toEqual([
 			"/nodeRecoveryStarted",
+			"/nodeProgress",
 			"/nodeComplete",
 		]);
 	});
@@ -611,9 +646,10 @@ describe("workflow node queue handler", () => {
 
 		expect(fixture.requests.map((request) => request.path)).toEqual([
 			"/nodeStarted",
+			"/nodeProgress",
 			"/nodeWaiting",
 		]);
-		expect(fixture.requests[1]?.payload).toMatchObject({
+		expect(fixture.lifecycleResult()).toMatchObject({
 			nodeId: "agent-waiting",
 			outputRefs: {
 				ports: {},
@@ -679,7 +715,7 @@ describe("workflow node queue handler", () => {
 
 			await handleWorkflowNodeJob(fixture.env, workflowJob("execution-1", "agent-balance"));
 
-			expect(fixture.requests[1]?.payload).toMatchObject({
+			expect(fixture.lifecycleResult()).toMatchObject({
 				outputRefs: {
 					externalCheck: {
 						version: 1,

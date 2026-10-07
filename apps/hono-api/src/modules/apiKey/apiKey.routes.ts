@@ -3278,11 +3278,32 @@ export async function runPublicTask(
 ): Promise<{ vendor: string; result: any }> {
 	const abortSignal = isAbortSignalLike(input?.abortSignal) ? input.abortSignal : null;
 	throwIfAbortSignalAborted(abortSignal);
-	const request = (await normalizeTaskAssetBackedVideoRequest(
+	const workflowTaskId = typeof input?.workflowTaskId === "string" && input.workflowTaskId.trim()
+		? input.workflowTaskId.trim()
+		: null;
+	const preUpstreamWorkflowImageError = (error: unknown, phase: string): AppError => new AppError(
+		`Workflow image request was rejected before async task registration: ${error instanceof Error ? error.message : String(error)}`,
+		{
+			status: 422,
+			code: "workflow_image_preflight_rejected",
+			details: {
+				workflowSubmissionState: "rejected_pre_upstream",
+				workflowTaskId,
+				upstreamRequestAttempted: false,
+				phase,
+			},
+		},
+	);
+	const normalizedRequest = await normalizeTaskAssetBackedVideoRequest(
 		c as AppContext,
 		userId,
 		normalizeImageEditRequestKind(input.request),
-	)) as Record<string, any>;
+	).catch((error: unknown) => {
+		if (workflowTaskId) throw preUpstreamWorkflowImageError(error, "request_normalization");
+		throw error;
+	});
+	if (!isPlainRecord(normalizedRequest)) throw new AppError("Task request must be an object", { status: 400, code: "invalid_task_request" });
+	const request = normalizedRequest;
 	const extras = (request?.extras || {}) as Record<string, any>;
 	const externalVendor =
 		typeof input?.vendor === "string" && input.vendor.trim() ? input.vendor.trim() : null;
@@ -3352,20 +3373,22 @@ export async function runPublicTask(
 		// Deterministic validation and queue readiness both finish before a task is
 		// accepted. Provider execution is owned by the durable worker, never by a
 		// detached Promise in this request process.
-		const asyncRequest = TaskRequestSchema.parse(requestForNewApi);
-		await resolveAuthorizedGenerationAssetContext(
-			c as AppContext,
-			userId,
-			asyncRequest,
-		);
-		await resolveExecutableNewApiTaskModel(
-			c as AppContext,
-			NEW_API_AUTO_VENDOR,
-			asyncRequest,
-		);
+		let asyncRequest: ReturnType<typeof TaskRequestSchema.parse>;
 		try {
+			asyncRequest = TaskRequestSchema.parse(requestForNewApi);
+			await resolveAuthorizedGenerationAssetContext(
+				c as AppContext,
+				userId,
+				asyncRequest,
+			);
+			await resolveExecutableNewApiTaskModel(
+				c as AppContext,
+				NEW_API_AUTO_VENDOR,
+				asyncRequest,
+			);
 			await ensureAsyncImageQueueReady();
 		} catch (error) {
+			if (workflowTaskId) throw preUpstreamWorkflowImageError(error, "async_image_preflight");
 			if (error instanceof AsyncImageQueueReadinessError) {
 				throw new AppError(error.message, {
 					status: 503,
@@ -3374,7 +3397,10 @@ export async function runPublicTask(
 			}
 			throw error;
 		}
-		const asyncTaskId = `task_${crypto.randomUUID()}`;
+		// Workflow attempts reserve this ID on their durable canvas claim before
+		// reaching the async task registration boundary. Ordinary manual image
+		// requests retain their random task identity.
+		const asyncTaskId = workflowTaskId ?? `task_${crypto.randomUUID()}`;
 		const asyncNowIso = new Date().toISOString();
 		const optionalContextString = (value: unknown): string | null => {
 			return typeof value === "string" && value.trim() ? value.trim() : null;

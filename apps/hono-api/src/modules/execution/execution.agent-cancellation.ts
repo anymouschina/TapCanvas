@@ -1,3 +1,4 @@
+import { decodeWorkflowOutput } from "./execution.output-storage";
 import type { AppContext, PrismaClient } from "../../types";
 import { cancelActiveSessionAgentContinuations } from "../task/async-agent-continuation";
 import {
@@ -38,12 +39,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseOutputRefs(value: string | null): Record<string, unknown> | null {
 	if (!value) return null;
-	try {
-		const parsed: unknown = JSON.parse(value);
-		return isRecord(parsed) ? parsed : null;
-	} catch {
-		return null;
-	}
+	const parsed = decodeWorkflowOutput(value);
+	return isRecord(parsed) ? parsed : null;
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -82,23 +79,23 @@ export function collectWorkflowAgentTurnIdentities(
 		if (row.status !== "running" && row.status !== "waiting_external") continue;
 		const output = parseOutputRefs(row.output_refs);
 		if (!output) continue;
-		const topLevel = identityFromEvidence({
-			nodeId: row.node_id,
-			runtimeNodeId: row.node_id,
-			evidence: output.evidence,
-		});
-		if (topLevel) identities.set(`${topLevel.sessionId}\u0000${topLevel.turnId}`, topLevel);
-		const itemRuns = Array.isArray(output.itemRuns) ? output.itemRuns : [];
-		for (const itemRun of itemRuns) {
-			if (!isRecord(itemRun) || itemRun.status !== "waiting_external") continue;
-			const runtimeNodeId = nonEmptyString(itemRun.runtimeNodeId) ?? row.node_id;
-			const identity = identityFromEvidence({
-				nodeId: row.node_id,
-				runtimeNodeId,
-				evidence: itemRun.evidence,
-			});
+		const collect = (receipt: Record<string, unknown>, runtimeNodeId: string): void => {
+			const identity = identityFromEvidence({ nodeId: row.node_id, runtimeNodeId, evidence: receipt.evidence });
 			if (identity) identities.set(`${identity.sessionId}\u0000${identity.turnId}`, identity);
-		}
+			const evidence = isRecord(receipt.evidence) ? receipt.evidence : {};
+			const pipeline = evidence.pipelineState;
+			if (isRecord(pipeline) && pipeline.protocolVersion === "workflow.pipeline.state/v1" && isRecord(pipeline.steps)) {
+				for (const step of Object.values(pipeline.steps)) {
+					if (!isRecord(step) || step.status !== "waiting_external" || !isRecord(step.outputRefs)) continue;
+					collect(step.outputRefs, nonEmptyString(step.outputRefs.nodeId) ?? runtimeNodeId);
+				}
+			}
+			for (const item of Array.isArray(receipt.itemRuns) ? receipt.itemRuns : []) {
+				if (!isRecord(item) || item.status !== "waiting_external") continue;
+				collect(item, nonEmptyString(item.runtimeNodeId) ?? runtimeNodeId);
+			}
+		};
+		collect(output, row.node_id);
 	}
 	return [...identities.values()];
 }

@@ -7,7 +7,7 @@ vi.mock("./agents-tool-bridge.generate-video-to-canvas", () => ({
   generateVideoToCanvas: mocks.generate, reconcileVideoNodesForFlow: mocks.reconcile,
 }));
 vi.mock("./video-orchestrator.flow-io", () => ({
-  freshReadFlowRow: vi.fn(async () => ({})),
+  freshReadFlowRow: vi.fn(async () => ({ data: JSON.stringify({ nodes: [...mocks.nodes.values()], edges: [] }) })),
   findFlowNode: (_row: unknown, id: string) => mocks.nodes.get(id) ?? null,
   readDurableNodeVideoUrl: (node: VideoFlowNode | undefined) => node?.data.videoUrl ?? "",
 }));
@@ -58,10 +58,24 @@ describe("stored video retry", () => {
     expect(mocks.generate.mock.calls[0][0].bodyArgs.node).toBe(existing);
     expect(mocks.reconcile).not.toHaveBeenCalled();
   });
-  it("requires the first retry before a second and rejects a third", async () => {
+  it("requires every predecessor while allowing a third attempt when its second predecessor exists", async () => {
     await expect(retryCanvasVideo(input(2))).rejects.toMatchObject({ code: "video_retry_previous_attempt_missing" });
-    await expect(retryCanvasVideo(input(3))).rejects.toMatchObject({ code: "invalid_video_retry_request" });
+    await expect(retryCanvasVideo(input(3))).rejects.toMatchObject({ code: "video_retry_previous_attempt_missing" });
     expect(mocks.generate).not.toHaveBeenCalled();
+
+    const first = buildStoredVideoRetryNode(source(), "flow", 1);
+    first.data.status = "failed";
+    first.data.taskId = "first-task";
+    const second = buildStoredVideoRetryNode(source(), "flow", 2);
+    second.data.status = "failed";
+    second.data.taskId = "second-task";
+    mocks.nodes.set(first.id, first);
+    mocks.nodes.set(second.id, second);
+    mocks.reconcile.mockResolvedValue({ details: [{ nodeId: second.id, taskId: "second-task", status: "failed", providerConfirmedFailure: true }] });
+
+    await retryCanvasVideo(input(3));
+    const third = buildStoredVideoRetryNode(source(), "flow", 3);
+    expect(mocks.generate.mock.calls.at(-1)?.[0].bodyArgs.node).toEqual(expect.objectContaining({ id: third.id }));
   });
   it("does not resubmit a receipt-less uncertain attempt", async () => {
     const node = source(); delete node.data.taskId; node.data.workflowSubmissionState = "uncertain";

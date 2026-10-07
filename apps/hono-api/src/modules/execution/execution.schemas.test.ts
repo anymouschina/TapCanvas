@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	ExecutionEventTypeSchema,
 	RunFlowExecutionRequestSchema,
+	WorkflowSnapshotRerunRequestSchema,
 	WorkflowExecutionEventSchema,
 	WorkflowExecutionResumeRequestSchema,
 } from "./execution.schemas";
@@ -77,6 +78,14 @@ describe("workflow execution resume schema", () => {
 });
 
 describe("RunFlowExecutionRequestSchema", () => {
+	it("limits snapshot rerun overrides to an explicit nonempty stop boundary", () => {
+		expect(WorkflowSnapshotRerunRequestSchema.parse({ stopAfterNodeId: "author" })).toEqual({ stopAfterNodeId: "author" });
+		expect(WorkflowSnapshotRerunRequestSchema.parse({})).toEqual({});
+		expect(WorkflowSnapshotRerunRequestSchema.safeParse({ stopAfterNodeId: " " }).success).toBe(false);
+		expect(WorkflowSnapshotRerunRequestSchema.safeParse({ model: "other" }).success).toBe(false);
+		expect(WorkflowSnapshotRerunRequestSchema.safeParse({ startFromNodeId: "author" }).success).toBe(false);
+		expect(WorkflowSnapshotRerunRequestSchema.parse({ startFromNodeId: "author", stopAfterNodeId: "author" })).toEqual({ startFromNodeId: "author", stopAfterNodeId: "author" });
+	});
 	it("keeps explicit triggerPayload facts available to project-context construction", () => {
 		const parsed = RunFlowExecutionRequestSchema.parse({
 			flowId: "flow-1",

@@ -23,4 +23,13 @@ describe("structured draft handoff", () => {
 			.toEqual({ sessionKey: delivery.sessionKey, turnId: delivery.logicalTaskId });
 		expect(() => workflowAgentRepairSource({ sourceExecutionId: "other", nodeId: "node", evidence: { deliveryEvidence: delivery } })).toThrow("identity_mismatch");
 	});
+	it("uses the receipt turn rather than its next scheduled retry ordinal", () => {
+		const identity = { executionId: "source", nodeId: "node", physicalRetryOrdinal: null };
+		const delivery = { sessionKey: workflowAgentSessionKey(identity), logicalTaskId: workflowAgentPublicTurnId(identity),
+			physicalRetryOrdinal: 1, recoveryCheckpoint: { physicalRunId: "previous-run" } };
+		expect(workflowAgentRepairSource({ sourceExecutionId: "source", nodeId: "node", evidence: { deliveryEvidence: delivery } }))
+			.toEqual({ sessionKey: delivery.sessionKey, turnId: delivery.logicalTaskId });
+		expect(() => workflowAgentRepairSource({ sourceExecutionId: "source", nodeId: "other", evidence: { deliveryEvidence: delivery } }))
+			.toThrow("identity_mismatch");
+	});
 });

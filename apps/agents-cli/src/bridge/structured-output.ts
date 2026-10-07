@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isJsonObject, type JsonObject, type RemoteToolDefinition } from './contracts.js';
 import { validateJsonSchemaStructure, type JsonSchemaStructuralIssue } from './json-schema-structural-validator.js';
+import type { ReferenceFactObservation } from '../../../../packages/schemas/json-schema-relations/reference-facts.mjs';
 
 export const STRUCTURED_OUTPUT_TOOL = 'submit_structured_output';
 export type StructuredSubmission = Readonly<{ value: JsonObject; contractHash: string }>;
@@ -54,19 +55,28 @@ export function structuredOutputSchema(contract: JsonObject): JsonObject {
   const allowed = strings(contract.allowedFields ?? contract.allowedTopLevelFields);
   for (const name of allowed) if (!properties[name]) properties[name] = {};
   const schema: JsonObject = { type: 'object', properties, required: [...required], ...(allowed.length ? { additionalProperties: false } : {}) };
-  return isJsonObject(contract.jsonSchema) ? { allOf: [schema, contract.jsonSchema], type: 'object' } : schema;
+  if (!isJsonObject(contract.jsonSchema)) return schema;
+  const { $defs, definitions, ...artifactSchema } = contract.jsonSchema;
+  return { allOf: [schema, artifactSchema], type: 'object',
+    ...(isJsonObject($defs) ? { $defs } : {}),
+    ...(isJsonObject(definitions) ? { definitions } : {}) };
 }
 
 export function structuredOutputTool(contract: JsonObject): RemoteToolDefinition {
+  const artifactSchema = structuredOutputSchema(contract);
+  const { $defs, definitions, ...outputSchema } = artifactSchema;
   return { name: STRUCTURED_OUTPUT_TOOL,
     description: 'Submit the exact JSON artifact required by this workflow node. Structural failures return actionable issues: repair the candidate and call this tool again in the same Harness turn. After acceptance stop authoring; the Bridge returns the accepted artifact verbatim.',
-    parameters: { type: 'object', properties: { output: structuredOutputSchema(contract) }, required: ['output'], additionalProperties: false } };
+    parameters: { type: 'object', properties: { output: outputSchema }, required: ['output'], additionalProperties: false,
+      ...(isJsonObject($defs) ? { $defs } : {}), ...(isJsonObject(definitions) ? { definitions } : {}) } };
 }
 
 export function inspectStructuredSubmission(contract: JsonObject, value: unknown): {
   submission: StructuredSubmission | null; issues: readonly JsonSchemaStructuralIssue[];
+  observations: readonly ReferenceFactObservation[];
 } {
-  const issues = validateJsonSchemaStructure({ schema: structuredOutputSchema(contract), value });
-  if (!isJsonObject(value) || issues.length) return { submission: null, issues };
-  return { submission: { value, contractHash: `sha256:${createHash('sha256').update(JSON.stringify(contract)).digest('hex')}` }, issues };
+  const observations: ReferenceFactObservation[] = [];
+  const issues = validateJsonSchemaStructure({ schema: structuredOutputSchema(contract), value, observations });
+  if (!isJsonObject(value) || issues.length) return { submission: null, issues, observations };
+  return { submission: { value, contractHash: `sha256:${createHash('sha256').update(JSON.stringify(contract)).digest('hex')}` }, issues, observations };
 }

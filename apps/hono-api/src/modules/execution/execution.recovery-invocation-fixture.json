@@ -1,0 +1,1536 @@
+{
+  "provenance": {
+    "kind": "synthetic_regression_fixture",
+    "executionId": "fixture-identity-8",
+    "fields": "Synthetic nested author route and frozen contract fixture; no production identifiers, user diagnostic text, or creative delivery retained."
+  },
+  "flowData": {
+    "nodes": [
+      {
+        "id": "video-workflow-fixture-identity-20:clip-production-pipeline",
+        "type": "taskNode",
+        "data": {
+          "kind": "workflowStage",
+          "workflowAtomicSpec": {
+            "version": 1,
+            "category": "subworkflow",
+            "operation": "inline_pipeline",
+            "executorRef": "workflow.pipeline.run/v1",
+            "executionMode": "each",
+            "inputPorts": [
+              "delivery-contract",
+              "source-segments",
+              "clip-sequences",
+              "chapter-assets"
+            ],
+            "selectiveOutputPorts": [
+              "prepared-nodes"
+            ],
+            "outputPorts": [
+              "node-plan",
+              "prompt-package",
+              "media-items",
+              "prepared-nodes"
+            ],
+            "inputArtifactTypes": {
+              "delivery-contract": [
+                "tapcanvas.delivery-contract/v2"
+              ],
+              "source-segments": [
+                "tapcanvas.clip-source-segments/v1"
+              ],
+              "clip-sequences": [
+                "tapcanvas.chapter-sequence-clips/v1"
+              ],
+              "chapter-assets": [
+                "tapcanvas.chapter-asset-plan/v3"
+              ]
+            },
+            "outputArtifactTypes": {
+              "node-plan": [
+                "tapcanvas.clip-production-node-plan/v1"
+              ],
+              "prompt-package": [
+                "tapcanvas.prompt-package/v2"
+              ],
+              "media-items": [
+                "tapcanvas.clip-production-media-items/v1"
+              ],
+              "prepared-nodes": [
+                "tapcanvas.video-node/v1"
+              ]
+            },
+            "itemConcurrency": 16,
+            "optionalInputPorts": []
+          },
+          "workflowInputPorts": [
+            "delivery-contract",
+            "source-segments",
+            "clip-sequences",
+            "chapter-assets"
+          ],
+          "workflowOptionalInputPorts": [],
+          "workflowOutputPorts": [
+            "node-plan",
+            "prompt-package",
+            "media-items",
+            "prepared-nodes"
+          ],
+          "workflowPipeline": {
+            "protocolVersion": "workflow.pipeline.run/v1",
+            "inputs": [
+              {
+                "portId": "delivery-contract",
+                "mode": "value",
+                "artifactTypes": [
+                  "tapcanvas.delivery-contract/v2"
+                ]
+              },
+              {
+                "portId": "source-segments",
+                "mode": "value",
+                "artifactTypes": [
+                  "tapcanvas.clip-source-segments/v1"
+                ],
+                "itemArtifactTypes": [
+                  "tapcanvas.clip-source-segment/v1"
+                ]
+              },
+              {
+                "portId": "clip-sequences",
+                "mode": "value",
+                "artifactTypes": [
+                  "tapcanvas.chapter-sequence-clips/v1"
+                ],
+                "itemArtifactTypes": [
+                  "tapcanvas.chapter-sequence-clip/v1"
+                ]
+              },
+              {
+                "portId": "chapter-assets",
+                "mode": "value",
+                "artifactTypes": [
+                  "tapcanvas.chapter-asset-plan/v3"
+                ]
+              }
+            ],
+            "steps": [
+              {
+                "stepId": "clip-production-agent",
+                "node": {
+                  "id": "clip-production-agent",
+                  "type": "taskNode",
+                  "kind": "workflowStage",
+                  "data": {
+                    "kind": "workflowStage",
+                    "label": "逐 Clip 提示词与资产意图",
+                    "workflowNodeId": "clip-production-agent",
+                    "workflowNodeKind": "clip_production_authoring",
+                    "workflowAtomicSpec": {
+                      "version": 1,
+                      "category": "agent",
+                      "operation": "clip_production_authoring",
+                      "executorRef": "agents.logical-task/v2",
+                      "executionMode": "each",
+                      "inputPorts": [
+                        "clip-segment",
+                        "clip-sequence",
+                        "delivery-contract",
+                        "chapter-assets"
+                      ],
+                      "outputPorts": [
+                        "packets"
+                      ],
+                      "inputArtifactTypes": {
+                        "clip-segment": [
+                          "tapcanvas.clip-source-segments/v1",
+                          "tapcanvas.clip-source-segment/v1"
+                        ],
+                        "clip-sequence": [
+                          "tapcanvas.chapter-sequence-clips/v1",
+                          "tapcanvas.chapter-sequence-clip/v1"
+                        ],
+                        "delivery-contract": [
+                          "tapcanvas.delivery-contract/v2"
+                        ],
+                        "chapter-assets": [
+                          "tapcanvas.chapter-asset-plan/v3"
+                        ]
+                      },
+                      "outputArtifactTypes": {
+                        "packets": [
+                          "tapcanvas.clip-production-packet/v2"
+                        ]
+                      },
+                      "itemConcurrency": 16
+                    },
+                    "workflowInputPorts": [
+                      "clip-segment",
+                      "clip-sequence",
+                      "delivery-contract",
+                      "chapter-assets"
+                    ],
+                    "workflowOptionalInputPorts": [],
+                    "workflowOutputPorts": [
+                      "packets"
+                    ],
+                    "workflowOperationDescription": "按冻结来源集合逐 Clip 并行创作完整视频提示词、明确输入模式与图像资产意图；保留逐 Clip 身份和来源，不编造资产 URL。",
+                    "workflowExecutionScope": "media_delivery",
+                    "workflowExecutionVariant": "full_video",
+                    "workflowInstruction": "依据已冻结 chapter-assets.objectRegistry 的精确 objectId、身份事实、现有资产选择和图像计划，为收到的每个物理窗口创作完整可执行视频提示词。按 clip-sequence.wholeFilmIntent 与 globalStartSeconds/globalEndSeconds 理解它在整片中的位置；事件 globalStartSeconds/globalEndSeconds 是全局时钟，事件 startSeconds/endSeconds 是本窗口局部时钟，continuesFromPrevious/continuesToNext 标记跨窗延续。只演当前窗口内的进程；动作跨窗时只呈现本窗当前状态，不提前演完后续进程。sourceSlices/sourceRanges 仅用于回溯原文，可能在多个窗口重复引用，不代表剧情仅属于该窗口。clip-sequence.speechEvents 是本窗口冻结发声事实。按运行时动态 schema 提交 videoPrompt 的统一时间线对象；有序 shots 与冻结 speechEvents 使用同一局部时钟，宿主把精确台词编译进对应时间段，不追加独立对白表。此绑定是文本装配，不表示已有配音或后期人声合成。结合 previousBoundary、当前首尾帧与 nextBoundary 保持角色、道具、场景、动作和情绪连续。专业拍摄、对白、视觉连续性与提示词方法遵循已加载 Skill。实际入镜的同一对象跨 Clip 必须引用同一个 registryObjectId；assetId 与 state 区分同一对象的不同画面状态，不得因 Clip 不同重复创造人物或场景身份。每个 assetIntent 只选择章级 registryObjectId 和与其一致的 imageSource：章级 reuse 只提交 {mode:\"reuse\",registryAssetIndex}，索引从该对象 imageSource.assetIds 零起；章级 generate 只提交 {mode:\"generate\"}。共享图片身份、语义名称、参考职责、卡片元数据和生图提示词都由宿主从冻结章级计划原样投影，逐 Clip 不再重写 assetId、state、generationSpec 或长已有资产 ID；局部服装、动作与画面状态写进本段视频提示词。按冻结 delivery-contract 填写 imageModelKey、imageAspectRatio、imageSize，不猜模型参数。blockingPlan 明确本段可见人物、地标、机位与构图；使用 backgroundObjectId 精确引用冻结章级 backgroundPlans 的稳定 objectId，不以列表序号选择背景。它是空间调度事实，不冒充已生成的站位图。通过同媒体视频案例候选回执按需读取正文；零命中或检索失败记录证据后继续原创，不伪称引用。protocolVersion、clipId、clipIndex、durationSeconds、sourceRanges 必须保留冻结值；clipFacts.sequenceClipId 必须填写本段冻结 clipId。依据供应商能力与创作需求选择明确支持的 videoInputMode；只提交 firstFrameAssetIndex（没有首帧时 null）和 referenceAssetIndices，从本 packet 的 assetIntents 零起选择；宿主派生 assetId 与 state，不重复抄写。image_to_video 的首帧索引必须同时包含在引用索引中；reference_to_video 必须提供引用；text_to_video 不得虚构图像依赖。模型参数只继承本轮显式选择或账号偏好与实时目录，不猜默认值或切换模型。提交前核对本 Clip 引用的图像身份均在冻结章级注册表中，节点与媒体阶段随后解析真实 URL；不得假称已生成资产或改写来源范围。",
+                    "workflowAgentOutputEncoding": "json_object",
+                    "workflowAgentJsonObjectContract": {
+                      "allowedFields": [
+                        "protocolVersion",
+                        "clipId",
+                        "clipIndex",
+                        "durationSeconds",
+                        "videoInputMode",
+                        "firstFrameAsset",
+                        "referenceAssets",
+                        "sourceRanges",
+                        "speechEvents",
+                        "videoPrompt",
+                        "blockingPlan",
+                        "clipFacts",
+                        "assetIntents"
+                      ],
+                      "jsonSchema": {
+                        "type": "object",
+                        "properties": {
+                          "protocolVersion": {
+                            "type": "string",
+                            "const": "tapcanvas.clip-production-packet/v2"
+                          },
+                          "clipId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                          },
+                          "clipIndex": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 79
+                          },
+                          "durationSeconds": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "videoInputMode": {
+                            "type": "string",
+                            "enum": [
+                              "image_to_video",
+                              "reference_to_video",
+                              "text_to_video"
+                            ]
+                          },
+                          "firstFrameAsset": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "assetId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                  }
+                                },
+                                "required": [
+                                  "assetId",
+                                  "state"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "referenceAssets": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "assetId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                }
+                              },
+                              "required": [
+                                "assetId",
+                                "state"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "sourceRanges": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "sourceIndex": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "startOffset": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "endOffset": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "sourceId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "sourceFingerprint": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                }
+                              },
+                              "required": [
+                                "sourceIndex",
+                                "startOffset",
+                                "endOffset",
+                                "sourceId",
+                                "sourceFingerprint"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "speechEvents": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "speechEventId": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "speaker": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "delivery": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "text": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "textOrigin": {
+                                  "type": "string",
+                                  "enum": [
+                                    "authored",
+                                    "source_quote"
+                                  ]
+                                },
+                                "startSeconds": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "endSeconds": {
+                                  "type": "number",
+                                  "exclusiveMinimum": 0
+                                },
+                                "globalStartSeconds": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "globalEndSeconds": {
+                                  "type": "number",
+                                  "exclusiveMinimum": 0
+                                },
+                                "sourceRanges": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "sourceIndex": {
+                                        "type": "integer",
+                                        "minimum": 0
+                                      },
+                                      "startOffset": {
+                                        "type": "integer",
+                                        "minimum": 0
+                                      },
+                                      "endOffset": {
+                                        "type": "integer",
+                                        "minimum": 1
+                                      },
+                                      "sourceId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                      },
+                                      "sourceFingerprint": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "sourceIndex",
+                                      "startOffset",
+                                      "endOffset",
+                                      "sourceId",
+                                      "sourceFingerprint"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "speechEventId",
+                                "speaker",
+                                "delivery",
+                                "text",
+                                "textOrigin",
+                                "startSeconds",
+                                "endSeconds",
+                                "globalStartSeconds",
+                                "globalEndSeconds",
+                                "sourceRanges"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "videoPrompt": {
+                            "type": "object",
+                            "description": "Author one ordered audiovisual timeline. Frozen dialogue is inserted once into the first intersecting interval during packet compilation; do not copy or paraphrase it in shot fields.",
+                            "properties": {
+                              "scene": {
+                                "type": "string",
+                                "description": "Only the stable scene facts needed to understand this Clip; they are rendered inside the first timed segment."
+                              },
+                              "shots": {
+                                "type": "array",
+                                "minItems": 1,
+                                "description": "Ordered segments whose durationSeconds add up to the full Clip duration. Each segment renders its action, camera, sound, and intersecting frozen dialogue on one timeline line.",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "durationSeconds": {
+                                      "type": "number",
+                                      "exclusiveMinimum": 0
+                                    },
+                                    "action": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "camera": {
+                                      "type": "string",
+                                      "description": "Camera behavior for this interval; use an empty string when no camera direction is needed."
+                                    },
+                                    "sound": {
+                                      "type": "string",
+                                      "description": "Sound for this interval; use an empty string when none is needed."
+                                    }
+                                  },
+                                  "required": [
+                                    "durationSeconds",
+                                    "action",
+                                    "camera",
+                                    "sound"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "scene",
+                              "shots"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "blockingPlan": {
+                            "type": "object",
+                            "properties": {
+                              "title": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "sceneName": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "landmarks": {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "const": "wall",
+                                          "type": "string"
+                                        },
+                                        "from": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1
+                                          },
+                                          "minItems": 2,
+                                          "maxItems": 2
+                                        },
+                                        "to": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1
+                                          },
+                                          "minItems": 2,
+                                          "maxItems": 2
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "from",
+                                        "to",
+                                        "label"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "const": "door",
+                                          "type": "string"
+                                        },
+                                        "at": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1
+                                          },
+                                          "minItems": 2,
+                                          "maxItems": 2
+                                        },
+                                        "orient": {
+                                          "type": "string",
+                                          "enum": [
+                                            "h",
+                                            "v"
+                                          ]
+                                        },
+                                        "lengthN": {
+                                          "type": "number",
+                                          "exclusiveMinimum": 0,
+                                          "maximum": 1
+                                        },
+                                        "swing": {
+                                          "type": "string",
+                                          "enum": [
+                                            "in",
+                                            "out",
+                                            "none"
+                                          ]
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "at",
+                                        "orient",
+                                        "lengthN",
+                                        "swing",
+                                        "label"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "const": "area",
+                                          "type": "string"
+                                        },
+                                        "at": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1
+                                          },
+                                          "minItems": 2,
+                                          "maxItems": 2
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "at",
+                                        "label"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  ]
+                                }
+                              },
+                              "characters": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "name": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "at": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "facingTo": {
+                                      "anyOf": [
+                                        {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1
+                                          },
+                                          "minItems": 2,
+                                          "maxItems": 2
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "moveTo": {
+                                      "anyOf": [
+                                        {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1
+                                          },
+                                          "minItems": 2,
+                                          "maxItems": 2
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "name",
+                                    "at",
+                                    "facingTo",
+                                    "moveTo"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "camera": {
+                                "type": "object",
+                                "properties": {
+                                  "at": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 1
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  "lookAt": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 1
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  }
+                                },
+                                "required": [
+                                  "at",
+                                  "lookAt"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "compositionContract": {
+                                "type": "object",
+                                "properties": {
+                                  "narrativeTask": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 240
+                                  },
+                                  "focusKind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "environment",
+                                      "character",
+                                      "relationship",
+                                      "object",
+                                      "event"
+                                    ]
+                                  },
+                                  "focusTargetNames": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 80
+                                    },
+                                    "minItems": 1,
+                                    "maxItems": 24,
+                                    "uniqueItems": true
+                                  },
+                                  "focalPoint": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 1
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  "shotScale": {
+                                    "type": "string",
+                                    "enum": [
+                                      "establishing",
+                                      "wide",
+                                      "full",
+                                      "medium",
+                                      "close",
+                                      "detail"
+                                    ]
+                                  },
+                                  "environmentVisualWeight": {
+                                    "type": "string",
+                                    "enum": [
+                                      "primary",
+                                      "secondary",
+                                      "context"
+                                    ]
+                                  },
+                                  "subjects": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "name": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 80
+                                        },
+                                        "visualWeight": {
+                                          "type": "string",
+                                          "enum": [
+                                            "primary",
+                                            "secondary",
+                                            "context"
+                                          ]
+                                        },
+                                        "depthLayer": {
+                                          "type": "string",
+                                          "enum": [
+                                            "foreground",
+                                            "midground",
+                                            "background"
+                                          ]
+                                        },
+                                        "centerPlacement": {
+                                          "type": "string",
+                                          "enum": [
+                                            "required",
+                                            "allowed",
+                                            "forbidden"
+                                          ]
+                                        },
+                                        "maxFrameHeightRatio": {
+                                          "type": "number",
+                                          "minimum": 0.05,
+                                          "maximum": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "name",
+                                        "visualWeight",
+                                        "depthLayer",
+                                        "centerPlacement",
+                                        "maxFrameHeightRatio"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    "maxItems": 24
+                                  }
+                                },
+                                "required": [
+                                  "narrativeTask",
+                                  "focusKind",
+                                  "focusTargetNames",
+                                  "focalPoint",
+                                  "shotScale",
+                                  "environmentVisualWeight",
+                                  "subjects"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "backgroundObjectId": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "axisLine": {
+                                "type": "object",
+                                "properties": {
+                                  "from": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 1
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  "to": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 1
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "to"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "title",
+                              "sceneName",
+                              "landmarks",
+                              "characters",
+                              "camera",
+                              "compositionContract",
+                              "backgroundObjectId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "clipFacts": {
+                            "type": "object",
+                            "minProperties": 1,
+                            "additionalProperties": true
+                          },
+                          "assetIntents": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "assetId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+                                  "description": "Agent-authored normalized state identity; never infer it from prompt or source prose in the host."
+                                },
+                                "registryObjectId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "displayName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "referenceType": {
+                                  "type": "string",
+                                  "enum": [
+                                    "character",
+                                    "scene",
+                                    "prop",
+                                    "vfx",
+                                    "palette",
+                                    "composition"
+                                  ]
+                                },
+                                "referenceAssetBindings": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "assetId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                      },
+                                      "role": {
+                                        "type": "string",
+                                        "enum": [
+                                          "identity",
+                                          "content",
+                                          "layout",
+                                          "style"
+                                        ]
+                                      },
+                                      "strength": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1
+                                      }
+                                    },
+                                    "required": [
+                                      "assetId",
+                                      "role"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "imageSource": {
+                                  "oneOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "mode": {
+                                          "const": "generate"
+                                        },
+                                        "generationSpecVersion": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                        },
+                                        "generationSpec": {
+                                          "type": "object",
+                                          "properties": {
+                                            "prompt": {
+                                              "type": "string",
+                                              "minLength": 1
+                                            },
+                                            "negativePrompt": {
+                                              "type": "string",
+                                              "minLength": 1
+                                            },
+                                            "modelKey": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                            },
+                                            "aspectRatio": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                            },
+                                            "size": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                            }
+                                          },
+                                          "required": [
+                                            "prompt",
+                                            "negativePrompt",
+                                            "modelKey",
+                                            "aspectRatio",
+                                            "size"
+                                          ],
+                                          "additionalProperties": true
+                                        }
+                                      },
+                                      "required": [
+                                        "mode",
+                                        "generationSpecVersion",
+                                        "generationSpec"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "mode": {
+                                          "const": "reuse"
+                                        },
+                                        "existingAssetId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+                                          "x-referenceSource": "project_image"
+                                        },
+                                        "existingProjectId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                        }
+                                      },
+                                      "required": [
+                                        "mode",
+                                        "existingAssetId",
+                                        "existingProjectId"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  ]
+                                },
+                                "canonicalName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "roleName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "physicalIdentityKey": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "assetReuseKey": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "characterAssetRole": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "characterProfileVersion": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "identityBoardSpec": {
+                                  "type": "object",
+                                  "minProperties": 1
+                                },
+                                "identityAnchors": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                  }
+                                },
+                                "prohibitedDrift": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                  }
+                                },
+                                "sceneCard": {
+                                  "type": "object",
+                                  "minProperties": 1
+                                },
+                                "sceneName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "propName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                },
+                                "assetPurpose": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                                }
+                              },
+                              "required": [
+                                "assetId",
+                                "state",
+                                "registryObjectId",
+                                "displayName",
+                                "referenceType",
+                                "referenceAssetBindings",
+                                "imageSource"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "protocolVersion",
+                          "clipId",
+                          "clipIndex",
+                          "durationSeconds",
+                          "videoInputMode",
+                          "firstFrameAsset",
+                          "referenceAssets",
+                          "sourceRanges",
+                          "videoPrompt",
+                          "blockingPlan",
+                          "clipFacts",
+                          "assetIntents"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "workflowAgentOutputArtifactType": "tapcanvas.clip-production-packet/v2",
+                    "workflowAgentDeliveryRequirement": "交付唯一符合 packet schema 的 Clip 生产包；所有媒体模式与资产身份都显式声明，结构错误同链修订并保留证据。",
+                    "workflowAgentDefinitionId": "video-prompt-writer",
+                    "workflowAgentMaxOutputTokens": 65536,
+                    "workflowAgentStructuredOutputTokenBudget": 65536,
+                    "workflowAgentFailurePolicy": "repair_with_correction",
+                    "workflowAgentExecutionPolicy": "multi_inference",
+                    "workflowPromptExampleMediaType": "video",
+                    "workflowKnowledgeRetrieval": true,
+                    "workflowRequiredSkills": [
+                      "tapcanvas-video-prompt-writer",
+                      "tapcanvas-dialogue-drama",
+                      "tapcanvas-video-authoring-stages"
+                    ],
+                    "workflowSkillId": "tapcanvas-video-prompt-writer",
+                    "workflowOutputArtifactType": "tapcanvas.clip-production-packet/v2"
+                  }
+                }
+              },
+              {
+                "stepId": "clip-production-collect",
+                "node": {
+                  "id": "clip-production-collect",
+                  "type": "taskNode",
+                  "kind": "workflowStage",
+                  "data": {
+                    "kind": "workflowStage",
+                    "label": "按身份汇总 Clip 资产意图",
+                    "workflowNodeId": "clip-production-collect",
+                    "workflowNodeKind": "clip_production_collect",
+                    "workflowAtomicSpec": {
+                      "version": 1,
+                      "category": "control",
+                      "operation": "clip_production_collect",
+                      "executorRef": "video.clip-production.collect/v1",
+                      "executionMode": "collect",
+                      "inputPorts": [
+                        "packets",
+                        "clip-segments",
+                        "chapter-assets"
+                      ],
+                      "outputPorts": [
+                        "clip-production",
+                        "asset-intents"
+                      ],
+                      "inputArtifactTypes": {
+                        "packets": [
+                          "tapcanvas.clip-production-packet/v2"
+                        ],
+                        "clip-segments": [
+                          "tapcanvas.clip-source-segments/v1"
+                        ],
+                        "chapter-assets": [
+                          "tapcanvas.chapter-asset-plan/v3"
+                        ]
+                      },
+                      "outputArtifactTypes": {
+                        "clip-production": [
+                          "tapcanvas.clip-production-packets/v1"
+                        ],
+                        "asset-intents": [
+                          "tapcanvas.clip-production-asset-intents/v1"
+                        ]
+                      }
+                    },
+                    "workflowInputPorts": [
+                      "packets",
+                      "clip-segments",
+                      "chapter-assets"
+                    ],
+                    "workflowOptionalInputPorts": [],
+                    "workflowOutputPorts": [
+                      "clip-production",
+                      "asset-intents"
+                    ],
+                    "workflowOperationDescription": "按相同索引和 Clip ID 核对 Agent 结果与冻结来源，再按精确资产身份合并重复生成意图。",
+                    "workflowExecutionScope": "media_delivery",
+                    "workflowExecutionVariant": "full_video",
+                    "workflowOutputArtifactType": "tapcanvas.clip-production-packets/v1"
+                  }
+                }
+              },
+              {
+                "stepId": "clip-production-nodes-materialize",
+                "node": {
+                  "id": "clip-production-nodes-materialize",
+                  "type": "taskNode",
+                  "kind": "workflowStage",
+                  "data": {
+                    "kind": "workflowStage",
+                    "label": "持久化全章节点与共享依赖",
+                    "workflowNodeId": "clip-production-nodes-materialize",
+                    "workflowNodeKind": "clip_production_nodes_materialize",
+                    "workflowAtomicSpec": {
+                      "version": 1,
+                      "category": "delivery",
+                      "operation": "clip_production_nodes_materialize",
+                      "executorRef": "video.clip-production.nodes.materialize/v1",
+                      "executionMode": "once",
+                      "inputPorts": [
+                        "clip-production",
+                        "asset-intents",
+                        "delivery-contract"
+                      ],
+                      "outputPorts": [
+                        "node-plan",
+                        "prompt-package",
+                        "media-items",
+                        "prepared-nodes"
+                      ],
+                      "inputArtifactTypes": {
+                        "clip-production": [
+                          "tapcanvas.clip-production-packets/v1"
+                        ],
+                        "asset-intents": [
+                          "tapcanvas.clip-production-asset-intents/v1"
+                        ],
+                        "delivery-contract": [
+                          "tapcanvas.delivery-contract/v2"
+                        ]
+                      },
+                      "outputArtifactTypes": {
+                        "node-plan": [
+                          "tapcanvas.clip-production-node-plan/v1"
+                        ],
+                        "prompt-package": [
+                          "tapcanvas.prompt-package/v2"
+                        ],
+                        "media-items": [
+                          "tapcanvas.clip-production-media-items/v1"
+                        ],
+                        "prepared-nodes": [
+                          "tapcanvas.video-node/v1"
+                        ]
+                      }
+                    },
+                    "workflowInputPorts": [
+                      "clip-production",
+                      "asset-intents",
+                      "delivery-contract"
+                    ],
+                    "workflowOptionalInputPorts": [],
+                    "workflowOutputPorts": [
+                      "node-plan",
+                      "prompt-package",
+                      "media-items",
+                      "prepared-nodes"
+                    ],
+                    "workflowOperationDescription": "全章核对一 Clip 一视频节点，按精确资产身份共享图片节点；持久化节点、依赖边并回读，不提交任何媒体任务。",
+                    "workflowExecutionScope": "media_delivery",
+                    "workflowExecutionVariant": "full_video",
+                    "workflowOutputArtifactType": "tapcanvas.clip-production-node-plan/v1"
+                  }
+                }
+              }
+            ],
+            "bindings": [
+              {
+                "from": {
+                  "kind": "input",
+                  "portId": "source-segments"
+                },
+                "to": {
+                  "stepId": "clip-production-agent",
+                  "portId": "clip-segment"
+                },
+                "mode": "collection"
+              },
+              {
+                "from": {
+                  "kind": "input",
+                  "portId": "clip-sequences"
+                },
+                "to": {
+                  "stepId": "clip-production-agent",
+                  "portId": "clip-sequence"
+                },
+                "mode": "collection"
+              },
+              {
+                "from": {
+                  "kind": "input",
+                  "portId": "delivery-contract"
+                },
+                "to": {
+                  "stepId": "clip-production-agent",
+                  "portId": "delivery-contract"
+                },
+                "mode": "value"
+              },
+              {
+                "from": {
+                  "kind": "input",
+                  "portId": "chapter-assets"
+                },
+                "to": {
+                  "stepId": "clip-production-agent",
+                  "portId": "chapter-assets"
+                },
+                "mode": "value"
+              },
+              {
+                "from": {
+                  "kind": "step",
+                  "stepId": "clip-production-agent",
+                  "portId": "packets"
+                },
+                "to": {
+                  "stepId": "clip-production-collect",
+                  "portId": "packets"
+                },
+                "mode": "collection"
+              },
+              {
+                "from": {
+                  "kind": "input",
+                  "portId": "source-segments"
+                },
+                "to": {
+                  "stepId": "clip-production-collect",
+                  "portId": "clip-segments"
+                },
+                "mode": "collection"
+              },
+              {
+                "from": {
+                  "kind": "input",
+                  "portId": "chapter-assets"
+                },
+                "to": {
+                  "stepId": "clip-production-collect",
+                  "portId": "chapter-assets"
+                },
+                "mode": "value"
+              },
+              {
+                "from": {
+                  "kind": "step",
+                  "stepId": "clip-production-collect",
+                  "portId": "clip-production"
+                },
+                "to": {
+                  "stepId": "clip-production-nodes-materialize",
+                  "portId": "clip-production"
+                },
+                "mode": "collection"
+              },
+              {
+                "from": {
+                  "kind": "step",
+                  "stepId": "clip-production-collect",
+                  "portId": "asset-intents"
+                },
+                "to": {
+                  "stepId": "clip-production-nodes-materialize",
+                  "portId": "asset-intents"
+                },
+                "mode": "value"
+              },
+              {
+                "from": {
+                  "kind": "input",
+                  "portId": "delivery-contract"
+                },
+                "to": {
+                  "stepId": "clip-production-nodes-materialize",
+                  "portId": "delivery-contract"
+                },
+                "mode": "value"
+              }
+            ],
+            "outputs": [
+              {
+                "portId": "node-plan",
+                "from": {
+                  "stepId": "clip-production-nodes-materialize",
+                  "portId": "node-plan"
+                },
+                "mode": "value"
+              },
+              {
+                "portId": "prompt-package",
+                "from": {
+                  "stepId": "clip-production-nodes-materialize",
+                  "portId": "prompt-package"
+                },
+                "mode": "value"
+              },
+              {
+                "portId": "media-items",
+                "from": {
+                  "stepId": "clip-production-nodes-materialize",
+                  "portId": "media-items"
+                },
+                "mode": "value"
+              },
+              {
+                "portId": "prepared-nodes",
+                "from": {
+                  "stepId": "clip-production-nodes-materialize",
+                  "portId": "prepared-nodes"
+                },
+                "mode": "value"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "edges": [],
+    "workflowExecutionScope": {
+      "version": 1,
+      "triggerNodeId": "video-workflow-fixture-identity-20:manual-trigger",
+      "workflowInstanceId": "video-workflow-fixture-identity-20",
+      "workflowKey": "one-click-production/v1",
+      "stopAfterNodeId": "video-workflow-fixture-identity-20:clip-production-pipeline"
+    },
+    "workflowDirectAgentModelSelection": {
+      "model": "fixture-model",
+      "source": "user_preference"
+    },
+    "workflowSourceSnapshots": {},
+    "workflowReplayInvocation": {
+      "version": 1,
+      "sourceExecutionId": "fixture-identity-7",
+      "sourceFlowVersionId": "fixture-identity-9",
+      "triggerNodeId": "video-workflow-fixture-identity-20:manual-trigger",
+      "startFromNodeId": "video-workflow-fixture-identity-20:chapter-sequence-project",
+      "stopAfterNodeId": "video-workflow-fixture-identity-20:clip-production-pipeline::step::clip-production-nodes-materialize",
+      "refreshAssetIds": [
+        "fixture-identity-18",
+        "fixture-identity-22",
+        "fixture-identity-23",
+        "fixture-identity-15",
+        "fixture-identity-14",
+        "fixture-identity-10",
+        "fixture-identity-19",
+        "fixture-identity-17",
+        "fixture-identity-13",
+        "fixture-identity-21"
+      ],
+      "capturedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "workflowAuthorRepairSelection": {
+      "version": 1,
+      "mode": "author_revision",
+      "deliveryExecutorRef": "agents.logical-task/v2",
+      "rootNodeId": "video-workflow-fixture-identity-20:clip-production-pipeline",
+      "sourceExecutionId": "fixture-identity-6",
+      "sourceNodeRunId": "fixture-identity-16",
+      "targetNodeId": "video-workflow-fixture-identity-20:clip-production-pipeline::item::64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c%3Aclip%3A4::step::clip-production-agent::item::64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c%3Aclip%3A4",
+      "deliveryHash": "sha256:145d4acc7cd6df6e3e5baec9ec6475fd6aad1c4d88f9bed9067a32def874eb4e",
+      "route": [
+        {
+          "kind": "item",
+          "itemId": "64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c:clip:4",
+          "nodeId": "video-workflow-fixture-identity-20:clip-production-pipeline"
+        },
+        {
+          "kind": "step",
+          "stepId": "clip-production-agent",
+          "nodeId": "video-workflow-fixture-identity-20:clip-production-pipeline::item::64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c%3Aclip%3A4"
+        },
+        {
+          "kind": "item",
+          "itemId": "64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c:clip:4",
+          "nodeId": "video-workflow-fixture-identity-20:clip-production-pipeline::item::64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c%3Aclip%3A4::step::clip-production-agent"
+        }
+      ],
+      "inputLineage": [
+        {
+          "nodeId": "video-workflow-fixture-identity-20:chapter-sequence-project",
+          "portId": "clip-segments",
+          "itemId": "64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c:clip:4",
+          "index": 4
+        },
+        {
+          "nodeId": "video-workflow-fixture-identity-20:chapter-sequence-project",
+          "portId": "clip-sequences",
+          "itemId": "64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c:clip:4",
+          "index": 4
+        },
+        {
+          "nodeId": "video-workflow-fixture-identity-20:clip-production-pipeline::item::64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c%3Aclip%3A4",
+          "portId": "source-segments",
+          "itemId": "64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c:clip:4",
+          "index": 0
+        },
+        {
+          "nodeId": "video-workflow-fixture-identity-20:clip-production-pipeline::item::64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c%3Aclip%3A4",
+          "portId": "clip-sequences",
+          "itemId": "64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c:clip:4",
+          "index": 0
+        }
+      ]
+    },
+    "workflowResolvedAuthorRepair": {
+      "version": 1,
+      "sourceKind": "delivery_artifact",
+      "sourceExecutionId": "fixture-identity-6",
+      "sourceNodeRunId": "fixture-identity-16",
+      "targetNodeId": "video-workflow-fixture-identity-20:clip-production-pipeline::item::64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c%3Aclip%3A4::step::clip-production-agent::item::64ef21c72f9a02eae4393c52bb83f96f1af151bcb72a43715b7b97a31ceb574c%3Aclip%3A4",
+      "deliveryHash": "sha256:145d4acc7cd6df6e3e5baec9ec6475fd6aad1c4d88f9bed9067a32def874eb4e",
+      "deliveryArtifact": "{\"protocolVersion\":\"fixture.delivery/v1\",\"action\":\"Review the workshop drawing without changing its layout.\"}",
+      "diagnostic": "Correct the selected action field while preserving all other authoring fields and the frozen source identity."
+    },
+    "workflowAuthorRepairAttempt": {
+      "version": 1,
+      "idempotencyKey": "fixture-author-repair-1",
+      "requestHash": "sha256:6018c61cd88f0d0fc54a91ffc3db874910c3c5ca76f0fc5b1245e9292b9c6d96"
+    },
+    "workflowDeliveryScope": {
+      "flowId": "book-____-1790669527141-ch1",
+      "projectId": "fixture-identity-12",
+      "chapterId": "book-____-1790669527141-ch1"
+    }
+  }
+}

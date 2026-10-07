@@ -27,8 +27,11 @@ import {
 } from "./execution.node-runtime";
 import { resolveCoreWorkflowExecutorSemantics } from "./execution.core-semantics";
 import { workflowExternalPollAfter } from "./execution.external-check";
+import { workflowAuthorRepairRouteAt, projectWorkflowAuthorRepairOutput, workflowConsumerReplayStepsAt, workflowConsumerReplayStepPorts, workflowConsumerReplayInputValue } from "./execution.author-repair-target";
 import type { WorkflowExternalCheckScheduleV1 } from "./execution.external-check";
-import { sha256Hex } from "../asset/book-content-hash";
+import { collectPipelineDependencyFailures, describePipelineDependencyFailure, type PipelineDependencyFailure } from "./execution.pipeline-failures";
+import { WorkflowPersistenceError } from "./execution.persistence-error";
+import { readDatabaseErrorCodes } from "../../platform/node/database-read-retry";
 
 const WORKFLOW_PIPELINE_CHECKPOINT_POLL_MS = 1_000;
 const WORKFLOW_PIPELINE_RECEIPT_FIELD = "providerReceiptRefs";
@@ -49,6 +52,16 @@ type WorkflowPipelineState = Readonly<{
 	steps: Readonly<Record<string, PipelineStepReceipt>>;
 	updatedAt: string;
 }>;
+
+// Only the database checkpoint boundary creates this wrapper. A provider or
+// stage failure with a similar error code must retain its original meaning.
+class PipelineCheckpointFailure extends Error {
+	readonly persistence: WorkflowPersistenceError;
+	constructor(cause: unknown) {
+		super(cause instanceof Error ? cause.message : String(cause), { cause });
+		this.persistence = cause instanceof WorkflowPersistenceError ? cause : new WorkflowPersistenceError(cause);
+	}
+}
 
 type ExecutePipelineStep = (
 	context: WorkflowNodeExecutionContext,
@@ -223,8 +236,8 @@ function nestedEvidence(outputRefs: WorkflowNodeOutputV1): readonly Record<strin
 
 function nonEmptyReceipt(value: unknown): boolean {
 	if (typeof value === "string") return value.trim().length > 0;
-	if (Array.isArray(value)) return value.length > 0;
-	return value !== null && value !== undefined;
+	if (Array.isArray(value)) return value.some(nonEmptyReceipt);
+	return isRecord(value) && Object.keys(value).length > 0;
 }
 
 function providerReceiptRefs(input: Readonly<{
@@ -269,7 +282,7 @@ function pipelineOutputRefs(input: Readonly<{
 	cursorStepId: string | null;
 	complete: boolean;
 	externalCheck?: WorkflowExternalCheckScheduleV1;
-	error?: Readonly<{ code: string; message: string }>;
+	error?: Readonly<{ code: string; message: string; dependencyFailures?: readonly PipelineDependencyFailure[] }>;
 }>): WorkflowNodeOutputV1 {
 	const artifacts = input.steps.flatMap((step) => input.stepReceipts[step.stepId]?.outputRefs?.artifacts ?? []);
 	const ports: Record<string, unknown> = {};
@@ -301,7 +314,7 @@ function pipelineOutputRefs(input: Readonly<{
 			...(input.stepReceipts[step.stepId]?.errorCode ? { errorCode: input.stepReceipts[step.stepId]?.errorCode } : {}),
 		},
 	]));
-	return {
+	return projectWorkflowAuthorRepairOutput(input.context.flowVersionData, {
 		protocolVersion: "1",
 		executorRef: "workflow.pipeline.run/v1",
 		nodeId: input.context.node.id,
@@ -325,7 +338,7 @@ function pipelineOutputRefs(input: Readonly<{
 		},
 		itemRuns: [],
 		...(input.externalCheck ? { externalCheck: input.externalCheck } : {}),
-	};
+	});
 }
 
 function stableStepRuntimeNodeId(context: WorkflowNodeExecutionContext, step: WorkflowPipelineStepV1): string {
@@ -347,7 +360,7 @@ function bindStepInputs(input: Readonly<{
 			if (!input.spec.inputs.some((candidate) => candidate.portId === binding.from.portId)) {
 				throw new Error(`Workflow pipeline input ${binding.from.portId} is missing`);
 			}
-			const sourceValues = input.context.inputs[binding.from.portId] ?? [];
+			const sourceValues = (input.context.inputs[binding.from.portId] ?? []).map(value => workflowConsumerReplayInputValue(input.context.flowVersionData, input.context.node.id, value));
 			const rebound = bindPipelineValues({
 				context: input.context,
 				mode: binding.mode,
@@ -358,16 +371,19 @@ function bindStepInputs(input: Readonly<{
 		} else {
 			const sourceReceipt = input.stepReceipts[binding.from.stepId];
 			const sourceOutput = sourceReceipt?.outputRefs;
-			if (sourceReceipt?.status !== "success"
+			const sourcePorts = sourceOutput ? workflowConsumerReplayStepPorts(input.context.flowVersionData, input.context.node.id, binding.from.stepId, sourceOutput) : {};
+			const selectedConsumerInput = workflowConsumerReplayStepsAt(input.context.flowVersionData, input.context.node.id) !== null
+				&& sourceOutput && sourcePorts !== sourceOutput.ports;
+			if ((sourceReceipt?.status !== "success" && !selectedConsumerInput)
 				|| !sourceOutput
-				|| !Object.prototype.hasOwnProperty.call(sourceOutput.ports, binding.from.portId)) {
+				|| !Object.prototype.hasOwnProperty.call(sourcePorts, binding.from.portId)) {
 				inactiveStepSource = true;
 				continue;
 			}
 			const adapted = bindPipelineValues({
 				context: input.context,
 				mode: binding.mode,
-				values: [sourceOutput.ports[binding.from.portId]],
+				values: [sourcePorts[binding.from.portId]],
 				producerPortId: `${binding.from.stepId}:${binding.from.portId}`,
 			});
 			if (adapted.active) values = adapted.values;
@@ -389,6 +405,51 @@ function bindStepInputs(input: Readonly<{
 		active: !hasIncomingBindings || hasBinding,
 		inactiveStepSource,
 	};
+}
+
+function pipelineStepDependenciesSettled(
+	step: WorkflowPipelineStepV1,
+	spec: WorkflowPipelineRunSpecV1,
+	stepReceipts: Readonly<Record<string, PipelineStepReceipt>>,
+	context: WorkflowNodeExecutionContext,
+): boolean {
+	return spec.bindings
+		.filter((binding) => binding.to.stepId === step.stepId && binding.from.kind === "step")
+		.every((binding) => {
+			if (binding.from.kind !== "step") return true;
+			const status = stepReceipts[binding.from.stepId]?.status;
+			const source = stepReceipts[binding.from.stepId]?.outputRefs;
+			return status === "success" || status === "not_selected" || Boolean(source
+				&& workflowConsumerReplayStepPorts(context.flowVersionData, context.node.id, binding.from.stepId, source) !== source.ports);
+		});
+}
+
+function pipelineCursorStepId(
+	steps: readonly WorkflowPipelineStepV1[],
+	stepReceipts: Readonly<Record<string, PipelineStepReceipt>>,
+): string | null {
+	return steps.find((step) => {
+		const status = stepReceipts[step.stepId]?.status;
+		return status !== "success" && status !== "not_selected";
+	})?.stepId ?? null;
+}
+
+function pipelineWaitingExternalCheck(
+	steps: readonly WorkflowPipelineStepV1[],
+	stepReceipts: Readonly<Record<string, PipelineStepReceipt>>,
+): WorkflowExternalCheckScheduleV1 | null {
+	const schedules = steps.flatMap((step) => {
+		const receipt = stepReceipts[step.stepId];
+		const schedule = receipt?.status === "waiting_external" ? receipt.outputRefs?.externalCheck : undefined;
+		return schedule ? [schedule] : [];
+	});
+	const polls = schedules.filter((schedule) => schedule.mode === "poll");
+	if (polls.length > 0) {
+		return polls.reduce((earliest, schedule) => (
+			Date.parse(schedule.notBeforeAt) < Date.parse(earliest.notBeforeAt) ? schedule : earliest
+		));
+	}
+	return schedules[0] ?? null;
 }
 
 /**
@@ -476,7 +537,7 @@ function stageOutputForCheckpoint(input: Readonly<{
 	if (!stepId) throw new Error(`Workflow pipeline checkpoint refers to unknown stage ${input.stageOutput.nodeId}`);
 	const stepReceipts = {
 		...input.stepReceipts,
-		[stepId]: { status: "waiting_external" as const, outputRefs: input.stageOutput },
+		[stepId]: stageOutputReceipt("waiting_external", input.stageOutput),
 	};
 	return pipelineOutputRefs({
 		context: input.context,
@@ -493,11 +554,12 @@ function stageResultState(input: Readonly<{
 	result: WorkflowNodeExecutionResult;
 	stepId: string;
 }>): PipelineStepReceipt {
-	if (input.result.ok) return { status: "success", outputRefs: input.result.outputRefs };
-	if (input.result.waitingExternal === true) return { status: "waiting_external", outputRefs: input.result.outputRefs };
+	if (input.result.ok) return stageOutputReceipt("success", input.result.outputRefs);
+	if (input.result.waitingExternal === true) return stageOutputReceipt("waiting_external", {
+		...input.result.outputRefs, externalCheck: input.result.externalCheck,
+	});
 	return {
-		status: "failed",
-		...(input.result.outputRefs ? { outputRefs: input.result.outputRefs } : {}),
+		...(input.result.outputRefs ? stageOutputReceipt("failed", input.result.outputRefs) : { status: "failed" as const }),
 		errorCode: input.result.errorCode,
 		errorMessage: input.result.errorMessage,
 	};
@@ -533,8 +595,18 @@ function shouldResumeStage(
 	const saved = priorPipelineState(context)?.steps[step.stepId];
 	return saved?.status === "waiting_external"
 		|| (context.resumeOnly === true && saved?.status === "failed")
+		|| (context.recoveryOfExecutionId != null && saved?.status === "failed"
+			&& isWorkflowMediaAdoptionCheckpoint(saved.outputRefs))
 		|| hasAcceptedFailedStageReceipt(context, step, saved)
 		|| shouldRevisitPartialStage(context, saved);
+}
+
+function isWorkflowMediaAdoptionCheckpoint(output: WorkflowNodeOutputV1 | undefined): boolean {
+	const checkpoint = output?.evidence.mediaAdoptionCheckpoint;
+	return isRecord(checkpoint) && checkpoint.protocolVersion === "workflow.media-adoption-checkpoint/v1"
+		&& Array.isArray(checkpoint.adoptedItemIds)
+		&& checkpoint.adoptedItemIds.length > 0
+		&& checkpoint.adoptedItemIds.every((itemId) => typeof itemId === "string" && itemId.length > 0);
 }
 
 function hasAcceptedFailedStageReceipt(
@@ -545,11 +617,20 @@ function hasAcceptedFailedStageReceipt(
 	if (!context.recoveryOfExecutionId || receipt?.status !== "failed" || !receipt.outputRefs) return false;
 	const field = resolveFrozenStepSemantics(context, step.node)?.resultLookup.outputField;
 	if (!field) return false;
-	return nestedEvidence(receipt.outputRefs).some((evidence) => {
-		const value = evidence[field];
-		return typeof value === "string" ? value.trim().length > 0
-			: Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null;
-	});
+	return nestedEvidence(receipt.outputRefs).some((evidence) => nonEmptyReceipt(evidence[field]));
+}
+
+function hasStageReconciliationReceipt(
+	context: WorkflowNodeExecutionContext,
+	step: WorkflowPipelineStepV1,
+	outputRefs: WorkflowNodeOutputV1,
+): boolean {
+	if (outputRefs.nodeId !== stableStepRuntimeNodeId(context, step)
+		|| outputRefs.executorRef !== resolveWorkflowNodeExecutorRef(step.node)) return false;
+	const semantics = resolveFrozenStepSemantics(context, step.node);
+	if (semantics?.recoveryMode !== "reconcile" || semantics.resultLookup.mode !== "provider_receipt") return false;
+	const field = semantics.resultLookup.outputField;
+	return field !== null && nestedEvidence(outputRefs).some((evidence) => nonEmptyReceipt(evidence[field]));
 }
 
 function shouldRevisitPartialStage(
@@ -592,15 +673,22 @@ function collectSelectedOutputPorts(outputRefs: WorkflowNodeOutputV1): readonly 
 	return Object.keys(outputRefs.ports).sort();
 }
 
+function stageOutputReceipt(status: PipelineStepStatus, outputRefs: WorkflowNodeOutputV1): PipelineStepReceipt {
+	return { status, outputRefs, selectedOutputPorts: collectSelectedOutputPorts(outputRefs) };
+}
+
 function wrappedStageCheckpoint(
 	context: WorkflowNodeExecutionContext,
 	steps: readonly WorkflowPipelineStepV1[],
 	outputs: WorkflowPipelineRunSpecV1["outputs"],
 	stepReceipts: Readonly<Record<string, PipelineStepReceipt>>,
 	cursorStepId: string,
+	retainStageOutput: (output: WorkflowNodeOutputV1) => void,
 ): NonNullable<WorkflowNodeExecutionContext["checkpointOutputRefs"]> | undefined {
 	if (!context.checkpointOutputRefs) return undefined;
 	return async (stageOutputRefs) => {
+		// Keep accepted receipts even when the following durable write fails.
+		retainStageOutput(stageOutputRefs);
 		const outputRefs = stageOutputForCheckpoint({
 			context,
 			steps,
@@ -620,8 +708,9 @@ function pipelineErrorResult(
 	stepReceipts: Readonly<Record<string, PipelineStepReceipt>>,
 	cursorStepId: string | null,
 	error: unknown,
+	dependencyFailures: readonly PipelineDependencyFailure[] = [],
 ): WorkflowNodeExecutionResult {
-	const message = error instanceof Error ? error.message : String(error);
+	const message = describePipelineDependencyFailure(error instanceof Error ? error.message : String(error), dependencyFailures);
 	const outputRefs = pipelineOutputRefs({
 		context,
 		steps,
@@ -629,9 +718,10 @@ function pipelineErrorResult(
 		stepReceipts,
 		cursorStepId,
 		complete: false,
-		error: { code: "workflow_pipeline_run_failed", message },
+		error: { code: "workflow_pipeline_run_failed", message, dependencyFailures },
 	});
-	return { ok: false, errorCode: "workflow_node_runtime_failed", errorMessage: message, outputRefs };
+	return { ok: false, errorCode: "workflow_node_runtime_failed", errorMessage: message,
+		outputRefs: projectWorkflowAuthorRepairOutput(context.flowVersionData, outputRefs) };
 }
 
 function preservedPipelineErrorResult(
@@ -655,7 +745,8 @@ function preservedPipelineErrorResult(
 		},
 		itemRuns: [],
 	};
-	return { ok: false, errorCode: "workflow_node_runtime_failed", errorMessage: message, outputRefs };
+	return { ok: false, errorCode: "workflow_node_runtime_failed", errorMessage: message,
+		outputRefs: projectWorkflowAuthorRepairOutput(context.flowVersionData, outputRefs) };
 }
 
 function assertPipelineStepAdmission(
@@ -698,70 +789,100 @@ export async function runWorkflowPipelineNode(
 	} catch (error: unknown) {
 		return preservedPipelineErrorResult(context, error);
 	}
-	const steps = topologicalSteps(spec);
+	const restriction = workflowAuthorRepairRouteAt(context.flowVersionData, context.node.id);
+	if (restriction && restriction.kind !== "step") throw new Error("workflow_author_repair_pipeline_route_invalid");
+	const consumerSteps = workflowConsumerReplayStepsAt(context.flowVersionData, context.node.id);
+	const steps = topologicalSteps(spec).filter(step => consumerSteps ? consumerSteps.includes(step.stepId) : !restriction || step.stepId === restriction.stepId);
+	if (restriction && steps.length !== (consumerSteps?.length ?? 1)) throw new Error("workflow_author_repair_pipeline_step_missing");
 	let stepReceipts: Readonly<Record<string, PipelineStepReceipt>> = priorPipelineState(context)?.steps ?? {};
-	for (const step of steps) {
-		const existingReceipt = stepReceipts[step.stepId];
-		if (existingReceipt?.status === "not_selected"
-			|| (existingReceipt?.status === "success" && !shouldRevisitPartialStage(context, existingReceipt))) continue;
-		const binding = stageStartInput({ context, step, stepReceipts, pipelineSpec: spec });
-		if (!binding.active) {
-			const required = readRequiredInputPorts(step.node);
-			if (binding.inactiveStepSource || required.size > 0) {
-				stepReceipts = markNotSelected(stepReceipts, step.stepId);
-				const checkpoint = pipelineOutputRefs({
-					context,
-					steps,
-					outputs: spec.outputs,
-					stepReceipts,
-					cursorStepId: step.stepId,
-					complete: false,
-					externalCheck: workflowExternalPollAfter(WORKFLOW_PIPELINE_CHECKPOINT_POLL_MS),
-				});
-				await context.checkpointOutputRefs?.(checkpoint);
-				continue;
+	const persistCheckpoint = context.checkpointOutputRefs;
+	context = {
+		...context,
+		checkpointOutputRefs: persistCheckpoint ? async (outputRefs) => {
+			try {
+				await persistCheckpoint(outputRefs);
+			} catch (error: unknown) {
+				throw new PipelineCheckpointFailure(error);
 			}
-		}
-		const stepNode = runtimeNode(context, step);
-		const priorOutputRefs = stageReceiptOutputRefs(existingReceipt);
-		const stageContext: WorkflowNodeExecutionContext = {
-			...context,
-			node: stepNode,
-			inputs: omitUndefinedInputs(binding.inputs),
-			persistedInputSource: {
-				nodeId: stepNode.id,
+		} : undefined,
+	};
+	try {
+		for (const step of steps) {
+			const existingReceipt = stepReceipts[step.stepId];
+			if (existingReceipt?.status === "not_selected"
+				|| (existingReceipt?.status === "success" && !shouldRevisitPartialStage(context, existingReceipt))) continue;
+			if (!pipelineStepDependenciesSettled(step, spec, stepReceipts, context)) continue;
+			const binding = stageStartInput({ context, step, stepReceipts, pipelineSpec: spec });
+			if (!binding.active) {
+				const required = readRequiredInputPorts(step.node);
+				if (binding.inactiveStepSource || required.size > 0) {
+					stepReceipts = markNotSelected(stepReceipts, step.stepId);
+					const checkpoint = pipelineOutputRefs({
+						context,
+						steps,
+						outputs: spec.outputs,
+						stepReceipts,
+						cursorStepId: pipelineCursorStepId(steps, stepReceipts),
+						complete: false,
+						externalCheck: workflowExternalPollAfter(WORKFLOW_PIPELINE_CHECKPOINT_POLL_MS),
+					});
+					await context.checkpointOutputRefs?.(checkpoint);
+					continue;
+				}
+			}
+			const stepNode = runtimeNode(context, step);
+			const priorOutputRefs = stageReceiptOutputRefs(existingReceipt);
+			const stageContext: WorkflowNodeExecutionContext = {
+				...context,
+				node: stepNode,
 				inputs: omitUndefinedInputs(binding.inputs),
-				revision: sha256Hex(JSON.stringify(binding.inputs)),
-			},
-			runtimeParentNodeIds: [...(context.runtimeParentNodeIds ?? []), context.node.id],
-			...(priorOutputRefs ? { resumeOutputRefs: priorOutputRefs } : { resumeOutputRefs: undefined }),
-			resumeOnly: shouldResumeStage(context, step),
-			checkpointOutputRefs: wrappedStageCheckpoint(context, steps, spec.outputs, stepReceipts, step.stepId),
-		};
-		try {
-			const result = await executeStep(stageContext, dependencies);
-			const state = stageResultState({ result, stepId: step.stepId });
-			stepReceipts = {
-				...stepReceipts,
-				[step.stepId]: {
-					...state,
-					...(state.outputRefs ? { selectedOutputPorts: collectSelectedOutputPorts(state.outputRefs) } : {}),
-				},
+				// Inline stages have no workflow_node_runs input row. Retain the nearest
+				// actual persisted parent's identity from context; only exact subtrees
+				// found there can become read handles. Newly derived facts stay inline.
+				runtimeParentNodeIds: [...(context.runtimeParentNodeIds ?? []), context.node.id],
+				...(priorOutputRefs ? { resumeOutputRefs: priorOutputRefs } : { resumeOutputRefs: undefined }),
+				resumeOnly: shouldResumeStage(context, step),
+				checkpointOutputRefs: wrappedStageCheckpoint(context, steps, spec.outputs, stepReceipts, step.stepId,
+					(outputRefs) => {
+						stepReceipts = { ...stepReceipts, [step.stepId]: stageOutputReceipt("waiting_external", outputRefs) };
+					}),
 			};
-			if (result.ok) {
-				const checkpoint = pipelineOutputRefs({
-					context,
-					steps,
-					outputs: spec.outputs,
-					stepReceipts,
-					cursorStepId: steps[steps.indexOf(step) + 1]?.stepId ?? null,
-					complete: false,
-					externalCheck: workflowExternalPollAfter(WORKFLOW_PIPELINE_CHECKPOINT_POLL_MS),
-				});
-				await context.checkpointOutputRefs?.(checkpoint);
-				continue;
-			}
-			if (result.waitingExternal === true) {
+			try {
+				const result = await executeStep(stageContext, dependencies);
+				const state = stageResultState({ result, stepId: step.stepId });
+				stepReceipts = {
+					...stepReceipts,
+					[step.stepId]: state,
+				};
+				if (result.ok) {
+					const checkpoint = pipelineOutputRefs({
+						context,
+						steps,
+						outputs: spec.outputs,
+						stepReceipts,
+						cursorStepId: pipelineCursorStepId(steps, stepReceipts),
+						complete: false,
+						externalCheck: pipelineWaitingExternalCheck(steps, stepReceipts)
+							?? workflowExternalPollAfter(WORKFLOW_PIPELINE_CHECKPOINT_POLL_MS),
+					});
+					await context.checkpointOutputRefs?.(checkpoint);
+					continue;
+				}
+				if (result.waitingExternal === true) {
+					const outputRefs = pipelineOutputRefs({
+						context,
+						steps,
+						outputs: spec.outputs,
+						stepReceipts,
+						cursorStepId: step.stepId,
+						complete: false,
+						externalCheck: result.externalCheck,
+					});
+					await context.checkpointOutputRefs?.(outputRefs);
+					continue;
+				}
+				const dependencyFailures = collectPipelineDependencyFailures({ stepId: step.stepId, bindings: spec.bindings, receipts: stepReceipts });
+				const errorMessage = describePipelineDependencyFailure(result.errorMessage, dependencyFailures);
 				const outputRefs = pipelineOutputRefs({
 					context,
 					steps,
@@ -769,46 +890,104 @@ export async function runWorkflowPipelineNode(
 					stepReceipts,
 					cursorStepId: step.stepId,
 					complete: false,
-					externalCheck: result.externalCheck,
+					error: { code: result.errorCode, message: errorMessage, dependencyFailures },
 				});
-				await context.checkpointOutputRefs?.(outputRefs);
-				return workflowNodeWaiting(outputRefs, result.externalCheck);
+				return { ok: false, errorCode: result.errorCode, errorMessage, outputRefs };
+			} catch (error: unknown) {
+				if (error instanceof Error && error.name === "AbortError") throw error;
+				if (error instanceof PipelineCheckpointFailure) throw error;
+				const message = error instanceof Error ? error.message : String(error);
+				const retainedOutputRefs = stepReceipts[step.stepId]?.outputRefs ?? priorOutputRefs;
+				if (retainedOutputRefs && hasStageReconciliationReceipt(context, step, retainedOutputRefs)) {
+					const scheduleMissing = retainedOutputRefs.externalCheck === undefined;
+					const observation = {
+						observedAt: new Date().toISOString(),
+						name: error instanceof Error ? error.name : "UnknownError",
+						message,
+						...(isRecord(error) && typeof error.code === "string" ? { code: error.code } : {}),
+						...(scheduleMissing ? { scheduleDiagnostic: "workflow_pipeline_accepted_receipt_schedule_missing" } : {}),
+					};
+					const previousObservations = retainedOutputRefs.evidence.pipelineStageObservationFailures;
+					const outputRefs: WorkflowNodeOutputV1 = {
+						...retainedOutputRefs,
+						externalCheck: retainedOutputRefs.externalCheck ?? workflowExternalPollAfter(WORKFLOW_PIPELINE_CHECKPOINT_POLL_MS),
+						evidence: {
+							...retainedOutputRefs.evidence,
+							pipelineStageObservationFailures: [
+								...(Array.isArray(previousObservations) ? previousObservations : previousObservations === undefined ? [] : [previousObservations]),
+								observation,
+							],
+						},
+					};
+					stepReceipts = { ...stepReceipts, [step.stepId]: stageOutputReceipt("waiting_external", outputRefs) };
+					console.error(JSON.stringify({
+						...observation, failureMessage: observation.message, message: "workflow_pipeline_stage_observation_failed",
+						executionId: context.executionId, nodeId: context.node.id, stepId: step.stepId,
+						resultLookup: resolveFrozenStepSemantics(context, step.node)?.resultLookup,
+					}));
+					continue;
+				}
+				stepReceipts = {
+					...stepReceipts,
+					[step.stepId]: {
+						...(retainedOutputRefs ? stageOutputReceipt("failed", retainedOutputRefs) : { status: "failed" as const }),
+						errorCode: "workflow_pipeline_step_threw",
+						errorMessage: message,
+					},
+				};
+				return pipelineErrorResult(context, steps, spec.outputs, stepReceipts, step.stepId, error,
+					collectPipelineDependencyFailures({ stepId: step.stepId, bindings: spec.bindings, receipts: stepReceipts }));
+			}
+		}
+		const waitingExternalCheck = pipelineWaitingExternalCheck(steps, stepReceipts);
+		if (steps.some((step) => stepReceipts[step.stepId]?.status === "waiting_external")) {
+			if (!waitingExternalCheck) {
+				const waitingStep = steps.find((step) => stepReceipts[step.stepId]?.status === "waiting_external");
+				return pipelineErrorResult(context, steps, spec.outputs, stepReceipts, waitingStep?.stepId ?? null,
+					new Error(`Workflow pipeline waiting step ${waitingStep?.stepId ?? "unknown"} is missing an external-check schedule`));
 			}
 			const outputRefs = pipelineOutputRefs({
 				context,
 				steps,
 				outputs: spec.outputs,
 				stepReceipts,
-				cursorStepId: step.stepId,
+				cursorStepId: pipelineCursorStepId(steps, stepReceipts),
 				complete: false,
-				error: { code: result.errorCode, message: result.errorMessage },
+				externalCheck: waitingExternalCheck,
 			});
-			return { ok: false, errorCode: result.errorCode, errorMessage: result.errorMessage, outputRefs };
-		} catch (error: unknown) {
-			if (error instanceof Error && error.name === "AbortError") throw error;
-			const message = error instanceof Error ? error.message : String(error);
-			stepReceipts = {
-				...stepReceipts,
-				[step.stepId]: {
-					status: "failed",
-					...(priorOutputRefs ? { outputRefs: priorOutputRefs } : {}),
-					errorCode: "workflow_pipeline_step_threw",
-					errorMessage: message,
-				},
-			};
-			return pipelineErrorResult(context, steps, spec.outputs, stepReceipts, step.stepId, error);
+			await context.checkpointOutputRefs?.(outputRefs);
+			return workflowNodeWaiting(outputRefs, waitingExternalCheck);
 		}
+		const outputRefs = pipelineOutputRefs({
+			context,
+			steps,
+			outputs: spec.outputs,
+			stepReceipts,
+			cursorStepId: null,
+			complete: restriction ? steps.every(step => stepReceipts[step.stepId]?.status === "success")
+				: Object.values(stepReceipts).every((receipt) => receipt.status === "success" || receipt.status === "not_selected"),
+		});
+		if (!outputRefs.evidence.executorCompleted) {
+			return { ok: false, errorCode: "workflow_node_runtime_failed", errorMessage: "Workflow pipeline ended before every frozen step was settled", outputRefs };
+		}
+		return { ok: true, outputRefs };
+	} catch (error: unknown) {
+		if (!(error instanceof PipelineCheckpointFailure)) throw error;
+		const failure = {
+			observedAt: new Date().toISOString(),
+			message: error.message,
+			errorCodes: readDatabaseErrorCodes(error.persistence),
+			recoverable: error.persistence.recoverable,
+		};
+		console.error(JSON.stringify({
+			...failure, failureMessage: failure.message, message: "workflow_pipeline_checkpoint_failed",
+			executionId: context.executionId, nodeId: context.node.id,
+		}));
+		const externalCheck = workflowExternalPollAfter(5_000);
+		const output = pipelineOutputRefs({ context, steps, outputs: spec.outputs, stepReceipts,
+			cursorStepId: pipelineCursorStepId(steps, stepReceipts), complete: false, externalCheck });
+		const outputRefs = { ...output, evidence: { ...output.evidence, checkpointPersistenceFailure: failure } };
+		if (failure.recoverable) return workflowNodeWaiting(outputRefs, externalCheck);
+		return { ok: false, errorCode: "workflow_node_runtime_failed", errorMessage: error.message, outputRefs };
 	}
-	const outputRefs = pipelineOutputRefs({
-		context,
-		steps,
-		outputs: spec.outputs,
-		stepReceipts,
-		cursorStepId: null,
-		complete: Object.values(stepReceipts).every((receipt) => receipt.status === "success" || receipt.status === "not_selected"),
-	});
-	if (!outputRefs.evidence.executorCompleted) {
-		return { ok: false, errorCode: "workflow_node_runtime_failed", errorMessage: "Workflow pipeline ended before every frozen step was settled", outputRefs };
-	}
-	return { ok: true, outputRefs };
 }

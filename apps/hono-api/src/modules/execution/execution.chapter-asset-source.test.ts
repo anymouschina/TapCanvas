@@ -51,7 +51,7 @@ describe('explicit chapter asset sources', () => {
     const result = projectChapterAssetSources([source]);
     expect(result.objectRegistry.map(item => item.objectId)).toEqual(['key']);
     expect(result.assetPlans.map(item => item.objectId)).toEqual(['key']);
-    expect(() => projectChapterAssetSources([source, source])).toThrow('Duplicate chapter asset objectId key');
+    expect(() => projectChapterAssetSources([source, source])).toThrow('violate schema');
   });
 
   it('rejects old reference arrays, mixed modes, mismatched roles, and separately authored plan object IDs', () => {

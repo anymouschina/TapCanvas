@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { bindInputOutputRelations, INPUT_OUTPUT_RELATIONS_KEYWORD } from "../../../../../packages/schemas/json-schema-relations/input-output.mjs";
 import { buildAgentsBridgeRemoteTools } from "../task/task.agents-bridge";
 import {
 	findUnsupportedWorkflowToolSchemaKeywords,
@@ -89,8 +90,29 @@ describe("workflow tool JSON Schema validation", () => {
 
 	it("fails closed when a registered schema contains an unresolved reference", () => {
 		expect(validateWorkflowToolArguments({ $ref: "#/$defs/input" }, {})).toEqual([
-			{ path: "$", message: "$ cannot be validated because registered schema references are not supported" },
+			{ path: "$", message: "Registered schema reference resolution failed: Unresolved JSON Schema reference: #/$defs/input" },
 		]);
+	});
+
+	it("validates a bound input-to-output relation as structural evidence", () => {
+		const schema = bindInputOutputRelations({
+			type: "object",
+			properties: { beats: { type: "array", items: { type: "object" } } },
+			[INPUT_OUTPUT_RELATIONS_KEYWORD]: [{
+				inputPort: "frozen-prefix",
+				inputIndex: 0,
+				inputPath: ["sourceUnitRefs"],
+				outputPath: ["beats", 0, "sourceUnitRefs"],
+				optional: true,
+			}],
+		}, { "frozen-prefix": [{ sourceUnitRefs: [{ unitId: "unit-a" }] }] });
+
+		expect(validateWorkflowToolArguments(schema, { beats: [{ sourceUnitRefs: [{ unitId: "unit-a" }] }] })).toEqual([]);
+		expect(validateWorkflowToolArguments(schema, { beats: [{ sourceUnitRefs: [{ unitId: "unit-a" }, { unitId: "unit-b" }] }] }))
+			.toEqual(expect.arrayContaining([expect.objectContaining({
+				path: "$.beats[0].sourceUnitRefs",
+				message: expect.stringContaining("must structurally equal frozen input frozen-prefix[0].sourceUnitRefs"),
+			})]));
 	});
 
 	it("covers every JSON Schema keyword exposed by the live scoped tool catalog", () => {

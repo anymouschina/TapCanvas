@@ -2709,10 +2709,14 @@ function CanvasInner({
     const resolvedGroupLabel = groupLabel || `组-${downloadAssetsGroupId}`
 
     setDownloadingGroupAssetsId(downloadAssetsGroupId)
-    toast('即将触发多文件下载；浏览器可能会提示“允许多个文件下载”', 'info')
     try {
+      const visibleGraph = filterAdminWorkflowCanvasGraph(nodes, edges, isAdmin)
+      const downloadNodes = projectWorkflowMediaAttempts(
+        visibleGraph.nodes as FlowNode[],
+        visibleGraph.edges as FlowEdge[],
+      ).nodes
       await downloadGroupAssets({
-        nodes,
+        nodes: downloadNodes,
         groupId: downloadAssetsGroupId,
         groupLabel: resolvedGroupLabel,
       })
@@ -2722,7 +2726,7 @@ function CanvasInner({
     } finally {
       setDownloadingGroupAssetsId(null)
     }
-  }, [downloadAssetsGroupId, downloadingGroupAssetsId, nodes])
+  }, [downloadAssetsGroupId, downloadingGroupAssetsId, edges, isAdmin, nodes])
   const hasSelectionOverflowActions = useMemo(
     () => (
       canLayoutSelection ||

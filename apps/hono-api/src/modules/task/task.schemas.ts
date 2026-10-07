@@ -41,12 +41,40 @@ export const TaskAssetSchema = z.object({
 
 export type TaskAssetDto = z.infer<typeof TaskAssetSchema>;
 
+export const TaskReceiptRecoverySchema = z.object({
+	disposition: z.enum(["pending", "awaiting_late_result", "action_failed", "terminal"]),
+	failureKind: z.string().optional(),
+	observedAt: z.number().int().optional(),
+	terminalBillingPreserved: z.boolean().optional(),
+});
+
+export type TaskReceiptRecovery = z.infer<typeof TaskReceiptRecoverySchema>;
+
+export const TaskReceiptAssetSchema = TaskAssetSchema.extend({
+	type: z.literal("video"),
+	observedAt: z.number().int(),
+	sourceUrl: z.string().optional(),
+});
+export const TaskReceiptReconciliationSchema = z.object({
+	revision: z.number().int().nonnegative(),
+	pendingReceipts: z.number().int().nonnegative(),
+	observedReceipts: z.number().int().nonnegative(),
+	identityError: z.boolean().optional(),
+});
+export type TaskReceiptAsset = z.infer<typeof TaskReceiptAssetSchema>;
+export type TaskReceiptReconciliation = z.infer<typeof TaskReceiptReconciliationSchema>;
+
 export const TaskResultSchema = z.object({
 	id: z.string(),
 	kind: TaskKindSchema,
 	status: TaskStatusSchema,
 	assets: z.array(TaskAssetSchema),
 	raw: z.unknown(),
+	receiptRecovery: TaskReceiptRecoverySchema.optional(),
+	receiptAssets: z.array(TaskReceiptAssetSchema).optional(),
+	receiptReconciliation: TaskReceiptReconciliationSchema.optional(),
+	staleTimeout: z.boolean().optional(),
+	failReason: z.string().optional(),
 });
 
 export type TaskResultDto = z.infer<typeof TaskResultSchema>;

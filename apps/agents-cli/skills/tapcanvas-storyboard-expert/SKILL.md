@@ -1,10 +1,36 @@
 ---
 name: tapcanvas-storyboard-expert
-description: 统一的 TapCanvas 章节分镜专家。用于“漫剧创作/章节剧本/分镜提示词/Seedance 片段脚本/章节出镜头”任务，默认输出 storyboard-director/v1.1 JSON，同时内置 Seedance 时间轴片段脚本、资产规划、对白/OS/VO/闪回格式与连续性收口方法。
+description: 统一的 TapCanvas 小说/剧本章节分镜专家。用户要求根据小说或剧本生成分镜、镜头脚本、人物资产后的镜头设计，或同时交付“人物资产和分镜”时使用；也覆盖漫剧创作、分镜提示词、Seedance 片段脚本、章节出镜头、剧情确认后的 story_preview 九宫格预演，以及“不改剧情、3 秒内切镜、多特写/反应镜、1 分 30 秒到 2 分钟、表格分镜”的忠实快节奏拍摄脚本。默认输出 storyboard-director/v1.2 JSON，用户明确只要表格时输出统一 13 列分镜表。
 disable-model-invocation: false
+requires-skills:
+  - tapcanvas-character-card
+  - tapcanvas-scene-card
+  - tapcanvas-prop-card
+knowledge-role: storyboard
+knowledge-domains:
+  - 角色一致性
+  - 提示词工程
+  - AI视频提示词
 ---
 
 # TapCanvas Storyboard Expert
+
+场景空间身份、状态版本和灯光设计只使用 `tapcanvas-scene-card`。本 skill 消费已验真的 `scene-card/v1` ID 与 `scene-lighting/v1` 连续性事实来做调度和镜头设计，不另写场景卡 prompt、固定光型或世界观模板。
+
+会被拿取、交接、操作、损坏、变形或跨镜追踪的可复用道具只使用 `tapcanvas-prop-card`。本 skill 消费已验真的 `prop-card/v1`、`prop-board/v1`、`prop-function/v1` 和精确状态版本来设计持物关系、受力与连续性，不自行重写道具结构、固定视图模板或把单镜动作焊进 canonical 道具卡。
+
+## 复现角色身份包（循环角色默认前置资产）
+
+角色身份包的设计、生成、反趋同、状态派生和去模板化只使用 `tapcanvas-character-card`。本 skill 只消费已经落地并经 ID 验真的 `character-card/v3` 资产，不再维护平行的视图数量、体型、介质、面部 DNA、negative prompt 或母版裂变规则。
+
+循环出场角色不能用头像、姿态图、表情图、群像图或某场戏剧照冒充 canonical identity anchor。镜头只继承身份卡授权的五官、身体结构、发型轮廓、肤色/材质、基准服装与身份物件，不继承卡面背景、排版、偶然姿势或机位；状态变化使用同名精确状态版本。
+
+## 图片引用 ID 协议（硬切）
+
+- 主 agents、分镜 specialist 与最终提示词都不得读取、复制、输出图片存储 URL。画面身份只以资产名称、`nodeId`、`assetId`、`assetRefId` 表达。
+- 用 `tapcanvas_flow_get` / `tapcanvas_flow_search` 找画布图片节点，用素材工具找资产/版本 ID；需要确认真实可执行时调用 `tapcanvas_image_refs_get({nodeIds?,assetIds?})`。需要看图时调用 `tapcanvas_analyze_image({nodeId})` 或 `tapcanvas_analyze_image({assetId})`。
+- 创建生图/视频节点时只写 `referenceImageNodeIds` / `referenceAssetIds`，不得写 `referenceImages`、`styleImages`、`assetInputs[].url`、`imageUrl` 或 `lastFrameUrl`。项目全局画风由服务端自动注入，不需要逐镜复制。
+- 任一引用 ID 无法解析时必须在付费提交前显式失败。禁止把 URL-only、planned metadata、节点连线或提示词里的“参考某图”当作真实媒体证据。
 
 ## 何时使用
 
@@ -14,14 +40,82 @@ disable-model-invocation: false
 - 每个镜头要素齐全
 - 可直接用于图像/视频模型生成
 
+### 忠实快节奏分镜分支
+
+用户要求“不改变剧情，只丰富镜头”、3 秒内切镜、长台词换机位、自然主义表演、多特写/反应镜/空镜、每集 90–120 秒或表格拍摄脚本时，必须读取并服从 `references/忠实快节奏分镜.md`。该分支锁定剧情事实、台词顺序、总时长和连续性，只允许丰富可见表演与镜头覆盖；它的时长、镜头数、声音和表格规则优先于本文件的通用章节镜头数量与 Seedance 节奏建议。
+
+> **边界（重要）**：本 skill 产出**文本分镜 / storyboard-director v1.2 JSON / 人读镜头说明 / 单张合成故事板图**，主要服务 **text 节点**的故事板/脚本生成——**这些产物不是供应商可执行视频提示词，也不进 orchestrate 出片**。用户要求“可直接生成/写入视频节点/真实出片”时，必须把本 skill 的分镜事实交给 `tapcanvas-video-workflow`；其正式 `video-prompt-writer` 按唯一结构化 shots 合同编译，并在同一上下文使用 `tapcanvas-video-reviewer` 复盘后修订。旧八段文本 clipPrompt 路径已下线，服务端拒收；不得拿 v1.2 JSON、13 列展示表或本 skill 的 Seedance 示例直接绕过 writer 提交，也不得在本 skill 里自行串多镜出视频+拼接。
+>
+> 若用户明确选择“故事板做视频”或要求先看、编辑故事板再出片，主 agents 必须将这里的文本分镜进一步执行为画布上的真实 `storyboardImage` 资产；每个用于视频的板都要有 `productionLayer=design_board`、`creationStage=beat_keyframe`，且其节点 ID 必须经 `tapcanvas_image_refs_get` 验证为 ready，再由 `tapcanvas-video-workflow` 的 `storyPlan.visualPreproduction={kind:"storyboard",requiredClipIndexes:[...],requiredAssetNodeIdsByClip:[...]}` 和对应 clip 的 `storyboardImageNodeId` 精确绑定。若图片先于 BeatSheet/clip 计划生成，必须在节点 data 中同时写入同一视频的 `clipRunId` 与绝对 `clipIndex`，并写 `storyboardScope="clip"`；服务端只按这些精确字段回填消费关系，不按标题、prompt、位置或连线猜测。每个命名人物、场景、道具或 VFX 都要由 agents 结构化列入该镜的真实资产输入清单，既作为故事板生图输入，也列进视频 clip 的 `referenceImageNodeIds`；不能扫描 prompt 猜名词，更不能创建了卡却不实际使用。文本 JSON、角色卡、场景卡和计划 metadata 都不能替代该视觉前置。
+
+## Story Preview 分支（剧情预演九宫格，通用能力）
+
+这是帮助用户快速看懂故事构建是否成立的视觉草图，不是视频生产设计板。它由小T在对话中根据用户“用图预览剧情 / 看九宫格分镜 / 先看故事是否成立”等请求触发，也可以在章节剧情确认后自动交接。所有入口共用同一套 preview 资产协议，不得再为某个章节、题材或人物写专用九宫格模板。
+
+1. 章节入口以 `tapcanvas_project_chapter_get` / `tapcanvas_project_chapter_update` 返回的 `canvasRevision` 与 `sourceHash` 锁定唯一剧情版本；普通项目文本入口以当前 `sourceNodeId` 和真实 flow/node 事实锁定来源。若又发生剧情更新，旧 preview 系列保留为历史，但新系列必须使用新 `previewSeriesId`，不得覆盖或冒充最新版。
+2. 只要用户在对话中说出总时长、片段时长或预览区间（例如“整章 60s”“先看 0~15s”），立即把它视为已确认的创作事实，不要求用户另说“冻结”。先 fresh-read `tapcanvas_project_chapter_get`；若现有 `storyPreviewContract` 已逐字段满足本轮要求，直接复用，禁止为了同一要求重复更新。只有合同时长、窗口、采样间隔或参考资产确实变化时，才调用 `tapcanvas_project_chapter_update`，并必须携带 fresh-read 返回的 `expectedCanvasRevision`，在锁定的 chapter seed 中完整覆盖保存：`schemaVersion="story-preview-contract/v1"`、`storyDurationSeconds`、`previewScope`、`frameIntervalSeconds` 和完整 `requiredReferences`。**默认是全预览**：用户没有明确指定局部预览窗口时，必须写 `previewScope="full_story"` 并省略 `previewWindow`，服务端确定性归一化为 `0~storyDurationSeconds`；只有用户明确说“先看前 15 秒”“预览 20~30 秒”等范围时，才写 `previewScope="user_window"` 与 `previewWindow.startSeconds/endSeconds`。禁止 agents 因九宫格数量、模型上下文、上次预览或示例自行裁短。`frameIntervalSeconds` 是本次预览合同参数：用户明确“每秒一格”时写 `1`，明确其它采样间隔时逐字服从；用户未指定时由 agents 根据当前预览目标形成明确值，Hono/Web 不提供默认值。如果用户随后改了时长、窗口、采样间隔、角色、场景或道具，必须提交一份完整的新合同；不能只补一个遗漏字段。
+3. `storyDurationSeconds` 是整章/整段的目标总时长。归一化后的 `previewWindow` 默认等于完整故事，仅在用户明确指定局部预览时才缩短。局部预览只覆盖窗口内的节拍，不能把 60 秒的终局、反转或完整战斗压缩到 0~15 秒；窗口外的故事必须留给后续板。每格必须填写数值 `startSeconds/endSeconds`，并严格落在当前窗口内。
+4. 生图前读取项目已有角色卡和场景卡，用精确 `nodeId/assetId` 验真并作为本次预览图的输入引用。项目已有 canonical 角色卡时必须使用，禁止因为是 preview 就重新捏脸或只靠文字描述人物。把本次故事实际出现的所有角色、场景、关键道具和必须保持的内容资产全部列入 `requiredReferences`；不能只引用当前画面最显眼的一个主体。
+5. 时间格数量、板数、当前板格数与每格绝对时码由服务端根据 `previewWindow + frameIntervalSeconds` 确定性计算；agent 不计算、不缓存、不复述猜测结果。每板最多 9 格。调用 `tapcanvas_story_preview_orchestrate.begin` 后，runtime 每次只开放当前缺失板的精确 `put_board_N` schema，并在 `progressCursor/allowedNextActions/expectedCellCount` 中给出唯一下一步；agent 只按回执逐板填内容。禁止把长时间窗摘要成少量代表图，也严禁改用通用生图的 `node` / `nodes[]` 生成逐格独立图片。服务端会从冻结合同创建一个真实 `storyboardImage` 九宫格板，并自动完整写入：
+   - `assetUsage="preview_only"`
+   - `assetPurpose="story_preview"`
+   - `productionEligible=false`
+   - `productionLayer="preview"`
+   - `creationStage="story_preview"`
+   - 同一系列共享的 `previewSeriesId`
+   - `previewBoardIndex`（从 0 开始）、`previewBoardCount`
+   - `previewShotCount`（1～9）
+   - `sourceChapterRevision` 与 `sourceHash`
+   - `storyPreviewContract`：逐字复制章节 seed 中已保存的合同，不得自行缩短 `storyDurationSeconds` 或改写 `previewWindow`
+   - `referenceManifest`：逐项复制合同的 `requiredReferences`，成员、职责、身份必须完全一致
+   - `storyPreviewCells`：每格至少包含 `cellIndex`、`startSeconds`、`endSeconds`、`timeRange`、`narrativeFunction`、`frameDescription`、`visibleAction`、`stateBefore`、`stateAfter`、`causeFromPrevious`、`transitionToNext`、`blocking`、`cameraState`、`motionTransition`、`physicalFeedback`、`environmentChange` 和 `subjectRefIds`
+6. 每格是该时间区间的可视状态，不是段落标题。首次生成时，模型填写紧凑格字段 `frame / mid / end / camera / feedback / environment / subjectRefIds`；`subjectRefIds` 必须从动态 schema 给出的 `referenceOptions[].refId` 中精确选择本格真实可见主体/场景/道具，不得全量复制、读名称猜测或默认补主角。服务端据此自动生成并在图上显示精确 `timeRange`，同时补齐 `stateBefore/stateAfter/motionTransition/physicalFeedback/environmentChange` 等权威字段。`frame` 写这一秒代表帧中的姿态、视线、持物、相对距离与构图落点；`mid` 写约 0.5 秒时重心、脚步、武器和视线如何运动；`end` 写下一秒可直接继承的完整状态；`feedback` 写接触、受力、反作用或明确的未接触压力变化；`environment` 写尘土、碎片、光线与 VFX 的可见变化。相邻格必须让陌生观众追得上主体从哪里来、怎样运动、与谁接触、怎样受力以及下一秒往哪里去。故事中的关键进入动作、现实/幻想切换、冲突触发、道具揭示和结尾钩子必须直接可见，不能做成无因果的 PPT 海报拼贴。服务端在付费提交前只核对确定性事实：板数、格数和每格起止时间严格匹配 `previewWindow + frameIntervalSeconds`，每个 `subjectRefId` 属于冻结合同，且来源 revision/hash 仍是当前章节版本；剧情忠实度由 agent 在当前链内对 `sourceExcerpt` 自检并修订，不下沉为 Hono 文案门禁。
+7. preview 图片载体不得设置 `productionMetadata`、`clipRunId`、`clipIndex`、`storyboardScope`、`masterBoardNodeId` 或 `storyboardImageNodeId`，不得写入 BeatSheet/clip 绑定，也不得作为后续图片、视频或首尾帧参考。若用户后来决定正式出片，必须从同一权威章节文本重新制作 production 设计板，不能把 preview 改标签后复用。
+
+### 小T 对话入口的生图合同
+
+当用户要求用图预览剧情时，小T必须把“九宫格”当作**一条实际的生图请求**，而不是先创建一个空节点、等待用户再操作，也不是只返回一段文字提示词：
+
+- 先读取当前对话已确认的完整故事、真实项目上下文、canonical 角色/场景资产和当前视觉风格；如果剧情仍缺关键事实，先在对话中补齐，不凭空画出人物关系或结局。
+- 形成按时间顺序分页的 3×3 九宫格内容；九格按左到右、从上到下阅读。每格对应服务端合同中的一个 `frameIntervalSeconds` 时间格，不再按“一个大节拍一格”压缩。每个 cell 内必须同时写 `frame` 起始可见状态、`mid` 半程承接状态与 `end` 退出状态，因此“一秒至少有起/承两状态”不等于一秒单独生成两张图片。是否需要下一张板及下一板格数只服从服务端 `allowedNextActions/expectedCellCount`，不得由模型预估。`nodes[]` 是独立图片批量生成分支，不是剧情预览分页能力。
+- 先调用 `tapcanvas_story_preview_orchestrate` 的 `{"mode":"begin"}`。服务端读取唯一章节合同与画布 checkpoint，返回唯一 `allowedNextActions`；runtime 自动加载当前 `put_board_N` 的精确 schema。失败重试、异步续跑或会话恢复再次调用 `begin` 或 `status` 即可，不能自行扫描、猜 boardIndex 或重复付费生成。
+- 动态 schema 中的 `sourceExcerpt` 是服务端按本板时间窗切出的完整重叠原文章节，`referenceOptions` 是唯一可绑定的冻结引用集合。Agent 必须在同链完成来源覆盖与视觉实体盘点；上一板的结束状态只负责物理连续性，不能覆盖新分段在边界处要求的转场、反转、世界切换或不可逆结果。`frame/mid/end` 必须写实际画面状态，禁止只填“54s/55s”、镜头编号或“继续战斗/走向远方”一类概括。
+- 每次提交前由 agent 回拼当前板全部格，与 `sourceExcerpt` 检查事实、事件顺序、转场和结局是否守恒；发现遗漏或误改就在当前 agents-cli 链重写同一 `put_board_N`，不得修改章节原文、不得跳板、不得把纠偏交给 Hono/Web 文案匹配，也不得改走通用生图工具。
+- 参考资产只服从逐格 `subjectRefIds` 的精确声明。跨世界/跨场景后的板不能因为旧 Boss 名称出现在对白、照片或屏幕 UI 中，就继续绑定上一场景、Boss 对战动作规划；嵌套画面与当前物理空间必须分别声明。没有匹配引用时如实依照 `sourceExcerpt` 描述，不得沿用旧场景或伪造引用 ID。
+- **一张九宫格就是一次工具调用**：每板最多 9 个 `cells`，整板一次提交；不得把服务端要求的多板合成一个巨型调用，也不得把一板拆成 9 次逐格调用。每板参数只写紧凑的 `frame / mid / end / camera / feedback / environment / subjectRefIds`，不重复合同、时间码、角色长设定或 prompt 公共前缀。
+- 全程只调用 `tapcanvas_story_preview_orchestrate`，不直接调用通用 `tapcanvas_image_generate_to_canvas`，不调用 `flow_patch`，不手写 `node.data`，不传 `prompt`、模型、分辨率、引用 URL、`storyPreviewContract`、`referenceManifest`、时间码或 preview 元数据。服务端根据章节唯一真源负责选择当前图片偏好，并把全部格 `subjectRefIds` 的精确并集作为本板有效参考，生成真实九宫格 prompt、创建 `storyboardImage / preview` 节点并回填当前画布；服务端不会从格文案补人物或改引用。
+- 每板 `cells` 数量必须与服务端返回的 `expectedCellCount` 完全一致；不得自行推导后续板号或格数，不得用粗粒度摘要内容填充更细的合同，也不得在一次 `put_board_N` 调用中提交多板。
+- 生图工具返回真实受理结果后，小T向用户说明“九格分别讲了什么、是否覆盖起因/攻防/逆转/结局”，并展示实际图片；不得用一段“已生成节点”的报告代替图片交付。用户确认后，正式出片仍从同一权威正文重新编译 production design board。
+
+首次生成单板时使用下面这个短调用；一次调用直接生成一张最多九格的真实九宫格板，不是九张独立图片，也不是前端节点模板：
+
+```json
+{
+	"mode": "put_board_0",
+    "openingState": "本板第一秒开始时，主体、武器、空间位置、伤势与视线的完整可见状态",
+		"cells": [{
+			"frame": "本秒代表帧：主体姿态、持物、相对位置与构图落点",
+			"mid": "约0.5秒时重心、肢体、武器和视线的连续变化",
+			"end": "本秒结束、可直接交给下一秒继承的完整状态",
+			"camera": "景别、机位、观察方向、焦点与连续路径",
+			"feedback": "接触点、受力方向与双方反作用；未接触则写惯性或距离压力",
+			"environment": "光、尘、雾、碎片、地面或背景相对上一秒的可见变化",
+			"subjectRefIds": ["node:从动态 referenceOptions 精确选择"]
+		}]
+}
+```
+
+模板只示范紧凑字段形状，不得照抄内容；所有 cell 必须从本轮真实剧情推导，并按本板时间顺序放在同一个 `cells` 数组内。时间码、板数、当前板格数、引用与最终 prompt 由服务端按冻结合同生成，模型不得另造或向用户宣称未经回执验证的数量。用户要求每秒预览时，`frameIntervalSeconds` 必须为 1；服务端会拒绝格数不足、时间网格有洞或来源版本变化。工具返回的 `running` 只表示该九宫格已受理，不是失败；不得因为等待图片就重复提交。
+
 ## 核心目标
 
 把“叙事文本”转换成“可执行的镜头生产 JSON”，并让输出可同时服务：
 
 - 3D 建模师（形体/材质/姿态约束）
 - 导演（调度/镜头/光线/节奏）
+- 编剧（因果、冲突、人物动机、情绪弧线）
 - 定格动画（帧步进/微抖动/手工痕迹）
-- Seedance / 短剧视频生成（15 秒片段时间轴、镜头节奏、参考图图位、承接上一片段尾帧）
+- Seedance / 短剧视频生成（15 秒片段时间轴、镜头节奏、参考图图位；镜间承接=并发独立+exitState 文字接力）
 
 ## 统一职责边界
 
@@ -31,14 +125,53 @@ disable-model-invocation: false
 - 角色 / 场景 / 道具资产规划
 - Seedance 15 秒片段时间轴脚本
 - 对白、OS、VO、闪回、字幕的脚本表达
-- 上一片段尾帧 -> 下一片段首帧的连续性收口
+- 片段间连续性收口：逐镜选择有意剪辑、真实首尾帧桥接或上一段真实视频续接，并保留可追溯的 exitState 物理状态接力
 
-若任务需要 Seedance 风格片段脚本，也必须在本 skill 内完成，不允许再切出平行分镜方法论。
+若任务需要 Seedance 风格片段脚本，也必须在本 skill 内完成，不允许再切出平行分镜方法论。豁免：**交互式分支叙事游戏**（画布分镜图选支玩法）走 `tapcanvas-storyboard-adventure`，不受此排他约束。
+
+## 首要纪律：叙事完整与承前启后（ch129《诛魔》实证·不可违）
+
+拆任何章节前，先守这四条，否则必然缺剧情、段间硬跳：
+
+1. **先读完整章节正文再分段**：确认拿到的是【全文】而非被截断的前半截/预览（ch129 漏读后半段→整个结局缺失）。分镜必须**逐句覆盖到原文结尾**。
+2. **按戏剧节拍分段，不按时间均匀切**：段数随剧情定，**15s 是单段时长上限、不是分段尺子**。连接性因果小节（脱身/传音回报/铺垫/因果转折）是钉因果链的胶水，**照样占镜头、不当过场省掉**。
+3. **连续性必须先设计再选择媒体合同**：所有相邻段先对齐上段 `exitState` 与下段进入态，再由 agents 逐镜选择 `editorial_cut/bridge_frames/reference_video`。普通剪辑不需要像素级咬合；形态跃迁、精确落幅或复杂转场用真实首尾帧；只有真实运动惯性、连续运镜或声场不可由状态文字重建时才续接上一段视频。
+4. **交付前自检：反向映射回原文**：把每个分镜段映射回它覆盖的原文句子，**列出没有任何镜头覆盖的句子=缺的节拍**，补齐后再逐对查相邻段接不接得上。出片后审片已下线（2026-07-10），质检左移到提示词阶段——这一步自己在交付前过一遍。
+
+## 权威叙事状态前置（真实 book 强制）
+
+章节属于真实 book 时，拆镜前并行读取完整章节与 `tapcanvas_story_facts_get`。记录第一页账本 `revision`，按 `offset/nextOffset` 翻页直到 `hasMore=false`；所有分页 revision 必须一致，变化时丢弃混合结果并从 offset=0 重读。目标镜头对应的故事点明确时，用 `at={chapter,sequence}` 读取当时有效事实。`story-facts.json` 是结构化权威层，`STORY_STATE.md` 只是人可读投影，不能因为投影更短就忽略来源、status 或有效区间。
+
+先把本轮事实快照写进顶层 `storyFactsContext`，再把实际影响当前镜头的事实编译进每镜 `storyFactLocks`：
+
+- 真实 book 使用 `mode="book_ledger"`，逐字记录真实 `bookId`、本次完整分页读取到的 `ledgerRevision`、目标 `effectiveAt={chapter,sequence,label?}`、真正被镜头消费的 `consumedFactIds`，并令 `consumedContextKeys=[]`；禁止把“读到过但没影响任何镜头”的 fact 塞进消费清单。
+- 非 book / standalone 使用 `mode="task_context"`，记录安全的总来源标签、`bookId=null / ledgerRevision=null / effectiveAt=null / consumedFactIds=[]`，并用本轮稳定且不冒充账本事实的 `consumedContextKeys` 追踪输入约束。
+- `category` 逐字沿用 story fact 的 `subject.kind` 或本轮上下文给出的结构化类别，不在本地维护题材枚举、别名表或关键词映射。
+- 每个 book binding 的 `factId` 必须属于顶层 `consumedFactIds`；每个 task binding 的 `contextKey` 必须属于 `consumedContextKeys`。两个集合都必须与所有镜头实际引用的并集完全一致。
+
+事实投射规则：
+
+- `confirmed` 锁人物位置、伤况、持物、关系、已知信息与已经发生的事件；
+- `inferred` 只能作为某个视角的怀疑、误判或证据方向，禁止直接画成客观答案；
+- `draft_choice` 只有被用户或当前正式剧本合同采纳后才可进入镜头，否则保留未决；
+- `visibility="objective"` 才能作为客观可见状态；`visibility="viewpoint_only"` 只能把角色相信、怀疑或误判的行为线索写进 `directive`；`inferred + objective` 是非法组合；
+- 尚未到揭示点的秘密必须使用 `visibility="hidden"`，binding 只保留不透明 `factId/contextKey + category + status`，**不得携带 `directive`、真相摘要、关系文本或暗示文案**；同时建立只含不透明引用、揭示窗口与完整 `blockedChannels` 的 `revealGuards`。隐藏事实正文不得进入 `relationshipGraph`、`prompt.cn`、图片/视频 prompt、负面 prompt、对白、字幕、闪回、道具说明、背景彩蛋或声音提示。下游只接收不含真相正文的通用禁泄露指令；
+- 道具易主、伤势变化、衣物破损、位置移动后，后续镜头继承新状态，关闭的旧事实只能用于对应历史时间点。
+
+输出 `storyboard-director/v1.2` 时，`relationshipGraph` 只描述目标故事点已经生效且允许观众理解的表层行动关系；没有真实关系时必须输出 `[]`，禁止制造占位敌我关系。每镜独立写客观、可复用的 `exitState`；从第二镜开始，`continuity.fromPrev` 必须逐字等于上一镜 `exitState`，禁止用“大致承接”掩盖道具、伤势、站位或人物认知跳变。`dramaticBeat.after` 仍写戏剧结果，不能代替物理退出态。伤况和人物认知边界同时进入 `storyFactLocks`、`continuity.persistentAnchors / forbiddenDrifts` 与 `performance`，道具归属同时进入可见 fact binding 与 `continuityLocks.propLock`。没有群像或某类连续性锁时输出空数组，不写“无/不适用”伪内容。禁止创造 schema 外字段后假装结构校验已通过。
+
+分镜 JSON、文本提示词、故事板图片和视频产物都是叙事事实的消费者，不会因为“已经生成”就自动改变 story facts。若分镜需要改剧情，先回到正式正文/剧本原地保存并通过对应写作 skill 提交事实增量，再重新拆受影响镜头。
 
 ## 附属参考资料
 
 本 skill 附带以下权威参考资料：
 
+- `references/忠实快节奏分镜.md` ← **不改剧情 + 丰富镜头 + 快切表格任务必读**：剧情/台词/时长锁、1–3 秒内部 shot、长台词跨机位、自然主义表演、15 秒单元、统一 13 列表格与逐镜语速审计
+- `references/镜头语言规则.md` ← **叙事/剧情片拆镜前必读**：调度先于景别、180°轴线、焦段心理、机位角度、构图权力、景深破贴片、慢镜正确实现、声音设计、表演行为链、镜尾可接力收束
+- `references/coverage-and-boundary.md` ← **拆镜责任与账目必读**：原文落实责任清单与动作落实表（每个来源动作只有一个主要落实镜头）、相连边界与"关键帧只投影镜头起始边界"、单集时长加总（不允许镜头无声漏掉）、工作景别与离开标记、切点必须带来可见变化、水平角度/机位高度/焦段是三件不同的事、竖屏景别收窄、交付面遮挡、尾帧成对、一镜到底还是切开
+- `references/产品商业摄影.md` ← **电商广告/产品片拆镜必读**：电商也是商业摄影、干净≠平淡——按材质选光的布光体系(金属侧光/玻璃背光透亮/磨砂柔光)、产品 hero 精密运镜(微距推进/环绕轨道/升格质感/推近定格)、质感渲染(水珠/蒸汽/光泽)、构图焦段、带货节奏(钩子→卖点→质感→CTA)
+- `references/拆镜范例.md` ← 逐镜带"为什么这么拍"标注的范例库（few-shot）
+- `references/电商TVC视频提示词范例.md` ← **电商/品牌/产品 TVC 类视频节点(S6 clipPrompt)必读**：用户金标范例 + 可复用骨架（定调头 / 参考图按用途分配+一致性硬锁 / 全局纪律 / 分段时间轴 / 风格收束）。做电商带货 TVC 视频时按它调整，换主体/卖点/场景、骨架不变
 - `references/seedance-manual.md`
 - `references/故事转视频脚本-转换工具.md`
 - `references/优化分镜.md`
@@ -46,9 +179,10 @@ disable-model-invocation: false
 
 当用户任务明确落在以下场景时，应主动读取对应 reference，而不是只依赖本文件摘要：
 
+- 用户要求忠实原剧本、快节奏切镜、多特写/反应镜/空镜、90–120 秒单集或 Markdown 分镜表
 - 多模态 Seedance 输入限制、参考图/参考视频/参考音频用法、视频延长、视频编辑、音乐卡点
 - 产品展示、角色动作、旅拍、空间漫游、口播、战争、长镜头追踪、伪纪录片等专门模板
-- 从原始故事抽取核心梗、人物小传、三幕/四幕结构、15 秒集数弧线、尾帧衔接检查
+- 从原始故事抽取核心梗、人物小传、三幕/四幕结构、15 秒集数弧线、段间承接检查
 - Seedance 提示词优化公式、动作/镜头/光影/画质/约束关键词
 
 ## Seedance 多模态能力边界
@@ -91,423 +225,24 @@ disable-model-invocation: false
 
 - 仅输出一个 JSON 对象
 - 禁止输出 markdown 包裹、解释性前后缀
-- 默认必须满足 `assets/storyboard-director-schema.v1.1.json` 的结构约束
+- 默认必须满足 `assets/storyboard-director-schema.v1.2.json` 的结构约束
 - 缺关键输入时显式失败，不输出伪完整 JSON
+- **所有 `prompt.cn` 字段必须使用中文**；`enOptional` 为可选，默认不填
+- 每镜必须有 `beatRole / exitState / storyFactLocks`；缺任一字段都属于合同失败，不得回退旧 schema 或把锁塞回自然语言备注
+- 真实 book 与 task context 共用唯一 v1.2 schema，只通过 `storyFactsContext.mode` 区分来源；禁止另建 standalone 旧格式
+- `visibility="hidden"` 的 binding 禁止出现 `directive/sourceLabel`；秘密只以不透明引用和 `revealGuards` 留在导演元数据中
 
 ## 输出模式（扩展）
 
-除默认 JSON 外，当宿主明确要求“视频片段脚本 / Seedance 时间轴 / 剧本正文格式 / 素材清单”时，可在同一套章节理解基础上派生以下补充产物：
+除默认 JSON 外，当宿主明确要求”视频片段脚本 / Seedance 时间轴 / 剧本正文格式 / 素材清单”时，可在同一套章节理解基础上派生以下补充产物：
 
 - `Seedance timeline prompt`
 - `章节剧本正文`
 - `资产清单`
-- `Ending frame continuity note`
+- `Exit state 承接注记` + 本镜 `continuityMode` 裁决；bridge 镜同时列出真实起幅与目标尾帧资产
 
 但这些都属于默认 JSON 的派生产物，不得替代默认 JSON 成为唯一交付，除非宿主或用户明确要求只要这些格式。
 
-## 强制输出协议
+## 延伸参考
 
-1. 必须输出多个镜头，不得只给单段大提示词。
-2. 顶层必须包含：
-   - `schemaVersion`
-   - `chapter`
-   - `globalStyle`
-   - `cast`
-   - `relationshipGraph`
-   - `modelingSpec`
-   - `stopMotionSpec`
-   - `atmosphereSpec`
-   - `shots`
-3. 每个镜头必须包含导演与生产关键字段：
-   - `shotId`
-   - `durationSec`
-   - `narrativeGoal`
-   - `subjectAnchors`
-   - `crowdRelations`
-   - `scene`
-   - `rigAndPose`
-   - `camera`
-   - `lighting`
-   - `actionChain`
-   - `composition`
-   - `dramaticBeat`
-   - `performance`
-   - `continuity`
-   - `continuityLocks`
-   - `readabilityChecks`
-   - `failureRisks`
-   - `negativeConstraints`
-   - `prompt`
-4. 章节证据不足时必须显式失败并指出缺什么，不得脑补关键剧情。
-
-## 镜头数量规则
-
-- 短章节（<=1200字）：`6-8` 镜头
-- 中章节（1201-2500字）：`8-12` 镜头
-- 长章节（>2500字）：`12-16` 镜头
-
-若用户指定镜头数，以用户要求为准。
-
-## Seedance 片段节奏规则
-
-当需要把镜头转换成 15 秒视频片段时，优先遵循：
-
-- 对话 / 情感片段：`3-4` 个镜头
-- 动作 / 冲突片段：`5-7` 个镜头
-- 蒙太奇 / 快节奏序列：`6-8` 个镜头
-
-默认情绪节拍：
-
-- `0-3s` 建立场景与情绪
-- `3-9s` 推进动作或冲突
-- `9-12s` 打到高潮 / 关键揭示
-- `12-15s` 落版 / 余韵 / 悬念
-
-若当前章节镜头要继续驱动 Seedance 片段，必须保证每个镜头都能被压缩或聚合进这一节奏框架，而不是只给静态图片 prompt。
-
-## 视觉可执行约束（CV 友好）
-
-每个镜头都必须满足：
-
-1. 主体明确：至少给出 1 个稳定身份锚点（年龄段/外观/服饰/独特特征）。
-2. 群像关系明确：至少写清 `谁与谁`、`关系类型`、`强度`、`冲突/合作状态`。
-3. 场景明确：地点 + 时间 + 天气/环境状态至少三要素中的两项。
-4. 动作明确：使用可见动作动词，避免“情绪化空话”。
-4. 空间明确：前景/中景/远景或左右前后关系至少一种。
-5. 相机明确：景别 + 机位 + 运镜 + 焦段，优先补充 `shutterAngleDeg`。
-6. 光照明确：主光方向 + 主光角度 + 色温 + 对比关系至少四项。
-7. 建模明确：材质、表面磨损、尺度、姿态约束不可缺失。
-8. 定格明确：`fpsBase` + `on ones/twos/threes` + `microJitterPx` 至少三项。
-9. 连续性明确：和上一镜头至少 1 个共用锚点（角色、道具、方位、时间推进）。
-10. 负面约束明确：写出至少 2 条“不要什么”。
-
-## 参考图策略（连续性）
-
-- 首镜头可在无参考图情况下启动，不做强阻断。
-- 非首镜头通常应携带至少 1 张参考图（优先上一帧 / 尾帧），用于角色与场景连续性锁定。
-- 若非首镜头缺少参考图：允许继续输出，但必须在 `failureRisks` 中显式标注 `referenceMissing` 或等价风险，并在 `continuity`/`continuityLocks` 里写明补救策略。
-- 禁止把“无参考图”伪装成“连续性已锁定”。
-- 若镜头后续要转成 Seedance / 视频片段 prompt，参考图语义必须可映射到图位职责：
-  - 图1：主体 / 角色一致性
-  - 图2：场景 / 光线 / 构图延续
-  - 若存在上一片段尾帧，优先作为视频续写的首帧连续性依据
-
-## 角色卡前置规划（强制方法论）
-
-- 在生成 chapter-grounded 关键帧、分镜图或镜头提示词前，先检查本章反复出现的主体是否已有可用角色卡锚点。
-- 可用角色卡锚点的判定标准是：项目/书籍作用域下已经存在真实角色卡资产，并且能提供可执行图片 URL 与可追溯的 `roleName` / `roleCardId` / 年龄或状态证据。
-- 对“本章会重复出现、后续多个镜头要复用”的角色，角色卡锚点必须进一步满足：已经存在真实 `three_view` 资产；只有普通角色图、没有三视图资产，不算满足重复主体锚点条件。
-- 若主体尚无角色卡、或当前镜头明确要求特定年龄/状态但现有角色卡无法覆盖，先创建角色卡节点，再继续创建镜头节点；不要跳过这一步直接写“假定已锁定”的镜头 prompt。
-- 角色卡节点应优先落成独立 `image` 节点，并带上明确的 `roleName`、`roleId`、`roleCardId`、`sourceBookId`、`materialChapter`、`stateDescription`、`referenceView=three_view` 与参考依据，确保后续镜头可以复用。
-- 后续镜头 prompt 可以直接使用 `@角色名` 或 `@角色名-状态` 语法，例如 `@方源-少年 从床上醒来`；当对应角色卡存在时，运行时会把它解析成真实参考图与角色卡绑定，而不是只把它当普通文本。
-- 若同名角色存在多张角色卡，必须在镜头约束里给出可区分的年龄/状态/时期证据；若仍无法唯一锁定，应显式失败并指出需要先补哪一张角色卡。
-- 这一步属于 agents 的证据规划与产物编排职责，不应假设后端或前端会替你自动决定“先做角色卡还是先出镜头”。
-
-## 场景/道具前置规划（强制方法论）
-
-- 在生成 chapter-grounded 分镜前，若章节元数据已暴露稳定场景或关键道具（例如固定房间、课堂、木盒、法器、载具、机关），必须先检查这些锚点是否已有可执行参考图。
-- 对会跨镜头复用的场景/道具，普通文本描述不算完成；必须存在真实视觉参考资产，并能回写到书籍 `visualRefs`。
-- 若场景/道具锚点缺失，先创建对应独立 `image` 节点，再继续创建镜头节点；不要在镜头 prompt 里假装“场景已锁定”。
-- 这类参考节点应显式携带 `sourceBookId`、`materialChapter`、`visualRefId`、`visualRefName`、`visualRefCategory`；当是 `scene_prop` 锚点时，同时写 `scenePropRefId` / `scenePropRefName`，避免后续节点只能看到不可读的 taskId。
-
-## 节点语义绑定（强制）
-
-- 任何新建的图片/分镜节点，只要绑定了角色或可复用场景/道具，都必须把语义字段直接写进节点数据；禁止依赖 taskId、临时 label 或运行时猜测回填。
-- 角色节点最少要带：`roleName`，必要时补 `roleId` / `roleCardId` / `referenceView`。
-- 场景/道具节点最少要带：`visualRefName`，必要时补 `visualRefId` / `visualRefCategory` / `scenePropRefName`。
-- 若当前证据不足以唯一确定绑定对象，应显式失败并指出缺哪张三视图角色卡或哪张场景/道具参考图，不要写入模糊绑定。
-
-## 剧本正文表达约束（当宿主要求脚本体时）
-
-若宿主需要“剧本正文 / Seedance 分镜脚本”而不只是结构化 JSON，采用下列表达规范：
-
-1. 每个镜头行以 `△ ` 开头。
-2. 对白标记使用：
-   - `角色名（os）`：内心独白 / 画外音
-   - `角色名（vo）`：人物不在画面中的画外音
-   - `角色名（怒/惊/喜）`：带情绪对白
-3. 特殊结构使用：
-   - `【空镜】`
-   - `【闪回】` / `【闪回结束】`
-   - `【字幕：xxx】`
-4. 镜头语言必须具体，不接受空泛“氛围镜头”：
-   - 景别：远景 / 全景 / 中景 / 近景 / 特写 / 大特写
-   - 运镜：推 / 拉 / 摇 / 移 / 跟 / 环绕 / 升降 / 手持 / 希区柯克变焦 / 一镜到底
-5. 连续动作链优先使用 `A -> B -> C` 或 `A → B → C` 表达。
-
-该正文格式是默认 JSON 的可读展开视图，不得与 JSON 语义冲突。
-
-## 资产规划（当宿主要求补齐角色/场景/道具时）
-
-若本轮目标包含“先补齐资产再继续镜头”，可采用以下稳定编号习惯：
-
-- 角色：`C01-C99`
-- 场景：`S01-S99`
-- 道具：`P01-P99`
-
-每个资产至少明确：
-
-- 名称
-- 类别
-- 视觉锚点
-- 与章节的关系
-- 后续要给哪类镜头 / 视频片段复用
-
-资产规划是为了服务执行，不是产出一份脱离 TapCanvas 的独立素材文档。
-
-## Seedance 时间轴派生规则
-
-若宿主明确要求 `Seedance prompt`，从结构化镜头派生时应生成：
-
-- 风格与总体氛围一句话
-- `0-3s / 3-6s / 6-9s / 9-12s / 12-15s` 的时间轴描述
-- `【声音】`：配乐 / 环境音 / 对白
-- `【参考】`：`图1 / 图2` 或 `@资产名` 的职责说明
-- `Ending Frame`：记录最后一帧的主体、构图、光线、背景与情绪，用于下一片段连续性
-
-禁止直接把章节摘要粗暴压成 15 秒时间轴。必须先有结构化 shot 级理解，再做时间轴派生。
-
-## Seedance 任务模板矩阵
-
-除章节分镜主链外，本 skill 还必须覆盖原 Seedance 模板矩阵。若任务明显属于以下类型，应优先按对应模板派生，而不是套一个抽象通用模版：
-
-- 叙事故事类
-- 产品展示类
-- 角色动作类
-- 风景旅拍类
-- 视频延长 / 续拍
-- 视频编辑 / 剧情颠覆
-- 情感冲突类
-- 产品动效展示类
-- 空间漫游类
-- 角色对战类
-- 口播类
-- 音乐卡点类
-- 战争场景类
-- 长镜头追踪类
-- 伪纪录片类
-
-这些模板的完整写法、时间轴组织、`@素材` 引用方式与特殊注意事项，统一见 `references/seedance-manual.md`。
-
-## Seedance 提示词优化公式
-
-当产出单条 Seedance prompt 时，默认使用以下八层公式校验：
-
-`主体 + 动作 + 场景 + 光影 + 镜头语言 + 风格 + 画质 + 约束`
-
-每一层都不能缺失，尤其是：
-
-- 动作要可见、可执行，优先使用“缓慢 / 连贯 / 自然 / 稳定”等抗崩词
-- 镜头要具体到景别、机位、运镜
-- 光影要明确方向、色温或氛围
-- 画质要给保底要求，如 `4K`、细节清晰、无模糊、无闪烁
-- 约束要显式写出结构稳定、比例正常、面部不变形、动作不僵硬等防崩条件
-
-避免使用“漂亮、帅气、很酷”这类主观空词；它们不构成可执行约束。
-
-## 故事转剧本结构化步骤
-
-当用户给的是故事、小说、短篇、真实事件，而不是现成分镜时，先按以下顺序拆解，再产出 JSON 或正文：
-
-1. 提炼核心梗（2-4 字）
-2. 补齐故事梗概六要素：
-   - 故事背景
-   - 开场冲突
-   - 主角画像
-   - 主线事件
-   - 结局
-3. 写一句话卖点
-4. 为主要角色建立人物小传
-5. 选择三幕式 / 四幕式骨架
-6. 规划每个 15 秒片段的镜头数、情绪弧线与尾帧衔接
-7. 再派生出：
-   - `storyboard-director/v1.1` JSON
-   - `△` 正文剧本
-   - `Seedance timeline prompt`
-
-这一整套步骤的细版模板与检查清单见 `references/故事转视频脚本-转换工具.md`。
-
-## 质量检查补充
-
-除本文件的导演 schema 自检外，若宿主要求正文剧本或 Seedance prompt，还必须额外确认：
-
-- 是否有明确的情绪弧线
-- 是否包含足够的感官细节（视觉 + 听觉，必要时触觉）
-- 是否控制在 15 秒可执行范围内
-- 尾帧描述是否足够详细，能直接给下一片段做首帧衔接
-- 是否补了音乐 / 音效 / 对话三层声音设计
-- 是否使用了清晰的 `@素材` 语法并标明各素材职责
-
-若输出是专门给 Seedance 的单条 prompt，还需再核对一次 `references/优化分镜.md` 中的公式与防崩词是否覆盖完整。
-
-## 禁止项
-
-- 禁止整段堆叠抽象词（如“史诗感、高级感、宿命感”）而无具体可视化细节。
-- 禁止同镜头里塞入过多冲突场景/时空跳变。
-- 禁止只写文学化描述，不写镜头参数。
-- 禁止省略 `负面约束`。
-- 禁止跳过 `relationshipGraph` 或 `crowdRelations`。
-- 禁止省略光照方向与角度描述。
-- 禁止省略 `rigAndPose` 或 `stopMotionSpec`。
-- 禁止只写“氛围很好”而不写可观察代理（风、颗粒、湿度、可视化声源）。
-
-## JSON 模板（必须遵守）
-
-```json
-{
-  "schemaVersion": "storyboard-director/v1.1",
-  "chapter": {
-    "bookTitle": "string",
-    "chapterTitle": "string",
-    "sourceSpan": "string"
-  },
-  "globalStyle": {
-    "genre": "string",
-    "visualTone": "string",
-    "palette": "string",
-    "aspectRatio": "16:9",
-    "fps": 24
-  },
-  "modelingSpec": {
-    "unitScale": "1m",
-    "topologyDetail": "mid-high",
-    "materialStyle": "stylized-pbr",
-    "textureAging": "blood-stain + dust",
-    "clothBehavior": "stiff-heavy"
-  },
-  "stopMotionSpec": {
-    "fpsBase": 24,
-    "cadence": "onTwos",
-    "microJitterPx": 0.8,
-    "holdFrames": [2, 3],
-    "imperfectionPolicy": "allow tactile handmade wobble"
-  },
-  "atmosphereSpec": {
-    "tensionLevel": 0.9,
-    "airDensity": "dusty-thin",
-    "humidityCue": "dry-wind",
-    "windVector": "left-to-right",
-    "particleType": ["dust", "blood-mist"],
-    "soundProxySources": ["cloth-flap", "weapon-hum", "distant-shout"]
-  },
-  "cast": [
-    {
-      "id": "char_fangyuan",
-      "name": "方源",
-      "anchorTraits": ["苍白肤色", "眼神幽深", "黑发", "残破碧绿袍"]
-    }
-  ],
-  "relationshipGraph": [
-    {
-      "from": "char_fangyuan",
-      "to": "group_zhengdao",
-      "relationType": "hostile",
-      "intensity": 0.95,
-      "state": "encirclement"
-    }
-  ],
-  "shots": [
-    {
-      "shotId": "SHOT_01",
-      "durationSec": 3.5,
-      "narrativeGoal": "string",
-      "subjectAnchors": ["string"],
-      "crowdRelations": [
-        {
-          "group": "group_zhengdao",
-          "relationToSubject": "hostile",
-          "blocking": "ring",
-          "distance": "mid"
-        }
-      ],
-      "scene": {
-        "location": "string",
-        "timeOfDay": "string",
-        "weather": "string",
-        "environmentDetails": ["string"]
-      },
-      "rigAndPose": {
-        "centerOfMass": "mid-low",
-        "limbConstraints": ["no hyperextension"],
-        "forbiddenPoses": ["heroic-victory-pose"],
-        "keyPoseNotes": "string"
-      },
-      "camera": {
-        "shotSize": "wide",
-        "angle": "high",
-        "height": "crane-high",
-        "lensMm": 35,
-        "shutterAngleDeg": 180,
-        "movement": "slow push-in",
-        "focusTarget": "char_fangyuan"
-      },
-      "lighting": {
-        "keyDirection": "back-left",
-        "keyAngleDeg": 35,
-        "colorTempK": 4300,
-        "contrastRatio": "high",
-        "fillStyle": "minimal",
-        "rimLight": "sunset edge"
-      },
-      "actionChain": ["A -> B -> C"],
-      "composition": {
-        "foreground": "string",
-        "midground": "string",
-        "background": "string",
-        "spatialRule": "triangular balance"
-      },
-      "dramaticBeat": {
-        "before": "string",
-        "during": "string",
-        "after": "string"
-      },
-      "performance": {
-        "emotion": "string",
-        "microExpression": "string",
-        "bodyLanguage": "string"
-      },
-      "continuity": {
-        "fromPrev": "string",
-        "persistentAnchors": ["string"],
-        "forbiddenDrifts": ["string"]
-      },
-      "continuityLocks": {
-        "identityLock": ["string"],
-        "propLock": ["string"],
-        "spaceLock": ["string"],
-        "lightLock": ["string"]
-      },
-      "readabilityChecks": {
-        "subjectReadable": true,
-        "relationshipReadable": true,
-        "lightingConsistent": true
-      },
-      "failureRisks": ["identityDrift", "lightFlip"],
-      "negativeConstraints": ["string", "string"],
-      "prompt": {
-        "cn": "string",
-        "enOptional": "string"
-      }
-    }
-  ]
-}
-```
-
-## 生成前自检
-
-输出前逐条检查：
-
-1. 是否为“多镜头 JSON”而非“单段大提示词”
-2. 是否每个镜头字段完整
-3. 是否每个镜头都可独立执行
-4. 是否存在跨镜头主体漂移风险
-5. 是否包含明确负面约束
-6. 是否包含群像关系与光照角度
-7. 是否包含建模/姿态/定格节奏字段
-8. 是否包含氛围代理（风/颗粒/可视化声源）
-9. 若镜头 prompt 使用了 `@角色名` / `@角色名-状态`，是否已有对应角色卡或已先补角色卡节点
-10. 若当前章需要新的年龄/状态形态，是否先完成角色卡再继续分镜
-11. 若宿主要求 Seedance 时间轴，是否已经把结构化镜头压成可执行的 `0-15s` 节奏，而不是只复制镜头标题
-12. 若宿主要求剧本正文，是否使用了 `△ / os / vo / 闪回 / 字幕` 的规范表达，且与 JSON 事实一致
-
-任一项不满足，先修正再输出。
+`references/storyboard-production-reference.md`：当交付分镜 JSON、表格或资产规划时，读取对应输出协议、字段格式与生成前自检；仅阅读主文件不能视为已取得完整输出合同。

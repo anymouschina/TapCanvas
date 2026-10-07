@@ -64,7 +64,7 @@ export const chapterAssetPlanSchema = {
     { type: 'object', properties: { kind: { const: 'character' }, physicalIdentityKey: text }, required: ['kind', 'physicalIdentityKey'] },
     { type: 'object', properties: { kind: { enum: registryProperties.kind.enum.filter(kind => kind !== 'character') }, physicalIdentityKey: { type: 'null' } }, required: ['kind', 'physicalIdentityKey'] },
   ] }], anyOf: chapterAssetRegistryVariants }, 1), 'x-uniqueBy': ['objectId'] },
-  backgroundPlans: array(object({ objectId: text, plan: backgroundPlanSchema }), 1),
+  backgroundPlans: { ...array(object({ objectId: text, plan: backgroundPlanSchema }), 1), 'x-uniqueBy': ['objectId'] },
   }),
   // A batch may bind to existing project assets, but cannot bind to an identity
   // that the same batch is creating. The host interprets these paths through its

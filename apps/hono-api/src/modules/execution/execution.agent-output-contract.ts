@@ -1,6 +1,8 @@
+import type { ReferenceFactObservation } from "../../../../../packages/schemas/json-schema-relations/reference-facts.mjs";
 import { inspectBeatExecutionStructure } from "../../../../../packages/schemas/video-authoring-stages/beat-structure.mjs";
 import { ASSET_OBJECT_KINDS, ASSET_REFERENCE_ROLES } from "../../../../../packages/schemas/workflow-asset-registry/index.mjs";
 import { inspectRegisteredAssetPlans } from "../../../../../packages/schemas/scene-reference-contract/index.mjs";
+import { chapterAssetPlanSchema } from "../../../../../packages/schemas/video-authoring-stages/schema.mjs";
 import { validateWorkflowToolArguments } from "./execution.json-schema-validator";
 import { projectBlockingPlans } from "../../../../../packages/schemas/blocking-plan-contract/index.mjs";
 import { blockingPlanFields, backgroundPlanSchema, compositionSchema } from "../../../../../packages/schemas/blocking-plan-contract/schema.mjs";
@@ -33,6 +35,11 @@ import {
 	validateNarrativeAudioPlacement,
 	type SpokenScriptLine,
 } from "../task/video-orchestrator.spoken-script";
+import {
+	OPENING_FRAME_PLAN_ARTIFACT_TYPE,
+	OPENING_FRAME_PLAN_CONTRACT_NAME,
+	OPENING_FRAME_PLAN_CONTRACT_VERSION,
+} from "./execution.opening-frame";
 
 export type { WorkflowAgentOutputEncoding } from "@tapcanvas/workflow-kernel-protocol";
 
@@ -98,6 +105,12 @@ export type WorkflowAgentJsonObjectContract = Readonly<{
 	// Agent 改写的运行时事实；值必须同时属于 requiredStringFields 与
 	// allowedFields，agents-cli 与 Hono 端口校验执行同一精确比较。
 	exactStringFields?: Readonly<Record<string, string>>;
+	/**
+	 * Caller-frozen identities already materialized in the current project
+	 * scope. The BeatSheet background self-reference check exempts only these
+	 * exact IDs; it never infers existence from an ID spelling or prefix.
+	 */
+	knownExistingAssetIds?: readonly string[];
 	requiredNumberFields?: readonly string[];
 	requiredObjectFields?: readonly string[];
 	// Nested structural paths whose resolved value must be a non-empty string;
@@ -175,6 +188,8 @@ export type WorkflowAgentJsonObjectContract = Readonly<{
 
 export const VIDEO_WRITER_ARTIFACT_CONTRACT_NAME = "tapcanvas.video-writer-artifact";
 export const VIDEO_WRITER_ARTIFACT_CONTRACT_VERSION = "14";
+export const OPENING_CLIP_ARTIFACT_CONTRACT_NAME = "tapcanvas.opening-clip-artifact";
+export const OPENING_CLIP_ARTIFACT_CONTRACT_VERSION = "3";
 export const BEAT_SHEET_ARTIFACT_CONTRACT_NAME = WORKFLOW_BEAT_SHEET_AGENT_CONTRACT_NAME;
 export const BEAT_SHEET_ARTIFACT_CONTRACT_VERSION = WORKFLOW_BEAT_SHEET_AGENT_CONTRACT_VERSION;
 
@@ -524,6 +539,32 @@ export function applyWorkflowArtifactJsonObjectContract(
 	contract: WorkflowAgentJsonObjectContract | null,
 ): WorkflowAgentJsonObjectContract | null {
 	if (!contract) return contract;
+	if (artifactType === "tapcanvas.chapter-asset-plan/v3") {
+		const canonicalSchema = isRecord(chapterAssetPlanSchema) ? chapterAssetPlanSchema : null;
+		const batchReferenceConstraints = canonicalSchema?.["x-batchAssetReferenceConstraints"];
+		if (batchReferenceConstraints === undefined) throw new Error("chapter-asset-plan/v3 canonical schema must declare its batch reference contract");
+		return { ...contract, jsonSchema: structuredClone(chapterAssetPlanSchema) };
+	}
+	if (artifactType === "tapcanvas.opening-clip/v3") {
+		return {
+			...contract,
+			requiredStringFields: ["protocolVersion", "clipPrompt"],
+			requiredArrayFields: ["sourceRanges"],
+			contractName: OPENING_CLIP_ARTIFACT_CONTRACT_NAME,
+			contractVersion: OPENING_CLIP_ARTIFACT_CONTRACT_VERSION,
+			allowedFields: ["protocolVersion", "sourceRanges", "clipPrompt"],
+		};
+	}
+	if (artifactType === OPENING_FRAME_PLAN_ARTIFACT_TYPE) {
+		return {
+			...contract,
+			requiredStringFields: ["protocolVersion", "prompt", "negativePrompt"],
+			requiredArrayFields: ["referenceAssetBindings"],
+			contractName: OPENING_FRAME_PLAN_CONTRACT_NAME,
+			contractVersion: OPENING_FRAME_PLAN_CONTRACT_VERSION,
+			allowedFields: ["protocolVersion", "prompt", "negativePrompt", "referenceAssetBindings"],
+		};
+	}
 	if (artifactType === "tapcanvas.beat-sheet/v2" || artifactType === "tapcanvas.launch-beat-sheet/v1") {
 		const baseContract = { ...contract };
 		delete baseContract.itemRequiredNonEmptyArrayFields;
@@ -1008,9 +1049,13 @@ function projectBeatSheetCompilerOwnedFields(
  * 引用必然无法解析，整批底图生成会以全部 item 失败收场。这是身份冲突，不是语义判断。
  * 上一批已生成的底图仍可被引用（其 assetId 不在本批计划集合里）。
  */
-function inspectBlockingBackgroundSelfReference(root: Record<string, unknown>): string | null {
+function inspectBlockingBackgroundSelfReference(
+	root: Record<string, unknown>,
+	knownExistingAssetIds: readonly string[] = [],
+): string | null {
 	if (!Array.isArray(root.blockingPlans)) return null;
 	const batchAssetIds = new Set<string>();
+	const existingAssetIds = new Set(knownExistingAssetIds);
 	for (const rawPlan of root.blockingPlans) {
 		if (!isRecord(rawPlan) || !isRecord(rawPlan.backgroundPlan)) continue;
 		const assetId = rawPlan.backgroundPlan.assetId;
@@ -1025,16 +1070,20 @@ function inspectBlockingBackgroundSelfReference(root: Record<string, unknown>): 
 			if (!isRecord(binding)) continue;
 			const boundId = typeof binding.assetId === "string" ? binding.assetId.trim() : "";
 			if (!boundId || !batchAssetIds.has(boundId)) continue;
+			if (existingAssetIds.has(boundId)) continue;
 			return `blockingPlans[${planIndex}].backgroundPlan.referenceAssetBindings[${bindingIndex}] references ${JSON.stringify(boundId)}, which is one of this batch's own backgroundPlan assetIds and therefore does not exist yet. A layout reference must name an already-existing canvas/project asset (real nodeId, assetId or project-node:<scope>); when there is no such asset, submit an empty referenceAssetBindings array and author the space from confirmed spatial facts`;
 		}
 	}
 	return null;
 }
 
-function inspectBeatSheetExecutionBlocker(root: Record<string, unknown>): string | null {
+function inspectBeatSheetExecutionBlocker(
+	root: Record<string, unknown>,
+	knownExistingAssetIds: readonly string[] = [],
+): string | null {
 	const corruptedPath = corruptTextPath(root);
 	if (corruptedPath) return `${corruptedPath} contains corrupt Unicode replacement/control text`;
-	const backgroundSelfReference = inspectBlockingBackgroundSelfReference(root);
+	const backgroundSelfReference = inspectBlockingBackgroundSelfReference(root, knownExistingAssetIds);
 	if (backgroundSelfReference) return backgroundSelfReference;
 	if (!isRecord(root.chapterArc)) return "chapterArc must be an object";
 	if (!Object.prototype.hasOwnProperty.call(root.chapterArc, "endingHook")) {
@@ -1271,6 +1320,81 @@ function inspectBeatSheetArtifact(root: Record<string, unknown>): string | null 
 	return null;
 }
 
+type ResolvedSchemaPathValue = Readonly<{
+	value: unknown;
+	path: readonly (string | number)[];
+}>;
+
+function parseSchemaIdentityPath(value: unknown): readonly string[] | null {
+	if (!Array.isArray(value) || value.length === 0 || value.length > 16) return null;
+	const path = value.map((segment) => typeof segment === "string" ? segment.trim() : "");
+	if (path.some((segment) => !segment || (segment !== "*" && segment.includes(".")))) return null;
+	return path;
+}
+
+function resolveSchemaIdentityPath(root: unknown, path: readonly string[]): ResolvedSchemaPathValue[] {
+	const resolved: ResolvedSchemaPathValue[] = [];
+	const visit = (value: unknown, offset: number, currentPath: readonly (string | number)[]): void => {
+		if (offset === path.length) {
+			resolved.push({ value, path: currentPath });
+			return;
+		}
+		const segment = path[offset];
+		if (segment === "*") {
+			if (!Array.isArray(value)) return;
+			for (const [index, entry] of value.entries()) visit(entry, offset + 1, [...currentPath, index]);
+			return;
+		}
+		if (!isRecord(value) || !Object.hasOwn(value, segment)) return;
+		visit(value[segment], offset + 1, [...currentPath, segment]);
+	};
+	visit(root, 0, []);
+	return resolved;
+}
+
+function renderSchemaDataPath(path: readonly (string | number)[]): string {
+	return path.reduce<string>((current, segment) => typeof segment === "number"
+		? `${current}[${String(segment)}]`
+		: current ? `${current}.${segment}` : segment, "");
+}
+
+/**
+ * Generic cross-reference contract for typed artifacts that create asset
+ * identities and also carry references. Schema metadata declares both paths;
+ * the host only rejects a reference to an identity produced by that same batch
+ * when the frozen project inventory proves it is not already materialized.
+ */
+function inspectBatchAssetReferenceConstraints(
+	root: Record<string, unknown>,
+	jsonSchema: Record<string, unknown> | undefined,
+	knownExistingAssetIds: readonly string[] = [],
+): string | null {
+	const rawRules = jsonSchema?.["x-batchAssetReferenceConstraints"];
+	if (rawRules === undefined) return null;
+	if (!Array.isArray(rawRules) || rawRules.length === 0 || rawRules.length > 32) {
+		return "jsonSchema x-batchAssetReferenceConstraints must be a non-empty array with at most 32 rules";
+	}
+	const existingAssetIds = new Set(knownExistingAssetIds);
+	for (const [ruleIndex, rawRule] of rawRules.entries()) {
+		if (!isRecord(rawRule)) return `jsonSchema x-batchAssetReferenceConstraints[${String(ruleIndex)}] must be an object`;
+		const declaredPath = parseSchemaIdentityPath(rawRule.declaredIdentityPath);
+		const referencedPath = parseSchemaIdentityPath(rawRule.referencedIdentityPath);
+		if (!declaredPath || !referencedPath) {
+			return `jsonSchema x-batchAssetReferenceConstraints[${String(ruleIndex)}] requires valid declaredIdentityPath and referencedIdentityPath`;
+		}
+		const declaredIds = new Set(resolveSchemaIdentityPath(root, declaredPath).flatMap(({ value }) =>
+			typeof value === "string" && value.trim() ? [value.trim()] : []));
+		if (declaredIds.size === 0) continue;
+		for (const reference of resolveSchemaIdentityPath(root, referencedPath)) {
+			if (typeof reference.value !== "string") continue;
+			const assetId = reference.value.trim();
+			if (!assetId || !declaredIds.has(assetId) || existingAssetIds.has(assetId)) continue;
+			return `${renderSchemaDataPath(reference.path)} references assetId ${JSON.stringify(assetId)} declared as an output of this same batch, but the frozen project inventory does not show it as an existing asset. Revise this exact binding using confirmed project asset facts and preserve unrelated valid bindings`;
+		}
+	}
+	return null;
+}
+
 export function parseWorkflowAgentJsonArrayContract(value: unknown): WorkflowAgentJsonArrayContract | null {
 	if (!isRecord(value)) return null;
 	const minimumArrayLength = value.minimumArrayLength;
@@ -1444,6 +1568,17 @@ export function parseWorkflowAgentJsonObjectContract(value: unknown): WorkflowAg
 			normalized[field] = exactValue;
 		}
 		exactStringFields = normalized;
+	}
+	let knownExistingAssetIds: readonly string[] | undefined;
+	if (value.knownExistingAssetIds !== undefined) {
+		if (!Array.isArray(value.knownExistingAssetIds)
+			|| value.knownExistingAssetIds.length === 0
+			|| value.knownExistingAssetIds.length > 2048) return null;
+		const normalized = value.knownExistingAssetIds.map((assetId) =>
+			typeof assetId === "string" ? assetId.trim() : "",
+		);
+		if (normalized.some((assetId) => !assetId)) return null;
+		knownExistingAssetIds = [...new Set(normalized)];
 	}
 	let expectedArrayLengths: Record<string, number> | undefined;
 	if (value.expectedArrayLengths !== undefined) {
@@ -1684,6 +1819,7 @@ export function parseWorkflowAgentJsonObjectContract(value: unknown): WorkflowAg
 		...(isRecord(value.jsonSchema) ? { jsonSchema: value.jsonSchema } : {}),
 		...(requiredStringFields ? { requiredStringFields } : {}),
 		...(exactStringFields ? { exactStringFields } : {}),
+		...(knownExistingAssetIds ? { knownExistingAssetIds } : {}),
 		...(requiredNumberFields ? { requiredNumberFields } : {}),
 		...(requiredObjectFields ? { requiredObjectFields } : {}),
 		...(requiredNonEmptyStringPaths ? { requiredNonEmptyStringPaths } : {}),
@@ -1859,13 +1995,22 @@ export function validateWorkflowAgentOutput(input: Readonly<{
 		let parsed = parsedValue;
 		const contract = input.jsonObjectContract;
 		if (!contract) return { ok: false, errorMessage: "Agent json_object output requires an explicit structural contract" };
+		const referenceObservations: ReferenceFactObservation[] = [];
 		if (contract.jsonSchema) {
-			const issues = validateWorkflowToolArguments(contract.jsonSchema, parsed);
+			const issues = validateWorkflowToolArguments(contract.jsonSchema, parsed, referenceObservations);
 			if (issues.length) return { ok: false, errorMessage: issues.map(issue => issue.message).join(" | ") };
 			const registryError = inspectRegisteredAssetPlans(parsed);
 			if (registryError) return { ok: false, errorMessage: registryError };
+			const batchAssetReferenceError = inspectBatchAssetReferenceConstraints(
+				parsed,
+				contract.jsonSchema,
+				contract.knownExistingAssetIds,
+			);
+			if (batchAssetReferenceError) return { ok: false, errorMessage: batchAssetReferenceError };
 		}
-		let diagnostics: readonly WorkflowAgentOutputDiagnostic[] = [];
+		let diagnostics: readonly WorkflowAgentOutputDiagnostic[] = referenceObservations.map(observation => ({
+			code: "model_authored_consistency", message: observation.message,
+		}));
 		if (
 			contract.contractName === BEAT_SHEET_ARTIFACT_CONTRACT_NAME
 			&& (
@@ -2085,13 +2230,13 @@ export function validateWorkflowAgentOutput(input: Readonly<{
 			if (contract.contractVersion !== BEAT_SHEET_ARTIFACT_CONTRACT_VERSION) {
 				return { ok: false, errorMessage: `Agent json_object output uses unsupported ${contract.contractName} version ${contract.contractVersion ?? "missing"}` };
 			}
-			const executionBlocker = inspectBeatSheetExecutionBlocker(parsed);
+			const executionBlocker = inspectBeatSheetExecutionBlocker(parsed, contract.knownExistingAssetIds);
 			if (executionBlocker) {
 				return { ok: false, errorMessage: `Agent BeatSheet artifact cannot be executed: ${executionBlocker}` };
 			}
 			const artifactMismatch = inspectBeatSheetArtifact(parsed);
 			if (artifactMismatch) {
-				diagnostics = [{
+				diagnostics = [...diagnostics, {
 					code: "model_authored_consistency",
 					message: artifactMismatch,
 				}];

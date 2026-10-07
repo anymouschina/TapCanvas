@@ -128,7 +128,7 @@ describe("CharacterIdentityBoardSpecSchema", () => {
       "utf8",
     );
 
-    expect(skillDoc).toContain("角色卡生成方法论的唯一权威");
+    expect(skillDoc).toContain("角色卡与群演选角视觉参考生成方法论的唯一权威");
     expect(skillDoc).toContain("identity_board_four_view");
     expect(skillDoc).toContain("正面脸、侧面脸、正面全身、背面全身");
     expect(skillDoc).toContain("参考图各自只负责身份、布局、内容或风格");

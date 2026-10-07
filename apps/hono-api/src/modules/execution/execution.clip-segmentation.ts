@@ -117,7 +117,7 @@ export function bindClipSegmentationAuthoringContract(
 	schema.description = [
 		"来源坐标采用原始 content 的 UTF-16 左闭右开区间，包含标题、空白及原始换行；不得按字数估计、去换行或重算文本。",
 		"冻结输入 authoritativeSources[].sourceCoordinates.lines 按原文行序列出 [startOffset,endOffset]，列名见 lineColumns；以下目录绑定每个 sourceIndex 的精确末端。行只是排版坐标，不是要求按行分 Clip，分段由作者依据完整原文决定。",
-		"sourceProfile.sourceChars/sourceSpeechChars 等是时长估计统计，绝不是原文坐标。每个来源必须按顺序完整消费到此处声明的 endOffset；下一段从上一段 endOffset 继续，不能停在末端之前或切开 forbiddenSurrogateOffsets。",
+		"sourceProfile.sourceChars/sourceQuotedChars 等是排版字符统计，不代表人声或时长，绝不是原文坐标。每个来源必须按顺序完整消费到此处声明的 endOffset；下一段从上一段 endOffset 继续，不能停在末端之前或切开 forbiddenSurrogateOffsets。",
 		JSON.stringify({ coordinateSystem: "utf16", interval: "start_inclusive_end_exclusive", sources: coordinateDirectory }),
 	].join("\n");
 	const schemaProperties = schema.properties as JsonRecord;

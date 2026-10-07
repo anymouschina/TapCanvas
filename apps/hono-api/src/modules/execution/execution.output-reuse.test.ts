@@ -1,11 +1,150 @@
 import { workflowAgentPublicTurnId, workflowAgentSessionKey } from "./execution.agent-identity";
+import { boundedReplayFixture } from "./execution.bounded-replay-fixture";
+import { scopeWorkflowFlowData } from "./execution.flow-scope";
 import { describe, expect, it, vi } from "vitest";
+import type { WorkflowNodeOutputV1, WorkflowNodeSnapshot } from "./execution.node-runtime";
+import { workflowAuthorDeliveryHash } from "./execution.author-repair";
+import { AUTHOR_SOURCE_REPRESENTATION, authorSourceJsonHash, authorSourceTextHash } from "../../../../../packages/schemas/author-source-representation/index.mjs";
+import { readWorkflowAcceptedAuthorRecovery } from "./execution.accepted-author-recovery";
+
+describe("ordinary nested recovery source admission", () => {
+	function fixture(mode: "once" | "each") {
+		const receiptOutput = (nodeId: string, executorRef: string, executionMode: "once" | "each"): WorkflowNodeOutputV1 => ({
+			protocolVersion: "1", nodeId, executorRef, executionMode, ports: {}, artifacts: [], itemRuns: [], evidence: { executorCompleted: false } });
+		const author = (id: string, executorRef: string, executionMode: "once" | "each"): WorkflowNodeSnapshot => ({
+			id, type: "taskNode", kind: "workflowStage", data: { kind: "workflowStage",
+				workflowAgentOutputEncoding: "json_object", workflowAgentFailurePolicy: "repair_with_correction",
+				workflowAtomicSpec: { version: 1, category: "agent", operation: "run", executorRef, executionMode,
+					inputPorts: ["input"], outputPorts: ["result"], inputArtifactTypes: { input: ["test/value"] }, outputArtifactTypes: { result: ["test/value"] } } } });
+		const root = author("pipeline", "workflow.pipeline.run/v1", mode);
+		root.data.workflowPipeline = { protocolVersion: "workflow.pipeline.run/v1", inputs: [{ portId: "input", mode: "value", artifactTypes: ["test/value"] }],
+			steps: [{ stepId: "write", node: author("write", "agents.logical-task/v2", "each") }],
+			bindings: [{ from: { kind: "input", portId: "input" }, to: { stepId: "write", portId: "input" }, mode: "value" }],
+			outputs: [{ portId: "result", from: { stepId: "write", portId: "result" }, mode: "value" }] };
+		const outerId = mode === "each" ? "pipeline::item::outer" : "pipeline";
+		const writeId = `${outerId}::step::write`; const leafId = `${writeId}::item::failed`;
+		const identity = { executionId: "original-paid", nodeId: leafId, physicalRetryOrdinal: null };
+		const writer: WorkflowNodeOutputV1 = { ...receiptOutput(writeId, "agents.logical-task/v2", "each"), itemRuns: [
+			{ itemId: "failed", index: 0, runtimeNodeId: leafId, status: "failed", lineage: [], ports: {}, artifacts: [], evidence: {
+				executorCompleted: false, deliveryEvidence: { sessionKey: workflowAgentSessionKey(identity), logicalTaskId: workflowAgentPublicTurnId(identity), recoveryCheckpoint: { physicalRunId: "original-paid-review", reasonCode: "unknown_submission" } } } },
+			{ itemId: "success", index: 1, runtimeNodeId: `${writeId}::item::success`, status: "success", lineage: [], ports: { result: { text: '{"valid":true}' } }, artifacts: [], evidence: { executorCompleted: true } },
+		] };
+		const state = { protocolVersion: "workflow.pipeline.state/v1", cursorStepId: "write", steps: { write: { status: "failed", outputRefs: writer } } };
+		const receipt = receiptOutput("pipeline", "workflow.pipeline.run/v1", mode);
+		if (mode === "once") receipt.evidence.pipelineState = state;
+		else receipt.itemRuns = [{ itemId: "outer", index: 0, status: "failed", runtimeNodeId: outerId, lineage: [], ports: {}, artifacts: [], evidence: { pipelineState: state } }];
+		const flow = { nodes: [root], edges: [] };
+		const leaves = (o: WorkflowNodeOutputV1) => {
+			const e = mode === "each" ? o.itemRuns[0].evidence : o.evidence;
+			return (e.pipelineState as typeof state).steps.write.outputRefs.itemRuns;
+		};
+		return { flow, receipt, leaves, identity };
+	}
+	async function prepare(f: ReturnType<typeof fixture>, sourceExecutionId: string, receipt: WorkflowNodeOutputV1) {
+		return prepareWorkflowOutputReuse({ flowData: f.flow, flowId: "flow", ownerId: "owner",
+			replay: { sourceExecutionId, startFromNodeId: "pipeline", scope: "recovery_snapshot" },
+			repository: { loadExecutionBundle: async () => ({ flowData: f.flow, nodeRuns: [{ id: "pipeline-run", nodeId: "pipeline", status: "failed", outputRefs: receipt }] }) } });
+	}
+	it.each(["once", "each"] as const)("admits %s pipeline with only a failed author step and carries exact source into its runtime item", async mode => {
+		const f = fixture(mode); const before = structuredClone(f.receipt);
+		const first = await prepare(f, "original-paid", f.receipt);
+		const checkpoint = readResolvedWorkflowReplayCheckpoints(first)[0].checkpoint.outputRefs;
+		expect(f.leaves(checkpoint)[0].evidence.agentRepairSource).toEqual({ sourceExecutionId: "original-paid",
+			sessionKey: workflowAgentSessionKey(f.identity), turnId: workflowAgentPublicTurnId(f.identity) });
+		expect(f.leaves(checkpoint)[1]).toEqual(f.leaves(f.receipt)[1]); expect(f.receipt).toEqual(before);
+		const second = await prepare(f, "recovery-member", checkpoint);
+		expect(f.leaves(readResolvedWorkflowReplayCheckpoints(second)[0].checkpoint.outputRefs)[0].evidence.agentRepairSource)
+			.toEqual(f.leaves(checkpoint)[0].evidence.agentRepairSource);
+	});
+	it.each(["replayCheckpoint", "outputReuse"] as const)("keeps legacy nested source ownership from %s before new checkpoint stamps are written", async key => {
+		const f = fixture("each"); f.receipt.evidence[key] = { sourceExecutionId: "original-paid", sourceNodeRunId: "original-run" };
+		const first = await prepare(f, "legacy-recovery-member", f.receipt);
+		const checkpoint = readResolvedWorkflowReplayCheckpoints(first)[0].checkpoint.outputRefs;
+		expect(checkpoint.evidence.replayCheckpoint).toMatchObject({ sourceExecutionId: "legacy-recovery-member" });
+		expect(f.leaves(checkpoint)[0].evidence.agentRepairSource).toMatchObject({ sourceExecutionId: "original-paid", sessionKey: workflowAgentSessionKey(f.identity) });
+		const second = await prepare(f, "next-recovery-member", checkpoint);
+		expect(f.leaves(readResolvedWorkflowReplayCheckpoints(second)[0].checkpoint.outputRefs)[0].evidence.agentRepairSource)
+			.toEqual(f.leaves(checkpoint)[0].evidence.agentRepairSource);
+	});
+	it("keeps a new explicit authorRepair independent of failed sibling paid-review sessions", async () => {
+		const f = fixture("each"); const before = structuredClone(f.receipt);
+		const prepared = await prepareWorkflowOutputReuse({ flowData: f.flow, flowId: "flow", ownerId: "owner",
+			replay: { sourceExecutionId: "original-paid", startFromNodeId: "pipeline", authorRepair: {
+				version: 1, sourceNodeRunId: "pipeline-run", sourceKind: "delivery_artifact", idempotencyKey: "explicit-new-author",
+				deliveryHash: workflowAuthorDeliveryHash('{"valid":true}'), diagnostic: "Revise the explicitly selected successful delivery.",
+				targetPath: [{ kind: "item", itemId: "outer" }, { kind: "step", stepId: "write" }, { kind: "item", itemId: "success" }] } },
+			repository: { loadExecutionBundle: async () => ({ flowData: f.flow, nodeRuns: [{ id: "pipeline-run", nodeId: "pipeline", status: "failed", outputRefs: f.receipt }] }) } });
+		const checkpoint = readResolvedWorkflowReplayCheckpoints(prepared)[0].checkpoint.outputRefs;
+		expect(f.leaves(checkpoint)).toHaveLength(1);
+		expect(f.leaves(checkpoint)[0]).toEqual(f.leaves(before)[0]);
+		expect(f.leaves(checkpoint)[0].evidence.agentRepairSource).toBeUndefined();
+		expect(f.receipt).toEqual(before);
+	});
+});
 import {
 	prepareWorkflowOutputReuse,
 	readResolvedWorkflowOutputReuses,
 	readResolvedWorkflowReplayCheckpoints,
 	type WorkflowOutputReuseRepository,
 } from "./execution.output-reuse";
+
+describe("bounded author receipt feeding a newly added consumer", () => {
+	it("reuses four successful ancestors while retaining project/assets/writer/collect/materialize and excluding image generation", async () => {
+		const fixture = boundedReplayFixture();
+		const scoped = scopeWorkflowFlowData(fixture.live, "trigger", "pipeline::step::clip-production-nodes-materialize", "project");
+		const result = await prepareWorkflowOutputReuse({ flowData: scoped, flowId: "flow", ownerId: "owner", replay: { sourceExecutionId: "author-only", startFromNodeId: "project", requireSuccessfulAncestors: true }, repository: fixture.repository });
+		expect(readResolvedWorkflowOutputReuses(result).map(item => item.reuse.sourceNodeRunId).sort()).toEqual(["receipt-author", "receipt-contract", "receipt-source", "receipt-trigger"]);
+		const pipeline = (result.nodes as Array<{ id: string; data: { workflowPipeline?: { steps: Array<{ stepId: string }> } } }>).find(n => n.id === "pipeline");
+		expect(pipeline?.data.workflowPipeline?.steps.map(step => step.stepId)).toEqual(["clip-production-agent", "clip-production-collect", "clip-production-nodes-materialize"]);
+		expect(fixture.source.nodes).toHaveLength(4);
+	});
+	it("reuses unchanged successful ancestors across whole-DAG publication stamps when downstream authoring changed", async () => {
+		const fixture = boundedReplayFixture();
+		fixture.source.nodes = structuredClone(fixture.source.nodes);
+		for (const node of fixture.source.nodes) Object.assign(node.data, {
+			workflowCanvasDefinitionVersion: 124,
+			workflowCanvasDefinitionFingerprint: "sha256:fde3346abca9f02222718eb59b62b0020bacb2c646c1ba59f7bbaae66a7b24f3",
+		});
+		for (const node of fixture.live.nodes) Object.assign(node.data, {
+			workflowCanvasDefinitionVersion: 125,
+			workflowCanvasDefinitionFingerprint: "sha256:ebbc1951b9034d0226701cca308a0a66d4778e70d933a8fa8505f05428a45a3a",
+		});
+		fixture.live.nodes.find(node => node.id === "assets")!.data.workflowInstruction = "A newly authored downstream contract";
+		const sourceBefore = structuredClone(fixture.source);
+		const scoped = scopeWorkflowFlowData(fixture.live, "trigger", "pipeline::step::clip-production-nodes-materialize", "project");
+		const result = await prepareWorkflowOutputReuse({ flowData: scoped, flowId: "flow", ownerId: "owner",
+			replay: { sourceExecutionId: "author-only", startFromNodeId: "project", requireSuccessfulAncestors: true }, repository: fixture.repository });
+		expect(readResolvedWorkflowOutputReuses(result).map(item => item.nodeId).sort()).toEqual(["author", "contract", "source", "trigger"]);
+		expect(fixture.source).toEqual(sourceBefore);
+		const nodes = result.nodes as Array<{ id: string; data: Record<string, unknown> }>;
+		expect(nodes.find(node => node.id === "trigger")!.data.workflowCanvasDefinitionVersion).toBe(125);
+		expect(nodes.find(node => node.id === "assets")!.data.workflowInstruction).toBe("A newly authored downstream contract");
+	});
+	it.each(["prompt", "model", "executor", "schema", "binding"] as const)("still rejects a changed successful ancestor %s across publication stamps", async (change) => {
+		const fixture = boundedReplayFixture();
+		fixture.source.nodes = structuredClone(fixture.source.nodes);
+		for (const node of fixture.source.nodes) Object.assign(node.data, { workflowCanvasDefinitionVersion: 124, workflowCanvasDefinitionFingerprint: "old-publication" });
+		for (const node of fixture.live.nodes) Object.assign(node.data, { workflowCanvasDefinitionVersion: 125, workflowCanvasDefinitionFingerprint: "new-publication" });
+		const author = fixture.live.nodes.find(node => node.id === "author")!.data;
+		if (change === "prompt") author.workflowInstruction = "Changed upstream authoring instruction";
+		if (change === "model") author.workflowAgentModelKey = "changed-model";
+		if (change === "executor") author.workflowAtomicSpec = { ...(author.workflowAtomicSpec as Record<string, unknown>), executorRef: "changed-executor/v1" };
+		if (change === "schema") author.workflowAgentJsonObjectContract = { ...(author.workflowAgentJsonObjectContract as Record<string, unknown>), jsonSchema: { type: "object", required: ["different"] } };
+		if (change === "binding") fixture.live.edges.find(edge => edge.target === "author")!.sourceHandle = "out-workflow:different";
+		const scoped = scopeWorkflowFlowData(fixture.live, "trigger", "pipeline::step::clip-production-nodes-materialize", "project");
+		await expect(prepareWorkflowOutputReuse({ flowData: scoped, flowId: "flow", ownerId: "owner",
+			replay: { sourceExecutionId: "author-only", startFromNodeId: "project", requireSuccessfulAncestors: true }, repository: fixture.repository })).rejects.toThrow(change === "binding" ? "upstream connections changed" : "changed since the source execution");
+	});
+
+	it("rejects new consumer bindings to an undeclared target or missing durable source port", async () => {
+		for (const missing of ["target", "durable"]) {
+			const fixture = boundedReplayFixture();
+			if (missing === "target") fixture.live.edges.find(e => e.target === "project")!.targetHandle = "in-workflow:undeclared";
+			else fixture.nodeRuns.find(r => r.nodeId === "author")!.outputRefs.ports = {};
+			await expect(prepareWorkflowOutputReuse({ flowData: fixture.live, flowId: "flow", ownerId: "owner", replay: { sourceExecutionId: "author-only", startFromNodeId: "project", requireSuccessfulAncestors: true }, repository: fixture.repository })).rejects.toThrow("new_consumer_binding_invalid");
+		}
+	});
+});
 
 function node(
 	id: string,
@@ -44,7 +183,7 @@ function edge(source: string, sourcePort: string, target: string, targetPort: st
 	};
 }
 
-function output(nodeId: string, executorRef: string, port: string, value: unknown): Record<string, unknown> {
+function output(nodeId: string, executorRef: string, port: string, value: unknown): WorkflowNodeOutputV1 {
 	return {
 		protocolVersion: "1",
 		executorRef,
@@ -70,6 +209,46 @@ function graph(extraPlannerData: Readonly<Record<string, unknown>> = {}): Record
 			edge("source", "text", "planner", "text"),
 			edge("planner", "result", "output", "result"),
 		],
+	};
+}
+
+function pipelineBoundaryGraph(inputPorts: readonly string[], includeAuthorizationEdge: boolean): Record<string, unknown> {
+	const pipeline = node("pipeline", "workflow.pipeline.run/v1", inputPorts, ["result"], {
+		kind: "workflowStage",
+		workflowInputPorts: [...inputPorts],
+		workflowOutputPorts: ["result"],
+	});
+	return {
+		nodes: [
+			node("trigger", "workflow.trigger/v1", [], ["trigger"]),
+			node("segments", "workflow.input.text/v1", ["trigger"], ["text"], { workflowTextInput: "segments" }),
+			node("contract", "workflow.input.text/v1", ["trigger"], ["text"], { workflowTextInput: "contract" }),
+			node("authorization", "workflow.input.text/v1", ["trigger"], ["text"], { workflowTextInput: "authorization" }),
+			pipeline,
+			node("output", "workflow.output/v1", ["result"], ["result"]),
+		],
+		edges: [
+			edge("trigger", "trigger", "segments", "trigger"),
+			edge("trigger", "trigger", "contract", "trigger"),
+			edge("trigger", "trigger", "authorization", "trigger"),
+			edge("segments", "text", "pipeline", "segments"),
+			edge("contract", "text", "pipeline", "contract"),
+			...(includeAuthorizationEdge ? [edge("authorization", "text", "pipeline", "authorization")] : []),
+			edge("pipeline", "result", "output", "result"),
+		],
+	};
+}
+
+function pipelineReplayRepository(sourceFlowData: Record<string, unknown>): WorkflowOutputReuseRepository {
+	return {
+		loadExecutionBundle: vi.fn(async () => ({
+			flowData: sourceFlowData,
+			nodeRuns: [
+				{ id: "run-trigger", nodeId: "trigger", status: "success", outputRefs: output("trigger", "workflow.trigger/v1", "trigger", {}) },
+				{ id: "run-segments", nodeId: "segments", status: "success", outputRefs: output("segments", "workflow.input.text/v1", "text", "segments") },
+				{ id: "run-contract", nodeId: "contract", status: "success", outputRefs: output("contract", "workflow.input.text/v1", "text", "contract") },
+			],
+		})),
 	};
 }
 
@@ -272,6 +451,40 @@ describe("workflow durable output reuse", () => {
 		const reuses = readResolvedWorkflowOutputReuses(prepared);
 		expect(reuses.map(({ nodeId }) => nodeId)).toEqual(["trigger", "source"]);
 		expect(reuses.every(({ reuse }) => reuse.kind === "replay")).toBe(true);
+	});
+
+	it("projects removed declared inputs at a replay boundary while reusing unchanged ancestors", async () => {
+		const sourceGraph = pipelineBoundaryGraph(["segments", "contract", "authorization"], true);
+		const currentGraph = pipelineBoundaryGraph(["segments", "contract"], false);
+		const prepared = await prepareWorkflowOutputReuse({
+			flowData: currentGraph,
+			flowId: "flow-1",
+			ownerId: "admin-1",
+			replay: { sourceExecutionId: "execution-source", startFromNodeId: "pipeline" },
+			repository: pipelineReplayRepository(sourceGraph),
+		});
+
+		expect(readResolvedWorkflowOutputReuses(prepared).map(({ nodeId }) => nodeId)).toEqual([
+			"trigger",
+			"segments",
+			"contract",
+		]);
+	});
+
+	it("still rejects changed connections to retained replay-boundary inputs", async () => {
+		const sourceGraph = pipelineBoundaryGraph(["segments", "contract", "authorization"], true);
+		const currentGraph = pipelineBoundaryGraph(["segments", "contract"], false);
+		const currentEdges = currentGraph.edges as Array<Record<string, unknown>>;
+		const retainedEdge = currentEdges.find((candidate) => candidate.id === "contract:pipeline");
+		if (!retainedEdge) throw new Error("retained contract edge missing");
+		retainedEdge.source = "segments";
+		await expect(prepareWorkflowOutputReuse({
+			flowData: currentGraph,
+			flowId: "flow-1",
+			ownerId: "admin-1",
+			replay: { sourceExecutionId: "execution-source", startFromNodeId: "pipeline" },
+			repository: pipelineReplayRepository(sourceGraph),
+		})).rejects.toThrow(/upstream connections changed/u);
 	});
 
 	it("treats skipped ancestors as a rerun frontier instead of a reusable-output protocol error", async () => {
@@ -507,6 +720,43 @@ describe("workflow durable output reuse", () => {
 		});
 	});
 
+	it("preserves successful inline pipeline stages when a later stage fails", async () => {
+		const sourceGraph = graph();
+		const planner = (sourceGraph.nodes as Array<Record<string, unknown>>).find((candidate) => candidate.id === "planner")!;
+		(planner.data as Record<string, unknown>).workflowAtomicSpec = {
+			version: 1, category: "control", operation: "planner", executorRef: "workflow.pipeline.run/v1",
+			executionMode: "once", inputPorts: ["text"], outputPorts: ["result"],
+		};
+		const failedPipeline = {
+			...output("planner", "workflow.pipeline.run/v1", "result", null),
+			ports: {},
+			evidence: { executorCompleted: false, pipelineState: {
+				protocolVersion: "workflow.pipeline.state/v1", cursorStepId: "materialize", updatedAt: new Date().toISOString(),
+				steps: {
+					author: { status: "success", outputRefs: output("planner::author", "agents.logical-task/v2", "result", ["clip-1"]) },
+					materialize: { status: "failed", errorCode: "workflow_node_runtime_failed" },
+				},
+			} },
+		};
+		const repository: WorkflowOutputReuseRepository = { loadExecutionBundle: vi.fn(async () => ({
+			flowData: sourceGraph,
+			nodeRuns: [
+				{ id: "run-trigger", nodeId: "trigger", status: "success", outputRefs: output("trigger", "workflow.trigger/v1", "trigger", {}) },
+				{ id: "run-source", nodeId: "source", status: "success", outputRefs: output("source", "workflow.input.text/v1", "text", "真实正文") },
+				{ id: "run-planner", nodeId: "planner", status: "failed", outputRefs: failedPipeline },
+			],
+		})) };
+		const prepared = await prepareWorkflowOutputReuse({
+			flowData: sourceGraph, flowId: "flow-1", ownerId: "admin-1",
+			replay: { sourceExecutionId: "execution-source", startFromNodeId: "planner" }, repository,
+		});
+		expect(readResolvedWorkflowReplayCheckpoints(prepared)).toMatchObject([{
+			nodeId: "planner", checkpoint: { outputRefs: {
+				ports: {}, evidence: { executorCompleted: false, pipelineState: { steps: { author: { status: "success" } } } },
+			} },
+		}]);
+	});
+
 	it("replays only an authorized failed item even when its collection was marked successful", async () => {
 		const sourceGraph = mediaGraph();
 		const media = failedCollectionMediaOutput();
@@ -520,6 +770,7 @@ describe("workflow durable output reuse", () => {
 		const prepared = await prepareWorkflowOutputReuse({
 			flowData: { ...mediaGraph(), workflowMediaRetrySourceExecutionId: "source-execution", workflowMediaRetries: [{
 				nodeId: "planner", itemId: "asset-02", taskId: "task-02", canvasNodeId: "canvas-02", retryKey: "authorized-key",
+				executorRef: "tapcanvas.image.generate/v1", executionMode: "each",
 			}] }, flowId: "flow-1", ownerId: "owner-1", repository,
 			replay: { sourceExecutionId: "source-execution", startFromNodeId: "planner", scope: "recovery_snapshot", invalidatedNodeIds: ["planner"] },
 		});
@@ -805,6 +1056,36 @@ it.each([false, true])("reuses a once-Agent draft only under the same frozen con
 });
 
 
+it.each([false, true])("retains a historical accepted author candidate only under its unchanged frozen recovery graph (changed=%s)", async (changed) => {
+ const sourceFlowData = graph({ workflowAgentOutputEncoding: "json_object" });
+ const flowData = changed ? graph({ workflowInstruction: "new task", workflowAgentOutputEncoding: "json_object" }) : sourceFlowData;
+ const identity = { executionId: "execution-source", nodeId: "planner", physicalRetryOrdinal: null };
+ const taskId = workflowAgentPublicTurnId(identity), turnId = "harness-turn";
+ const candidate = '{"scene":{"cast":[]}}', candidateHash = authorSourceTextHash(candidate);
+ const contract = { kind: "json", jsonSchema: { type: "object" } }, contractHash = authorSourceJsonHash(contract);
+ const accepted = { version: 1, representation: AUTHOR_SOURCE_REPRESENTATION,
+  identity: { taskId, sessionId: workflowAgentSessionKey(identity), turnId }, candidate, candidateHash,
+  authorContract: { ref: `${turnId}#/acceptedAuthorSource/authorContract/value`, value: contract, hash: contractHash },
+  acceptance: { kind: "harness_accepted_candidate", receiptRef: turnId, candidateHash, authorContractHash: contractHash },
+  sourceContext: { value: "frozen original input", hash: authorSourceTextHash("frozen original input") } };
+ const saved = { ...output("planner", "agents.logical-task/v2", "result", { text: candidate, acceptedAuthorSource: accepted }),
+  evidence: { taskId, executorCompleted: false, outputContractFailure: { code: "structured_output_invalid", message: "layout rejected" } } };
+ const before = structuredClone(saved);
+ const prepared = await prepareWorkflowOutputReuse({ flowData, flowId: "flow-1", ownerId: "admin-1",
+  replay: { sourceExecutionId: "execution-source", startFromNodeId: "planner", scope: "recovery_snapshot", invalidatedNodeIds: ["planner"] },
+  repository: { loadExecutionBundle: async () => ({ flowData: sourceFlowData, nodeRuns: [{ id: "original-run", nodeId: "planner", status: "failed", outputRefs: saved }] }) },
+ });
+ const checkpoints = readResolvedWorkflowReplayCheckpoints(prepared);
+ expect(checkpoints).toHaveLength(changed ? 0 : 1);
+ if (!changed) {
+  const receipt = checkpoints[0].checkpoint.outputRefs;
+  expect(readWorkflowAcceptedAuthorRecovery(receipt.evidence)).toMatchObject({ sourceExecutionId: "execution-source", sourceNodeRunId: "original-run", acceptedAuthorSource: accepted });
+  expect(receipt.ports).toEqual(saved.ports); expect(receipt.evidence.executorCompleted).toBe(false);
+ }
+ expect(readResolvedWorkflowOutputReuses(prepared)).toEqual([]);
+ expect(saved).toEqual(before);
+});
+
 it.each([false, true])("hands off an inactive once-Agent checkpoint without host-submitted output (changed=%s)", async (changed) => {
  const sourceFlowData = graph({ workflowAgentOutputEncoding: "json_object" });
  const flowData = changed ? graph({ workflowInstruction: "changed", workflowAgentOutputEncoding: "json_object" }) : sourceFlowData;
@@ -823,7 +1104,71 @@ it.each([false, true])("hands off an inactive once-Agent checkpoint without host
  const checkpoints = readResolvedWorkflowReplayCheckpoints(prepared);
  expect(checkpoints).toHaveLength(changed ? 0 : 1);
  if (!changed) {
-  expect(checkpoints[0].checkpoint.outputRefs.evidence.agentRepairSource).toEqual(source);
+  expect(checkpoints[0].checkpoint.outputRefs.evidence.agentRepairSource).toEqual({ ...source, sourceExecutionId: "execution-source" });
   expect(checkpoints[0].checkpoint.outputRefs.ports).toEqual({});
  }
+});
+
+it("projects nested media adoption into its owner pipeline checkpoint without losing sibling receipts", async () => {
+	const scopeId = "pipeline::item::clip%3A0";
+	const nestedNodeId = `${scopeId}::step::generate`;
+	const sharedItemId = "effect:shared";
+	const adoption = { nodeId: nestedNodeId, itemId: sharedItemId, assetId: "verified-image" };
+	const mediaOutput = {
+		protocolVersion: "1", executorRef: "tapcanvas.image.generate/v1", nodeId: nestedNodeId,
+		executionMode: "each", ports: {}, artifacts: [], evidence: { executorCompleted: true },
+		itemRuns: [
+			{ itemId: sharedItemId, index: 0, status: "success", runtimeNodeId: `${nestedNodeId}::item::${encodeURIComponent(sharedItemId)}`,
+				lineage: [], ports: {}, artifacts: [{ type: "tapcanvas.image/v1", identity: "old-image", value: "https://assets.example/old.png" }], evidence: { taskId: "paid-old-image" } },
+			{ itemId: "effect:other", index: 1, status: "success", runtimeNodeId: `${nestedNodeId}::item::effect%3Aother`,
+				lineage: [], ports: {}, artifacts: [{ type: "tapcanvas.image/v1", identity: "sibling-image", value: "https://assets.example/sibling.png" }], evidence: { taskId: "paid-sibling-image" } },
+		],
+	};
+	const pipelineNode = {
+		id: "pipeline", type: "taskNode", data: {
+			kind: "workflowStage",
+			workflowAtomicSpec: { version: 1, category: "control", operation: "pipeline", executorRef: "workflow.pipeline.run/v1",
+				executionMode: "each", inputPorts: ["assets"], outputPorts: ["images"] },
+			workflowPipeline: {
+				protocolVersion: "workflow.pipeline.run/v1",
+				inputs: [{ portId: "assets", mode: "collection", artifactTypes: [] }],
+				bindings: [{ from: { kind: "input", portId: "assets" }, to: { stepId: "generate", portId: "assets" }, mode: "collection" }],
+				outputs: [{ portId: "images", from: { stepId: "generate", portId: "images" }, mode: "collection" }],
+				steps: [{ stepId: "generate", node: { id: "generate", type: "taskNode", kind: "workflowStage", data: {
+					workflowAtomicSpec: { version: 1, category: "media", operation: "generate", executorRef: "tapcanvas.image.generate/v1",
+						executionMode: "each", inputPorts: ["assets"], outputPorts: ["images"] },
+				} } }],
+			},
+		},
+	};
+	const sourceGraph = { nodes: [pipelineNode], edges: [] };
+	const ownerOutput = {
+		protocolVersion: "1", executorRef: "workflow.pipeline.run/v1", nodeId: "pipeline", executionMode: "each",
+		ports: {}, artifacts: [], evidence: { executorCompleted: true },
+		itemRuns: [{ itemId: "clip:0", index: 0, status: "success", runtimeNodeId: scopeId, lineage: [], ports: {}, artifacts: [],
+			evidence: { pipelineState: { protocolVersion: "workflow.pipeline.state/v1", cursorStepId: null,
+				steps: { generate: { status: "success", outputRefs: mediaOutput } }, updatedAt: "2026-09-29T00:00:00.000Z" } } }],
+	};
+	const flowData = { ...sourceGraph, workflowMediaAdoptions: [adoption],
+		workflowMediaAdoptionSourceExecutionId: "execution-source" };
+	const prepared = await prepareWorkflowOutputReuse({
+		flowData,
+		flowId: "flow-1",
+		ownerId: "admin-1",
+		replay: { sourceExecutionId: "execution-source", startFromNodeId: "pipeline", invalidatedNodeIds: ["pipeline"], scope: "recovery_snapshot" },
+		repository: { loadExecutionBundle: async () => ({ flowData: sourceGraph,
+			nodeRuns: [{ id: "run-pipeline", nodeId: "pipeline", status: "success", outputRefs: ownerOutput }] }) },
+	});
+
+	const checkpoint = readResolvedWorkflowReplayCheckpoints(prepared).find((item) => item.nodeId === "pipeline")?.checkpoint.outputRefs;
+	expect(checkpoint?.itemRuns[0]?.status).toBe("success");
+	const state = checkpoint?.itemRuns[0]?.evidence.pipelineState as Record<string, unknown>;
+	const steps = state.steps as Record<string, Record<string, unknown>>;
+	expect(steps.generate?.status).toBe("failed");
+	const savedMedia = steps.generate?.outputRefs as WorkflowNodeOutputV1;
+	expect(savedMedia.itemRuns.map((item) => item.itemId)).toEqual(["effect:other"]);
+	expect(savedMedia.itemRuns[0]?.evidence.taskId).toBe("paid-sibling-image");
+	expect(savedMedia.evidence.mediaAdoptionCheckpoint).toMatchObject({
+		protocolVersion: "workflow.media-adoption-checkpoint/v1", adoptedItemIds: [sharedItemId],
+	});
 });

@@ -1,7 +1,8 @@
+import { flattenWorkflowNodeTree } from "./execution.node-tree";
 import {
 	findWorkflowNode,
 } from "./execution.node-runtime";
-import { resolveWorkflowExecutorPortArtifactContract } from "@tapcanvas/workflow-kernel-protocol";
+import { WORKFLOW_CONCURRENCY_MAX, resolveWorkflowExecutorPortArtifactContract } from "@tapcanvas/workflow-kernel-protocol";
 import { resolveCoreWorkflowExecutorPortContract } from "./execution.core-semantics";
 import { readWorkflowNodeExecutionSemantics } from "./execution.semantics-snapshot";
 
@@ -62,9 +63,11 @@ function declaredPorts(node: { data?: unknown }, direction: "input" | "output"):
 	const spec = isRecord(data.workflowAtomicSpec) ? data.workflowAtomicSpec : null;
 	const value = spec?.[direction === "input" ? "inputPorts" : "outputPorts"]
 		?? data[direction === "input" ? "workflowInputPorts" : "workflowOutputPorts"];
-	return Array.isArray(value)
+	const declared = Array.isArray(value)
 		? value.flatMap((port) => typeof port === "string" && port.trim() ? [port.trim()] : [])
 		: [];
+	if (direction !== "input") return declared;
+	return [...new Set([...declared, ...optionalInputPorts(node)])];
 }
 
 function declaredArtifactTypes(
@@ -113,7 +116,9 @@ function assertExecutorArtifactPortContract(
 	node: { data?: unknown },
 	executorReference: string,
 ): void {
-	const expected = resolveWorkflowExecutorPortArtifactContract(executorReference);
+	const nodeData = node.data && typeof node.data === "object" && !Array.isArray(node.data)
+		? node.data as Record<string, unknown> : {};
+	const expected = resolveWorkflowExecutorPortArtifactContract(executorReference, { workflowPipeline: nodeData.workflowPipeline });
 	if (!expected) return;
 	const declaredInputs = new Set(declaredPorts(node, "input"));
 	const declaredOutputs = new Set(declaredPorts(node, "output"));
@@ -201,7 +206,29 @@ export function resolveWorkflowNodeRetryPolicy(
 
 export function compileWorkflowGraph(input: ReactFlowLike): CompiledWorkflowGraph {
 	const nodes = Array.isArray(input.nodes) ? input.nodes : [];
+	for (const node of flattenWorkflowNodeTree(nodes)) {
+		const nodeId = typeof node.id === "string" ? node.id : "";
+		const ref = executorRef(node);
+		const inputs = declaredPorts(node, "input");
+		const contract = resolveCoreWorkflowExecutorPortContract(ref ?? "");
+		const missing = contract?.requiredInputPorts.find(port => !inputs.includes(port));
+		if (missing) throw new Error(`Workflow graph node ${nodeId} omits executor-required input port ${missing}`);
+		assertExecutorArtifactPortContract(nodeId, node, ref ?? "");
+	}
+	return compileFrozenWorkflowGraph(input);
+}
+
+/** Rebuild an already admitted immutable graph from its own port contracts.
+ * Current registry contracts apply at admission, not retroactively to settled work.
+ * Handles, artifact compatibility, required edges and graph identities remain checked.
+ */
+export function compileFrozenWorkflowGraph(input: ReactFlowLike): CompiledWorkflowGraph {
+	const nodes = Array.isArray(input.nodes) ? input.nodes : [];
 	const edges = Array.isArray(input.edges) ? input.edges : [];
+	for (const node of flattenWorkflowNodeTree(nodes)) {
+		declaredArtifactTypes(node, "input");
+		declaredArtifactTypes(node, "output");
+	}
 	const nodeIds = nodes
 		.map((node) => typeof node.id === "string" ? node.id.trim() : "")
 		.filter((nodeId) => nodeId.length > 0);
@@ -229,14 +256,6 @@ export function compileWorkflowGraph(input: ReactFlowLike): CompiledWorkflowGrap
 		const declaredOutputs = node ? declaredPorts(node, "output") : [];
 		const declaredInputs = node ? declaredPorts(node, "input") : [];
 		requiredInputPorts[nodeId] = declaredInputs.filter((port) => !node || !optionalInputPorts(node).includes(port));
-		const portContract = node ? resolveCoreWorkflowExecutorPortContract(executorRef(node) ?? "") : null;
-		const missingContractPort = portContract?.requiredInputPorts.find((port) => !declaredInputs.includes(port));
-		if (missingContractPort) {
-			throw new Error(
-				`Workflow graph node ${nodeId} omits executor-required input port ${missingContractPort}`,
-			);
-		}
-		if (node) assertExecutorArtifactPortContract(nodeId, node, executorRef(node) ?? "");
 		const invalidSelectivePort = declaredSelectivePorts.find((port) => !declaredOutputs.includes(port));
 		if (invalidSelectivePort) {
 			throw new Error(`Workflow graph node ${nodeId} declares unknown selective output port ${invalidSelectivePort}`);
@@ -389,7 +408,7 @@ export function rebuildWorkflowExecutionGraph(input: Readonly<{
 	latestEventSeq: number;
 	nodeRuns: readonly WorkflowNodeRunStatusSnapshot[];
 }>): WorkflowExecutionGraphState {
-	const compiled = compileWorkflowGraph(input.flowData);
+	const compiled = compileFrozenWorkflowGraph(input.flowData);
 	if (workflowGraphHasCycle(compiled)) {
 		throw new Error("Cycle detected in workflow graph");
 	}
@@ -397,7 +416,7 @@ export function rebuildWorkflowExecutionGraph(input: Readonly<{
 	const indeg = { ...compiled.indeg };
 	const graph: WorkflowExecutionGraphState = {
 		status: input.executionStatus,
-		concurrency: Math.max(1, Math.min(8, Math.floor(input.concurrency || 1))),
+		concurrency: Math.max(1, Math.min(WORKFLOW_CONCURRENCY_MAX, Math.floor(input.concurrency || 1))),
 		// queued means a dispatch intent already exists; reserve its concurrency slot
 		// until the attempt-fenced worker claims or reconciles that exact job.
 		running: input.nodeRuns.filter((run) => run.status === "queued" || run.status === "running").length,

@@ -1,49 +1,84 @@
 import type { Connection, Node } from '@xyflow/react'
-import { useRFStore } from './store'
-import { getNodeAbsPosition } from './utils/nodeBounds'
-import { isCurrentUserAdmin } from '../auth/isAdmin'
-import { workflowPortHandleId } from './workflowCanvasPorts'
-import { WORKFLOW_ICON_NODE_SIZE } from './workflowNodeDimensions'
-import type { VideoWorkflowExecutionScope } from './videoWorkflowExecution'
+import {
+  VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
+  VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
+  VIDEO_PRODUCTION_WORKFLOW_DEFINITION,
+  VIDEO_PRODUCTION_WORKFLOW_KEY,
+} from '@tapcanvas/video-orchestrator-protocol'
 import {
   ADMIN_WORKFLOW_PERMISSION,
   createManualWorkflowTriggerSpec,
 } from '@tapcanvas/workflow-kernel-protocol'
 import {
-  VIDEO_PRODUCTION_WORKFLOW_DEFINITION,
-  VIDEO_PRODUCTION_WORKFLOW_KEY,
-} from '@tapcanvas/video-orchestrator-protocol'
-import {
+  assertWorkflowDefinitionTopology,
+  atomicSpec,
   COLUMN_COUNT,
   COLUMN_GAP,
   NODE_HEIGHT,
   NODE_WIDTH,
   ROW_GAP,
-  VIDEO_ATOMIC_CANVAS_DEFINITION_FINGERPRINT,
-  VIDEO_ATOMIC_CANVAS_DEFINITION_VERSION,
-  VIDEO_WORKFLOW_CAPABILITY_DESCRIPTION,
-  VIDEO_WORKFLOW_EXECUTION_CONCURRENCY,
-  assertWorkflowDefinitionTopology,
-  atomicSpec,
-  createIdentity,
-  isSourceGroup,
-  nodeData,
-  readWorkflowExecutionVariant,
-  selectedSourceGroup,
+  SOURCE_GAP,
   stageNodeId,
+  VIDEO_V119_WORKFLOW_CAPABILITY_DESCRIPTION,
+  VIDEO_WORKFLOW_EXECUTION_CONCURRENCY,
   videoNodeRuntimeData,
   workflowDefinitions,
   workflowEdges,
-} from './videoWorkflowDefinition'
-import type {
-  VideoAtomicEdgeDefinition,
-  VideoWorkflowCanvasTemplateResult,
-  VideoWorkflowExecutionVariant,
-} from './videoWorkflowDefinition'
+  WORKFLOW_ICON_NODE_SIZE,
+  type VideoAtomicEdgeDefinition,
+  type VideoWorkflowCanvasTemplateResult,
+  type VideoWorkflowExecutionScope,
+  type VideoWorkflowExecutionVariant,
+} from '../../../../packages/schemas/video-workflow-canvas-template'
+import { useRFStore } from './store'
+import { getNodeAbsPosition } from './utils/nodeBounds'
+import { isCurrentUserAdmin } from '../auth/isAdmin'
+import { workflowPortHandleId } from './workflowCanvasPorts'
 
-export * from './videoWorkflowDefinition'
+// The executable template is pure data shared with Hono (which upgrades stale
+// equipped workflows from it). This module only adds the browser canvas side.
+export * from '../../../../packages/schemas/video-workflow-canvas-template'
 
-const SOURCE_GAP = 160
+function readWorkflowExecutionVariant(value: unknown): VideoWorkflowExecutionVariant {
+  return value === 'first_video' ? 'first_video' : 'full_video'
+}
+
+function createIdentity(prefix: string): string {
+  if (typeof globalThis.crypto?.randomUUID !== 'function') {
+    throw new Error('当前浏览器不支持安全 UUID，无法创建可追踪的工作流实例')
+  }
+  return `${prefix}-${globalThis.crypto.randomUUID()}`
+}
+
+function nodeData(node: Node): Record<string, unknown> {
+  return node.data && typeof node.data === 'object' ? node.data as Record<string, unknown> : {}
+}
+
+function isSourceGroup(node: Node): boolean {
+  const data = nodeData(node)
+  return node.type === 'groupNode' && data.adminWorkflow !== true
+}
+
+export function listWorkflowSourceGroups(nodes: readonly Node[]): readonly Readonly<{ value: string; label: string }>[] {
+  return nodes.filter(isSourceGroup).map((node) => {
+    const data = nodeData(node)
+    const label = typeof data.label === 'string' && data.label.trim() ? data.label.trim() : node.id
+    return { value: node.id, label }
+  })
+}
+
+function selectedSourceGroup(nodes: readonly Node[]): Node | null {
+  const selected = nodes.filter((node) => node.selected)
+  const directGroups = selected.filter(isSourceGroup)
+  if (directGroups.length === 1) return directGroups[0]
+  if (directGroups.length > 1) return null
+  const parentIds = new Set(selected
+    .map((node) => typeof node.parentId === 'string' ? node.parentId.trim() : '')
+    .filter(Boolean))
+  if (parentIds.size !== 1) return null
+  const [parentId] = Array.from(parentIds)
+  return nodes.find((node) => node.id === parentId && isSourceGroup(node)) ?? null
+}
 
 function sourceBounds(node: Node, nodes: readonly Node[]): { x: number; y: number; width: number } {
   const style = node.style ?? {}
@@ -197,7 +232,7 @@ export function createVideoWorkflowCanvasTemplate(input: Readonly<{
     sourceBindingStatus: sourceGroup ? 'bound' : 'unbound',
     workflowTriggerSpec: createManualWorkflowTriggerSpec(),
     workflowExecutionConcurrency: VIDEO_WORKFLOW_EXECUTION_CONCURRENCY,
-    workflowCapabilityDescription: VIDEO_WORKFLOW_CAPABILITY_DESCRIPTION,
+    workflowCapabilityDescription: VIDEO_V119_WORKFLOW_CAPABILITY_DESCRIPTION,
     workflowOutputPorts: ['trigger'],
     workflowPermission: ADMIN_WORKFLOW_PERMISSION,
     adminWorkflow: true,

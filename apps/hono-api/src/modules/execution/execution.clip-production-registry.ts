@@ -1,6 +1,6 @@
-import type { ClipProductionPacket } from "../../../../../packages/schemas/clip-production-packet/index.mjs";
+import { isClipProductionStagingPlan, type ClipProductionPacket } from "../../../../../packages/schemas/clip-production-packet/index.mjs";
 
-type RegistryObject = Readonly<{
+export type RegistryObject = Readonly<{
 	objectId: string;
 	kind: string;
 	name: string;
@@ -74,10 +74,24 @@ export function chapterBackgroundPlanIds(value: unknown): readonly string[] {
 	return [...ids];
 }
 
+/** Display names of the frozen background plans, keyed by their stable objectId. */
+export function chapterBackgroundPlanNames(value: unknown): ReadonlyMap<string, string> {
+	const assets = frozenChapterAssets(value);
+	const names = new Map<string, string>();
+	for (const id of chapterBackgroundPlanIds(value)) {
+		const background = (assets.backgroundPlans as unknown[]).find((item) => record(item) && item.objectId === id);
+		const plan = record(background) && record(background.plan) ? background.plan : null;
+		names.set(id, plan && typeof plan.displayName === "string" ? plan.displayName : "");
+	}
+	return names;
+}
+
 /** Checks frozen references only; creative prose and quality remain Agent-owned. */
 export function verifyClipAssetsAgainstChapterRegistry(packet: ClipProductionPacket, registryValue: unknown): void {
 	const registry = chapterAssetRegistry(registryValue);
-	if (!chapterBackgroundPlanIds(registryValue).includes(packet.blockingPlan.backgroundObjectId)) {
+	// Staging bound from the chapter ledger names no background plan; an authored plan must resolve one.
+	if (packet.blockingPlan && !isClipProductionStagingPlan(packet.blockingPlan)
+		&& !chapterBackgroundPlanIds(registryValue).includes(packet.blockingPlan.backgroundObjectId)) {
 		throw new Error(`Clip ${packet.clipId} blockingPlan.backgroundObjectId must resolve one frozen background plan`);
 	}
 	for (const [index, intent] of packet.assetIntents.entries()) {

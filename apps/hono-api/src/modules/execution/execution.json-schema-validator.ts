@@ -1,10 +1,20 @@
 import { inspectFieldRelations, FIELD_RELATIONS_KEYWORD } from "../../../../../packages/schemas/json-schema-relations/index.mjs";
 import { inspectIndexReferences, INDEX_REFERENCES_KEYWORD } from "../../../../../packages/schemas/json-schema-relations/index-references.mjs";
+import { inspectUniqueBy, inspectUniqueItems, UNIQUE_BY_KEYWORD } from "../../../../../packages/schemas/json-schema-relations/array-uniqueness.mjs";
+import { resolveLocalJsonSchemaReferences } from "../../../../../packages/schemas/json-schema-relations/local-references.mjs";
+import { FROZEN_REFERENCE_FACTS_KEYWORD, inspectReferenceFactEquality, type ReferenceFactObservation } from "../../../../../packages/schemas/json-schema-relations/reference-facts.mjs";
+import { FROZEN_REFERENCE_CATALOGS_KEYWORD, inspectReferenceMembership } from "../../../../../packages/schemas/json-schema-relations/reference-membership.mjs";
+import { inspectInputOutputRelations } from "../../../../../packages/schemas/json-schema-relations/input-output.mjs";
+import { inspectSourceRelations } from "../../../../../packages/schemas/source-unit-ledger/index.mjs";
+
+type ReferenceValidationContext = { facts: unknown; catalogs: unknown; observations?: ReferenceFactObservation[] };
+
 export type WorkflowJsonSchemaIssue = Readonly<{ path: string; message: string }>;
 
 const WORKFLOW_SCHEMA_KEYWORDS = new Set([
 	FIELD_RELATIONS_KEYWORD,
 	INDEX_REFERENCES_KEYWORD,
+	UNIQUE_BY_KEYWORD,
 	"$comment", "$defs", "$id", "$ref", "$schema",
 	"additionalProperties", "allOf", "anyOf", "const", "contains", "contentEncoding", "contentMediaType", "contentSchema",
 	"default", "definitions", "dependentRequired", "deprecated", "description", "else", "enum", "examples",
@@ -48,9 +58,9 @@ function equal(left: unknown, right: unknown): boolean {
 		&& leftKeys.every((key, index) => key === rightKeys[index] && equal(leftRecord[key], rightRecord[key]));
 }
 
-function branchMatches(schema: unknown, value: unknown, path: string): boolean {
+function branchMatches(schema: unknown, value: unknown, path: string, references?: ReferenceValidationContext): boolean {
 	const branchIssues: WorkflowJsonSchemaIssue[] = [];
-	validate(schema, value, path, branchIssues);
+	validate(schema, value, path, branchIssues, references);
 	return branchIssues.length === 0;
 }
 
@@ -96,7 +106,7 @@ export function findUnsupportedWorkflowToolSchemaKeywords(schema: Record<string,
 	return issues;
 }
 
-function validate(schemaValue: unknown, value: unknown, path: string, issues: WorkflowJsonSchemaIssue[]): void {
+function validate(schemaValue: unknown, value: unknown, path: string, issues: WorkflowJsonSchemaIssue[], references?: ReferenceValidationContext): void {
 	if (issues.length >= 32 || schemaValue === true) return;
 	if (schemaValue === false) {
 		issues.push({ path, message: `${path} is not allowed` });
@@ -104,26 +114,28 @@ function validate(schemaValue: unknown, value: unknown, path: string, issues: Wo
 	}
 	const schema = record(schemaValue);
 	if (!schema) return;
-	if (schema.$ref !== undefined) {
-		issues.push({ path, message: `${path} cannot be validated because registered schema references are not supported` });
-		return;
-	}
-	if (Array.isArray(schema.allOf)) schema.allOf.forEach((branch) => validate(branch, value, path, issues));
+	issues.push(...inspectSourceRelations(schema, value, path).slice(0, 32 - issues.length));
+	issues.push(...inspectInputOutputRelations(schema, value, path).slice(0, 32 - issues.length));
+	const relation = inspectReferenceFactEquality(schema, value, path, references?.facts);
+	issues.push(...inspectReferenceMembership(schema, value, path, references?.catalogs));
+	issues.push(...relation.issues);
+	references?.observations?.push(...relation.observations);
+	if (Array.isArray(schema.allOf)) schema.allOf.forEach((branch) => validate(branch, value, path, issues, references));
 	for (const keyword of ["anyOf", "oneOf"] as const) {
 		const branches = Array.isArray(schema[keyword]) ? schema[keyword] : [];
 		if (branches.length === 0) continue;
-		const matches = branches.filter((branch) => branchMatches(branch, value, path)).length;
+		const matches = branches.filter((branch) => branchMatches(branch, value, path, references)).length;
 		if ((keyword === "anyOf" && matches === 0) || (keyword === "oneOf" && matches !== 1)) {
 			issues.push({ path, message: `${path} must match ${keyword === "anyOf" ? "at least" : "exactly"} one schema branch` });
 			return;
 		}
 	}
-	if (schema.not !== undefined && branchMatches(schema.not, value, path)) {
+	if (schema.not !== undefined && branchMatches(schema.not, value, path, references)) {
 		issues.push({ path, message: `${path} must not match the excluded schema` });
 	}
 	if (schema.if !== undefined) {
-		const selected = branchMatches(schema.if, value, path) ? schema.then : schema.else;
-		if (selected !== undefined) validate(selected, value, path, issues);
+		const selected = branchMatches(schema.if, value, path, references) ? schema.then : schema.else;
+		if (selected !== undefined) validate(selected, value, path, issues, references);
 	}
 	if (Object.prototype.hasOwnProperty.call(schema, "const") && !equal(value, schema.const)) {
 		issues.push({ path, message: `${path} must equal ${JSON.stringify(schema.const)}` });
@@ -159,26 +171,20 @@ function validate(schemaValue: unknown, value: unknown, path: string, issues: Wo
 	if (Array.isArray(value)) {
 		if (typeof schema.minItems === "number" && value.length < schema.minItems) issues.push({ path, message: `${path} has too few items` });
 		if (typeof schema.maxItems === "number" && value.length > schema.maxItems) issues.push({ path, message: `${path} has too many items` });
-		if (schema.uniqueItems === true) {
-			for (let index = 0; index < value.length; index += 1) {
-				if (value.slice(0, index).some((candidate) => equal(candidate, value[index]))) {
-					issues.push({ path: `${path}[${index}]`, message: `${path}[${index}] must be unique` });
-				}
-			}
-		}
+		issues.push(...inspectUniqueItems(schema, value, path), ...inspectUniqueBy(schema, value, path));
 		const prefixItems = Array.isArray(schema.prefixItems) ? schema.prefixItems : [];
 		prefixItems.forEach((itemSchema, index) => {
-			if (index < value.length) validate(itemSchema, value[index], `${path}[${index}]`, issues);
+			if (index < value.length) validate(itemSchema, value[index], `${path}[${index}]`, issues, references);
 		});
 		if (Array.isArray(schema.items)) {
 			schema.items.forEach((itemSchema, index) => {
-				if (index < value.length) validate(itemSchema, value[index], `${path}[${index}]`, issues);
+				if (index < value.length) validate(itemSchema, value[index], `${path}[${index}]`, issues, references);
 			});
 		} else if (schema.items !== undefined) {
-			value.slice(prefixItems.length).forEach((item, offset) => validate(schema.items, item, `${path}[${offset + prefixItems.length}]`, issues));
+			value.slice(prefixItems.length).forEach((item, offset) => validate(schema.items, item, `${path}[${offset + prefixItems.length}]`, issues, references));
 		}
 		if (schema.contains !== undefined) {
-			const matchingItems = value.filter((item, index) => branchMatches(schema.contains, item, `${path}[${index}]`)).length;
+			const matchingItems = value.filter((item, index) => branchMatches(schema.contains, item, `${path}[${index}]`, references)).length;
 			const minimumMatches = typeof schema.minContains === "number" ? schema.minContains : 1;
 			const maximumMatches = typeof schema.maxContains === "number" ? schema.maxContains : Number.POSITIVE_INFINITY;
 			if (matchingItems < minimumMatches || matchingItems > maximumMatches) {
@@ -210,20 +216,27 @@ function validate(schemaValue: unknown, value: unknown, path: string, issues: Wo
 		}
 	}
 	for (const [key, child] of Object.entries(objectValue)) {
-		if (schema.propertyNames !== undefined) validate(schema.propertyNames, key, `${path}.${key}`, issues);
+		if (schema.propertyNames !== undefined) validate(schema.propertyNames, key, `${path}.${key}`, issues, references);
 		const matchingPatterns = Object.entries(patternProperties).filter(([pattern]) => validPattern(key, pattern, `${path}.${key}`, issues));
-		if (properties[key] !== undefined) validate(properties[key], child, `${path}.${key}`, issues);
-		matchingPatterns.forEach(([, childSchema]) => validate(childSchema, child, `${path}.${key}`, issues));
+		if (properties[key] !== undefined) validate(properties[key], child, `${path}.${key}`, issues, references);
+		matchingPatterns.forEach(([, childSchema]) => validate(childSchema, child, `${path}.${key}`, issues, references));
 		if (properties[key] === undefined && matchingPatterns.length === 0) {
 			if (schema.additionalProperties === false) issues.push({ path: `${path}.${key}`, message: `${path}.${key} is not allowed` });
-			else if (record(schema.additionalProperties)) validate(schema.additionalProperties, child, `${path}.${key}`, issues);
+			else if (record(schema.additionalProperties)) validate(schema.additionalProperties, child, `${path}.${key}`, issues, references);
 		}
 	}
 }
 
-export function validateWorkflowToolArguments(schema: Record<string, unknown>, value: unknown): WorkflowJsonSchemaIssue[] {
+export function validateWorkflowToolArguments(schema: Record<string, unknown>, value: unknown, observations?: ReferenceFactObservation[]): WorkflowJsonSchemaIssue[] {
 	const issues = findUnsupportedWorkflowToolSchemaKeywords(schema);
 	if (issues.length > 0) return issues;
-	validate(schema, value, "$", issues);
+	let resolved: Record<string, unknown> | boolean;
+	try {
+		resolved = resolveLocalJsonSchemaReferences(schema);
+	} catch (error: unknown) {
+		issues.push({ path: "$", message: `Registered schema reference resolution failed: ${error instanceof Error ? error.message : String(error)}` });
+		return issues;
+	}
+	validate(resolved, value, "$", issues, {facts:schema[FROZEN_REFERENCE_FACTS_KEYWORD],catalogs:schema[FROZEN_REFERENCE_CATALOGS_KEYWORD],observations});
 	return issues;
 }

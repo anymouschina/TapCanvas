@@ -1,4 +1,6 @@
 import { assetBindingIdentity } from "./execution.asset-identity";
+import { CHARACTER_IDENTITY_BOARD_SPEC } from "./execution.character-identity-contract";
+import { buildWorkflowSourceCoordinates } from "./execution.source-coordinates";
 import { bindWorkflowClipAssetObjectContracts, parseWorkflowClipAssetObjectContracts } from "./execution.video-workflow-continuity";
 import { inspectDeclaredAssetIdsMatch } from "./execution.agent-output-contract";
 import { sceneReferenceFixture } from "./execution.scene-reference-fixture";
@@ -15,6 +17,7 @@ import {
 	freezeWorkflowVideoDurationPlan,
 	inspectWorkflowPromptPackageAdmission,
 	parseFrozenWorkflowVideoDurationPlan,
+	parseWorkflowVideoDeliveryDurationPlan,
 	parseWorkflowAssetRole,
 	projectVideoAssetPlansFromBeatSheet,
 	compileWorkflowClipWriterFrozenEnvelope,
@@ -798,6 +801,8 @@ describe("video workflow atomic contracts", () => {
 			roleName: "hero",
 			characterAssetRole: "identity_anchor",
 			characterProfileVersion: "character-card/v3",
+			// The four-view board is the host's constant even when the plan omits it.
+			identityBoardSpec: CHARACTER_IDENTITY_BOARD_SPEC,
 			identityAnchors: ["稳定骨相", "固定发型剪影"],
 			prohibitedDrift: ["不得改变年龄", "不得改变脸型"],
 		}, {
@@ -921,19 +926,39 @@ describe("video workflow atomic contracts", () => {
 			targetDurationSeconds: 40,
 			modelKey: "doubao-seedance-2.5",
 			durationOptions: Array.from({ length: 27 }, (_, index) => index + 4),
+			supportsTextToVideo: true,
+			supportsReferenceImages: true,
+			supportsFirstLastFrame: false,
 		});
 		expect(frozen).toMatchObject({
 			protocolVersion: "tapcanvas.workflow-video-duration-plan/v2",
 			policy: "agent_semantic_duration_budget",
 		});
 		expect(parseFrozenWorkflowVideoDurationPlan(frozen)).toEqual(frozen);
+		const deliveryContract = buildVideoDeliveryContract({
+			executionId: "execution-capability-freeze",
+			workflowKey: "tapcanvas.video-production",
+			executionScope: "media_delivery",
+			canvasFacts: { sourceMode: "project_context" },
+			durationPlan: frozen,
+		});
+		expect(deliveryContract.generationContract).toMatchObject({
+			supportsTextToVideo: true,
+			supportsReferenceImages: true,
+			supportsFirstLastFrame: false,
+		});
+		expect(parseWorkflowVideoDeliveryDurationPlan(deliveryContract)).toMatchObject({
+			supportsTextToVideo: true,
+			supportsReferenceImages: true,
+			supportsFirstLastFrame: false,
+		});
 		expect(parseFrozenWorkflowVideoDurationPlan({
 			...frozen,
 			policy: "model_max_duration",
 		})).toBeNull();
 	});
 
-	it("freezes canonical source speech capacity into the delivery contract for the BeatSheet agent", () => {
+	it("freezes canonical quoted source addresses without voice capacity into the delivery contract", () => {
 		const durationPlan = {
 			targetDurationSeconds: null,
 			modelKey: "doubao-seedance-2.0",
@@ -951,12 +976,9 @@ describe("video workflow atomic contracts", () => {
 			durationPlan,
 		});
 		expect(withSpeech.sourceProfile).toMatchObject({
-			protocolVersion: "tapcanvas.beat-sheet-source-profile/v1",
-			sourceSpeechUnits: [{ verbatim: "到了吗？" }, { verbatim: "不要紧张，一定能过的。" }],
-			sourceSpeechChars: "到了吗？不要紧张，一定能过的。".length,
-			minimumPlannedSeconds: Math.ceil("到了吗？不要紧张，一定能过的。".length / 6),
-			minimumClipCount: Math.ceil(Math.ceil("到了吗？不要紧张，一定能过的。".length / 6) / 15),
-			speechMaxCharsPerSecond: 6,
+			protocolVersion: "tapcanvas.beat-sheet-source-profile/v2",
+			sourceQuotedUnits: [{ verbatim: "到了吗？" }, { verbatim: "不要紧张，一定能过的。" }],
+			sourceQuotedChars: "到了吗？不要紧张，一定能过的。".length,
 		});
 		const withoutSources = buildVideoDeliveryContract({
 			executionId: "execution-source-profile-empty",
@@ -1093,7 +1115,7 @@ describe("video workflow atomic contracts", () => {
 			nodes: [{ nodeId: "chapter-1", kind: "text", label: "第一章" }],
 			selectedNodeFacts,
 			missingSelectedNodeIds: ["missing-image"],
-			authoritativeSources: [{ nodeId: "chapter-1", sourceId: "chapter-1", sourceFingerprint: sha256Hex(chapterText.trim()), content: chapterText, label: "第一章" }],
+			authoritativeSources: [{ nodeId: "chapter-1", sourceId: "chapter-1", sourceFingerprint: sha256Hex(chapterText.trim()), content: chapterText, label: "第一章", sourceCoordinates: buildWorkflowSourceCoordinates(chapterText) }],
 		});
 		expect(JSON.stringify(contract).split(chapterText)).toHaveLength(2);
 	});
@@ -1155,14 +1177,14 @@ describe("video workflow atomic contracts", () => {
 		const summary = "急速滑翔，拖脚犁出五米火星";
 		const authored = beatSheet([{ clipId: "clip-a", durationSeconds: 5, sourceSpan: summary }]);
 		const authoredFacts = JSON.parse(authored.text) as Record<string, unknown>;
-		authoredFacts.sourceFingerprint = sha256Hex(original.trim());
+		authoredFacts.sourceFingerprint = sha256Hex(original);
 		const contexts = buildVideoClipContexts({
 			executionId: "source-evidence", nodeId: "fan-out",
 			deliveryContract: {
 				...deliveryContract([5]),
 				canvasFacts: { authoritativeSources: [{
 					sourceId: "workflow-test-source",
-					sourceFingerprint: matches ? sha256Hex(original.trim()) : "wrong-version",
+					sourceFingerprint: matches ? sha256Hex(original) : "wrong-version",
 					content: original,
 				}] },
 			},
@@ -1212,11 +1234,51 @@ describe("video workflow atomic contracts", () => {
 			});
 			const sequence = middle.sequenceContext as Record<string, unknown>;
 			expect(sequence.sequenceTimeline).toHaveLength(3);
+			expect(sequence.sequenceControlPlan).toMatchObject({ segments: expect.any(Array) });
+			expect((sequence.sequenceControlPlan as Record<string, unknown>).segments).toHaveLength(3);
+			expect(sequence.sequenceContextScope).toMatchObject({
+				protocolVersion: "tapcanvas.sequence-context-scope/v1",
+				currentClipIndex: 1,
+				totalClipCount: 3,
+				timeline: { scope: "current_and_adjacent", includedClipIndices: [0, 1, 2], omittedClipCount: 0 },
+				controlPlan: { scope: "full_canonical", includedSegmentIndices: [0, 1, 2], totalSegmentCount: 3 },
+				readPolicy: "read_parent_beat_sheet_for_non_adjacent_clips",
+				fullSequenceRead: { tool: "tapcanvas_execution_node_runs_get", args: {
+					executionId: "sequence-facts", nodeId: "fan-out", field: "input", path: ["beat-sheet", "0"],
+				} },
+			});
 			expect(middle.spokenScript).toEqual([speech("line-b", "查找")]);
 			expect(contexts.items[0]!.value).toMatchObject({ sequenceContext: { previous: null } });
 			expect(contexts.items[2]!.value).toMatchObject({ sequenceContext: { next: null } });
 		}
 		expect(JSON.stringify(input)).toBe(original);
+	});
+
+	it("keeps a long chapter's Clip context local while exposing an exact parent read", () => {
+		const beatInput = beatSheet(Array.from({ length: 5 }, (_, index) => ({
+			clipId: `clip-${index}`,
+			durationSeconds: 5,
+			startKeyframe: `state-${index}`,
+			endKeyframe: `state-${index + 1}`,
+		})));
+		const contexts = buildVideoClipContexts({
+			executionId: "sequence-window",
+			nodeId: "fan-out",
+			deliveryContract: deliveryContract([5, 5, 5, 5, 5]),
+			beatSheetAgentResult: beatInput,
+		});
+		const middle = contexts.items[2]?.value as Record<string, unknown>;
+		const sequence = middle.sequenceContext as Record<string, unknown>;
+		expect((sequence.sequenceTimeline as readonly Record<string, unknown>[]).map((entry) => entry.clipIndex)).toEqual([1, 2, 3]);
+		expect(sequence.sequenceControlPlan).toMatchObject({ segments: expect.any(Array) });
+		expect((sequence.sequenceControlPlan as Record<string, unknown>).segments).toHaveLength(5);
+		expect(sequence.sequenceContextScope).toMatchObject({
+			currentClipIndex: 2,
+			totalClipCount: 5,
+			timeline: { includedClipIndices: [1, 2, 3], omittedClipCount: 2 },
+			controlPlan: { scope: "full_canonical", includedSegmentIndices: [0, 1, 2, 3, 4], totalSegmentCount: 5 },
+			fullSequenceRead: { args: { path: ["beat-sheet", "0"] } },
+		});
 	});
 
 	it("rejects a delivery contract without an immutable execution scope", () => {
@@ -1279,6 +1341,14 @@ describe("video workflow atomic contracts", () => {
 			totalDurationSeconds: 13,
 		});
 		expect(sequenceContext.sequenceTimeline).toHaveLength(2);
+		expect(sequenceContext.sequenceControlPlan).toMatchObject({ segments: expect.any(Array) });
+		expect((sequenceContext.sequenceControlPlan as Record<string, unknown>).segments).toHaveLength(2);
+		expect(sequenceContext.sequenceContextScope).toMatchObject({
+			currentClipIndex: 0,
+			totalClipCount: 2,
+			timeline: { includedClipIndices: [0, 1], omittedClipCount: 0 },
+			controlPlan: { scope: "full_canonical", includedSegmentIndices: [0, 1], totalSegmentCount: 2 },
+		});
 		expect(firstContext?.beat).toMatchObject({
 			characters: ["主角"],
 			assetObjectContracts: expect.any(Array),
@@ -2867,7 +2937,7 @@ describe("video workflow atomic contracts", () => {
 		expect(promptPackage.clips[0]?.declaredAssetIds).toEqual([]);
 	});
 
-	it("rejects a generated image that no Clip actually consumes before video submission", () => {
+	it("preserves unused generated assets as diagnostics and submits only the declared clip references", () => {
 		const prompts = createWorkflowCollection({
 			collectionId: "clip-prompts",
 			producerNodeId: "writer",
@@ -2900,7 +2970,7 @@ describe("video workflow atomic contracts", () => {
 			],
 		});
 
-		expect(() => buildVideoProductionPlan({
+		const plan = buildVideoProductionPlan({
 			executionId: "execution-1",
 			nodeId: "handoff",
 			promptPackage,
@@ -2912,7 +2982,11 @@ describe("video workflow atomic contracts", () => {
 			},
 			assetBindings,
 			voiceManifest: { protocolVersion: "tapcanvas.voice-manifest/v1", entries: [] },
-		})).toThrow("Generated assets have no Clip consumer: unused-forest");
+		});
+		expect(plan.items).toHaveLength(1);
+		expect(plan.diagnostics).toEqual({ unusedAssetIds: ["unused-forest"], unusedVoiceSpeakers: [] });
+		expect(plan.items[0]?.value).toMatchObject({ declaredAssetIds: ["hero"], referenceImageNodeIds: ["image-node-hero"] });
+		expect(assetBindings.items).toHaveLength(2);
 	});
 
 	it("fails on duplicate BeatSheet clip identities", () => {
@@ -2925,6 +2999,21 @@ describe("video workflow atomic contracts", () => {
 				{ clipId: "same", durationSeconds: 5 },
 			]),
 		})).toThrow("BeatSheet clipId values must be unique");
+	});
+
+	it("accepts the configured 80-Clip upper bound", () => {
+		const contexts = buildVideoClipContexts({
+			executionId: "execution-1",
+			nodeId: "fan-out",
+			deliveryContract: deliveryContract(Array.from({ length: 80 }, () => 4)),
+			beatSheetAgentResult: beatSheet(Array.from({ length: 80 }, (_unused, index) => ({
+				clipId: `clip-${index}`,
+				durationSeconds: 4,
+			}))),
+		});
+
+		expect(contexts.items).toHaveLength(80);
+		expect(contexts.items.at(-1)?.itemId).toBe("clip-79");
 	});
 
 	it("reports a rejected BeatSheet port with the exact live contract fingerprint", () => {

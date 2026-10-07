@@ -83,6 +83,35 @@ function signedUrlExpiresAt(url: string): number | null {
 	}
 }
 
+/** Resource freshness is a deterministic admission fact; text-only assets have no media URL to validate. */
+export function assertWorkflowAssetResourcesCurrent(asset: MaterialAssetDto, now: Date): void {
+	const data = asset.latestVersion?.data;
+	if (!data) throw new WorkflowAssetResolverError(`Asset ${asset.id} has no current version`, "workflow_asset_resource_unavailable");
+	const status = statusOf(data);
+	if (data.deleted === true || ["deleted", "failed", "rejected", "pending", "processing", "transcoding"].includes(status)
+		|| readString(data.approvalStatus) === "rejected") {
+		throw new WorkflowAssetResolverError(`Asset ${asset.id} has an unavailable resource state`, "workflow_asset_resource_unavailable");
+	}
+	const rawExpiry = data.urlExpiresAt ?? data.expiresAt ?? data.signedUrlExpiresAt;
+	if (rawExpiry !== undefined && expiresAt(data) === null) {
+		throw new WorkflowAssetResolverError(`Asset ${asset.id} has invalid expiration metadata`, "workflow_asset_resource_unavailable");
+	}
+	for (const kind of ["image", "video", "audio"] as const) {
+		const url = firstUrl(data, kind);
+		if (!url) continue;
+		let parsed: URL;
+		try { parsed = new URL(url); }
+		catch { throw new WorkflowAssetResolverError(`Asset ${asset.id} has an invalid resource URL`, "workflow_asset_resource_unavailable"); }
+		if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+			throw new WorkflowAssetResolverError(`Asset ${asset.id} has an invalid resource protocol`, "workflow_asset_resource_unavailable");
+		}
+		const expiry = expiresAt(data) ?? signedUrlExpiresAt(url);
+		if (expiry !== null && expiry <= now.getTime()) {
+			throw new WorkflowAssetResolverError(`Asset ${asset.id} has an expired resource`, "workflow_asset_resource_unavailable");
+		}
+	}
+}
+
 function statusOf(data: Record<string, unknown>): string {
 	return readString(data.status) || readString(data.transcodeStatus) || readString(data.processingStatus);
 }

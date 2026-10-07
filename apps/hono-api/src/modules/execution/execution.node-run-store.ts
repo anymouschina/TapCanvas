@@ -6,7 +6,12 @@ import type { PrismaClient } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
 import { readDatabaseErrorCodes } from "../../platform/node/database-read-retry";
 import { runDatabaseTransactionWithTransientRetry } from "../../platform/node/database-transaction-retry";
-import { readWorkflowNodeExecutionSemantics } from "./execution.semantics-snapshot";
+import { readWorkflowExecutionSemanticsSnapshot } from "./execution.semantics-snapshot";
+import { Prisma } from "@prisma/client";
+import { WorkflowPersistenceError } from "./execution.persistence-error";
+import { decodeWorkflowOutput, encodeWorkflowOutput, WORKFLOW_OUTPUT_STORAGE_VERSION } from "./execution.output-storage";
+import { persistWorkflowOutput } from "./execution.output-storage-store";
+import { readStoredWorkflowOutputStrict, workflowOutputRootHash, type WorkflowOutputCheckpointWrite } from "./execution.output-checkpoint-packet";
 
 // Workflow media nodes can update their aggregate row while several sibling
 // items are persisting external-task receipts in parallel. The Prisma default
@@ -56,7 +61,6 @@ export type UpdateWorkflowNodeRunInput = Readonly<{
 	errorCode?: string | null;
 	failureStage?: string | null;
 	inputRefs?: unknown;
-	outputRefs?: unknown;
 	toolCalls?: unknown;
 	retryCount?: number;
 	nodeType?: string | null;
@@ -64,7 +68,19 @@ export type UpdateWorkflowNodeRunInput = Readonly<{
 	modelKey?: string | null;
 	startedAt?: string | null;
 	finishedAt?: string | null;
-}>;
+}> & (
+	| Readonly<{ outputRefs?: unknown; outputCheckpoint?: never }>
+	| Readonly<{ outputRefs?: never; outputCheckpoint: WorkflowOutputCheckpointWrite }>
+);
+
+/** A stale local checkpoint cannot acquire database-retry or task-terminal authority. */
+export class WorkflowOutputCheckpointStaleError extends Error {
+	readonly code = "workflow_output_checkpoint_stale";
+	constructor(readonly reason: "attempt_changed" | "base_root_changed", cause?: unknown) {
+		super(`Workflow output checkpoint is stale: ${reason}`, { cause });
+		this.name = "WorkflowOutputCheckpointStaleError";
+	}
+}
 
 type NewWorkflowNodeAttemptRow = Readonly<{
 	id: string;
@@ -140,13 +156,13 @@ function collectDeclaredOutputValues(value: unknown, field: string): readonly st
 
 function providerReceipts(
 	semantics: WorkflowExecutionSemanticsV2,
-	outputRefs: string | null,
+	outputRefs: unknown,
 	existing: string | null,
 ): string | null {
 	const previous = storedStringList(existing);
 	const field = semantics.resultLookup.outputField;
 	if (!field || outputRefs === null) return previous.length > 0 ? stringifyStoredValue(previous, "Workflow provider receipts") : null;
-	const collected = collectDeclaredOutputValues(parseStoredJson(outputRefs), field);
+	const collected = collectDeclaredOutputValues(outputRefs, field);
 	const merged = [...new Set([...previous, ...collected])];
 	return merged.length > 0 ? stringifyStoredValue(merged, "Workflow provider receipts") : null;
 }
@@ -158,7 +174,6 @@ function nodeRunMutationData(params: UpdateWorkflowNodeRunInput) {
 		...(params.errorCode !== undefined ? { error_code: params.errorCode } : {}),
 		...(params.failureStage !== undefined ? { failure_stage: params.failureStage } : {}),
 		...(params.inputRefs !== undefined ? { input_refs: stringifyStoredValue(params.inputRefs, "Workflow node inputRefs") } : {}),
-		...(params.outputRefs !== undefined ? { output_refs: stringifyStoredValue(params.outputRefs, "Workflow node outputRefs") } : {}),
 		...(params.toolCalls !== undefined ? { tool_calls: stringifyStoredValue(params.toolCalls, "Workflow node toolCalls") } : {}),
 		...(params.retryCount !== undefined ? { retry_count: Math.max(0, Math.trunc(params.retryCount)) } : {}),
 		...(params.nodeType !== undefined ? { node_type: params.nodeType } : {}),
@@ -177,8 +192,9 @@ export async function ensureNodeRuns(
 	if (params.nodeIds.length === 0) return;
 	if (new Set(params.nodeIds).size !== params.nodeIds.length) throw new Error("Workflow node run identities must be unique");
 	const prisma = getPrismaClient();
-	await runDatabaseTransactionWithTransientRetry(() => prisma.$transaction(async (transaction) => {
-		const execution = await transaction.workflow_executions.findUnique({
+	// The immutable definition may contain large recovered outputs. Parse it
+	// once, before taking transaction locks, rather than once per node inside.
+	const execution = await prisma.workflow_executions.findUnique({
 			where: { id: params.executionId },
 			select: {
 				execution_family_id: true,
@@ -186,10 +202,18 @@ export async function ensureNodeRuns(
 				flow_versions: { select: { data: true } },
 			},
 		});
-		if (!execution) throw new Error(`Workflow execution ${params.executionId} does not exist`);
+	if (!execution) throw new Error(`Workflow execution ${params.executionId} does not exist`);
+	const snapshot = readWorkflowExecutionSemanticsSnapshot(execution.flow_versions.data);
+	const semanticsByNode = new Map(params.nodeIds.map((nodeId) => {
+		const frozen = snapshot.nodes[nodeId];
+		if (!frozen) throw new Error(`Workflow node ${nodeId} has no frozen execution semantics`);
+		return [nodeId, stringifyStoredValue(frozen.semantics, "Workflow node execution semantics")] as const;
+	}));
+	await runDatabaseTransactionWithTransientRetry(() => prisma.$transaction(async (transaction) => {
 		const attempts: NewWorkflowNodeAttemptRow[] = [];
 		for (const nodeId of params.nodeIds) {
-			const semantics = readWorkflowNodeExecutionSemantics(execution.flow_versions.data, nodeId);
+			const semantics = semanticsByNode.get(nodeId);
+			if (semantics === undefined) throw new Error(`Workflow node ${nodeId} has no frozen execution semantics`);
 			const nodeRun = await transaction.workflow_node_runs.upsert({
 				where: { execution_id_node_id: { execution_id: params.executionId, node_id: nodeId } },
 				create: {
@@ -211,7 +235,7 @@ export async function ensureNodeRuns(
 				attempt: nodeRun.attempt,
 				trigger: execution.recovery_of_execution_id ? "recovery_execution" : "initial",
 				status: nodeRun.status,
-				semantics_snapshot: stringifyStoredValue(semantics, "Workflow node execution semantics"),
+				semantics_snapshot: semantics,
 				input_refs: nodeRun.input_refs,
 				output_refs: nodeRun.output_refs,
 				tool_calls: nodeRun.tool_calls,
@@ -251,13 +275,19 @@ export async function updateNodeRun(
 	// Serialize before acquiring the row lock. Only changed fields cross the
 	// connection; returning/replaying the full collection makes every checkpoint
 	// transfer all accumulated inputs and tool history twice.
-	const mutation = nodeRunMutationData(params);
-	const { retry_count: ignoredRetryCount, ...attemptMutation } = mutation;
-	void ignoredRetryCount;
+	let outputStorage: Awaited<ReturnType<typeof persistWorkflowOutput>> | undefined;
 	const startedAt = performance.now();
-	let phase = "transaction_admission";
+	let phase = "prepare_mutation";
 	let phaseStartedAt = startedAt;
 	const phaseDurationsMs: Record<string, number> = {};
+	let preparationElapsedMs: number | undefined;
+	let preparationCompleted = false;
+	let preparationSize: Readonly<{
+		inputRefsBytes: number;
+		toolCallsBytes: number;
+		suppliedOutputStringBytes: number | null;
+		outputStorageBlockCount: number;
+	}> | undefined;
 	const enterPhase = (next: string): void => {
 		const now = performance.now();
 		phaseDurationsMs[phase] = (phaseDurationsMs[phase] ?? 0) + now - phaseStartedAt;
@@ -267,15 +297,87 @@ export async function updateNodeRun(
 	let outcome: "success" | "failed" = "failed";
 	let errorCodes: readonly string[] = [];
 	try {
+		const checkpoint = params.outputCheckpoint;
+		if (checkpoint !== undefined && params.outputRefs !== undefined) {
+			throw new Error("Workflow node outputRefs and outputCheckpoint are mutually exclusive");
+		}
+		if (checkpoint !== undefined && (!checkpoint.nodeRunId.trim() || !Number.isSafeInteger(checkpoint.attempt) || checkpoint.attempt < 1)) {
+			throw new Error("Workflow output checkpoint requires a node-run identity and positive attempt");
+		}
+		if (checkpoint !== undefined && checkpoint.output !== null && checkpoint.output.storageVersion !== WORKFLOW_OUTPUT_STORAGE_VERSION) {
+			throw new Error("Unsupported workflow output checkpoint storage envelope");
+		}
+		const mutation = nodeRunMutationData(params);
+		enterPhase("prepare_output_decode");
+		const semanticOutput = checkpoint !== undefined ? checkpoint.output === null ? undefined : decodeWorkflowOutput(checkpoint.output)
+			: params.outputRefs === undefined ? undefined : decodeWorkflowOutput(params.outputRefs);
+		enterPhase(checkpoint === undefined ? "prepare_output_encode" : "prepare_output_checkpoint");
+		const storedOutput = checkpoint?.output ?? (semanticOutput === undefined ? undefined : encodeWorkflowOutput(semanticOutput));
+		enterPhase("prepare_size_diagnostics");
+		// Reuse strings already required for persistence. Measuring a semantic
+		// output by stringifying it again would recreate the work being observed.
+		preparationSize = {
+			inputRefsBytes: mutation.input_refs === undefined ? 0 : Buffer.byteLength(mutation.input_refs),
+			toolCallsBytes: mutation.tool_calls === undefined ? 0 : Buffer.byteLength(mutation.tool_calls),
+			suppliedOutputStringBytes: typeof params.outputRefs === "string" ? Buffer.byteLength(params.outputRefs) : null,
+			outputStorageBlockCount: storedOutput === undefined ? 0 : Object.keys(storedOutput.blocks).length,
+		};
+		const { retry_count: ignoredRetryCount, ...attemptMutation } = mutation;
+		void ignoredRetryCount;
+		preparationElapsedMs = performance.now() - startedAt;
+		preparationCompleted = true;
 		await runDatabaseTransactionWithTransientRetry(() => {
 			enterPhase("transaction_admission");
 			return prisma.$transaction(async (transaction) => {
+				if (checkpoint !== undefined) {
+					// Prisma can turn an empty mutation into a read. Acquire the row
+					// lock before reading its authoritative base, including guard-only
+					// writes, so no physical writer can change it before persistence.
+					enterPhase("lock_output_checkpoint_base");
+					const targets = await transaction.$queryRaw<Readonly<{ id: string; attempt: number; output_refs: string | null }>[]>(Prisma.sql`
+						SELECT id, attempt, output_refs FROM workflow_node_runs
+						WHERE execution_id = ${params.executionId} AND node_id = ${params.nodeId}
+							AND id = ${checkpoint.nodeRunId} AND attempt = ${checkpoint.attempt}
+						FOR UPDATE
+					`);
+					if (targets.length !== 1 || targets[0]!.id !== checkpoint.nodeRunId || targets[0]!.attempt !== checkpoint.attempt) {
+						throw new WorkflowOutputCheckpointStaleError("attempt_changed");
+					}
+					enterPhase("validate_output_checkpoint_base");
+					const previousOutput = targets[0]!.output_refs;
+					if (checkpoint.baseRootHash === null) {
+						// Null fences absence, never permission to replace an existing receipt.
+						if (previousOutput !== null) throw new WorkflowOutputCheckpointStaleError("base_root_changed");
+					} else if (previousOutput == null || workflowOutputRootHash(readStoredWorkflowOutputStrict(previousOutput)) !== checkpoint.baseRootHash) {
+						throw new WorkflowOutputCheckpointStaleError("base_root_changed");
+					}
+				}
 				enterPhase("update_node_run");
-				const nodeRun = await transaction.workflow_node_runs.update({
-					where: { execution_id_node_id: { execution_id: params.executionId, node_id: params.nodeId } },
-					data: mutation,
-					select: { id: true, attempt: true },
-				});
+				let nodeRun: Readonly<{ id: string; attempt: number }>;
+				try {
+					nodeRun = await transaction.workflow_node_runs.update({
+						where: {
+							execution_id_node_id: { execution_id: params.executionId, node_id: params.nodeId },
+							...(checkpoint === undefined ? {} : { id: checkpoint.nodeRunId, attempt: checkpoint.attempt }),
+						},
+						data: mutation,
+						select: { id: true, attempt: true },
+					});
+				} catch (error: unknown) {
+					if (checkpoint !== undefined && readDatabaseErrorCodes(error).includes("P2025")) {
+						throw new WorkflowOutputCheckpointStaleError("attempt_changed", error);
+					}
+					throw error;
+				}
+				if (checkpoint !== undefined) {
+					if (nodeRun.id !== checkpoint.nodeRunId || nodeRun.attempt !== checkpoint.attempt) {
+						throw new WorkflowOutputCheckpointStaleError("attempt_changed");
+					}
+				}
+				if (storedOutput !== undefined) {
+					enterPhase("persist_output_delta");
+					outputStorage = await persistWorkflowOutput(transaction, nodeRun.id, storedOutput);
+				}
 				enterPhase("read_attempt_contract");
 				const attempt = await transaction.workflow_node_attempts.findUnique({
 					where: { node_run_id_attempt: { node_run_id: nodeRun.id, attempt: nodeRun.attempt } },
@@ -284,20 +386,25 @@ export async function updateNodeRun(
 				if (!attempt) throw new Error(`Workflow node ${params.nodeId} current attempt has no ledger row`);
 				enterPhase("collect_provider_receipts");
 				const semantics = parseWorkflowExecutionSemanticsV2(parseStoredJson(attempt.semantics_snapshot));
-				const receipts = mutation.output_refs !== undefined
-					? providerReceipts(semantics, mutation.output_refs, attempt.provider_receipts)
+				const receipts = storedOutput !== undefined
+					? providerReceipts(semantics, semanticOutput, attempt.provider_receipts)
 					: undefined;
 				enterPhase("update_attempt");
-				await transaction.workflow_node_attempts.update({
-					where: { node_run_id_attempt: { node_run_id: nodeRun.id, attempt: nodeRun.attempt } },
-					data: {
-						...attemptMutation,
-						...(mutation.output_refs !== undefined ? {
-							provider_receipts: receipts,
-						} : {}),
-					},
-					select: { id: true },
-				});
+				// Copy changed fields inside PostgreSQL while the current node row is
+				// locked. In particular, never send the multi-MB inputs/output a second
+				// time through Prisma just to mirror them into the attempt ledger.
+				const assignments = Object.keys(attemptMutation).map((field) =>
+					Prisma.sql`${Prisma.raw(`"${field}"`)} = n.${Prisma.raw(`"${field}"`)}`);
+				if (storedOutput !== undefined) assignments.push(Prisma.sql`"output_refs" = n."output_refs"`);
+				if (receipts !== undefined) assignments.push(Prisma.sql`provider_receipts = ${receipts}`);
+				if (assignments.length > 0) {
+					const updated = await transaction.$executeRaw(Prisma.sql`
+						UPDATE workflow_node_attempts AS a SET ${Prisma.join(assignments)}
+						FROM workflow_node_runs AS n
+						WHERE n.id = ${nodeRun.id} AND a.node_run_id = n.id AND a.attempt = n.attempt
+					`);
+					if (updated !== 1) throw new Error(`Workflow node ${params.nodeId} current attempt ledger changed`);
+				}
 				enterPhase("commit");
 			}, WORKFLOW_NODE_TRANSACTION_OPTIONS);
 		}, {
@@ -311,17 +418,23 @@ export async function updateNodeRun(
 		outcome = "success";
 	} catch (error: unknown) {
 		errorCodes = readDatabaseErrorCodes(error);
-		throw error;
+		// Serialization/schema failures retain their existing error meaning;
+		// only a started persistence action is a WorkflowPersistenceError.
+		if (!preparationCompleted || error instanceof WorkflowOutputCheckpointStaleError) throw error;
+		throw new WorkflowPersistenceError(error);
 	} finally {
 		const elapsedMs = performance.now() - startedAt;
 		const lastPhase = phase;
 		enterPhase("finished");
-		if (outcome === "failed" || elapsedMs >= 1_000) {
+		if (outcome === "failed" || elapsedMs >= 1_000 || outputStorage !== undefined) {
 			console.warn(JSON.stringify({
 				message: "workflow_node_persistence_timing",
 				executionId: params.executionId, nodeId: params.nodeId,
 				outcome, elapsedMs, lastPhase, phaseDurationsMs, errorCodes,
-				outputBytes: mutation.output_refs === undefined ? 0 : Buffer.byteLength(mutation.output_refs),
+				preparationElapsedMs: preparationElapsedMs ?? elapsedMs,
+				preparationSize,
+				outputBytes: outputStorage?.outputBytes ?? 0,
+				outputStorage,
 			}));
 		}
 	}
@@ -421,9 +534,12 @@ export async function updateNodeRuns(
 	params: Readonly<{
 		executionId: string;
 		nodeIds: readonly string[];
-		update: Omit<UpdateWorkflowNodeRunInput, "executionId" | "nodeId">;
+		// A prepared checkpoint owns one node-run/attempt; aggregate lifecycle
+		// updates retain the ordinary output contract and cannot replay that fence.
+		update: Omit<UpdateWorkflowNodeRunInput, "executionId" | "nodeId"> & Readonly<{ outputCheckpoint?: never }>;
 	}>,
 ): Promise<void> {
+	if (params.update.outputCheckpoint !== undefined) throw new Error("Prepared output checkpoints must target one node-run identity");
 	for (const nodeId of params.nodeIds) {
 		await updateNodeRun(db, { executionId: params.executionId, nodeId, ...params.update });
 	}

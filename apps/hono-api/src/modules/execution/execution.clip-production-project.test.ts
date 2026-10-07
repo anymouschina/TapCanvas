@@ -53,10 +53,11 @@ function packet(mode: "image_to_video" | "reference_to_video" = "image_to_video"
 	};
 }
 
-function projections(mode: "image_to_video" | "reference_to_video" = "image_to_video") {
+function projections(mode: "image_to_video" | "reference_to_video" = "image_to_video", speechEvents?: readonly Record<string, unknown>[], videoPrompt = packet(mode).videoPrompt) {
 	const segment = sourceSegment();
 	const segments = createWorkflowCollection({ collectionId: "segments", producerNodeId: "segmentation", producerPortId: "clip-segments", itemIds: [segment.clipId], values: [segment] });
-	const collected = projectClipProductionPackets({ executionId: "exec-1", nodeId: "collector", packets: [packet(mode)], sourceSegmentCollection: segments });
+	const collected = projectClipProductionPackets({ executionId: "exec-1", nodeId: "collector",
+		packets: [{ ...packet(mode), videoPrompt, ...(speechEvents === undefined ? {} : { speechEvents }) }], sourceSegmentCollection: segments });
 	const assetItems = projectClipProductionAssetItems({ executionId: "exec-1", nodeId: "asset-project", assetIntentCollection: collected.assetIntentCollection });
 	const assetItem = assetItems.items[0]!.value;
 	const assetBindings = createWorkflowCollection({
@@ -99,8 +100,11 @@ describe("Clip production media projection", () => {
 			deliveryContract,
 		});
 		const clip = (promptPackage.clips as Record<string, unknown>[])[0]!;
-		expect(promptPackage).toMatchObject({ artifactType: "tapcanvas.prompt-package/v2", authoringProtocol: "tapcanvas.clip-production-packets/v1" });
-		expect(clip.prompt).toBe(packet().videoPrompt);
+		expect(promptPackage).toMatchObject({ artifactType: "tapcanvas.prompt-package/v2", authoringProtocol: "tapcanvas.clip-production-packets/v2" });
+		expect(clip.prompt).toBe(`参考：图1=张羽。\n${packet().videoPrompt}`);
+		expect(clip.sourcePrompt).toBe(packet().videoPrompt);
+		expect(clip.referenceBindings).toEqual([{ nodeId: "generated-image-node-0", name: "张羽", referenceType: "character" }]);
+		expect(clip.referenceHeader).toBe("参考：图1=张羽。");
 		expect(clip.structuredClip).toBeNull();
 		expect(clip.clipFacts).toEqual(packet().clipFacts);
 		expect(clip.sourceRanges).toEqual(packet().sourceRanges);
@@ -109,6 +113,39 @@ describe("Clip production media projection", () => {
 		expect(clip.referenceImageNodeIds).toEqual(["generated-image-node-0"]);
 		expect(clip.referenceAssetIds).toEqual(["stored-image-asset-0"]);
 		expect(clip.assetBindings).toEqual([]);
+		expect(promptPackage.deliveryEvidence).toMatchObject({
+			speechEvidenceStatus: "not_projected_from_clip_packets",
+			sourceSpeechLineCount: 0, narrativeSpeechLineCount: 0, executableSpeechLineCount: 0,
+		});
+	});
+
+	it("projects frozen speech once into the provider prompt and reports provenance from the bound track", () => {
+		const speechEvents = [
+			{ speechEventId: "authored-1", speaker: "阿乔", delivery: "on_screen", text: "  我来，\n现在。 ",
+				textOrigin: "authored", eventIndex: 0, clipId: "clip-0", sceneId: "scene", scope: "scene" as const,
+				sourceRanges: [] },
+			{ speechEventId: "quote-1", speaker: "阿乔", delivery: "off_screen", text: "原文台词。",
+				textOrigin: "source_quote", eventIndex: 0, clipId: "clip-0", sceneId: "scene", scope: "scene" as const,
+				sourceRanges: [{ sourceIndex: 0, startOffset: 0, endOffset: 5, sourceId: "chapter-text", sourceFingerprint: "sha256:source" }] },
+		];
+		const compiledPrompt = "镜头1：人物停在门边。 阿乔on_screen，说：{  我来，\n现在。 }\n镜头2：阿乔off_screen，说：{原文台词。}";
+		const result = projections("image_to_video", speechEvents, compiledPrompt);
+		const promptPackage = projectClipProductionPromptPackage({
+			executionId: "exec-1", workflowKey: "one-click-production/v1",
+			clipProductionCollection: result.collected.clipProductionCollection,
+			assetBindings: result.assetBindings, deliveryContract,
+		});
+		const clip = (promptPackage.clips as Record<string, unknown>[])[0]!;
+		expect(clip.sourcePrompt).toBe(compiledPrompt);
+		expect(clip.prompt).toBe(`参考：图1=张羽。\n${compiledPrompt}`);
+		expect(clip.speechEvents).toEqual(speechEvents);
+		expect(clip.authoringEvidence).toEqual({
+			sourceDialogueLineIds: ["quote-1"], spokenLineIds: ["authored-1", "quote-1"],
+		});
+		expect(promptPackage.deliveryEvidence).toMatchObject({
+			speechEvidenceStatus: "projected_from_clip_packets",
+			sourceSpeechLineCount: 1, narrativeSpeechLineCount: 1, executableSpeechLineCount: 2,
+		});
 	});
 
 	it("keeps distinct effect bindings that reuse one provider image asset", () => {
@@ -144,7 +181,10 @@ describe("Clip production media projection", () => {
 		const promptPackage = projectClipProductionPromptPackage({
 			executionId: "exec-1", workflowKey: "one-click-production/v1",
 			clipProductionCollection: collected.clipProductionCollection, assetBindings, deliveryContract,
+			// The style lock opens every Clip prompt; the plan must re-derive the same prompt from the package.
+			stylePrompt: "国风3D动画电影CG渲染。\n必须看得出是3D。",
 		});
+		expect((promptPackage.clips as { prompt: string }[])[0]?.prompt.startsWith("画风：国风3D动画电影CG渲染。必须看得出是3D。\n参考：")).toBe(true);
 		const plan = buildVideoProductionPlan({
 			executionId: "exec-1", nodeId: "handoff", promptPackage,
 			estimate: { estimateIdentity: "estimate-1", modelKey: "video-model", resolution: "720p", aspectRatio: "16:9" },
@@ -159,7 +199,13 @@ describe("Clip production media projection", () => {
 		expect((promptPackage.clips as { imageReferences: unknown[] }[])[0]?.imageReferences).toHaveLength(2);
 		expect(plan.items[0]?.value).toMatchObject({
 			declaredAssetIds: assetItems.items.map((item) => item.itemId),
-			referenceImageNodeIds: [], referenceAssetIds: ["shared-provider-asset"],
+			referenceImageNodeIds: ["effect-image-node-0", "effect-image-node-1"], referenceAssetIds: [],
+			sourcePrompt: first.videoPrompt,
+			referenceBindings: [
+				{ nodeId: "effect-image-node-0", name: "张羽", referenceType: "character" },
+				{ nodeId: "effect-image-node-1", name: "同一素材的另一对象引用", referenceType: "character" },
+			],
+			referenceHeader: "参考：图1=张羽，图2=同一素材的另一对象引用。",
 		});
 	});
 

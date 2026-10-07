@@ -63,10 +63,124 @@ describe("video generation contract", () => {
   it("freezes duration, image and audio policies from exactly one fresh directory observation", async () => {
     vi.mocked(listNewApiModels).mockClear();
     const result = await resolveVideoGenerationContract({ c: {} as never, videoModel: "doubao-seedance-2-0-260128" });
-    expect(result).toMatchObject({ durationOptions: [5, 10, 15], referenceAudioPolicy: { maximumDurationSeconds: 30.2 } });
+    expect(result).toMatchObject({
+      durationOptions: [5, 10, 15],
+      referenceAudioPolicy: { maximumDurationSeconds: 30.2 },
+      supportsTextToVideo: null,
+      supportsReferenceImages: null,
+      supportsFirstLastFrame: null,
+      maxReferenceImages: 30,
+    });
     expect(listNewApiModels).toHaveBeenCalledTimes(1);
     expect(listNewApiModels).toHaveBeenCalledWith(undefined, { kind: "video", enabled: true, fresh: true });
   });
+
+  it("freezes the complete live capability snapshot even without an authoring mode list", async () => {
+    vi.mocked(listNewApiModels).mockResolvedValueOnce([{
+      modelName: "video-model",
+      requestModelKey: "video-model",
+      enabled: true,
+      meta: { videoOptions: {
+        durationOptions: [{ value: 5 }],
+        supportsReferenceImages: true,
+        supportsFirstLastFrame: false,
+        maxReferenceImages: 4,
+      } },
+    } as never]);
+
+    const frozen = await resolveVideoGenerationContract({ c: {} as never, videoModel: "video-model" });
+
+    expect(frozen).toMatchObject({
+      supportsTextToVideo: null,
+      supportsReferenceImages: true,
+      supportsFirstLastFrame: false,
+      maxReferenceImages: 4,
+    });
+    expect(parseVideoGenerationContract(frozen)).toEqual(frozen);
+    expect(videoGenerationContractsEqual(frozen, parseVideoGenerationContract(frozen)!)).toBe(true);
+  });
+
+  it("validates image_to_video against first-frame capability, independently of reference-image capability", async () => {
+    vi.mocked(listNewApiModels).mockResolvedValueOnce([{
+      modelName: "video-model",
+      requestModelKey: "video-model",
+      enabled: true,
+      meta: { videoOptions: {
+        durationOptions: [{ value: 5 }],
+        supportsReferenceImages: true,
+        supportsFirstLastFrame: false,
+      } },
+    } as never]);
+    await expect(resolveVideoGenerationContract({
+      c: {} as never,
+      videoModel: "video-model",
+      videoInputModes: ["image_to_video"],
+    })).rejects.toMatchObject({
+      dependency: { field: "supportsFirstLastFrame", code: "video_model_first_frame_not_supported" },
+    });
+  });
+
+  it("validates reference_to_video against reference-image capability, independently of first-frame capability", async () => {
+    vi.mocked(listNewApiModels).mockResolvedValueOnce([{
+      modelName: "video-model",
+      requestModelKey: "video-model",
+      enabled: true,
+      meta: { videoOptions: {
+        durationOptions: [{ value: 5 }],
+        supportsReferenceImages: false,
+        supportsFirstLastFrame: true,
+        maxReferenceImages: 4,
+      } },
+    } as never]);
+    await expect(resolveVideoGenerationContract({
+      c: {} as never,
+      videoModel: "video-model",
+      videoInputModes: ["reference_to_video"],
+    })).rejects.toMatchObject({
+      dependency: { field: "supportsReferenceImages", code: "video_model_reference_images_not_supported" },
+    });
+  });
+
+  it("freezes the declared text-to-video capability from the live model", async () => {
+    vi.mocked(listNewApiModels).mockResolvedValueOnce([{
+      modelName: "video-model",
+      requestModelKey: "video-model",
+      enabled: true,
+      meta: { videoOptions: {
+        durationOptions: [{ value: 5 }],
+        supportsTextToVideo: true,
+      } },
+    } as never]);
+    await expect(resolveVideoGenerationContract({
+      c: {} as never,
+      videoModel: "video-model",
+      videoInputModes: ["text_to_video"],
+    })).resolves.toMatchObject({ supportsTextToVideo: true });
+  });
+
+  it("freezes the mode-specific capability and reference limit from the live model", async () => {
+    vi.mocked(listNewApiModels).mockResolvedValueOnce([{
+      modelName: "video-model",
+      requestModelKey: "video-model",
+      enabled: true,
+      meta: { videoOptions: {
+        durationOptions: [{ value: 5 }],
+        supportsReferenceImages: true,
+        supportsFirstLastFrame: true,
+        maxReferenceImages: 4,
+      } },
+    } as never]);
+    await expect(resolveVideoGenerationContract({
+      c: {} as never,
+      videoModel: "video-model",
+      videoInputModes: ["image_to_video", "reference_to_video"],
+    })).resolves.toMatchObject({
+      supportsReferenceImages: true,
+      supportsFirstLastFrame: true,
+      maxReferenceImages: 4,
+    });
+  });
+
   const contract = {
     videoModel: "doubao-seedance-2-0-260128",
     durationOptions: [5, 10, 15],
@@ -75,6 +189,10 @@ describe("video generation contract", () => {
       minimumDurationSeconds: 1.8,
       maximumDurationSeconds: 30.2,
     },
+    supportsTextToVideo: null,
+    supportsReferenceImages: null,
+    supportsFirstLastFrame: null,
+    maxReferenceImages: 30,
   };
 
   it("只接受 maxDurationSeconds 等于目录档位最大值的完整快照", () => {
@@ -415,5 +533,13 @@ describe("video generation contract", () => {
     expect(
       videoGenerationContractsEqual(contract, { ...contract, durationOptions: [5, 15] }),
     ).toBe(false);
+    expect(videoGenerationContractsEqual(contract, { ...contract, supportsTextToVideo: true })).toBe(false);
+    expect(videoGenerationContractsEqual(contract, {
+      videoModel: contract.videoModel,
+      durationOptions: contract.durationOptions,
+      maxDurationSeconds: contract.maxDurationSeconds,
+      referenceAudioPolicy: contract.referenceAudioPolicy,
+      maxReferenceImages: contract.maxReferenceImages,
+    })).toBe(true);
   });
 });

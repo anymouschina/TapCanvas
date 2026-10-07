@@ -145,12 +145,21 @@ describe("terminal continuation settlement public projection", () => {
 				turnId: "turn-1",
 				internalTurnId: "turn-1",
 				state: "suspended",
+				logicalTaskState: {
+					version: 1, logicalTaskId: "turn-1", status: "active",
+					reasonCode: "root_physical_execution_budget_exhausted",
+					physicalRunStatus: "interrupted", deliveryStatus: "pending",
+					taskNodeId: "root", taskRevision: 0,
+					updatedAt: "2026-08-20T00:00:01.000Z", continuationTicket: null,
+				},
 				phase: "suspended",
 				startedAt: "2026-08-20T00:00:00.000Z",
 				updatedAt: "2026-08-20T00:00:01.000Z",
 				lastConfirmedAt: "2026-08-20T00:00:01.000Z",
 				requestText: "生成视频",
 				terminalAuthority: "user_delivery",
+				userIntentContract: null,
+				terminalDelivery: null,
 				reasonCode: "root_physical_execution_budget_exhausted",
 				suspension: {
 					reasonCode: "root_physical_execution_budget_exhausted",
@@ -1694,6 +1703,10 @@ describe("async continuation delivery lock", () => {
 });
 
 describe("public agents chat model propagation", () => {
+	it("preserves the frozen artifact identity for request-scoped Skill resources", () => {
+		expect(buildTaskRequest({ prompt: "author", modelKey: "chosen-model", outputArtifactType: "tapcanvas.chapter-sequence/v4" }).extras?.outputArtifactType)
+			.toBe("tapcanvas.chapter-sequence/v4");
+	});
 	it("forwards explicit reasoning effort into the bridge request", () => {
 		expect(buildTaskRequest({ prompt: "test", modelKey: "gpt-5.6-terra", reasoningEffort: "high" }).extras?.reasoningEffort).toBe("high");
 	});

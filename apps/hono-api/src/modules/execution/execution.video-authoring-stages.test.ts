@@ -2,6 +2,14 @@ import { type SourceUnitLedger } from "../../../../../packages/schemas/source-un
 import { projectChapterAssetSources } from "./execution.chapter-asset-source";
 import { describe, expect, it } from "vitest";
 import { chapterSpeechLedger, parseChapterBeatPlan, parseChapterAssetPlan, validateClipDesignReferences, assembleDesignedBeatSheet, buildClipDesignInputs, type ChapterBeatPlan, type ClipDesign } from "./execution.video-authoring-stages";
+function authoredObjectStates(beat: ClipDesign["beat"]): Record<string, unknown>[] {
+  const states = beat.objectStates;
+  if (!Array.isArray(states)) throw new Error("Fixture beat requires objectStates");
+  return states.map((state: unknown) => {
+    if (!state || typeof state !== "object" || Array.isArray(state)) throw new Error("Fixture objectState must be an object");
+    return state as Record<string, unknown>;
+  });
+}
 const plan: ChapterBeatPlan = {
   sourceId: "chapter", sourceFingerprint: "source-hash", chapterArc: { endingHook: null },
   sourceFidelityAudit: { sourceBeatLedger: [] },
@@ -116,7 +124,7 @@ it("repairs mismatched placement and reference handles before clip assembly with
 it('requires frozen scene membership in the author schema, not only the later assembly', () => {
   const { clip } = stagedAuthoringFixture();
   const schema = bindClipDesignSchema({ speechLineIds: [], clipIndex: 0, durationSeconds: 10, objectIds: ['scene', 'hero'], sceneObjectIds: ["scene"], backgroundObjectIds: ['scene'] });
-  const invalid = { ...clip, beat: { ...clip.beat, objectStates: clip.beat.objectStates.map(state => ({ ...state, objectId: 'hero' })) } };
+  const invalid = { ...clip, beat: { ...clip.beat, objectStates: authoredObjectStates(clip.beat).map(state => ({ ...state, objectId: 'hero' })) } };
   expect(validateWorkflowToolArguments(schema, invalid).some(issue => issue.path.includes('objectStates'))).toBe(true);
   expect(validateWorkflowToolArguments(schema, clip)).toEqual([]);
 });
@@ -154,13 +162,13 @@ it('keeps registered scenes and background plan identities separate across autho
   const assembled = assembleDesignedBeatSheet(chapter, distinctAssets, [value], ledger);
   expect(validateWorkflowAgentOutput({ encoding: 'json_object', artifactType: 'tapcanvas.beat-sheet/v2', rawText: JSON.stringify(assembled), jsonObjectContract: applyWorkflowArtifactJsonObjectContract('tapcanvas.beat-sheet/v2', { requiredStringFields: ['sourceId', 'sourceFingerprint', 'protocolVersion'], requiredArrayFields: ['beats', 'objectRegistry', 'assetPlans', 'blockingPlans'], allowedFields: Object.keys(assembled) }) }).ok).toBe(true);
   expect(() => validateClipDesignReferences(value, projectChapterAssetSources(shared.objectRegistry).objectRegistry)).not.toThrow();
-  const inventedState = { ...value, beat: { ...value.beat, objectStates: value.beat.objectStates.map(state => ({ ...state, objectId: 'background-day' })) } };
+  const inventedState = { ...value, beat: { ...value.beat, objectStates: authoredObjectStates(value.beat).map(state => ({ ...state, objectId: 'background-day' })) } };
   expect(validateWorkflowToolArguments(schema, inventedState).length).toBeGreaterThan(0);
   expect(() => bindClipDesignSchema({ speechLineIds: [], clipIndex: 0, durationSeconds: 10,
     objectIds: ['scene'], sceneObjectIds: ['unregistered'], backgroundObjectIds: ['background-day'] })).toThrow('scene IDs');
 });
 
-it('namespaces duplicate background plans by their frozen asset identity before Clip authoring', () => {
+it('rejects duplicate background identities before Clip authoring without rewriting the plan', () => {
   const duplicate = {
     objectRegistry: [{ objectId: 'scene', kind: 'scene', name: '广场', physicalIdentityKey: null, referenceRole: 'environment', identityInvariant: '同一空间', imageSource: { mode: 'reuse', assetIds: ['scene-image'] } }],
     backgroundPlans: [
@@ -168,10 +176,9 @@ it('namespaces duplicate background plans by their frozen asset identity before 
       { objectId: 'scene', plan: { assetId: 'night-background', displayName: '夜间', prompt: 'night', negativePrompt: 'none', referenceAssetBindings: [] } },
     ],
   };
-  const parsed = parseChapterAssetPlan(duplicate);
-  expect(parsed.backgroundPlans.map((item) => item.objectId)).toEqual([
-    'scene::background::day-background::0',
-    'scene::background::night-background::1',
-  ]);
-  expect(new Set(parsed.backgroundPlans.map((item) => item.objectId)).size).toBe(2);
+  expect(() => parseChapterAssetPlan(duplicate)).toThrow('duplicates string-field tuple');
+  const distinct = { ...duplicate, backgroundPlans: duplicate.backgroundPlans.map((item, index) => ({
+    ...item, objectId: index === 0 ? 'scene-day' : 'scene-night',
+  })) };
+  expect(parseChapterAssetPlan(distinct).backgroundPlans.map(item => item.objectId)).toEqual(['scene-day', 'scene-night']);
 });

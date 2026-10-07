@@ -4,6 +4,7 @@ import {
 	hasWorkflowPluginExecutorRefPrefix,
 	parseWorkflowExecutionSemanticsSnapshotV2,
 	parseWorkflowExecutionSemanticsV2,
+	parseWorkflowPipelineRunSpec,
 	parseWorkflowPluginExecutorRefV1,
 	parseWorkflowPluginManifestV1,
 	type WorkflowExecutionSemanticsSnapshotV2,
@@ -14,8 +15,18 @@ import type { WorkflowPluginCatalogRegistration } from "./execution.plugin-runti
 import {
 	parseWorkflowNodes,
 	resolveWorkflowNodeExecutorRef,
+	type WorkflowNodeSnapshot,
 } from "./execution.node-runtime";
 import { resolveCoreWorkflowExecutorSemantics } from "./execution.core-semantics";
+
+import { flattenWorkflowNodeTree } from "./execution.node-tree";
+import { composeWorkflowPipelineRunSemantics } from "./execution.pipeline-runner";
+
+function frozenNodeTree(flowData: unknown): WorkflowNodeSnapshot[] {
+	const nodes = parseWorkflowNodes({ nodes: flattenWorkflowNodeTree(parseWorkflowNodes(flowData)) });
+	if (new Set(nodes.map(node => node.id)).size !== nodes.length) throw new Error("Frozen workflow node ids must be unique across inline steps");
+	return nodes;
+}
 
 const SNAPSHOT_FIELD = "workflowExecutionSemantics";
 
@@ -64,7 +75,7 @@ function assertSnapshotMatchesFlow(
 	flowData: Record<string, unknown>,
 	snapshot: WorkflowExecutionSemanticsSnapshotV2,
 ): void {
-	const nodes = parseWorkflowNodes(flowData);
+	const nodes = frozenNodeTree(flowData);
 	if (Object.keys(snapshot.nodes).length !== nodes.length) {
 		throw new Error("Workflow execution semantics snapshot must cover every immutable workflow node exactly once");
 	}
@@ -79,10 +90,28 @@ function assertSnapshotMatchesFlow(
 }
 
 export function workflowRequiresPluginSemantics(flowData: unknown): boolean {
-	return parseWorkflowNodes(flowData).some((node) => {
+	return frozenNodeTree(flowData).some((node) => {
 		const executorRef = resolveWorkflowNodeExecutorRef(node);
 		return executorRef ? hasWorkflowPluginExecutorRefPrefix(executorRef) : false;
 	});
+}
+
+/** Preserve original action semantics when an explicit bound selects a subgraph. */
+export function projectWorkflowExecutionSemanticsSnapshot(
+	source: Record<string, unknown>,
+	scoped: Record<string, unknown>,
+): Record<string, unknown> {
+	if (source[SNAPSHOT_FIELD] === undefined) return scoped;
+	const original = parseWorkflowExecutionSemanticsSnapshotV2(source[SNAPSHOT_FIELD]);
+	assertSnapshotMatchesFlow(source, original);
+	const nodes = Object.fromEntries(frozenNodeTree(scoped).map(node => {
+		const entry = original.nodes[node.id];
+		if (!entry) throw new Error(`Scoped node ${node.id} has no frozen execution semantics`);
+		return [node.id, entry];
+	}));
+	const snapshot = { ...original, nodes };
+	assertSnapshotMatchesFlow(scoped, snapshot);
+	return { ...scoped, [SNAPSHOT_FIELD]: snapshot };
 }
 
 export function freezeWorkflowExecutionSemanticsSnapshot(
@@ -98,11 +127,13 @@ export function freezeWorkflowExecutionSemanticsSnapshot(
 	}
 	const manifests = registeredPluginManifests(pluginRegistrations);
 	const nodes: Record<string, Readonly<{ executorRef: string; semantics: WorkflowExecutionSemanticsV2 }>> = {};
-	for (const node of parseWorkflowNodes(flowData)) {
+	const resolveNodeSemantics = (node: WorkflowNodeSnapshot): WorkflowExecutionSemanticsV2 => {
 		const executorRef = resolveWorkflowNodeExecutorRef(node);
 		if (!executorRef) throw new Error(`Workflow node ${node.id} has no executorRef for its execution semantics`);
-		const semantics = resolveCoreWorkflowExecutorSemantics(executorRef)
-			?? (hasWorkflowPluginExecutorRefPrefix(executorRef) ? resolvePluginSemantics(executorRef, manifests) : null);
+		const semantics = executorRef === "workflow.pipeline.run/v1"
+			? composeWorkflowPipelineRunSemantics(parseWorkflowPipelineRunSpec(node.data.workflowPipeline), resolveNodeSemantics)
+			: resolveCoreWorkflowExecutorSemantics(executorRef)
+				?? (hasWorkflowPluginExecutorRefPrefix(executorRef) ? resolvePluginSemantics(executorRef, manifests) : null);
 		if (!semantics) throw new Error(`Workflow executor ${executorRef} has no registered execution semantics`);
 		const retryPolicy = node.data.workflowRetryPolicy;
 		if (retryPolicy !== undefined && (!isRecord(retryPolicy) || !Number.isInteger(retryPolicy.maxAttempts))) {
@@ -112,7 +143,9 @@ export function freezeWorkflowExecutionSemanticsSnapshot(
 			? parseWorkflowExecutionSemanticsV2({ ...semantics, maxAutomaticAttempts: retryPolicy.maxAttempts })
 			: semantics;
 		nodes[node.id] = Object.freeze({ executorRef, semantics: configuredSemantics });
-	}
+		return configuredSemantics;
+	};
+	for (const node of frozenNodeTree(flowData)) resolveNodeSemantics(node);
 	return {
 		...flowData,
 		[SNAPSHOT_FIELD]: Object.freeze({

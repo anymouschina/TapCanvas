@@ -159,9 +159,59 @@ function getNodeLabel(node: FlowNode): string {
 }
 
 function getNodeParentId(node: FlowNode): string | null {
-  const raw = (node as unknown as { parentId?: unknown }).parentId
-  const pid = normalizeString(raw)
+  const pid = normalizeString(node.parentId)
   return pid || null
+}
+
+type NodeRect = { x: number; y: number; width: number; height: number }
+
+function positiveSize(value: unknown): number | null {
+  const size = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(size) && size > 0 ? size : null
+}
+
+function getNodeRect(node: FlowNode, nodeById: ReadonlyMap<string, FlowNode>): NodeRect | null {
+  let x = node.position.x
+  let y = node.position.y
+  const visited = new Set<string>([node.id])
+  let parentId = getNodeParentId(node)
+  while (parentId) {
+    if (visited.has(parentId)) return null
+    visited.add(parentId)
+    const parent = nodeById.get(parentId)
+    if (!parent) return null
+    x += parent.position.x
+    y += parent.position.y
+    parentId = getNodeParentId(parent)
+  }
+  const data = node.data && typeof node.data === 'object' ? node.data as UnknownNodeData : {}
+  const width = positiveSize(node.measured?.width ?? node.style?.width ?? data.nodeWidth)
+  const height = positiveSize(node.measured?.height ?? node.style?.height ?? data.nodeHeight)
+  if (!Number.isFinite(x) || !Number.isFinite(y) || width === null || height === null) return null
+  return { x, y, width, height }
+}
+
+function findVisualGroupAssets(nodes: FlowNode[], groupId: string): FlowNode[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]))
+  const groups = nodes.filter((node) => node.type === 'groupNode')
+    .flatMap((node) => {
+      const rect = getNodeRect(node, nodeById)
+      return rect ? [{ id: node.id, rect, area: rect.width * rect.height }] : []
+    })
+  if (!groups.some((group) => group.id === groupId)) return []
+
+  return nodes.filter((node) => {
+    if (node.type !== 'taskNode' || getNodeParentId(node)) return false
+    const rect = getNodeRect(node, nodeById)
+    if (!rect) return false
+    const centerX = rect.x + rect.width / 2
+    const centerY = rect.y + rect.height / 2
+    const containing = groups
+      .filter((group) => centerX >= group.rect.x && centerX <= group.rect.x + group.rect.width
+        && centerY >= group.rect.y && centerY <= group.rect.y + group.rect.height)
+      .sort((a, b) => a.area - b.area || a.id.localeCompare(b.id))
+    return containing[0]?.id === groupId
+  })
 }
 
 function buildFilenameBase(asset: Omit<GroupDownloadAsset, 'filename'>): string {
@@ -197,6 +247,7 @@ export function collectGroupAssetsForDownload({ nodes, groupId }: CollectGroupAs
   const assets: Array<Omit<GroupDownloadAsset, 'filename'>> = []
   const groupQueue: string[] = [trimmedGroupId]
   const visitedGroups = new Set<string>()
+  let hasStructuralChildren = false
 
   while (groupQueue.length) {
     const currentGroupId = groupQueue.shift()
@@ -205,6 +256,7 @@ export function collectGroupAssetsForDownload({ nodes, groupId }: CollectGroupAs
 
     for (const node of nodes) {
       if (getNodeParentId(node) !== currentGroupId) continue
+      hasStructuralChildren = true
       if (node.type === 'groupNode') {
         groupQueue.push(String(node.id))
         continue
@@ -215,6 +267,22 @@ export function collectGroupAssetsForDownload({ nodes, groupId }: CollectGroupAs
       const primary = pickPrimaryMedia(data)
       if (!primary) continue
 
+      assets.push({
+        nodeId: String(node.id),
+        nodeLabel: getNodeLabel(node),
+        mediaType: primary.mediaType,
+        url: primary.url,
+      })
+    }
+  }
+
+  // A visible group can contain cards whose positions are inside its rectangle
+  // even when they have no parentId. Structural membership takes precedence.
+  if (!hasStructuralChildren) {
+    for (const node of findVisualGroupAssets(nodes, trimmedGroupId)) {
+      const data = node.data && typeof node.data === 'object' ? node.data as UnknownNodeData : {}
+      const primary = pickPrimaryMedia(data)
+      if (!primary) continue
       assets.push({
         nodeId: String(node.id),
         nodeLabel: getNodeLabel(node),

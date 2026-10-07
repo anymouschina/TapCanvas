@@ -340,6 +340,9 @@ export function buildTaskRequest(input: AgentsChatRequestDto): TaskRequestDto {
 		: [];
 	const extras: Record<string, unknown> = {
 		...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+		...(typeof input.outputArtifactType === "string" && input.outputArtifactType.trim()
+			? { outputArtifactType: input.outputArtifactType.trim() }
+			: {}),
 		...(typeof input.clientPendingId === "string" && input.clientPendingId.trim()
 			? { clientPendingId: input.clientPendingId.trim() }
 			: {}),

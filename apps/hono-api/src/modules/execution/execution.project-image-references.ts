@@ -1,9 +1,12 @@
 import { isWorkflowProjectImageReady, type WorkflowProjectContext } from "./execution.project-context";
 
 export function frozenReadyProjectImages(context: WorkflowProjectContext) {
-  const visible = new Set(context.projectAssetIds);
-  return context.assetSnapshot.filter(asset => asset.projectId === context.projectId
-    && visible.has(asset.assetId) && isWorkflowProjectImageReady(asset));
+	const visible = new Set(context.projectAssetIds);
+	return context.assetSnapshot.filter(asset => asset.projectId === context.projectId
+		&& visible.has(asset.assetId)
+		&& isWorkflowProjectImageReady(asset)
+		&& typeof asset.sourceFacts.mediaIdentityKey === "string"
+		&& asset.sourceFacts.mediaIdentityKey.trim().length > 0);
 }
 
 /** Resolve only explicit handles in the frozen scope; never match display names. */
@@ -23,12 +26,9 @@ export function resolveWorkflowProjectImageReferences(
 	const ids = readIds(contract.referenceAssetIds, "referenceAssetIds");
 	for (const id of ids) {
 		if (!byId.has(id)) {
-			// The isolated author receives this correction without the original
-			// conversation. Include exact frozen handles so it can repair an ID
-			// without guessing aliases, dropping images, or issuing a new task.
-			throw new Error(`assetId=${id} outside the frozen ready production image set; frozen reference handles=${JSON.stringify(ready.map((asset) => ({
-				assetId: asset.assetId, nodeId: asset.nodeId, flowId: asset.flowId,
-			})))}; preserve selectedAssetIds=${JSON.stringify(context.selectedAssetIds)}; current canvasId=${context.canvasId}`);
+			// Keep this action's exact failure evidence. Discovery remains an
+			// on-demand read and never expands the entire permission catalog here.
+			throw new Error(`assetId=${id} outside the frozen ready production image set; use frozenAssetMatch (tapcanvas_workflow_execution_inspect view=asset_match) to obtain exact allowed asset IDs when that read capability is available; preserve selectedAssetIds=${JSON.stringify(context.selectedAssetIds)}; current canvasId=${context.canvasId}`);
 		}
 	}
 	for (const nodeId of readIds(contract.referenceImageNodeIds, "referenceImageNodeIds")) {
@@ -50,4 +50,3 @@ export type WorkflowReusableAssetReference = Readonly<{
 }>;
 
 export type WorkflowReusableAssetRoleFacts = Readonly<Record<string, readonly WorkflowReusableAssetReference[]>>;
-

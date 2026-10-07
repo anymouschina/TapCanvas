@@ -1,5 +1,5 @@
 import { createWorkflowRefreshQueue } from './workflowRefreshQueue'
-import { sanitizeBrowserCanvasPatch, mergeCanvasAuthoringData } from '@tapcanvas/video-orchestrator-protocol'
+import { sanitizeBrowserCanvasPatch, mergeCanvasSyncedNodeData, type CanvasNodeDataMode } from '@tapcanvas/video-orchestrator-protocol'
 import { applyRemotePatchToDeletionLedger, filterCanvasMembershipPatch } from "../persistence/canvasMembership"
 import { useEffect, useRef, useState } from 'react'
 import type { Node, Edge } from '@xyflow/react'
@@ -95,7 +95,7 @@ export type SyncNodeItem = {
   type?: string
   position?: { x: number; y: number }
   data?: unknown
-  dataMode?: 'authoring'
+  dataMode?: CanvasNodeDataMode
   parentId?: string
   style?: unknown
   width?: number
@@ -336,7 +336,7 @@ function applyCanvasPatch(patch: SyncPatch): void {
           return {
             ...current,
             ...node,
-            ...(dataMode === 'authoring' ? { data: mergeCanvasAuthoringData(current?.data, node.data) } : {}),
+            ...(node.data !== undefined ? { data: mergeCanvasSyncedNodeData(current?.data, node.data, node.id, dataMode) } : {}),
           } as Node
         }),
         removeNodeIds: patch.removeNodeIds,

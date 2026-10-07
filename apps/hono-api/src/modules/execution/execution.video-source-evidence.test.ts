@@ -4,7 +4,7 @@ import { workflowSourceSetIdentity } from "./execution.source-lineage";
 import { sha256Hex } from "../asset/book-content-hash";
 
 const original = "  爬升再俯冲。\n卸力翻滚踩稳。  ";
-const receipt = { sourceId: "source-a", sourceFingerprint: sha256Hex(original.trim()) };
+const receipt = { sourceId: "source-a", sourceFingerprint: sha256Hex(original) };
 const source = { ...receipt, content: original };
 const bind = (sources: unknown, sourceReceipt: unknown = receipt) => bindWorkflowVideoSourceEvidence({
 	sourceReceipt,

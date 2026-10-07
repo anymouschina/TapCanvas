@@ -19,10 +19,12 @@ requires-skills:
   - cinematic-feel-director
 ---
 
-完整章节生产的持久 Workflow 已拆分职责：`tapcanvas.chapter-beat-plan/v1`、`tapcanvas.chapter-asset-plan/v1`、`tapcanvas.clip-design/v1` 分别按 `tapcanvas-video-authoring-stages` 交付；不能要求其中任何一个节点再写整份 BeatSheet。最终 BeatSheet 由确定性组装器生成，现有来源、对象与下游 writer 合同继续有效。首 Clip 快速验证的独立单 Clip 合同保持按其声明的 artifact 执行。
+完整章节生产的持久 Workflow 已拆分职责：`tapcanvas.source-unit-ledger/v1`、`tapcanvas.chapter-beat-plan/v3`、`tapcanvas.chapter-asset-plan/v3`、`tapcanvas.clip-design/v2` 分别按 `tapcanvas-video-authoring-stages` 交付；原文单位独立持久化，章节只分配引用，对白及说话人由冻结来源投影；不能要求其中任何一个节点再写整份 BeatSheet。最终 BeatSheet 由确定性组装器生成，现有来源、对象与下游 writer 合同继续有效。首 Clip 快速验证的独立单 Clip 合同保持按其声明的 artifact 执行。
 
 
 # 小T 戏剧改编器
+
+指定短时长原创或用户反馈“剧情散、空、对白看不懂”时，按需读取 `tapcanvas-screenwriter/references/short-film-density.md`，先把观众可理解的诉求、阻力、选择与后果连成整片，再切技术窗口。精选知识卡中的官方简介、作者评语与实际视频观察要分别标注；简介没有提供的结局、台词和秒点不能冒充参考事实。此方法只指导同链创作修订，不改变现有 BeatSheet 合同，也不增加检索配额或质量闸门。
 
 ## 拓扑与站位提示词来源
 
@@ -127,7 +129,7 @@ requires-skills:
 - 每个 `storyEvents[]` 只提交 `sourceBeatId/event/exitState/startSeconds/endSeconds`；首个入口由 beat 的 `startKeyframe` 表达，后续 `entryState` 与 beat `exitState` 由宿主按事件顺序确定性投影，禁止模型重复提交这些编译字段，避免状态接力出现两份冲突事实。每个字段只表达一个可执行事实，禁止附带审计解释。
 - 每个 beat 必须用非空短事实序列化 `dominantFunction/causalEntry/irreversibleResult/handoffToNext`：分别声明本段在整章中的唯一主功能、为何必须从上一状态发生、本段造成的不可逆局面变化，以及下一段必须承接的未完成义务。`dominantFunction` 是 Agent 自由表达的语义事实，不建立本地枚举或题材 switch；相邻段比较与修订由 Agent 完成。
 - 根级 `objectRegistry[]` 恰好使用 `objectId/kind/name/physicalIdentityKey/referenceRole/referenceImageNodeIds/referenceAssetIds/forbiddenTransfer/identityInvariant/scale`，每个对象只注册一次；每个 `objectStates[]` 恰好使用 `objectId/referenceAssetIds/referenceImageNodeIds/startState/spatialRelation/driver/stateChange/endState`，表达当前 beat 所有入画对象的状态；状态不变也必须声明。同一对象跨 beat 通过 objectId 接力，Agent 不重复序列化不变量或宿主派生的 `assetObjectContracts`。
-- 参考资产只服务于对成片真正重要的跨镜身份或空间连续性。一次性路人、匿名围观者、背景人群和只承担群体反应的非核心群体，除非其可辨认身份必须跨 Clip 保持一致，否则在根级对象中使用 `referenceRole="none"`，并保持 `referenceImageNodeIds/referenceAssetIds=[]`；不要为它们生成或绑定角色卡。这个取舍由当前模型在唯一首稿中根据叙事功能判断，runtime 不做关键词路由或事后纠偏。
+- 参考资产服务于成片需要的跨镜身份、群体视觉或空间连续性。一次性路人、匿名围观者或背景群体没有视觉连续需求且用户未明确要求群演参考时，在根级对象中使用 `referenceRole="none"`，并保持 `referenceImageNodeIds/referenceAssetIds=[]`。当作者判断服装、体型差异、人数或群体组成需要跨镜保持一致，或用户明确要求群演参考时，按当前 schema 的 `composition` 职责与 `assetPlans` 表达群体参考需求，交由 `tapcanvas-character-card` 的 `references/cast-tiering-and-crowd-design.md` 设计群演选角视觉参考；不因匿名或非核心身份一概免除参考，也不强迫背景成员逐人制作完整卡。需要近景、对白、持续互动或独立辨认的具体人物，由作者依据实际演出需要交接单人卡需求。角色分层与资产粒度由当前模型结合来源、镜头需要和用户意图判断，runtime 不增加主配角枚举、关键词路由或语义门禁。
 - 调用方给出非空 `selectedAssetIds + selectedAssetSnapshot` 时，这些资产是一等执行事实，不是可选素材。逐项依据快照中的 `canonicalName/kind/referenceType/sourceFacts` 与真实媒体理解证据判断对象身份及参考职责，并把原始 ID 写入匹配的根级对象 `referenceAssetIds`；全部 selected ID 必须在根级 registry 中精确出现一次。同一对象的多角度、细节或状态参考可以绑定多张真实图片，保持有序 ID；不同对象分别注册，不能因同时选中就合成一个泛称对象。不要仅凭文件名、选中顺序或图片数量推断商品、材质或性能；事实不足时使用当前已授权的媒体理解工具补证，不编造产品卖点。禁止遗漏、截断、替换或另生成相似身份，也不得从 nodeId 自行拼造 assetId。当前画布裸节点 ID 仅进入 `referenceImageNodeIds`，跨画布资产原样使用稳定 `referenceAssetIds`。逐 beat 的 `assetObjectContracts` 由宿主从 registry 与 objectStates 派生，模型不填写派生字段。结构性拒因经同一逻辑任务的 outputRepair 回灌，Agent 保留已有事实与精确选择继续修订；runtime 不按名称补绑、不替 Agent 决定对象关系、不重建已受理任务。
 - 章级 BeatSheet 不输出 `temporalFrameTrack`；逐秒窗口由后续单 clip writer 根据冻结的 `storyEvents` 编译。
 - `speakers` 是运行时从实际发声行确定性投影的索引；模型可以省略，不得为了它复制对白。

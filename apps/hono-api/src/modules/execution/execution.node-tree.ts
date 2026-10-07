@@ -22,24 +22,9 @@ export function mapWorkflowNodeTree(nodes: readonly unknown[], mapNode: (node: N
 }
 
 export function flattenWorkflowNodeTree(nodes: readonly unknown[]): NodeRecord[] {
-	const result: NodeRecord[] = [];
-	const visit = (scope: readonly unknown[]): void => {
-		for (const value of scope) {
-			if (!record(value)) continue;
-			result.push(value);
-			if (!record(value.data) || value.data.workflowPipeline === undefined) continue;
-			const pipeline = value.data.workflowPipeline;
-			if (!record(pipeline) || pipeline.protocolVersion !== 'workflow.pipeline.run/v1' || !Array.isArray(pipeline.steps)) {
-				throw new Error('Inline workflow node has an invalid frozen pipeline');
-			}
-			for (const step of pipeline.steps) {
-				if (!record(step) || !record(step.node)) throw new Error('Inline workflow step requires a frozen node snapshot');
-				visit([step.node]);
-			}
-		}
-	};
-	visit(nodes);
-	return result;
+  const result: NodeRecord[] = [];
+  mapWorkflowNodeTree(nodes, node => { result.push(node); return node; });
+  return result;
 }
 
 /** Apply a list-level transform at every inline pipeline scope while retaining the authored tree. */

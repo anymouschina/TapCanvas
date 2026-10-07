@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { assetFactIdentity } from "./execution.asset-identity";
 import { reconcileWorkflowMediaReceipt } from "./execution.media-receipt";
+import { matchesWorkflowMediaItemRuntimeNodeId } from "./execution.media-retry";
 import { appendSceneCardConstraint } from "../../../../../packages/schemas/scene-card-prompt";
 import type { AppContext, WorkerEnv } from "../../types";
 import { resolveProjectBillingTeamId } from "../task/agents-tool-bridge.billing-scope";
@@ -13,6 +16,7 @@ import { freshReadFlowRow } from "../task/video-orchestrator.flow-io";
 import { isProviderTaskPendingStatus } from "../task/provider-task-status";
 import { workflowImageSemanticLabel } from "./execution.media-label";
 import { buildWorkflowImageTaskId } from "../task/workflow-image-effect-claim";
+import { getTaskResultByTaskId } from "../task/task-result.repo";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -89,60 +93,48 @@ function sameReferenceAssetBindings(
 function sameAssetMetadata(value: Record<string, unknown>, expected: WorkflowImageRunRequest["assetMetadata"]): boolean {
 	if (!expected) return true;
 	return Object.entries(expected).every(([key, expectedValue]) => (
-		JSON.stringify(value[key]) === JSON.stringify(expectedValue)
+		isDeepStrictEqual(value[key], expectedValue)
 	));
 }
 
-function isCharacterIdentityAnchor(
-	value: WorkflowImageRunRequest["assetMetadata"],
-): value is Readonly<Record<string, unknown>> & { referenceType: "character"; characterAssetRole: "identity_anchor"; characterProfileVersion: "character-card/v3" } {
-	return Boolean(
-		value
-		&& readString(value.referenceType) === "character"
-		&& readString(value.characterAssetRole) === "identity_anchor"
-		&& readString(value.characterProfileVersion) === "character-card/v3",
-	);
-}
-
-/**
- * Character identity cards are single-subject reference boards.  Project
- * style locks are shared with scene/video generation and may mention a cast
- * or an action sequence, so the single-subject board contract must be placed
- * after that shared style text at the final prompt boundary.
- */
 export function composeWorkflowImagePrompt(
 	request: Pick<WorkflowImageRunRequest, "prompt" | "stylePrompt" | "assetMetadata">,
 ): string {
 	const styledPrompt = request.stylePrompt
 		? `${request.prompt}\n\n[项目统一视觉风格]\n${request.stylePrompt}`.trim()
 		: request.prompt.trim();
-	if (!isCharacterIdentityAnchor(request.assetMetadata)) return appendSceneCardConstraint(styledPrompt, request.assetMetadata?.referenceType);
-	const roleName = readString(request.assetMetadata.roleName)
-		|| readString(request.assetMetadata.canonicalName)
-		|| readString(request.assetMetadata.displayName)
-		|| "当前角色";
-	return `${styledPrompt}\n\n【单人角色身份板约束】\n只呈现一个角色：${roleName}。四个信息区（正面脸、3/4脸、正面全身、背面全身）全部是同一角色的不同视角，不是四个角色；保持同一张脸、同一套服装结构、同一体型与同一身份物件。采用中性干净参考背景和中性基态，不绘制战斗动作、剧情现场或环境叙事。画面中不得出现第二个人、其他人物、群像、分身、镜中人、背景人物或陪衬角色。`.trim();
+	const referenceType = request.assetMetadata?.referenceType;
+	return appendSceneCardConstraint(styledPrompt, referenceType);
 }
 
-export function persistedWorkflowImageRequestMatches(
+function workflowImageRequestMismatchFields(
 	data: Record<string, unknown>,
 	request: Pick<WorkflowImageRunRequest,
 		"prompt" | "negativePrompt" | "modelKey" | "aspectRatio" | "imageSize" | "imageQuality" | "referenceAssetBindings" | "assetMetadata"
 		| "styleReferenceImages" | "stylePrompt" | "styleFingerprint"
 	>,
-): boolean {
+): readonly string[] {
 	const expectedPrompt = composeWorkflowImagePrompt(request);
-	return readString(data.prompt) === expectedPrompt
-		&& readString(data.negativePrompt) === request.negativePrompt.trim()
-		&& readString(data.modelKey) === request.modelKey
-		&& (readString(data.aspect) || readString(data.aspectRatio)) === request.aspectRatio
-		&& readString(data.imageSize) === request.imageSize
-		&& readString(data.imageQuality) === readString(request.imageQuality)
-		&& sameReferenceAssetBindings(data.referenceAssetBindings, request.referenceAssetBindings)
-		&& JSON.stringify(data.styleImages ?? []) === JSON.stringify(request.styleReferenceImages ?? [])
-		&& readString(data.stylePrompt) === readString(request.stylePrompt)
-		&& readString(data.styleFingerprint) === readString(request.styleFingerprint)
-		&& sameAssetMetadata(data, request.assetMetadata);
+	return [
+		["prompt", readString(data.prompt) === expectedPrompt],
+		["negativePrompt", readString(data.negativePrompt) === request.negativePrompt.trim()],
+		["modelKey", readString(data.modelKey) === request.modelKey],
+		["aspect", (readString(data.aspect) || readString(data.aspectRatio)) === request.aspectRatio],
+		["imageSize", readString(data.imageSize) === request.imageSize],
+		["imageQuality", readString(data.imageQuality) === readString(request.imageQuality)],
+		["referenceAssetBindings", sameReferenceAssetBindings(data.referenceAssetBindings, request.referenceAssetBindings)],
+		["styleImages", JSON.stringify(data.styleImages ?? []) === JSON.stringify(request.styleReferenceImages ?? [])],
+		["stylePrompt", readString(data.stylePrompt) === readString(request.stylePrompt)],
+		["styleFingerprint", readString(data.styleFingerprint) === readString(request.styleFingerprint)],
+		["assetMetadata", sameAssetMetadata(data, request.assetMetadata)],
+	].flatMap(([field, matches]) => matches ? [] : [field as string]);
+}
+
+export function persistedWorkflowImageRequestMatches(
+	data: Record<string, unknown>,
+	request: Parameters<typeof workflowImageRequestMismatchFields>[1],
+): boolean {
+	return workflowImageRequestMismatchFields(data, request).length === 0;
 }
 
 export function inspectPersistedWorkflowImageNode(
@@ -188,6 +180,14 @@ export function inspectPersistedWorkflowImageNode(
 	};
 }
 
+function isUnsubmittedPreparedImageNode(
+	data: Record<string, unknown>,
+): boolean {
+	return data.workflowPreparedOnly === true && data.status === "idle"
+		&& !readString(data.taskId) && !readString(data.imageTaskId)
+		&& !readString(data.imageUrl) && !Array.isArray(data.imageResults);
+}
+
 export function workflowImageEffectIdentity(
 	request: Pick<WorkflowImageRunRequest, "executionFamilyId" | "runtimeNodeId" | "authorizedRetry" | "assetIdentity">,
 ): Readonly<{
@@ -204,7 +204,7 @@ export function workflowImageEffectIdentity(
 	};
 }
 
-export async function runWorkflowImageNode(
+async function runWorkflowImageAttempt(
 	env: WorkerEnv,
 	request: WorkflowImageRunRequest,
 ): Promise<WorkflowImageRunResult> {
@@ -217,8 +217,74 @@ export async function runWorkflowImageNode(
 		...(request.chapterId ? { chapterId: request.chapterId } : {}),
 	});
 	let row = await readRow();
+	const adoptRegisteredClaim = async (rowData: string, nodeId: string): Promise<WorkflowImageRunResult | null> => {
+		const claimed = flowNode(rowData, nodeId);
+		if (!claimed || !isRecord(claimed.data) || claimed.data.status !== "submitting"
+			|| claimed.data.workflowSubmissionState !== "submitting" || readString(claimed.data.taskId)) return null;
+		const effectId = readString(claimed.data.workflowEffectId);
+		const taskId = readString(claimed.data.workflowTaskId);
+		if (!effectId || !taskId) return null;
+		if (taskId !== buildWorkflowImageTaskId({ ownerId: request.ownerId, effectId })
+			|| !persistedWorkflowImageRequestMatches(claimed.data, request)) {
+			throw new Error("Workflow image claim task identity or generation contract changed");
+		}
+		// Task registration and canvas receipt projection are separate durable writes.
+		// Adopt only the exact owner-scoped task; absence never authorizes resubmission.
+		const registered = await getTaskResultByTaskId(env.DB, request.ownerId, taskId);
+		if (!registered) return null;
+		console.info(JSON.stringify({ message: "workflow_image_claim_task_adopted", executionId: request.executionId,
+			runtimeNodeId: request.runtimeNodeId, nodeId, taskId, effectId }));
+		return reconcileWorkflowMediaReceipt(context, request.ownerId, nodeId, taskId, "image");
+	};
+	if (request.authorizedRetry) {
+		const authorization = request.authorizedRetry;
+		const exactRuntimeNodeId = authorization.executionMode === "once"
+			? authorization.itemId === null && authorization.nodeId === request.runtimeNodeId
+			: authorization.itemId !== null
+				&& matchesWorkflowMediaItemRuntimeNodeId({
+					nodeId: authorization.nodeId,
+					itemId: authorization.itemId,
+					runtimeNodeId: request.runtimeNodeId,
+				});
+		if (authorization.executorRef !== "tapcanvas.image.generate/v1" || authorization.taskId === null
+			|| authorization.executionMode !== request.executionMode || !exactRuntimeNodeId) {
+			throw new Error("media_retry_executor_identity_mismatch");
+		}
+		const original = flowNode(row.data, authorization.canvasNodeId);
+		if (!original || !isRecord(original.data)
+			|| !["failed", "error"].includes(readString(original.data.status))
+			|| (readString(original.data.taskId) || readString(original.data.imageTaskId)) !== authorization.taskId
+			|| persistentHttpUrl(readString(original.data.imageUrl))
+			|| (Array.isArray(original.data.imageResults) && original.data.imageResults.length > 0)) {
+			throw new Error("media_retry_failed_canvas_receipt_changed");
+		}
+		const confirmed = await reconcileWorkflowMediaReceipt(
+			context, request.ownerId, authorization.canvasNodeId, authorization.taskId, "image",
+		);
+		if (confirmed.status !== "failed") return confirmed;
+		row = await readRow();
+		const latestOriginal = flowNode(row.data, authorization.canvasNodeId);
+		if (!latestOriginal || !isRecord(latestOriginal.data)
+			|| !["failed", "error"].includes(readString(latestOriginal.data.status))
+			|| (readString(latestOriginal.data.taskId) || readString(latestOriginal.data.imageTaskId)) !== authorization.taskId
+			|| persistentHttpUrl(readString(latestOriginal.data.imageUrl))
+			|| (Array.isArray(latestOriginal.data.imageResults) && latestOriginal.data.imageResults.length > 0)) {
+			const persisted = inspectPersistedWorkflowImageNode(row.data, authorization.canvasNodeId, authorization.taskId);
+			if (persisted.status !== "failed") return persisted;
+			throw new Error("media_retry_failed_canvas_receipt_changed");
+		}
+	}
 	const previousNodeId = request.previousEvidence ? readString(request.previousEvidence.canvasNodeId) : "";
 	const previousTaskId = request.previousEvidence ? readString(request.previousEvidence.taskId) : "";
+	const identity = workflowImageEffectIdentity(request);
+	let unsubmittedPreparedResume = false;
+	if (previousNodeId && request.executionId !== request.executionFamilyId) {
+		console.info(JSON.stringify({ message: "workflow_image_prior_receipt_decision",
+			executionId: request.executionId, runtimeNodeId: request.runtimeNodeId,
+			previousNodeId, identityNodeId: identity.canvasNodeId,
+			previousTaskId, resumeOnly: request.resumeOnly,
+		}));
+	}
 	if (request.resumeOnly) {
 		console.info(JSON.stringify({
 			message: "image_resume_evidence",
@@ -230,7 +296,27 @@ export async function runWorkflowImageNode(
 			evidenceKeys: request.previousEvidence ? Object.keys(request.previousEvidence) : [],
 		}));
 	}
-	if (previousNodeId) {
+	if (!request.authorizedRetry && previousNodeId) {
+		const previousNode = flowNode(row.data, previousNodeId);
+		if (previousNodeId === identity.canvasNodeId && !previousTaskId
+			&& previousNode && isRecord(previousNode.data)
+			&& isUnsubmittedPreparedImageNode(previousNode.data)) {
+			const mismatches = workflowImageRequestMismatchFields(previousNode.data, request);
+			if (mismatches.length > 0) {
+				throw new Error(`Prepared image ${previousNodeId} has a different generation contract: ${mismatches.join(", ")}`);
+			}
+			const plannedTaskId = readString(previousNode.data.workflowTaskId);
+			if (!plannedTaskId || plannedTaskId !== buildWorkflowImageTaskId({ ownerId: request.ownerId, effectId: identity.effectId })) {
+				throw new Error("Prepared image node has an invalid durable task identity");
+			}
+			const registered = await getTaskResultByTaskId(env.DB, request.ownerId, plannedTaskId);
+			if (registered) return reconcileWorkflowMediaReceipt(context, request.ownerId, previousNodeId, plannedTaskId, "image");
+			// No task was accepted. This is the first submission for an already
+			// prepared effect, even when a checkpoint resumed its image item.
+			unsubmittedPreparedResume = true;
+		} else {
+		const adopted = await adoptRegisteredClaim(row.data, previousNodeId);
+		if (adopted) return adopted;
 		if (previousTaskId && !flowNode(row.data, previousNodeId)) {
 			return reconcileWorkflowMediaReceipt(context, request.ownerId, previousNodeId, previousTaskId, "image");
 		}
@@ -256,20 +342,19 @@ export async function runWorkflowImageNode(
 			return reconcileWorkflowMediaReceipt(context, request.ownerId, persisted.nodeId, persisted.taskId, "image");
 		}
 		return persisted;
+		}
 	}
-	if (previousTaskId) throw new Error("Persisted image receipt is incomplete; canvasNodeId is required");
-	if (request.resumeOnly) throw new Error("External image resume has no persisted canvas receipt; refusing a new provider submission");
-	const identity = workflowImageEffectIdentity(request);
+	if (!request.authorizedRetry && previousTaskId) throw new Error("Persisted image receipt is incomplete; canvasNodeId is required");
+	if (!request.authorizedRetry && request.resumeOnly && !unsubmittedPreparedResume) throw new Error("External image resume has no persisted canvas receipt; refusing a new provider submission");
 	const existingNode = flowNode(row.data, identity.canvasNodeId);
 	if (existingNode) {
 		if (!isRecord(existingNode.data) || !persistedWorkflowImageRequestMatches(existingNode.data, request)) {
 			throw new Error(`Workflow image output ${identity.canvasNodeId} already exists with a different generation contract`);
 		}
-		const prepared = existingNode.data.workflowPreparedOnly === true && existingNode.data.status === "idle"
-			&& !readString(existingNode.data.taskId) && !readString(existingNode.data.imageTaskId)
-			&& !readString(existingNode.data.imageUrl)
-			&& !(Array.isArray(existingNode.data.imageResults) && existingNode.data.imageResults.length > 0);
+		const prepared = isUnsubmittedPreparedImageNode(existingNode.data);
 		if (!prepared) {
+			const adopted = await adoptRegisteredClaim(row.data, identity.canvasNodeId);
+			if (adopted) return adopted;
 			let persisted = inspectPersistedWorkflowImageNode(row.data, identity.canvasNodeId, null);
 			if (persisted.status === "waiting_external" && persisted.taskId) {
 				await reconcileImageNodesForFlow({
@@ -291,20 +376,6 @@ export async function runWorkflowImageNode(
 		}
 	}
 
-	if (request.authorizedRetry) {
-		const authorization = request.authorizedRetry;
-		if (`${authorization.nodeId}::item::${encodeURIComponent(authorization.itemId)}` !== request.runtimeNodeId) {
-			throw new Error("media_retry_runtime_identity_mismatch");
-		}
-		const original = flowNode(row.data, authorization.canvasNodeId);
-		if (!original || !isRecord(original.data)
-			|| !["failed", "error"].includes(readString(original.data.status))
-			|| (readString(original.data.taskId) || readString(original.data.imageTaskId)) !== authorization.taskId
-			|| persistentHttpUrl(readString(original.data.imageUrl))
-			|| (Array.isArray(original.data.imageResults) && original.data.imageResults.length > 0)) {
-			throw new Error("media_retry_failed_canvas_receipt_changed");
-		}
-	}
 	if (request.projectId) {
 		context.set("activeTeamId", await resolveProjectBillingTeamId(env.DB, { projectId: request.projectId, userId: request.ownerId }));
 	}
@@ -342,8 +413,12 @@ export async function runWorkflowImageNode(
 					...(request.stylePrompt ? { stylePrompt: request.stylePrompt, stylePromptApplied: true } : {}),
 					...(request.styleFingerprint ? { styleFingerprint: request.styleFingerprint } : {}),
 					waitForResult: false,
+					...(request.authorizedRetry ? { workflowMediaRetry: request.authorizedRetry } : {}),
 					workflowEffectId: identity.effectId,
-					workflowTaskId: buildWorkflowImageTaskId({ ownerId: request.ownerId, effectId: identity.effectId }),
+					workflowTaskId: buildWorkflowImageTaskId({
+						ownerId: request.ownerId,
+						effectId: identity.effectId,
+					}),
 					workflowExecutionId: request.executionId,
 					workflowExecutionFamilyId: request.executionFamilyId,
 					workflowRuntimeNodeId: request.runtimeNodeId,
@@ -357,6 +432,8 @@ export async function runWorkflowImageNode(
 		const claimed = flowNode(current.data, identity.canvasNodeId);
 		if (!claimed || !isRecord(claimed.data) || readString(claimed.data.workflowEffectId) !== identity.effectId
 			|| !persistedWorkflowImageRequestMatches(claimed.data, request)) throw error;
+		const adopted = await adoptRegisteredClaim(current.data, identity.canvasNodeId);
+		if (adopted) return adopted;
 		return inspectPersistedWorkflowImageNode(current.data, identity.canvasNodeId, null);
 	}
 	if ("batch" in result) throw new Error("Workflow image runner received an unexpected batch result");
@@ -367,4 +444,45 @@ export async function runWorkflowImageNode(
 	const imageUrl = persistentHttpUrl(result.imageUrl);
 	if (!imageUrl) throw new Error(`Image node ${result.nodeId} completed without a persistent HTTP(S) URL`);
 	return { status: "success", nodeId: result.nodeId, taskId: result.taskId, imageUrl, assetId: null, reused: false };
+}
+
+/** Consume the frozen one-retry budget only after an authoritative failed receipt.
+ * The retry has a stable, separate effect identity; replay after a lost checkpoint
+ * finds that same node/claim. Original failures and successful siblings stay intact.
+ */
+export async function runWorkflowImageNode(
+	env: WorkerEnv,
+	request: WorkflowImageRunRequest,
+): Promise<WorkflowImageRunResult> {
+	const result = await runWorkflowImageAttempt(env, request);
+	if (result.status !== "failed" || !result.taskId || !request.mediaDeliveryPolicy?.maxRetries
+		|| request.authorizedRetry) return result;
+	const originalIdentity = workflowImageEffectIdentity(request);
+	// An accepted retry never recursively receives another automatic budget.
+	if (result.nodeId !== originalIdentity.canvasNodeId) return result;
+	const separator = request.runtimeNodeId.lastIndexOf("::item::");
+	if (request.executionMode === "each" && separator < 1) return result;
+	const confirmed = await reconcileWorkflowMediaReceipt(
+		createInternalContext(env, request), request.ownerId, result.nodeId, result.taskId, "image",
+	);
+	if (confirmed.status !== "failed") return confirmed;
+	const retryKey = createHash("sha256").update(JSON.stringify([
+		request.executionFamilyId, originalIdentity.effectId, result.taskId, "automatic-image-retry", 1,
+	])).digest("hex");
+	console.info(JSON.stringify({ message: "workflow_image_retry_authorized",
+		executionId: request.executionId, executionFamilyId: request.executionFamilyId,
+		runtimeNodeId: request.runtimeNodeId, originalTaskId: result.taskId, retryKey, retryIndex: 1,
+	}));
+	return runWorkflowImageAttempt(env, {
+		...request, resumeOnly: false, previousEvidence: null,
+		authorizedRetry: {
+			executorRef: "tapcanvas.image.generate/v1",
+			executionMode: request.executionMode,
+			nodeId: request.executionMode === "each" ? request.runtimeNodeId.slice(0, separator) : request.runtimeNodeId,
+			itemId: request.executionMode === "each"
+				? decodeURIComponent(request.runtimeNodeId.slice(separator + "::item::".length))
+				: null,
+			taskId: result.taskId, canvasNodeId: result.nodeId, retryKey,
+		},
+	});
 }

@@ -3,6 +3,13 @@ import type { WorkflowClipAssetObjectContract } from "./execution.video-workflow
 
 type JsonRecord = Record<string, unknown>;
 
+type SequenceContextSource = Readonly<{
+	executionId: string;
+	nodeId: string;
+	path: readonly string[];
+	revision?: string;
+}>;
+
 export type FrozenSequenceClip = Readonly<{
 	beat: JsonRecord;
 	spokenScript: readonly SpokenScriptLine[];
@@ -22,6 +29,7 @@ export function buildFrozenSequenceContext(input: Readonly<{
 	sequenceControlPlan: JsonRecord;
 	sequenceTimeline: readonly JsonRecord[];
 	clips: readonly FrozenSequenceClip[];
+	sequenceSource?: SequenceContextSource;
 }>): JsonRecord {
 	const project = (index: number): JsonRecord | null => {
 		if (index < 0 || index >= input.clips.length) return null;
@@ -43,10 +51,58 @@ export function buildFrozenSequenceContext(input: Readonly<{
 	if (!Number.isInteger(input.clipIndex) || input.clipIndex < 0 || input.clipIndex >= input.clips.length) {
 		throw new Error("Sequence context requires an existing clipIndex");
 	}
+	const includedClipIndices = [input.clipIndex - 1, input.clipIndex, input.clipIndex + 1]
+		.filter((index) => index >= 0 && index < input.clips.length);
+	const adjacentTimeline = input.sequenceTimeline.filter((entry) => {
+		const entryClipIndex = entry.clipIndex;
+		return typeof entryClipIndex === "number"
+			&& Number.isInteger(entryClipIndex)
+			&& Math.abs(entryClipIndex - input.clipIndex) <= 1;
+	});
+	if (adjacentTimeline.length !== includedClipIndices.length) {
+		throw new Error("Sequence timeline must contain the current Clip and its adjacent frozen Clips");
+	}
+	const sourceRead = input.sequenceSource
+		? {
+			tool: "tapcanvas_execution_node_runs_get",
+			args: {
+				executionId: input.sequenceSource.executionId,
+				nodeId: input.sequenceSource.nodeId,
+				view: "content",
+				field: "input",
+				path: [...input.sequenceSource.path],
+				...(input.sequenceSource.revision ? { revision: input.sequenceSource.revision } : {}),
+			},
+			pagination: { cursor: "offset", next: "nextOffset", consistency: "revision" },
+		}
+		: null;
+	const sequenceContextScope = {
+		protocolVersion: "tapcanvas.sequence-context-scope/v1",
+		currentClipIndex: input.clipIndex,
+		totalClipCount: input.clips.length,
+		timeline: {
+			scope: "current_and_adjacent",
+			includedClipIndices,
+			omittedClipCount: input.clips.length - includedClipIndices.length,
+		},
+		controlPlan: {
+			scope: "full_canonical",
+			includedSegmentIndices: Array.from({ length: input.clips.length }, (_, index) => index),
+			totalSegmentCount: Array.isArray(input.sequenceControlPlan.segments)
+				? input.sequenceControlPlan.segments.length
+				: input.clips.length,
+		},
+		readPolicy: "read_parent_beat_sheet_for_non_adjacent_clips",
+		...(sourceRead ? { fullSequenceRead: sourceRead } : {}),
+	};
 	return {
 		chapterArc: input.chapterArc,
+		// Keep the canonical control plan complete. The prompt-facing runner owns
+		// the single current-segment projection by stable clipIndex; shrinking it
+		// here would make a second projection lose segments for later Clips.
 		sequenceControlPlan: input.sequenceControlPlan,
-		sequenceTimeline: input.sequenceTimeline,
+		sequenceTimeline: adjacentTimeline,
+		sequenceContextScope,
 		executionPolicy: "execute_frozen_beat",
 		previous: project(input.clipIndex - 1),
 		current: project(input.clipIndex),

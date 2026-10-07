@@ -20,7 +20,13 @@ importers:
       dotenv:
         specifier: ^16.6.1
         version: 16.6.1
+      js-yaml:
+        specifier: 4.3.2
+        version: 4.3.2
     devDependencies:
+      '@types/js-yaml':
+        specifier: 4.0.9
+        version: 4.0.9
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
@@ -32,6 +38,9 @@ importers:
         version: 5.9.3
 
 packages:
+
+  '@types/js-yaml@4.0.9':
+    resolution: {integrity: sha512-k4MGaQl5TGo/iipqb2UDG2UwjXziSWkh0uysQelTlJpX1qGlpUZYm8PnO4DxG1qBomtJUdYJ6qR6xdIah10JLg==}
 
   '@agentclientprotocol/sdk@1.4.0':
     resolution: {integrity: sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==}
@@ -3635,6 +3644,8 @@ packages:
     resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
 
 snapshots:
+
+  '@types/js-yaml@4.0.9': {}
 
   '@agentclientprotocol/sdk@1.4.0(zod@4.5.4)':
     dependencies:

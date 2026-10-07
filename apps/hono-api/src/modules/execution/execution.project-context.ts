@@ -3,6 +3,7 @@ import { projectCanvasMembership } from "@tapcanvas/workflow-kernel-protocol";
 import type { MaterialAssetDto } from "../material/material.schemas";
 import type { CanvasIndexStyleLock } from "../material/material.repo";
 import { workflowAssetContentFingerprint } from "./execution.asset-content-fingerprint";
+import { imageMediaIdentityKey } from "./execution.image-media-identity";
 import type { ImageUnderstandingEvidence } from "../task/image-understanding-evidence";
 
 export const WORKFLOW_PROJECT_CONTEXT_VERSION = 3 as const;
@@ -49,8 +50,13 @@ export type WorkflowProjectAssetSnapshot = Readonly<{
 		referenceType: string | null;
 		roleName: string | null;
 		physicalIdentityKey: string | null;
-		/** Stable cross-chapter reuse identity authored by the planner, when persisted. */
 		assetReuseKey?: string | null;
+		/** Explicit visual-state identity; resource readiness is not a visual state. */
+		stateKey?: string | null;
+		/** Equal only for the same effective primary image and complete image URL set. */
+		mediaIdentityKey?: string | null;
+		/** Persisted lineage, not an additional reference permission. */
+		sourceIdentity?: Readonly<Record<string, unknown>>;
 		characterAssetRole: string | null;
 		characterProfileVersion: string | null;
 		identityAnchors: readonly string[];
@@ -169,6 +175,12 @@ export function projectAssetSnapshot(asset: MaterialAssetDto): WorkflowProjectAs
 		roleName: readString(data.canonicalName) || readString(data.roleName) || readString(data.characterName) || readString(data.sceneName) || readString(data.propName) || null,
 		physicalIdentityKey: readString(data.physicalIdentityKey) || null,
 		assetReuseKey: readString(data.assetReuseKey) || null,
+		stateKey: readString(data.stateKey) || null,
+		mediaIdentityKey: media.mediaKind === "image" ? imageMediaIdentityKey(data) : null,
+		sourceIdentity: Object.fromEntries([
+			"sourceAssetId", "sourceMaterialAssetId", "sourceMaterialAssetVersionId", "sourceMaterialAssetVersion",
+			"sourceProjectId", "sourceProjectNodeId", "sourceProjectOwnerType", "sourceProjectOwnerId",
+		].filter((field) => data[field] !== undefined).map((field) => [field, data[field]])),
 		characterAssetRole: readString(data.characterAssetRole) || null,
 		characterProfileVersion: readString(data.characterProfileVersion) || null,
 		identityAnchors: uniqueStrings(Array.isArray(data.identityAnchors) ? data.identityAnchors : []),

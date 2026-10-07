@@ -24,9 +24,11 @@
     "@deepseek-ai/dsh": "0.1.2-alpha.2",
     "@deepseek-ai/dsh-sdk-client": "0.1.2-alpha.2",
     "commander": "^12.1.0",
-    "dotenv": "^16.6.1"
+    "dotenv": "^16.6.1",
+    "js-yaml": "4.3.2"
   },
   "devDependencies": {
+    "@types/js-yaml": "4.0.9",
     "@types/node": "^24.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"

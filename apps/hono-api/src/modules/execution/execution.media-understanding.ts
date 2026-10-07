@@ -3,23 +3,26 @@ import { loadImageUnderstandingEvidence } from "../task/image-understanding-evid
 import { isWorkflowProjectImageReady, type WorkflowProjectContext } from "./execution.project-context";
 import type { WorkflowAssetResolver } from "./execution.asset-resolver";
 
-/** Append source evidence without changing the frozen selection, asset identity,
- * user intent or canvas. Retries of an existing execution use the same cutoff.
- * Evidence lookup never submits a paid media task or vetoes authoring.
+/** Read persisted evidence only for caller-specified frozen asset IDs, without
+ * changing selection, asset identity, user intent or canvas. Existing runs use
+ * the same cutoff. This read never submits media tasks or vetoes authoring.
  */
 export async function enrichWorkflowMediaUnderstanding(input: {
   c: AppContext;
   ownerId: string;
   context: WorkflowProjectContext;
   resolver: WorkflowAssetResolver;
+  assetIds: readonly string[];
 }): Promise<WorkflowProjectContext> {
   const visible = new Set(input.context.projectAssetIds);
+  const requested = new Set(input.assetIds);
   const inspected = new Set([
     ...(input.context.mediaUnderstanding ?? []).map((item) => item.referenceId),
     ...(input.context.mediaUnderstandingDiagnostics ?? []).map((item) => item.referenceId),
   ]);
   const assets = input.context.assetSnapshot.filter((asset) => asset.projectId === input.context.projectId
-    && visible.has(asset.assetId) && isWorkflowProjectImageReady(asset) && !inspected.has(asset.assetId));
+    && visible.has(asset.assetId) && requested.has(asset.assetId)
+    && isWorkflowProjectImageReady(asset) && !inspected.has(asset.assetId));
   if (assets.length === 0 && input.context.mediaUnderstanding !== undefined) return input.context;
   const diagnostics = [...(input.context.mediaUnderstandingDiagnostics ?? [])];
   try {

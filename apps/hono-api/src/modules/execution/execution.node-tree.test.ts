@@ -1,52 +1,36 @@
-import { describe, expect, it } from "vitest";
-import { flattenWorkflowNodeTree, mapWorkflowNodeTreeScopes } from "./execution.node-tree";
+import { expect, it } from 'vitest';
+import { flattenWorkflowNodeTree } from './execution.node-tree';
+import { materializeWorkflowConfigurationInheritance } from './execution.workflow-configuration';
+import { freezeMediaDeliveryPolicy } from './execution.media-delivery-policy';
+import { materializeWorkflowExecutionControl, WORKFLOW_VIDEO_PROVIDER_EXECUTOR_REF } from './execution.production-start-deadline';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+function graph() {
+  return { nodes: [
+    { id: 'source', data: { kind: 'workflowStage', workflowInstanceId: 'flow', workflowNodeId: 'source',
+      workflowVideoModelKey: 'chosen-model', workflowAtomicSpec: { executorRef: 'agents.delivery.contract/v2' } } },
+    { id: 'pipeline', data: { kind: 'workflowStage', workflowAtomicSpec: { executorRef: 'workflow.pipeline.run/v1' }, workflowPipeline: {
+      protocolVersion: 'workflow.pipeline.run/v1', steps: [{ stepId: 'video', node: { id: 'nested-video',
+        data: { kind: 'workflowStage', workflowInstanceId: 'flow', workflowNodeId: 'video', workflowConfigurationSourceNodeId: 'source',
+          workflowAtomicSpec: { executorRef: WORKFLOW_VIDEO_PROVIDER_EXECUTOR_REF } } } }],
+    } } },
+  ], edges: [{ source: 'source', target: 'pipeline' }] };
 }
 
-function node(id: string, workflowPipeline?: Record<string, unknown>): Record<string, unknown> {
-	return {
-		id,
-		data: workflowPipeline ? { workflowPipeline } : {},
-	};
-}
+it('freezes shared media settings and paid recovery policy inside a pipeline while keeping the saved definition immutable', () => {
+  const original = graph();
+  const inherited = { ...original, nodes: materializeWorkflowConfigurationInheritance(original.nodes) };
+  const frozen = freezeMediaDeliveryPolicy(inherited);
+  const nested = flattenWorkflowNodeTree(frozen.nodes as unknown[]).find(node => node.id === 'nested-video');
+  expect(nested).toMatchObject({ data: { workflowVideoModelKey: 'chosen-model', workflowMediaDeliveryPolicy: { maxRetries: 0 } } });
+  expect(JSON.stringify(original)).not.toContain('workflowMediaDeliveryPolicy');
+  expect(flattenWorkflowNodeTree(original.nodes).find(node => node.id === 'nested-video')).not.toHaveProperty('data.workflowVideoModelKey');
+});
 
-function pipeline(...nodes: Record<string, unknown>[]): Record<string, unknown> {
-	return {
-		protocolVersion: "workflow.pipeline.run/v1",
-		steps: nodes.map((stepNode) => ({ node: stepNode })),
-	};
-}
-
-describe("workflow inline node tree", () => {
-	it("maps each pipeline's sibling scope while retaining the authored tree", () => {
-		const authored = [node("root", pipeline(
-			node("first"),
-			node("inner", pipeline(node("nested-a"), node("nested-b"))),
-		))];
-
-		const mapped = mapWorkflowNodeTreeScopes(authored, (scopeNodes) => {
-			const siblingIds = scopeNodes.flatMap((value) =>
-				isRecord(value) && typeof value.id === "string" ? [value.id] : [],
-			);
-			return scopeNodes.map((value) => {
-				if (!isRecord(value) || !isRecord(value.data)) return value;
-				return { ...value, data: { ...value.data, siblingIds } };
-			});
-		});
-
-		expect(flattenWorkflowNodeTree(mapped).map((item) => item.id)).toEqual([
-			"root", "first", "inner", "nested-a", "nested-b",
-		]);
-		const rootPipeline = (mapped[0] as Record<string, unknown>).data as Record<string, unknown>;
-		const steps = ((rootPipeline.workflowPipeline as Record<string, unknown>).steps as Array<Record<string, unknown>>);
-		const innerPipeline = (steps[1]!.node as Record<string, unknown>).data as Record<string, unknown>;
-		const nestedSteps = ((innerPipeline.workflowPipeline as Record<string, unknown>).steps as Array<Record<string, unknown>>);
-
-		expect((steps[0]!.node as Record<string, unknown>).data).toMatchObject({ siblingIds: ["first", "inner"] });
-		expect((steps[1]!.node as Record<string, unknown>).data).toMatchObject({ siblingIds: ["first", "inner"] });
-		expect((nestedSteps[0]!.node as Record<string, unknown>).data).toMatchObject({ siblingIds: ["nested-a", "nested-b"] });
-		expect((nestedSteps[1]!.node as Record<string, unknown>).data).toMatchObject({ siblingIds: ["nested-a", "nested-b"] });
-	});
+it('includes the enclosing pipeline in the existing first-provider-receipt deadline scope', () => {
+  const control = materializeWorkflowExecutionControl(graph(), { version: 2, productionStartDeadline: {
+    version: 2, kind: 'video_provider_receipt', source: 'public_chat', publicTurnId: 'turn',
+    acceptedAt: '2026-09-23T09:00:00.000Z', targetExecutorRef: WORKFLOW_VIDEO_PROVIDER_EXECUTOR_REF,
+  } });
+  expect(control.productionStartDeadline.controlledNodeIds).toEqual(['pipeline', 'source']);
+  expect(control.productionStartDeadline.deadlineAt).toBe('2026-09-23T09:10:00.000Z');
 });

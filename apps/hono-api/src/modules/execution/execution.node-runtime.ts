@@ -1,3 +1,4 @@
+import { decodeWorkflowOutput } from "./execution.output-storage";
 import {
 	hasWorkflowPluginExecutorRefPrefix,
 	parseWorkflowMediaAssetV1,
@@ -54,14 +55,15 @@ export type WorkflowNodeExecutionResult =
 				| "workflow_node_prompt_not_ready"
 				| "workflow_project_context_required"
 				| "workflow_node_runtime_failed"
-				| "workflow_delivery_coverage_unsatisfied"
 				| "workflow_asset_forbidden"
 				| "workflow_asset_not_found"
 				| "workflow_asset_deleted"
 				| "workflow_asset_transcoding"
 				| "workflow_asset_resource_unavailable"
 				| "workflow_explicit_failure_terminal"
-				| "workflow_subworkflow_failed";
+				| "workflow_subworkflow_failed"
+				| "agents_chat_status_invalid_response"
+				| "agents_chat_interrupt_invalid_response";
 			errorMessage: string;
 			outputRefs?: WorkflowNodeOutputV1;
 	  };
@@ -181,14 +183,7 @@ function parseWorkflowItemRuns(value: unknown): readonly WorkflowNodeItemRunV1[]
 
 export function parseWorkflowNodeOutputV1(raw: unknown): WorkflowNodeOutputV1 | null {
 	if (raw === null || raw === undefined) return null;
-	let parsed: unknown = raw;
-	if (typeof raw === "string") {
-		try {
-			parsed = JSON.parse(raw) as unknown;
-		} catch (error: unknown) {
-			throw new Error(`Workflow node output is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
+	const parsed = decodeWorkflowOutput(raw);
 	if (!isRecord(parsed)) throw new Error("Workflow node output must be an object");
 	if (parsed.protocolVersion !== "1") throw new Error("Workflow node output protocolVersion must be 1");
 	const executionMode = parsed.executionMode;

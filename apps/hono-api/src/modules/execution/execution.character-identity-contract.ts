@@ -37,6 +37,33 @@ function exactArray<T extends string>(value: unknown, expected: readonly T[]): v
 }
 
 /**
+ * The one identity board the product draws. Every field has a single legal value,
+ * so it is a host fact: the author no longer writes it (2026-10-07 e6bfd598 ch1,
+ * an author wrote readableTextVisible=false and the single submission failed).
+ */
+export const CHARACTER_IDENTITY_BOARD_SPEC: CharacterIdentityBoardSpec = Object.freeze({
+	layout: "identity_board_four_view",
+	faceViews: ["front", "profile"],
+	fullBodyViews: ["front", "back"],
+	crossViewConsistency: true,
+	referenceRoleIsolation: true,
+	neutralReferenceBackground: true,
+	readableTextVisible: true,
+	brandingVisible: false,
+	neutralBaseState: true,
+	canonicalNameVisible: false,
+	ipSafeOriginal: true,
+}) as unknown as CharacterIdentityBoardSpec;
+
+/**
+ * A character plan's board is always the host's constant. Whatever an author or a
+ * stored plan echoes is ignored, so a differing echo can no longer fail a delivery.
+ */
+export function characterIdentityBoardSpec(_value: unknown, _field: string): CharacterIdentityBoardSpec {
+	return CHARACTER_IDENTITY_BOARD_SPEC;
+}
+
+/**
  * Parse the identity-board/v3 shape without inventing missing values.  The
  * board is optional at legacy boundaries, but whenever supplied it must be the
  * complete executable four-view contract emitted by tapcanvas-character-card.

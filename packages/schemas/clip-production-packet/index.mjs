@@ -5,8 +5,8 @@
 import { clipDesignSchema } from '../video-authoring-stages/schema.mjs';
 import { normalizedPointSchema } from '../blocking-plan-contract/schema.mjs';
 
-export const CLIP_PRODUCTION_PACKET_PROTOCOL_VERSION = 'tapcanvas.clip-production-packet/v1';
-export const CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE = 'tapcanvas.clip-production-packets/v1';
+export const CLIP_PRODUCTION_PACKET_PROTOCOL_VERSION = 'tapcanvas.clip-production-packet/v2';
+export const CLIP_PRODUCTION_PACKET_COLLECTION_ARTIFACT_TYPE = 'tapcanvas.clip-production-packets/v2';
 export const CLIP_PRODUCTION_ASSET_INTENTS_ARTIFACT_TYPE = 'tapcanvas.clip-production-asset-intents/v1';
 export const CLIP_PRODUCTION_PACKET_MAX_ITEMS = 80;
 
@@ -112,6 +112,26 @@ const assetIdentitySchema = {
   additionalProperties: false,
 };
 
+const speechEventSchema = {
+  type: 'object',
+  properties: {
+    speechEventId: text,
+    speaker: text,
+    delivery: text,
+    text,
+    textOrigin: { type: 'string', enum: ['authored', 'source_quote'] },
+    voice: { type: 'string', enum: ['onscreen', 'inner', 'offscreen', 'narration'] },
+    eventIndex: { type: 'integer', minimum: 0 },
+    clipId: text,
+    sceneId: text,
+    scope: { type: 'string', enum: ['beat', 'scene'] },
+    storyEventId: text,
+    sourceRanges: { type: 'array', items: sourceRangeSchema },
+  },
+  required: ['speechEventId', 'speaker', 'delivery', 'text', 'textOrigin', 'eventIndex', 'clipId', 'sceneId', 'scope', 'sourceRanges'],
+  additionalProperties: false,
+};
+
 /** The Clip author owns spatial facts. The chapter plan owns the background identity. */
 export const clipProductionBlockingPlanSchema = {
   ...clipDesignSchema.properties.blockingPlan,
@@ -137,6 +157,9 @@ export const clipProductionPacketSchema = {
     firstFrameAsset: { oneOf: [assetIdentitySchema, { type: 'null' }] },
     referenceAssets: { type: 'array', items: assetIdentitySchema },
     sourceRanges: { type: 'array', minItems: 1, items: sourceRangeSchema },
+    // Optional when the upstream producer has no frozen speech track. The
+    // chapter-sequence/v4 author path supplies an explicit array, including [].
+    speechEvents: { type: 'array', items: speechEventSchema },
     videoPrompt: text,
     blockingPlan: clipProductionBlockingPlanSchema,
     clipFacts: {
@@ -149,7 +172,7 @@ export const clipProductionPacketSchema = {
   required: [
     'protocolVersion', 'clipId', 'clipIndex', 'durationSeconds', 'videoInputMode',
     'firstFrameAsset', 'referenceAssets', 'sourceRanges',
-    'videoPrompt', 'blockingPlan', 'clipFacts', 'assetIntents',
+    'videoPrompt', 'clipFacts', 'assetIntents',
   ],
   additionalProperties: false,
 };
@@ -200,7 +223,8 @@ export function canonicalClipProductionJson(value) {
 
 function validateSourceRanges(ranges, path) {
   if (!Array.isArray(ranges) || ranges.length === 0) throw new Error(`${path} must contain at least one range`);
-  let previous = null;
+  // Provenance ranges are evidence references, so order and overlap carry no
+  // partition meaning. The frozen authoring contract binds the exact list.
   for (const [index, range] of ranges.entries()) {
     const rangePath = `${path}[${index}]`;
     if (!hasExactKeys(range, ['sourceIndex', 'startOffset', 'endOffset', 'sourceId', 'sourceFingerprint'])) {
@@ -212,11 +236,46 @@ function validateSourceRanges(ranges, path) {
       || !isCanonicalText(range.sourceId) || !isCanonicalText(range.sourceFingerprint)) {
       throw new Error(`${rangePath} must contain canonical source identity and a positive UTF-16 range`);
     }
-    if (previous && (range.sourceIndex < previous.sourceIndex
-      || (range.sourceIndex === previous.sourceIndex && range.startOffset < previous.endOffset))) {
-      throw new Error(`${rangePath} must be ordered and must not overlap a prior range`);
+  }
+}
+
+function validateSpeechEvents(events, clipId, path) {
+  if (!Array.isArray(events)) throw new Error(`${path} must be an array`);
+  const eventIds = new Set();
+  for (const [index, event] of events.entries()) {
+    const eventPath = `${path}[${index}]`;
+    // The optional voice category follows the ordered chapter-sequence speech contract.
+    const keys = ['speechEventId', 'speaker', 'delivery', 'text', 'textOrigin', 'eventIndex', 'clipId', 'sceneId', 'scope', 'sourceRanges',
+      ...(isRecord(event) && Object.hasOwn(event, 'voice') ? ['voice'] : []),
+      ...(isRecord(event) && Object.hasOwn(event, 'storyEventId') ? ['storyEventId'] : [])];
+    if (!hasExactKeys(event, keys)) {
+      throw new Error(`${eventPath} has missing or unknown fields`);
     }
-    previous = range;
+    if (event.voice !== undefined && !['onscreen', 'inner', 'offscreen', 'narration'].includes(event.voice)) {
+      throw new Error(`${eventPath}.voice must be onscreen, inner, offscreen or narration`);
+    }
+    for (const field of ['speechEventId', 'speaker', 'delivery', 'text']) {
+      if (typeof event[field] !== 'string' || event[field].length === 0) {
+        throw new Error(`${eventPath}.${field} must be non-empty text`);
+      }
+    }
+    if (eventIds.has(event.speechEventId)) throw new Error(`${path} must not contain duplicate speechEventId values`);
+    eventIds.add(event.speechEventId);
+    if (event.textOrigin !== 'authored' && event.textOrigin !== 'source_quote') {
+      throw new Error(`${eventPath}.textOrigin must be authored or source_quote`);
+    }
+    if (!Number.isSafeInteger(event.eventIndex) || event.eventIndex < 0 || event.clipId !== clipId
+      || !isCanonicalText(event.sceneId) || !['beat', 'scene'].includes(event.scope)
+      || (event.scope === 'beat' && !isCanonicalText(event.storyEventId))
+      || (event.storyEventId !== undefined && !isCanonicalText(event.storyEventId))) {
+      throw new Error(`${eventPath} must contain ordered speech identity and matching Clip ownership`);
+    }
+    if (!Array.isArray(event.sourceRanges)) throw new Error(`${eventPath}.sourceRanges must be an array`);
+    if (event.sourceRanges.length > 0) validateSourceRanges(event.sourceRanges, `${eventPath}.sourceRanges`);
+    if (event.textOrigin === 'source_quote' && event.sourceRanges.length === 0) {
+      throw new Error(`${eventPath}.sourceRanges must be non-empty for source_quote`);
+    }
+    assertJsonValue(event, eventPath);
   }
 }
 
@@ -294,8 +353,69 @@ function validPoint(value) {
       && Number.isFinite(coordinate) && coordinate >= 0 && coordinate <= 1);
 }
 
+/** Host-derived staging: the chapter's frozen floor plans and who goes where in this Clip. */
+export const CLIP_STAGING_PROTOCOL = 'tapcanvas.clip-staging/v2';
+const STAGING_POSTURES = ['stand', 'sit', 'kneel', 'crouch', 'lie'];
+
+export function isClipProductionStagingPlan(value) {
+  return isRecord(value) && value.protocol === CLIP_STAGING_PROTOCOL;
+}
+
+function validateStagingPlan(value, path) {
+  if (Object.keys(value).some((field) => field !== 'protocol' && field !== 'stages')
+    || !Array.isArray(value.stages) || value.stages.length === 0) {
+    throw new Error(`${path} staging needs protocol and at least one stage`);
+  }
+  value.stages.forEach((stage, stageIndex) => {
+    const stagePath = `${path}.stages[${stageIndex}]`;
+    if (!isRecord(stage) || !isCanonicalText(stage.sceneId) || typeof stage.setting !== 'string'
+      || !Array.isArray(stage.landmarks) || !Array.isArray(stage.marks) || !Array.isArray(stage.characters)) {
+      throw new Error(`${stagePath} requires sceneId, setting, landmarks, marks and characters`);
+    }
+    for (const [index, landmark] of stage.landmarks.entries()) {
+      if (!isRecord(landmark) || !['door', 'window', 'furniture', 'area'].includes(landmark.kind)
+        || typeof landmark.label !== 'string' || !validPoint(landmark.at)) {
+        throw new Error(`${stagePath}.landmarks[${index}] has invalid spatial facts`);
+      }
+    }
+    for (const [index, mark] of stage.marks.entries()) {
+      if (!isRecord(mark) || typeof mark.mark !== 'string' || typeof mark.where !== 'string' || !validPoint(mark.at)) {
+        throw new Error(`${stagePath}.marks[${index}] has invalid spatial facts`);
+      }
+    }
+    for (const [index, character] of stage.characters.entries()) {
+      if (!isRecord(character) || !isCanonicalText(character.name) || typeof character.mark !== 'string'
+        || !STAGING_POSTURES.includes(character.posture) || !validPoint(character.at)
+        || (character.endMark !== null && typeof character.endMark !== 'string')
+        || (character.endPosture !== null && !STAGING_POSTURES.includes(character.endPosture))
+        || (character.moveTo !== null && !validPoint(character.moveTo))
+        || (character.positionStatus !== undefined && !['origin_only', 'target_only'].includes(character.positionStatus))
+        || typeof character.enters !== 'boolean' || typeof character.exits !== 'boolean') {
+        throw new Error(`${stagePath}.characters[${index}] has invalid spatial facts`);
+      }
+    }
+    if (stage.transitions !== undefined) {
+      if (!Array.isArray(stage.transitions)) throw new Error(`${stagePath}.transitions must be an array`);
+      for (const [index, transition] of stage.transitions.entries()) {
+        const validPosition = (position) => isRecord(position) && typeof position.mark === 'string'
+          && STAGING_POSTURES.includes(position.posture) && validPoint(position.at);
+        if (!hasExactKeys(transition, ['eventId', 'eventIndex', 'name', 'from', 'to']) || !isCanonicalText(transition.eventId) || !isCanonicalText(transition.name)
+          || (transition.from !== null && !validPosition(transition.from)) || !validPosition(transition.to)
+          || !Number.isSafeInteger(transition.eventIndex) || transition.eventIndex < 0) {
+          throw new Error(`${stagePath}.transitions[${index}] has invalid movement facts`);
+        }
+      }
+    }
+  });
+  assertJsonValue(value, path);
+}
+
 function validateBlockingPlan(value) {
   const path = 'clip-production-packet.blockingPlan';
+  if (isClipProductionStagingPlan(value)) {
+    validateStagingPlan(value, path);
+    return;
+  }
   const required = ['title', 'sceneName', 'landmarks', 'characters', 'camera', 'compositionContract', 'backgroundObjectId'];
   if (!isRecord(value) || required.some((field) => !Object.hasOwn(value, field))
     || Object.keys(value).some((field) => !required.includes(field) && field !== 'axisLine')) {
@@ -341,9 +461,13 @@ export function validateClipProductionPacket(value) {
   const packetFields = [
     'protocolVersion', 'clipId', 'clipIndex', 'durationSeconds', 'videoInputMode',
     'firstFrameAsset', 'referenceAssets', 'sourceRanges',
-    'videoPrompt', 'blockingPlan', 'clipFacts', 'assetIntents',
+    'videoPrompt', 'clipFacts', 'assetIntents',
   ];
-  if (!hasExactKeys(value, packetFields)) throw new Error('clip-production-packet has missing or unknown fields');
+  if (!isRecord(value)
+    || Object.keys(value).some((field) => !packetFields.includes(field) && field !== 'speechEvents' && field !== 'blockingPlan')
+    || packetFields.some((field) => !Object.hasOwn(value, field))) {
+    throw new Error('clip-production-packet has missing or unknown fields');
+  }
   if (value.protocolVersion !== CLIP_PRODUCTION_PACKET_PROTOCOL_VERSION) {
     throw new Error(`clip-production-packet.protocolVersion must equal ${CLIP_PRODUCTION_PACKET_PROTOCOL_VERSION}`);
   }
@@ -393,19 +517,24 @@ export function validateClipProductionPacket(value) {
       throw new Error(`referenceAssets[${index}] must match an asset intent by assetId and state`);
     }
   }
-  if (value.videoInputMode !== 'text_to_video'
-    && (availableIdentities.size !== referenceKeys.length || intentKeys.some((key) => !referenceKeys.includes(key)))) {
-    throw new Error('assetIntents and referenceAssets must declare the same identities for image-input modes');
-  }
   if (typeof value.videoPrompt !== 'string' || value.videoPrompt.trim().length === 0) {
     throw new Error('clip-production-packet.videoPrompt must be non-empty');
   }
-  validateBlockingPlan(value.blockingPlan);
+  if (Object.hasOwn(value, 'speechEvents')) {
+    validateSpeechEvents(value.speechEvents, value.clipId, 'clip-production-packet.speechEvents');
+  }
+  if (Object.hasOwn(value, 'blockingPlan')) validateBlockingPlan(value.blockingPlan);
   validateSourceRanges(value.sourceRanges, 'clip-production-packet.sourceRanges');
   if (!isRecord(value.clipFacts) || Object.keys(value.clipFacts).length === 0) {
     throw new Error('clip-production-packet.clipFacts must be a non-empty structured object');
   }
   assertJsonValue(value.clipFacts, 'clip-production-packet.clipFacts');
+  return structuredClone(value);
+}
+
+/** Validate one asset intent outside a packet (e.g. chapter asset previews). */
+export function validateClipProductionAssetIntent(value) {
+  validateAssetIntent(value, 'clip-production-asset-intent');
   return structuredClone(value);
 }
 

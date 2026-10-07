@@ -1,3 +1,7 @@
+import { workflowAuthorRepairAttempt, type WorkflowAuthorRepairRequest } from "./execution.author-repair";
+import { workflowConsumerReplaySelectionAttempt, type WorkflowConsumerReplaySelectionRequest } from "./execution.consumer-replay-selection";
+import type { WorkflowReplayAttemptV1 } from "./execution.replay-attempt";
+import { mapWorkflowNodeTree, flattenWorkflowNodeTree } from "./execution.node-tree";
 import { freezeMediaDeliveryPolicy } from "./execution.media-delivery-policy";
 import { Prisma } from "@prisma/client";
 import {
@@ -6,30 +10,31 @@ import {
 } from "@tapcanvas/workflow-kernel-protocol";
 import type { WorkerEnv } from "../../types";
 import type { FlowRow } from "../flow/flow.repo";
-import { createFlowVersion } from "../flow/flow.repo";
+import { createFlowVersion, getFlowVersion } from "../flow/flow.repo";
 import {
 	createExecution,
 	getExecutionById,
 	mapExecutionRow,
 	updateExecutionStatus,
+	type WorkflowExclusiveDeliveryScope,
 } from "./execution.repo";
 import { scopeWorkflowFlowData } from "./execution.flow-scope";
 import { inspectWorkflowExecutionSupport } from "./execution.node-runtime";
-import { compileWorkflowGraph } from "./execution.recovery";
+import { compileWorkflowGraph, compileFrozenWorkflowGraph } from "./execution.recovery";
 import type { WorkflowExecutionDto } from "./execution.schemas";
 import {
 	createWorkflowOutputReuseRepository,
 	prepareWorkflowOutputReuse,
 } from "./execution.output-reuse";
 import type { WorkflowCallerCanvasSnapshot, WorkflowProjectContext } from "./execution.project-context";
-import type { WorkflowInitiatingAgentExecution } from "./execution.agent-model-inheritance";
+import { parseWorkflowProjectContext } from "./execution.project-context";
+import { resolveWorkflowAgentModelKey, type WorkflowAgentPreferences, type WorkflowInitiatingAgentExecution } from "./execution.agent-model-inheritance";
 import { listAdmittedWorkflowPluginCatalogRegistrations } from "./execution.plugin-catalog";
 import {
 	freezeWorkflowExecutionSemanticsSnapshot,
 	workflowRequiresPluginSemantics,
 } from "./execution.semantics-snapshot";
 import { materializeWorkflowConfigurationInheritance } from "./execution.workflow-configuration";
-import { flattenWorkflowNodeTree, mapWorkflowNodeTree, mapWorkflowNodeTreeScopes } from "./execution.node-tree";
 import {
 	inspectVideoWorkflowCanvasDefinition,
 } from "./execution.video-workflow-definition-authority";
@@ -53,6 +58,7 @@ export type WorkflowStartFailureCode =
 	| "workflow_runtime_unavailable"
 	| "workflow_agent_execution_invalid"
 	| "workflow_execution_projection_failed"
+	| "workflow_delivery_scope_busy"
 	| "workflow_start_failed";
 
 export class WorkflowStartError extends Error {
@@ -73,6 +79,9 @@ export type StartWorkflowExecutionInput = Readonly<{
 	triggerNodeId: string;
 	stopAfterNodeId?: string;
 	replay?: Readonly<{
+		authorRepair?: WorkflowAuthorRepairRequest;
+		consumerReplay?: WorkflowConsumerReplaySelectionRequest;
+		requireSuccessfulAncestors?: true;
 		sourceExecutionId: string;
 		startFromNodeId: string;
 		invalidatedNodeIds?: readonly string[];
@@ -82,6 +91,10 @@ export type StartWorkflowExecutionInput = Readonly<{
 	concurrency?: number;
 	idempotencyKey?: string;
 	triggerPayload?: unknown;
+	/** Server-resolved source invocation facts for a new live-DAG replay. */
+	replayInvocationFacts?: Readonly<Record<string, unknown>>;
+	/** Server-computed request fingerprint for one explicit consumer replay attempt. */
+	replayAttempt?: WorkflowReplayAttemptV1;
 	workflowAncestry?: readonly string[];
 	/**
 	 * 系统级共享工作流的交付目标：媒体节点（参考图 / 逐镜视频 / 最终成片）
@@ -101,11 +114,16 @@ export type StartWorkflowExecutionInput = Readonly<{
 	/** Actual parent Agent execution identity for model inheritance. */
 	initiatingAgentExecution?: WorkflowInitiatingAgentExecution;
 	/** User-selected enabled model for a direct, non-Agent workflow launch. */
-	directAgentModelSelection?: Readonly<{ model: string; source: "user_preference" }>;
+	directAgentModelSelection?: Readonly<{
+		model: string;
+		source: "user_preference";
+		/** The reasoning effort the user selected next to the model; frozen with it. */
+		reasoningEffort?: WorkflowAgentPreferences["reasoningEffort"];
+	}>;
 	/** Frozen runtime control facts derived from the public request admission. */
 	executionControl?: WorkflowExecutionControlAdmissionV2;
 	recoveryOfExecutionId?: string;
-	recoveryAdmission?: "failed_source" | "cancellation_revocation" | "provider_balance_recovery";
+	recoveryAdmission?: "failed_source" | "cancellation_revocation" | "provider_balance_recovery" | "media_retry";
 	/**
 	 * Optional admission projection. When provided, it must finish after the durable execution row
 	 * exists and before the scheduler is dispatched, so the caller canvas never observes a running
@@ -124,10 +142,33 @@ function isPrismaUniqueConstraint(error: unknown): boolean {
 	return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
+function workflowDeliveryScopeBusyExecutionId(error: unknown): string | null {
+	if (!(error instanceof Error) || error.name !== "WorkflowDeliveryScopeBusyError") return null;
+	if (!("activeExecutionId" in error) || typeof error.activeExecutionId !== "string") return null;
+	return error.activeExecutionId.trim() || null;
+}
+
 function workflowRecoveryAdmissionReason(error: unknown): string | null {
 	if (!(error instanceof Error) || error.name !== "WorkflowRecoveryAdmissionError") return null;
 	if (!("reason" in error) || typeof error.reason !== "string" || !error.reason.trim()) return null;
 	return error.reason;
+}
+
+/**
+ * Full runs that deliver into a caller canvas (one-click into a chapter) are
+ * exclusive per canvas. Partial runs (author repair, consumer replay of one
+ * branch) stay concurrent: they are scoped edits, not a second whole delivery.
+ */
+export function resolveExclusiveDeliveryScope(input: Readonly<{
+	deliversIntoCallerCanvas: boolean;
+	fullRun: boolean;
+	projectId: string | null | undefined;
+	canvasId: string | null | undefined;
+}>): WorkflowExclusiveDeliveryScope | null {
+	if (!input.deliversIntoCallerCanvas || !input.fullRun) return null;
+	const projectId = input.projectId?.trim();
+	const canvasId = input.canvasId?.trim();
+	return projectId && canvasId ? { projectId, canvasId } : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -229,6 +270,7 @@ function applyWorkflowTriggerMediaOverrides(
 		}
 		if (executorRef !== "agents.delivery.contract/v2"
 			&& executorRef !== "video.estimate/v1"
+			&& executorRef !== "tapcanvas.video.prepare/v1"
 			&& executorRef !== "tapcanvas.video.generate/v1") {
 			return rawNode;
 		}
@@ -244,9 +286,9 @@ function applyWorkflowTriggerMediaOverrides(
 }
 
 function applyWorkflowAuthoredConfigurationInheritance(flowData: Record<string, unknown>): void {
-	const nodes = Array.isArray(flowData.nodes) ? flattenWorkflowNodeTree(flowData.nodes) : [];
+	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
 	try {
-		flowData.nodes = mapWorkflowNodeTreeScopes(nodes, materializeWorkflowConfigurationInheritance);
+		flowData.nodes = materializeWorkflowConfigurationInheritance(nodes);
 	} catch (error: unknown) {
 		throw new WorkflowStartError(
 			error instanceof Error ? error.message : "Workflow configuration inheritance is invalid",
@@ -257,8 +299,8 @@ function applyWorkflowAuthoredConfigurationInheritance(flowData: Record<string, 
 }
 
 function assertFrozenVideoEstimateConfiguration(flowData: Record<string, unknown>): void {
-	const nodes = Array.isArray(flowData.nodes) ? flattenWorkflowNodeTree(flowData.nodes) : [];
-	for (const rawNode of nodes) {
+	const nodes = Array.isArray(flowData.nodes) ? flowData.nodes : [];
+	for (const rawNode of flattenWorkflowNodeTree(nodes)) {
 		if (!isRecord(rawNode) || !isRecord(rawNode.data)) continue;
 		const spec = isRecord(rawNode.data.workflowAtomicSpec) ? rawNode.data.workflowAtomicSpec : null;
 		if (spec?.executorRef !== "video.estimate/v1") continue;
@@ -357,10 +399,121 @@ async function stableIdentity(prefix: string, identity: string): Promise<string>
 	return `${prefix}-${hex.slice(0, 40)}`;
 }
 
-function requireExecutableFlow(raw: unknown, triggerNodeId: string, stopAfterNodeId?: string): Record<string, unknown> {
+type StableWorkflowExecutionIdentity = Readonly<{
+	flowId: string;
+	triggerNodeId: string;
+	stopAfterNodeId?: string;
+	contextIdentity: string;
+	idempotencyKey: string;
+}>;
+
+async function stableWorkflowExecutionId(input: StableWorkflowExecutionIdentity): Promise<string> {
+	return stableIdentity(
+		"workflow-execution",
+		`${input.flowId}:${input.triggerNodeId}:${input.stopAfterNodeId ?? "complete"}:${input.contextIdentity}:${input.idempotencyKey.trim()}`,
+	);
+}
+
+function workflowContextIdentity(
+	projectContext: Pick<WorkflowProjectContext, "projectId" | "canvasId"> | undefined,
+): string {
+	return projectContext ? `${projectContext.projectId}:${projectContext.canvasId}` : "no-project-context";
+}
+
+/**
+ * Resolve an already accepted identity before a caller rebuilds source or project
+ * context. This is a receipt lookup, not a new admission: it never writes a
+ * flow version or replaces the frozen execution snapshot.
+ */
+export async function findExistingWorkflowExecutionForIdempotency(
+	env: WorkerEnv,
+	input: Readonly<{
+		flowId: string;
+		triggerNodeId: string;
+		stopAfterNodeId?: string;
+		ownerId: string;
+		projectContext?: Pick<WorkflowProjectContext, "projectId" | "canvasId">;
+		idempotencyKey: string;
+	}>,
+): Promise<WorkflowExecutionDto | null> {
+	const idempotencyKey = input.idempotencyKey.trim();
+	if (!idempotencyKey) return null;
+	const executionId = await stableWorkflowExecutionId({
+		flowId: input.flowId,
+		triggerNodeId: input.triggerNodeId,
+		...(input.stopAfterNodeId ? { stopAfterNodeId: input.stopAfterNodeId } : {}),
+		contextIdentity: workflowContextIdentity(input.projectContext),
+		idempotencyKey,
+	});
+	let existing = await getExecutionById(env.DB, executionId);
+	if (!existing) return null;
+	const isInScope = (row: typeof existing): row is NonNullable<typeof existing> => Boolean(
+		row
+		&& row.id === executionId
+		&& row.owner_id === input.ownerId
+		&& row.flow_id === input.flowId
+		&& (!input.projectContext || (
+			row.project_id === input.projectContext.projectId
+			&& row.canvas_id === input.projectContext.canvasId
+		)),
+	);
+	if (!isInScope(existing)) return null;
+	if (existing.status === "queued") {
+		await startDurableExecution(env, executionId);
+		existing = await getExecutionById(env.DB, executionId);
+		if (!existing) {
+			throw new WorkflowStartError("Failed to load claimed execution", "workflow_start_failed", 500);
+		}
+		if (!isInScope(existing)) return null;
+	}
+	return mapExecutionRow(existing);
+}
+
+async function consumerReplayExecutionId(flowId: string, ownerId: string, attempt: WorkflowReplayAttemptV1): Promise<string> {
+	return stableIdentity("workflow-execution", JSON.stringify(["consumer-replay/v1", ownerId, flowId, attempt.idempotencyKey]));
+}
+
+async function verifyConsumerReplayAttempt(env: WorkerEnv, flowId: string, versionId: string, attempt: WorkflowReplayAttemptV1): Promise<Record<string, unknown>> {
+	const version = await getFlowVersion(env.DB, versionId, flowId);
+	const data: unknown = version ? JSON.parse(version.data) : null;
+	const prior = isRecord(data) && isRecord(data.workflowReplayAttempt) ? data.workflowReplayAttempt : null;
+	if (!prior || prior.version !== 1 || prior.idempotencyKey !== attempt.idempotencyKey || prior.requestHash !== attempt.requestHash) {
+		throw new WorkflowStartError("The replay attempt key is already bound to a different request", "workflow_output_reuse_invalid", 409,
+			{ reason: "workflow_replay_idempotency_conflict" });
+	}
+	if (!isRecord(data)) throw new WorkflowStartError("Replay receipt snapshot is invalid", "workflow_output_reuse_invalid", 409);
+	return data;
+}
+
+/** Check the accepted immutable receipt before any mutable asset directory refresh. */
+export async function findExistingWorkflowConsumerReplay(env: WorkerEnv, input: Readonly<{
+	flowId: string; ownerId: string; attempt: WorkflowReplayAttemptV1;
+}>): Promise<WorkflowExecutionDto | null> {
+	const executionId = await consumerReplayExecutionId(input.flowId, input.ownerId, input.attempt);
+	let existing = await getExecutionById(env.DB, executionId);
+	if (!existing) return null;
+	if (existing.id !== executionId || existing.owner_id !== input.ownerId || existing.flow_id !== input.flowId) {
+		throw new WorkflowStartError("Replay attempt receipt belongs to another execution scope", "workflow_output_reuse_invalid", 409);
+	}
+	await verifyConsumerReplayAttempt(env, input.flowId, existing.flow_version_id, input.attempt);
+	if (existing.status === "queued") {
+		await startDurableExecution(env, executionId);
+		existing = await getExecutionById(env.DB, executionId);
+		if (!existing || existing.id !== executionId || existing.owner_id !== input.ownerId || existing.flow_id !== input.flowId) throw new WorkflowStartError("Failed to load claimed replay execution", "workflow_start_failed", 500);
+	}
+	return mapExecutionRow(existing);
+}
+
+function requireExecutableFlow(
+	raw: unknown,
+	triggerNodeId: string,
+	stopAfterNodeId?: string,
+	startFromNodeId?: string,
+	frozenRecovery = false,
+): Record<string, unknown> {
 	let scopedFlowData: Record<string, unknown>;
 	try {
-		scopedFlowData = scopeWorkflowFlowData(raw, triggerNodeId, stopAfterNodeId);
+		scopedFlowData = scopeWorkflowFlowData(raw, triggerNodeId, stopAfterNodeId, startFromNodeId);
 	} catch (error: unknown) {
 		throw new WorkflowStartError(
 			error instanceof Error ? error.message : "Workflow flow data is invalid",
@@ -404,7 +557,8 @@ function requireExecutableFlow(raw: unknown, triggerNodeId: string, stopAfterNod
 		);
 	}
 	try {
-		compileWorkflowGraph(scopedFlowData);
+		if (frozenRecovery) compileFrozenWorkflowGraph(scopedFlowData);
+		else compileWorkflowGraph(scopedFlowData);
 	} catch (error: unknown) {
 		throw new WorkflowStartError(
 			error instanceof Error ? error.message : "Workflow graph contract is invalid",
@@ -486,6 +640,11 @@ export async function startWorkflowExecution(
 			503,
 		);
 	}
+	if (input.replayAttempt) {
+		if (!input.replay || !input.replayInvocationFacts || input.replay.authorRepair || input.replay.scope === "recovery_snapshot") throw new WorkflowStartError("A consumer replay attempt requires server-resolved invocation facts", "workflow_flow_invalid", 400);
+		const existing = await findExistingWorkflowConsumerReplay(env, { flowId: input.flow.id, ownerId: input.ownerId, attempt: input.replayAttempt });
+		if (existing) { await materializeAcceptedExecution(input, existing); return { created: false, execution: existing }; }
+	}
 	let videoDefinitionState: ReturnType<typeof inspectVideoWorkflowCanvasDefinition>;
 	try {
 		videoDefinitionState = inspectVideoWorkflowCanvasDefinition(input.flow.data);
@@ -504,7 +663,34 @@ export async function startWorkflowExecution(
 			...videoDefinitionState,
 		}));
 	}
-	const executableFlowData = requireExecutableFlow(input.flow.data, input.triggerNodeId, input.stopAfterNodeId);
+	if (input.replay?.authorRepair && input.stopAfterNodeId !== input.replay.startFromNodeId) {
+		throw new WorkflowStartError("An author repair must run only its explicitly named author node", "workflow_output_reuse_invalid", 400);
+	}
+	if (input.replay?.consumerReplay && (input.replay.authorRepair || input.stopAfterNodeId !== input.replay.startFromNodeId)) {
+		throw new WorkflowStartError("A selected consumer replay requires one explicit root boundary", "workflow_output_reuse_invalid", 400);
+	}
+	const frozenRecovery = input.replay?.scope === "recovery_snapshot"
+		&& input.recoveryOfExecutionId === input.replay.sourceExecutionId;
+	const executableFlowData = requireExecutableFlow(
+		input.flow.data,
+		input.triggerNodeId,
+		input.stopAfterNodeId,
+		input.replay?.startFromNodeId,
+		frozenRecovery,
+	);
+	if (input.replayInvocationFacts) {
+		if (!input.replay || input.replay.scope === "recovery_snapshot") throw new WorkflowStartError("Frozen invocation inheritance requires an explicit new replay", "workflow_flow_invalid", 400);
+		Object.assign(executableFlowData, structuredClone(input.replayInvocationFacts));
+		for (const node of flattenWorkflowNodeTree(Array.isArray(executableFlowData.nodes) ? executableFlowData.nodes : [])) {
+			const data = isRecord(node.data) ? node.data : null;
+			const spec = data && isRecord(data.workflowAtomicSpec) ? data.workflowAtomicSpec : null;
+			if (spec?.executorRef !== "agents.logical-task/v2") continue;
+			const configuredModelKey = data && typeof data.workflowAgentModelKey === "string" ? data.workflowAgentModelKey : null;
+			if (!resolveWorkflowAgentModelKey({ flowVersionData: executableFlowData, configuredModelKey })) {
+				throw new WorkflowStartError(`Workflow replay Agent ${String(node.id)} has no frozen or explicit model identity`, "workflow_agent_execution_invalid", 400);
+			}
+		}
+	}
 	// Variant branches inherit media configuration from one authored source node.
 	// Resolve that relation before applying any explicit per-run override so the
 	// immutable execution snapshot always contains a complete, auditable config.
@@ -559,6 +745,9 @@ export async function startWorkflowExecution(
 		executableFlowData.workflowDirectAgentModelSelection = {
 			model: input.directAgentModelSelection.model.trim(),
 			source: input.directAgentModelSelection.source,
+			...(input.directAgentModelSelection.reasoningEffort
+				? { reasoningEffort: input.directAgentModelSelection.reasoningEffort }
+				: {}),
 		};
 	}
 	if (input.delivery) {
@@ -573,12 +762,34 @@ export async function startWorkflowExecution(
 			};
 		}
 	}
+	// Resolve the actual attempt identity before source-evidence admission. Hashing does not claim or dispatch an execution.
+	const revisionAttempt = input.replay?.authorRepair
+		? workflowAuthorRepairAttempt(input.replay.authorRepair, input.replay.sourceExecutionId, input.replay.startFromNodeId)
+		: input.replay?.consumerReplay ? workflowConsumerReplaySelectionAttempt(input.replay.consumerReplay, input.replay.sourceExecutionId, input.replay.startFromNodeId) : null;
+	const identity = revisionAttempt && input.replay
+		? `${input.replay.consumerReplay ? "consumer-replay" : "author-repair"}:${input.replay.sourceExecutionId}:${input.replay.startFromNodeId}:${revisionAttempt.idempotencyKey}`
+		: input.replayAttempt?.idempotencyKey ?? input.idempotencyKey?.trim();
+	const executionId = input.replayAttempt
+		? await consumerReplayExecutionId(input.flow.id, input.ownerId, input.replayAttempt)
+		: identity
+		? await stableWorkflowExecutionId({
+			flowId: input.flow.id,
+			triggerNodeId: input.triggerNodeId,
+			...(input.stopAfterNodeId ? { stopAfterNodeId: input.stopAfterNodeId } : {}),
+			contextIdentity: workflowContextIdentity(input.projectContext),
+			idempotencyKey: identity,
+		})
+		: crypto.randomUUID();
+	const flowVersionId = identity
+		? await stableIdentity("workflow-version", executionId)
+		: crypto.randomUUID();
 	let scopedFlowData: Record<string, unknown>;
 	try {
 		scopedFlowData = await prepareWorkflowOutputReuse({
 			flowData: executableFlowData,
 			flowId: input.flow.id,
 			ownerId: input.ownerId,
+			attemptExecutionId: executionId,
 			...(input.replay ? { replay: input.replay } : {}),
 			repository: createWorkflowOutputReuseRepository(env.DB),
 		});
@@ -632,16 +843,38 @@ export async function startWorkflowExecution(
 			Math.floor(input.concurrency ?? authoredConcurrency ?? WORKFLOW_CONCURRENCY_MIN),
 		),
 	);
-	const identity = input.idempotencyKey?.trim();
-	const contextIdentity = input.projectContext
-		? `${input.projectContext.projectId}:${input.projectContext.canvasId}`
-		: "no-project-context";
-	const executionId = identity
-		? await stableIdentity("workflow-execution", `${input.flow.id}:${input.triggerNodeId}:${input.stopAfterNodeId ?? "complete"}:${contextIdentity}:${identity}`)
-		: crypto.randomUUID();
-	const flowVersionId = identity
-		? await stableIdentity("workflow-version", executionId)
-		: crypto.randomUUID();
+	if (input.replayAttempt) scopedFlowData.workflowReplayAttempt = input.replayAttempt;
+	const verifyRevisionIdentity = async (versionId: string): Promise<void> => {
+		if (input.replayAttempt) scopedFlowData = await verifyConsumerReplayAttempt(env, input.flow.id, versionId, input.replayAttempt);
+		if (!revisionAttempt) return;
+		const version = await getFlowVersion(env.DB, versionId, input.flow.id);
+		const data: unknown = version ? JSON.parse(version.data) : null;
+		const attemptField = input.replay?.consumerReplay ? "workflowConsumerReplayAttempt" : "workflowAuthorRepairAttempt";
+		const priorValue = isRecord(data) ? data[attemptField] : null;
+		const prior = isRecord(priorValue) ? priorValue : null;
+		if (!prior || prior.version !== 1 || prior.idempotencyKey !== revisionAttempt.idempotencyKey || prior.requestHash !== revisionAttempt.requestHash) {
+			throw new WorkflowStartError("The author revision attempt key is already bound to different evidence or diagnostic", "workflow_output_reuse_invalid", 409,
+				{ reason: "workflow_author_repair_idempotency_conflict" });
+		}
+	};
+	if (revisionAttempt) {
+		const existing = await getExecutionById(env.DB, executionId);
+		if (existing) {
+			if (existing.owner_id !== input.ownerId || existing.flow_id !== input.flow.id) {
+				throw new WorkflowStartError("Author revision attempt identity belongs to another execution scope", "workflow_output_reuse_invalid", 409);
+			}
+			await verifyRevisionIdentity(existing.flow_version_id);
+			const execution = mapExecutionRow(existing);
+			await materializeAcceptedExecution(input, execution);
+			if (existing.status === "queued") {
+				await startDurableExecution(env, executionId);
+				const refreshed = await getExecutionById(env.DB, executionId);
+				if (!refreshed) throw new WorkflowStartError("Failed to load claimed execution", "workflow_start_failed", 500);
+				return { created: false, execution: mapExecutionRow(refreshed) };
+			}
+			return { created: false, execution };
+		}
+	}
 	let executionFamilyId = executionId;
 	if (input.recoveryOfExecutionId) {
 		const sourceExecution = await getExecutionById(env.DB, input.recoveryOfExecutionId);
@@ -666,9 +899,22 @@ export async function startWorkflowExecution(
 		});
 	} catch (error: unknown) {
 		if (!identity || !isPrismaUniqueConstraint(error)) throw error;
+		await verifyRevisionIdentity(flowVersionId);
 	}
 
 	try {
+		// A competing identical request may have frozen an earlier named asset version.
+		// The winner's immutable snapshot, rather than this caller's refreshed view, owns admission facts.
+		const admittedContext = input.replayAttempt ? parseWorkflowProjectContext(scopedFlowData.workflowProjectContext) ?? undefined : input.projectContext;
+		const admittedDelivery = input.replayAttempt && isRecord(scopedFlowData.workflowDeliveryScope) ? scopedFlowData.workflowDeliveryScope : input.delivery;
+		const admittedProjectId = admittedContext?.projectId ?? (typeof admittedDelivery?.projectId === "string" ? admittedDelivery.projectId : input.flow.project_id);
+		const admittedCanvasId = admittedContext?.canvasId ?? (typeof admittedDelivery?.flowId === "string" ? admittedDelivery.flowId : input.flow.id);
+		const exclusiveDeliveryScope = resolveExclusiveDeliveryScope({
+			deliversIntoCallerCanvas: isRecord(scopedFlowData.workflowDeliveryScope),
+			fullRun: !input.stopAfterNodeId && (!input.replay || input.replay.scope === "recovery_snapshot"),
+			projectId: admittedProjectId,
+			canvasId: admittedCanvasId,
+		});
 		await createExecution(env.DB, {
 			id: executionId,
 			flowId: input.flow.id,
@@ -676,20 +922,30 @@ export async function startWorkflowExecution(
 			ownerId: input.ownerId,
 			concurrency,
 			trigger: input.trigger,
-			projectId: input.projectContext?.projectId ?? input.delivery?.projectId ?? input.flow.project_id,
-			canvasId: input.projectContext?.canvasId ?? input.delivery?.flowId ?? input.flow.id,
+			projectId: admittedProjectId,
+			canvasId: admittedCanvasId,
 			userInput: workflowUserInput(input.triggerPayload),
-			projectContext: input.projectContext,
-			assetSnapshot: input.projectContext?.assetSnapshot,
+			projectContext: admittedContext,
+			assetSnapshot: admittedContext?.assetSnapshot,
 			recoveryOfExecutionId: input.recoveryOfExecutionId ?? null,
 			...(input.recoveryOfExecutionId
 				? { recoveryAdmission: input.recoveryAdmission ?? "failed_source" as const }
 				: {}),
 			executionFamilyId,
-			usesProjectAssets: executionUsesProjectAssets(input.projectContext, input.triggerPayload),
+			usesProjectAssets: executionUsesProjectAssets(admittedContext, input.triggerPayload),
+			...(exclusiveDeliveryScope ? { exclusiveDeliveryScope } : {}),
 			nowIso,
 		});
 	} catch (error: unknown) {
+		const busyDeliveryScopeExecutionId = workflowDeliveryScopeBusyExecutionId(error);
+		if (busyDeliveryScopeExecutionId) {
+			throw new WorkflowStartError(
+				`当前画布已有同一工作流在运行（${busyDeliveryScopeExecutionId}），不能重复发起。请跟踪该执行（tapcanvas_workflow_execution_inspect），或先取消它再重新发起。`,
+				"workflow_delivery_scope_busy",
+				409,
+				{ activeExecutionId: busyDeliveryScopeExecutionId },
+			);
+		}
 		const recoveryAdmissionReason = workflowRecoveryAdmissionReason(error);
 		if (recoveryAdmissionReason) {
 			throw new WorkflowStartError(
@@ -704,6 +960,7 @@ export async function startWorkflowExecution(
 		if (!existing || existing.owner_id !== input.ownerId || existing.flow_id !== input.flow.id) {
 			throw error;
 		}
+		await verifyRevisionIdentity(existing.flow_version_id);
 		const existingExecution = mapExecutionRow(existing);
 		await materializeAcceptedExecution(input, existingExecution);
 		if (existing.status === "queued") {

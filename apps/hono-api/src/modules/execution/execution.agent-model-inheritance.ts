@@ -41,27 +41,35 @@ export function resolveWorkflowAgentModelKey(input: Readonly<{
 	flowVersionData: unknown;
 	configuredModelKey?: string | null;
 }>): string {
-	const flowData = isRecord(input.flowVersionData) ? input.flowVersionData : null;
-	const hasDirectSelection = flowData !== null
-		&& Object.prototype.hasOwnProperty.call(flowData, "workflowDirectAgentModelSelection");
-	const rawDirectSelection = hasDirectSelection ? flowData.workflowDirectAgentModelSelection : undefined;
-	if (hasDirectSelection && (!isRecord(rawDirectSelection)
-		|| rawDirectSelection.source !== "user_preference"
-		|| typeof rawDirectSelection.model !== "string"
-		|| !rawDirectSelection.model.trim())) {
-		throw new Error("Frozen direct workflow Agent model selection is invalid");
-	}
-	if (hasDirectSelection && parseWorkflowInitiatingAgentExecution(input.flowVersionData)) {
-		throw new Error("Frozen workflow Agent model selections are mutually exclusive");
-	}
-	const directSelection = hasDirectSelection && isRecord(rawDirectSelection)
-		&& typeof rawDirectSelection.model === "string"
-		? rawDirectSelection.model.trim()
-		: null;
 	return parseWorkflowInitiatingAgentExecution(input.flowVersionData)?.model
-		?? directSelection
+		?? (isRecord(input.flowVersionData)
+			&& isRecord(input.flowVersionData.workflowDirectAgentModelSelection)
+			&& typeof input.flowVersionData.workflowDirectAgentModelSelection.model === "string"
+			? input.flowVersionData.workflowDirectAgentModelSelection.model.trim()
+			: null)
 		?? input.configuredModelKey?.trim()
 		?? "";
+}
+
+/**
+ * The reasoning effort the user chose for this run, in precedence order: the
+ * initiating AI-chat turn, then the effort selected next to the model when the
+ * workflow was launched directly, then the node's own configuration. Returns
+ * undefined when nobody chose one, so the caller applies the workflow default.
+ */
+export function resolveWorkflowAgentReasoningEffort(input: Readonly<{
+	flowVersionData: unknown;
+	configuredEffort?: WorkflowAgentPreferences["reasoningEffort"];
+}>): WorkflowAgentPreferences["reasoningEffort"] {
+	const initiating = parseWorkflowInitiatingAgentExecution(input.flowVersionData)?.reasoningEffort;
+	if (initiating) return initiating;
+	const direct = isRecord(input.flowVersionData) && isRecord(input.flowVersionData.workflowDirectAgentModelSelection)
+		? AgentExecutionPreferencesSchema.safeParse({
+			reasoningEffort: input.flowVersionData.workflowDirectAgentModelSelection.reasoningEffort,
+		})
+		: null;
+	if (direct?.success && direct.data.reasoningEffort) return direct.data.reasoningEffort;
+	return input.configuredEffort;
 }
 
 /**

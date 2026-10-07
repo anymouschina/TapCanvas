@@ -62,7 +62,7 @@ describe("chapter Clip segmentation contract", () => {
 	it("states every source's exact UTF-16 terminal boundary independently of duration character counts", () => {
 		const contract = bindClipSegmentationAuthoringContract({ allowedFields: [] }, {
 			...deliveryContract,
-			sourceProfile: { sourceChars: 1, sourceSpeechChars: 1 },
+			sourceProfile: { sourceChars: 1, sourceQuotedChars: 1 },
 		});
 		const description = contract.jsonSchema?.description;
 		expect(typeof description).toBe("string");
@@ -76,7 +76,7 @@ describe("chapter Clip segmentation contract", () => {
 			{ sourceIndex: 0, sourceId: "source-0", startOffset: 0, endOffset: 8, utf16Length: 8, forbiddenSurrogateOffsets: [2, 5] },
 			{ sourceIndex: 1, sourceId: "source-1", startOffset: 0, endOffset: 4, utf16Length: 4, forbiddenSurrogateOffsets: [] },
 		]);
-		expect(description).toContain("sourceProfile.sourceChars/sourceSpeechChars");
+		expect(description).toContain("sourceProfile.sourceChars/sourceQuotedChars");
 		expect(description).not.toContain(sourceContents[0]);
 		expect(description).not.toContain(sourceContents[1]);
 	});

@@ -1,3 +1,4 @@
+import { REFERENCE_ONLY_EXECUTION_ROLE } from "@tapcanvas/canvas-edge-semantics";
 import { isDeepStrictEqual } from "node:util";
 import type { WorkerEnv } from "../../types";
 import { freshReadFlowRow, persistFlowPatch } from "../task/video-orchestrator.flow-io";
@@ -10,6 +11,7 @@ import { clipProductionAssetMetadata } from "./execution.clip-production";
 import { workflowImageSemanticLabel } from "./execution.media-label";
 import { PublicFlowCreateNodeSchema } from "../flow/flow.public.schemas";
 import type { ClipProductionNodePlan } from "./execution.clip-production-nodes";
+import { renderClipProductionReferenceHeader, renderClipProductionReferencePrompt } from "./execution.clip-production-reference-prompt";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -70,6 +72,7 @@ function assertFrozenNode(existing: JsonRecord, planned: JsonRecord): void {
 	const expected = planned.data;
 	for (const field of ["kind", "prompt", "workflowEffectId", "workflowExecutionFamilyId", "workflowClipId",
 		"workflowVideoInputMode", "modelKey", "videoDurationSeconds", "videoResolution", "aspectRatio",
+		"workflowSourcePrompt", "workflowSpeechEvents", "workflowReferenceBindings", "workflowReferenceHeader",
 		"negativePrompt", "imageSize", "registryObjectId", "canonicalAssetId", "assetState",
 		"displayName", "referenceType", "referenceAssetBindings", "generationSpecVersion"] as const) {
 		if (!isDeepStrictEqual(data[field], expected[field])) throw new Error(`Planned canvas node ${read(planned.id)} changed frozen ${field}`);
@@ -131,11 +134,24 @@ function buildNodes(request: WorkflowClipNodeMaterializationRequest): JsonRecord
 	const videoNodes = request.nodePlan.videoNodes.map((video) => {
 		const identity = buildWorkflowVideoEffectV2Identity({ executionFamilyId: request.executionFamilyId, clipId: video.clipId });
 		if (identity.canvasNodeId !== video.nodeId) throw new Error(`Clip ${video.clipId} changed planned node identity`);
+		const referenceImages = video.referenceImageNodeIds.map((nodeId) => ({ sourceNodeIds: [nodeId] }));
+		const referenceHeader = renderClipProductionReferenceHeader({ bindings: video.referenceBindings, images: referenceImages });
+		const prompt = renderClipProductionReferencePrompt({
+			prompt: video.sourcePrompt, speechEvents: video.speechEvents,
+			bindings: video.referenceBindings, images: referenceImages, stylePrompt: request.stylePrompt,
+		});
+		if (referenceHeader !== video.referenceHeader || prompt !== video.prompt) {
+			throw new Error(`Clip ${video.clipId} reference prompt differs from its frozen packet bindings`);
+		}
 		return {
 			id: video.nodeId, type: "taskNode", position: { x: 560, y: 120 + video.clipIndex * 360 },
 			data: {
 				kind: "video", label: `Clip ${video.clipIndex + 1}`, status: "idle", workflowPreparedOnly: true,
-				prompt: video.prompt, workflowPromptSourceProtocol: "tapcanvas.clip-production-packets/v1",
+				prompt, workflowPromptSourceProtocol: "tapcanvas.clip-production-packets/v2",
+				workflowSourcePrompt: video.sourcePrompt,
+				...(video.speechEvents === undefined ? {} : { workflowSpeechEvents: video.speechEvents }),
+				workflowReferenceBindings: video.referenceBindings.map((binding) => ({ ...binding })),
+				workflowReferenceHeader: video.referenceHeader,
 				workflowVideoInputMode: video.videoInputMode, modelKey: request.videoModelKey, videoModel: request.videoModelKey,
 				videoDurationSeconds: video.durationSeconds, videoResolution: request.videoResolution,
 				...(request.videoSize ? { videoSize: request.videoSize } : {}), aspectRatio: request.videoAspectRatio,
@@ -189,10 +205,21 @@ export async function materializeWorkflowClipProductionNodes(
 		current: graphWithPlannedNodes, clipNodeId: video.nodeId,
 		sourceNodeIds: video.referenceImageNodeIds, targetWillBeCreated: true,
 	}));
-	if (createNodes.length || createEdges.length) {
+	// Story order is drawn on the canvas: each Clip points at the next one. The edge only shows the
+	// order; reference_only keeps every runner from treating the previous Clip as a media input.
+	const existingEdgeIds = new Set(current.edges.map((edge) => read(edge.id)));
+	const ordered = [...request.nodePlan.videoNodes].sort((left, right) => left.clipIndex - right.clipIndex);
+	const sequenceEdges = ordered.slice(1).flatMap((video, index) => {
+		const previous = ordered[index]!;
+		const id = `e-seq-${previous.nodeId}-${video.nodeId}`;
+		return existingEdgeIds.has(id) ? [] : [{ id, source: previous.nodeId, target: video.nodeId,
+			sourceHandle: "out-video", targetHandle: "in-any", label: "下一段",
+			data: { executionRole: REFERENCE_ONLY_EXECUTION_ROLE, relationKind: "clip_sequence", label: "下一段" } }];
+	});
+	if (createNodes.length || createEdges.length || sequenceEdges.length) {
 		await persistFlowPatch({ c: context, row, flowId: request.flowId, requestUserId: request.ownerId, devBypass: false,
 			...(request.chapterId ? { chapterId: request.chapterId } : {}),
-			patch: { createNodes, createEdges },
+			patch: { createNodes, createEdges: [...createEdges, ...sequenceEdges] },
 			affectedNodeIds: [...plannedById.keys()],
 		});
 	}

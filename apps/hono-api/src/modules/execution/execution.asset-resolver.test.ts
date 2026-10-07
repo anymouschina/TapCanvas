@@ -262,7 +262,7 @@ describe("workflow ProjectContext and Asset Resolver", () => {
 					approvalStatus: "approved",
 					canvasRevision: 11,
 					status: "success",
-					urlExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+					urlExpiresAt: "2099-09-18T00:00:00.000Z",
 				},
 			} : null,
 		};

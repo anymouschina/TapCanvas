@@ -89,7 +89,7 @@ export function bindWorkflowVideoSourceEvidence(input: Readonly<{
 	if (matchedSources.length !== matches.length) {
 		return unavailable("source_content_unavailable");
 	}
-	if (matchedSources.some((source) => sha256Hex(source.content.trim()) !== source.sourceFingerprint)) {
+	if (matchedSources.some((source) => sha256Hex(source.content) !== source.sourceFingerprint)) {
 		return unavailable("source_content_fingerprint_mismatch");
 	}
 	// Keep whitespace and complete wording exactly as frozen, independently of beat scope/summary.

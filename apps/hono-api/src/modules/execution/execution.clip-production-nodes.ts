@@ -1,9 +1,14 @@
 import { createWorkflowCollection, isWorkflowCollection, type WorkflowCollectionV1 } from "@tapcanvas/workflow-kernel-protocol";
-import { type ClipProductionPacket } from "../../../../../packages/schemas/clip-production-packet/index.mjs";
+import { type ClipProductionPacket, type ClipProductionSpeechEvent } from "../../../../../packages/schemas/clip-production-packet/index.mjs";
 import { buildWorkflowVideoEffectV2Identity } from "../task/workflow-video-effect-claim";
 import { projectClipProductionAssetItems, type ClipProductionAssetPlanItem, type MaterializedClipAssetIntent } from "./execution.clip-production";
 import { workflowImageEffectIdentity } from "./execution.image-runner";
 import { buildWorkflowClipSourceSnapshot } from "../task/workflow-clip-source-snapshot";
+import {
+	renderClipProductionReferenceHeader,
+	renderClipProductionReferencePrompt,
+	type ClipProductionReferenceBinding,
+} from "./execution.clip-production-reference-prompt";
 
 export type ClipProductionMediaItem = Readonly<{
 	protocolVersion: "tapcanvas.clip-production-media-item/v1";
@@ -28,6 +33,10 @@ export type ClipProductionNodePlan = Readonly<{
 		videoInputMode: "image_to_video" | "reference_to_video" | "text_to_video";
 		firstFrameImageNodeId: string | null;
 		referenceImageNodeIds: readonly string[];
+		sourcePrompt: string;
+		speechEvents?: readonly ClipProductionSpeechEvent[];
+		referenceBindings: readonly ClipProductionReferenceBinding[];
+		referenceHeader: string;
 	}>[];
 }>;
 
@@ -52,6 +61,8 @@ export function projectClipProductionNodePlan(input: Readonly<{
 	clipProductionCollection: unknown;
 	assetIntentCollection: unknown;
 	deliveryContract: unknown;
+	/** The run's frozen style lock; it opens every Clip prompt. */
+	stylePrompt?: string | null;
 }>): Readonly<{
 	nodePlan: ClipProductionNodePlan;
 	mediaItems: WorkflowCollectionV1<ClipProductionMediaItem>;
@@ -84,12 +95,16 @@ export function projectClipProductionNodePlan(input: Readonly<{
 			}).canvasNodeId,
 		});
 	}
+	const seenClipIndices = new Set<number>();
 	const videoNodes = clips.items.map((item, index) => {
 		const packet = item.value;
-		if (!record(packet) || packet.protocolVersion !== "tapcanvas.clip-production-packet/v1"
-			|| packet.clipId !== item.itemId || packet.clipIndex !== index) {
+		if (!record(packet) || packet.protocolVersion !== "tapcanvas.clip-production-packet/v2"
+			|| packet.clipId !== item.itemId || !Number.isSafeInteger(packet.clipIndex) || packet.clipIndex < 0
+			|| seenClipIndices.has(packet.clipIndex)
+			|| (index > 0 && packet.clipIndex <= clips.items[index - 1]!.value.clipIndex)) {
 			throw new Error(`Clip ${index} differs from its frozen packet collection identity`);
 		}
+		seenClipIndices.add(packet.clipIndex);
 		const references = packet.referenceAssets.map((reference) => {
 			const asset = assetByIdentity.get(identity(reference.assetId, reference.state));
 			if (!asset) throw new Error(`Clip ${packet.clipId} has no planned image for ${identity(reference.assetId, reference.state)}`);
@@ -104,16 +119,30 @@ export function projectClipProductionNodePlan(input: Readonly<{
 		if (packet.videoInputMode !== "image_to_video" && packet.videoInputMode !== "reference_to_video" && packet.videoInputMode !== "text_to_video") {
 			throw new Error(`Clip ${packet.clipId} has unsupported video input mode`);
 		}
+		const referenceBindings: readonly ClipProductionReferenceBinding[] = references.map(({ assetItem, nodeId }) => ({
+			nodeId,
+			name: assetItem.displayName,
+			referenceType: assetItem.referenceType,
+		}));
+		const plannedReferenceImages = references.map(({ nodeId }) => ({ sourceNodeIds: [nodeId] }));
+		const referenceHeader = renderClipProductionReferenceHeader({ bindings: referenceBindings, images: plannedReferenceImages });
+		const prompt = renderClipProductionReferencePrompt({ prompt: packet.videoPrompt,
+			speechEvents: packet.speechEvents, bindings: referenceBindings, images: plannedReferenceImages,
+			stylePrompt: input.stylePrompt });
 		return {
 			nodeId: buildWorkflowVideoEffectV2Identity({ executionFamilyId, clipId: packet.clipId }).canvasNodeId,
 			clipId: packet.clipId,
 			clipIndex: packet.clipIndex,
 			sourceSnapshot: buildWorkflowClipSourceSnapshot({ clipId: packet.clipId, sourceRanges: packet.sourceRanges, clipFacts: packet.clipFacts }),
-			prompt: packet.videoPrompt,
+			prompt,
+			sourcePrompt: packet.videoPrompt,
+			...(packet.speechEvents === undefined ? {} : { speechEvents: packet.speechEvents }),
 			durationSeconds: packet.durationSeconds,
 			videoInputMode: packet.videoInputMode,
 			firstFrameImageNodeId: firstFrame?.nodeId ?? null,
 			referenceImageNodeIds: references.map((reference) => reference.nodeId),
+			referenceBindings,
+			referenceHeader,
 		};
 	});
 	const nodePlan: ClipProductionNodePlan = {
@@ -139,14 +168,38 @@ export function projectClipProductionNodePlan(input: Readonly<{
 		values: videoNodes.map((video) => ({ nodeId: video.nodeId, clipId: video.clipId, promptPersisted: true as const, videoSubmitted: false as const })),
 		parentLineage: clips.items.map((item) => item.lineage) });
 	const promptPackage = {
-		protocolVersion: "2", artifactType: "tapcanvas.prompt-package/v2", authoringProtocol: "tapcanvas.clip-production-packets/v1",
+		protocolVersion: "2", artifactType: "tapcanvas.prompt-package/v2", authoringProtocol: "tapcanvas.clip-production-packets/v2",
 		executionId, workflowKey,
 		clips: clips.items.map((item, index) => ({ itemId: item.itemId, index, clipIndex: item.value.clipIndex,
-			prompt: item.value.videoPrompt, durationSeconds: item.value.durationSeconds, videoInputMode: item.value.videoInputMode,
+			prompt: videoNodes[index]!.prompt, sourcePrompt: videoNodes[index]!.sourcePrompt,
+			...(input.stylePrompt ? { stylePrompt: input.stylePrompt } : {}),
+			...(item.value.speechEvents === undefined ? {} : { speechEvents: item.value.speechEvents }),
+			authoringEvidence: {
+				sourceDialogueLineIds: item.value.speechEvents?.filter((event) => event.textOrigin === "source_quote")
+					.map((event) => event.speechEventId) ?? [],
+				spokenLineIds: item.value.speechEvents?.map((event) => event.speechEventId) ?? [],
+			},
+			referenceBindings: videoNodes[index]!.referenceBindings, referenceHeader: videoNodes[index]!.referenceHeader,
+			durationSeconds: item.value.durationSeconds, videoInputMode: item.value.videoInputMode,
 			firstFrameAsset: item.value.firstFrameAsset, referenceAssets: item.value.referenceAssets,
 			referenceImageNodeIds: videoNodes[index]!.referenceImageNodeIds, referenceAssetIds: [],
 			clipFacts: item.value.clipFacts, sourceRanges: item.value.sourceRanges, lineage: item.lineage })),
 		planningState: "awaiting_canvas_readback",
+		deliveryEvidence: {
+			version: 2,
+			source: "workflow_prompt_package",
+			clipCount: clips.items.length,
+			totalDurationSeconds: clips.items.reduce((total, item) => total + item.value.durationSeconds, 0),
+			speechEvidenceStatus: clips.items.every((item) => item.value.speechEvents !== undefined)
+				? "projected_from_clip_packets"
+				: clips.items.every((item) => item.value.speechEvents === undefined)
+					? "not_projected_from_clip_packets" : "partially_projected_from_clip_packets",
+			sourceSpeechLineCount: clips.items.reduce((total, item) => total
+				+ (item.value.speechEvents?.filter((event) => event.textOrigin === "source_quote").length ?? 0), 0),
+			narrativeSpeechLineCount: clips.items.reduce((total, item) => total
+				+ (item.value.speechEvents?.filter((event) => event.textOrigin === "authored").length ?? 0), 0),
+			executableSpeechLineCount: clips.items.reduce((total, item) => total + (item.value.speechEvents?.length ?? 0), 0),
+		},
 	};
 	return { nodePlan, mediaItems, preparedNodes, promptPackage };
 }

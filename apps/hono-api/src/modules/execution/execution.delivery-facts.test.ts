@@ -18,11 +18,20 @@ describe('persisted delivery facts', () => {
       requiredDependencyIds: ['image-1'], dependencies } }, facts).status).toBe('unsatisfied');
   });
   it('accepts a real image receipt and legal reference-free node', () => {
-    for (const imageDependencies of [[], [{ referenceId: 'image-1', url: 'https://assets.example/image.png' }]]) {
+    for (const imageDependencies of [[], [{ referenceId: 'node:image-1', url: 'https://assets.example/image.png' }]]) {
       const result = preparedNodeDelivery({ nodeId: 'video-1', persisted: true, promptPersisted: true,
-        referenceImageNodeIds: imageDependencies.map(image => image.referenceId), referenceAssetIds: [], imageDependencies });
+        referenceImageNodeIds: imageDependencies.length ? ['image-1'] : [], referenceAssetIds: [], imageDependencies });
       expect(verifyDeliveryFacts(result, facts).status).toBe('satisfied');
       expect(result.deliveryEvidence.videoSubmitted).toBe(false);
     }
+  });
+  it('keeps node and asset handle namespaces distinct in prepared receipts', () => {
+    const result = preparedNodeDelivery({ nodeId: 'video-1', persisted: true, promptPersisted: true,
+      referenceImageNodeIds: ['shared'], referenceAssetIds: ['shared'],
+      imageDependencies: [
+        { referenceId: 'node:shared', url: 'https://assets.example/node.png' },
+        { referenceId: 'asset:shared', url: 'https://assets.example/asset.png' },
+      ] });
+    expect(verifyDeliveryFacts(result, facts).status).toBe('satisfied');
   });
 });

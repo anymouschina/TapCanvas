@@ -3,7 +3,8 @@ export type WorkflowKnowledgeDiagnostics = Readonly<{
   indexedCards: number;
   availableCards: number;
   embeddingModel: string;
-  mode?: "vector";
+  /** database: cards looked up in Postgres by id, route or keyword; no embedding model involved. */
+  mode?: "vector" | "database";
   vectorHits?: number;
   requestedQueryViews?: number;
   queryViews?: number;

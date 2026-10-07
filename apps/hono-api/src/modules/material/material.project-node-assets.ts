@@ -172,6 +172,7 @@ function buildProjectedData(node: CanvasNodeRecord, canvas: ProjectNodeAssetCanv
 		"voiceId",
 		"voiceCharacter",
 		"sourceMaterialAssetId",
+		"sourceAssetId",
 		"sourceMaterialAssetVersionId",
 		"sourceMaterialAssetVersion",
 		"sourceProjectId",

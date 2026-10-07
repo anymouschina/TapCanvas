@@ -1,3 +1,5 @@
+import type { WorkflowNodeOutputV1 } from "./execution.node-runtime";
+
 export type WorkflowAgentOutputRepair = Readonly<{
 	version: 1;
 	sourceTurnId: string;
@@ -28,4 +30,18 @@ export function readWorkflowAgentOutputRepair(
 		error: record.error,
 		...(repairAttemptCount !== undefined ? { repairAttemptCount } : {}),
 	};
+}
+
+/** Repair checkpoints retain already produced artifacts across physical windows. */
+export function retainWorkflowAgentRepairArtifacts(
+	previous: WorkflowNodeOutputV1["artifacts"],
+	current: WorkflowNodeOutputV1["artifacts"],
+): WorkflowNodeOutputV1["artifacts"] {
+	const keys = new Set<string>();
+	return [...previous, ...current].filter((artifact) => {
+		const key = JSON.stringify([artifact.type, artifact.identity, artifact.value, artifact.media]);
+		if (keys.has(key)) return false;
+		keys.add(key);
+		return true;
+	});
 }

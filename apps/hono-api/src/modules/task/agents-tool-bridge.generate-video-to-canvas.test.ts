@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FlowRevisionConflictError, type FlowRow } from "../flow/flow.repo";
 import type { AppContext } from "../../types";
+import { buildWorkflowVideoEffectRetryV2Identity, buildWorkflowVideoEffectV2Identity } from "./workflow-video-effect-claim";
 
 const {
   mockedRunPublicTask,
@@ -61,6 +62,22 @@ vi.mock("../asset/asset.hosting", () => ({
   registerGeneratedMediaAsset: mockedRegisterGeneratedMediaAsset,
 }));
 
+vi.mock("../material/material.repo", async () => ({
+  ...await vi.importActual<typeof import("../material/material.repo")>("../material/material.repo"),
+  readCanvasIndexStyleImages: vi.fn().mockResolvedValue([]),
+  readCanvasIndexStyleLock: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("../material/project-look-bible", async () => ({
+  ...await vi.importActual<typeof import("../material/project-look-bible")>("../material/project-look-bible"),
+  getActiveProjectLookBible: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("../agents/project-context.service", async () => ({
+  ...await vi.importActual<typeof import("../agents/project-context.service")>("../agents/project-context.service"),
+  getProjectBookStyleFacts: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("../model-catalog/model-catalog.service", () => ({
   listModelCatalogModels: mockedListModelCatalogModels,
 }));
@@ -83,7 +100,8 @@ vi.mock("../apiKey/apiKey.routes", () => ({
   runPublicTask: mockedRunPublicTask,
 }));
 
-vi.mock("./task.polling", () => ({
+vi.mock("./task.polling", async () => ({
+  ...await vi.importActual<typeof import("./task.polling")>("./task.polling"),
   fetchTaskResultForPolling: mockedFetchTaskResultForPolling,
 }));
 
@@ -158,6 +176,7 @@ vi.mock("../team/team.service", async () => {
 
 import {
   generateVideoToCanvas,
+  isMatchingPreparedWorkflowVideoNode,
   reconcileVideoNodesForFlow,
   ensureVideoNodeShape,
   resolveChapterDesignBoardNodes,
@@ -382,6 +401,143 @@ describe("ensureVideoNodeShape — 视频节点脚手架确定性补全", () => 
 });
 
 describe("generateVideoToCanvas", () => {
+	it("submits a manual video derivative under a fresh node ID without changing the workflow output", async () => {
+		const sourceNode = {
+			id: "workflow-video-output",
+			type: "taskNode",
+			position: { x: 0, y: 0 },
+			data: {
+				kind: "video",
+				status: "success",
+				workflowExecutionId: "execution-1",
+				workflowExecutionFamilyId: "family-1",
+				workflowRuntimeNodeId: "video::item::clip-1",
+				workflowEffectId: "effect-1",
+				taskId: "source-task",
+				videoTaskId: "source-task",
+				videoUrl: "https://assets.example/original.mp4",
+				videoResults: [{ url: "https://assets.example/original.mp4", assetId: "source-video-asset" }],
+			},
+		};
+		const row: FlowRow = {
+			id: "flow-manual-video",
+			name: "Flow",
+			data: JSON.stringify({ nodes: [sourceNode], edges: [] }),
+			owner_id: "user-1",
+			project_id: "project-1",
+			created_at: "2026-09-27T00:00:00.000Z",
+			updated_at: "2026-09-27T00:00:00.000Z",
+		};
+		const sourceSnapshot = structuredClone(sourceNode);
+		mockedRunPublicTask.mockResolvedValueOnce({ vendor: "newapi", result: {
+			id: "manual-video-task", kind: "text_to_video", status: "running", assets: [], raw: {},
+		} });
+		mockedUpdateFlow.mockImplementationOnce(async (_db, update) => ({
+			id: update.id,
+			name: update.name,
+			data: update.data,
+			owner_id: "user-1",
+			project_id: "project-1",
+			created_at: row.created_at,
+			updated_at: update.nowIso,
+		}));
+		mockedCreateFlowVersion.mockResolvedValueOnce(undefined);
+
+		const result = await generateVideoToCanvas({
+			c: { env: { DB: {} } } as AppContext,
+			requestUserId: "user-1",
+			devBypass: false,
+			flowId: row.id,
+			row,
+			bodyArgs: { node: {
+				id: "manual-video-attempt-1",
+				type: "taskNode",
+				position: { x: 540, y: 0 },
+				data: {
+					kind: "video",
+					status: "idle",
+					prompt: "当前编辑后的视频提示词",
+					videoModel: "doubao-seedance-2-0-260128",
+					mediaTaskExecutionOwner: "manual",
+					sourceWorkflowOutput: { nodeId: sourceNode.id, executionId: "execution-1" },
+				},
+			} },
+		});
+
+		expect(result).toMatchObject({ ok: true, nodeId: "manual-video-attempt-1", taskId: "manual-video-task" });
+		expect(mockedRunPublicTask).toHaveBeenCalledTimes(1);
+		const taskInput = mockedRunPublicTask.mock.calls[0]?.[2] as { request: { prompt: string; extras: Record<string, unknown> } };
+		expect(taskInput.request).toMatchObject({
+			prompt: "当前编辑后的视频提示词",
+			extras: { generationContext: { nodeId: "manual-video-attempt-1" } },
+		});
+		expect(taskInput.request.extras.generationContext).not.toHaveProperty("workflowExecutionId");
+		expect(mockedClaimVideoSubmissionIntent).not.toHaveBeenCalled();
+
+		const persisted = JSON.parse(String(mockedUpdateFlow.mock.calls[0]?.[1]?.data ?? "{}")) as {
+			nodes: Array<{ id: string; data: Record<string, unknown> }>;
+		};
+		expect(persisted.nodes.find((node) => node.id === sourceNode.id)).toEqual(sourceSnapshot);
+		expect(persisted.nodes.find((node) => node.id === "manual-video-attempt-1")?.data).toMatchObject({
+			kind: "video",
+			prompt: "当前编辑后的视频提示词",
+			mediaTaskExecutionOwner: "manual",
+			sourceWorkflowOutput: { nodeId: sourceNode.id, executionId: "execution-1" },
+			status: "running",
+			taskId: "manual-video-task",
+		});
+		expect(persisted.nodes.find((node) => node.id === "manual-video-attempt-1")?.data)
+			.not.toHaveProperty("workflowExecutionId");
+	});
+
+  it("rebinds a Clip packet prompt to the provider image order without direct node handles", async () => {
+    const row: FlowRow = {
+      id: "flow-packet-binding", name: "Flow",
+      data: JSON.stringify({ nodes: [
+        { id: "image-a", type: "taskNode", data: { kind: "image", status: "success", label: "角色甲",
+          imageResults: [{ url: "https://assets.example/a.png", assetId: "asset-a" }] } },
+        { id: "image-b", type: "taskNode", data: { kind: "image", status: "success", label: "角色乙",
+          imageResults: [{ url: "https://assets.example/b.png", assetId: "asset-b" }] } },
+      ], edges: [] }),
+      owner_id: "user-1", project_id: "project-1",
+      created_at: "2026-07-22T00:00:00.000Z", updated_at: "2026-07-22T00:00:00.000Z",
+    };
+    mockedRunPublicTask.mockResolvedValueOnce({ vendor: "newapi", result: {
+      id: "task-packet-binding", kind: "image_to_video", status: "running", assets: [], raw: {},
+    } });
+    mockedUpdateFlow.mockImplementationOnce(async (_db, input) => ({
+      id: input.id, name: input.name, data: input.data, owner_id: "user-1", project_id: "project-1",
+      created_at: row.created_at, updated_at: input.nowIso,
+    }));
+    mockedCreateFlowVersion.mockResolvedValueOnce(undefined);
+    const preparedHeader = "\n\n参考图绑定：\n@图1：角色甲（character）\n@图2：角色乙（character）";
+    await generateVideoToCanvas({
+      c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, row,
+      bodyArgs: { node: { type: "taskNode", position: { x: 0, y: 0 }, data: {
+        kind: "video", videoModel: "doubao-seedance-2-0-260128",
+        prompt: `更新过的动作正文${preparedHeader}`,
+        stylePrompt: "不应重复追加的项目画风",
+        workflowPromptSourceProtocol: "tapcanvas.clip-production-packets/v2",
+        workflowSourcePrompt: "原始动作正文", workflowReferenceHeader: preparedHeader,
+        workflowReferenceBindings: [
+          { nodeId: "image-a", name: "角色甲", referenceType: "character" },
+          { nodeId: "image-b", name: "角色乙", referenceType: "character" },
+        ],
+        referenceImageNodeIds: [],
+        referenceImages: ["https://assets.example/b.png", "https://assets.example/a.png"],
+      } } },
+    });
+    const taskRequest = mockedRunPublicTask.mock.calls[0]?.[2] as {
+      request: { prompt: string; extras: { referenceMediaManifest: { images: { sourceNodeIds: string[] }[] } } };
+    };
+    expect(taskRequest.request.prompt).toContain("更新过的动作正文");
+    expect(taskRequest.request.prompt).not.toContain("不应重复追加的项目画风");
+    expect(taskRequest.request.prompt).toContain("参考：图1=角色乙，图2=角色甲。");
+    expect(taskRequest.request.extras.referenceMediaManifest.images.map((image) => image.sourceNodeIds))
+      .toEqual([["image-b"], ["image-a"]]);
+  });
+
   it("keeps a Seedance keyframe and reference video without automatically adding project style images", async () => {
     const row: FlowRow = {
       id: "flow-seedance-frame",
@@ -1591,7 +1747,208 @@ describe("generateVideoToCanvas", () => {
     expect(mockedRunPublicTask).not.toHaveBeenCalled();
   });
 
-  it.each(["uncertain", undefined])("recovers a targeted receipt with submission projection %s without submitting again", async (submissionState) => {
+  it("keeps a newer video task when an older reconciliation finishes after it", async () => {
+    const nodeId = "regenerated-video";
+    const oldTaskId = "task-old";
+    const newTaskId = "task-new";
+    const oldNode = { id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "running", taskId: oldTaskId, videoTaskId: oldTaskId,
+      videoTaskKind: "text_to_video", vendor: "newapi", prompt: "same prompt",
+      videoModel: "video-model", videoDurationSeconds: 10,
+    } };
+    const row: FlowRow = { id: "chapter-regeneration", name: "Regeneration",
+      data: JSON.stringify({ nodes: [oldNode], edges: [] }), owner_id: "user-1",
+      project_id: "project-1", created_at: "2026-09-25T00:00:00.000Z",
+      updated_at: "2026-09-25T00:00:00.000Z" };
+    const currentFlow = { nodes: [{ ...oldNode, data: {
+      ...oldNode.data, taskId: oldTaskId, videoTaskId: newTaskId,
+      lastResult: { id: newTaskId, at: 1, kind: "video" },
+    } }], edges: [] };
+    mockedGetChapterCanvasFlow.mockResolvedValue({ revision: 2, flow: currentFlow });
+    mockedPutChapterCanvasFlow.mockResolvedValue({ revision: 3 });
+    mockedFetchTaskResultForPolling.mockResolvedValueOnce({ ok: true, vendor: "newapi", result: {
+      id: oldTaskId, kind: "text_to_video", status: "succeeded",
+      assets: [{ type: "video", url: "https://example.com/old.mp4" }], raw: {},
+    } });
+
+    const result = await reconcileVideoNodesForFlow({ c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row,
+    });
+
+    expect(result).toMatchObject({ reconciled: 0, failed: 0,
+      details: [{ nodeId, taskId: oldTaskId, status: "superseded" }] });
+    expect(mockedPutChapterCanvasFlow.mock.calls[0]?.[3]).toMatchObject({ flow: { nodes: [expect.objectContaining({
+      id: nodeId, data: expect.objectContaining({ videoTaskId: newTaskId, status: "running",
+        videoReceiptHistory: [expect.objectContaining({ taskId: oldTaskId, assets: [{ type: "video", url: "https://example.com/old.mp4" }] })] }),
+    })] } });
+    expect(mockedSettleTeamCreditsOnSuccess).toHaveBeenCalledWith(expect.anything(), "user-1",
+      expect.objectContaining({ taskId: oldTaskId }));
+  });
+
+  it("reconciles the active videoTaskId ahead of a previous taskId", async () => {
+    const nodeId = "active-regeneration";
+    const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "running", taskId: "task-previous", videoTaskId: "task-current",
+      videoTaskKind: "text_to_video", vendor: "newapi", prompt: "current prompt",
+      videoModel: "video-model", videoDurationSeconds: 10,
+    } }], edges: [] };
+    const row: FlowRow = { id: "chapter-active-regeneration", name: "Active regeneration",
+      data: JSON.stringify(flow), owner_id: "user-1", project_id: "project-1",
+      created_at: "2026-09-25T00:00:00.000Z", updated_at: "2026-09-25T00:00:00.000Z" };
+    mockedGetChapterCanvasFlow.mockResolvedValue({ revision: 2, flow });
+    mockedPutChapterCanvasFlow.mockResolvedValue({ revision: 3 });
+    mockedFetchTaskResultForPolling.mockResolvedValueOnce({ ok: true, vendor: "newapi", result: {
+      id: "task-current", kind: "text_to_video", status: "succeeded",
+      assets: [{ type: "video", url: "https://example.com/current.mp4" }], raw: {},
+    } });
+
+    const result = await reconcileVideoNodesForFlow({ c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row,
+    });
+
+    expect(mockedFetchTaskResultForPolling).toHaveBeenCalledWith(expect.anything(), "user-1",
+      expect.objectContaining({ taskId: "task-current" }));
+    expect(result.reconciled).toBe(1);
+    expect(mockedPutChapterCanvasFlow.mock.calls[0]?.[3]).toMatchObject({ flow: { nodes: [
+      expect.objectContaining({ id: nodeId, data: expect.objectContaining({
+        taskId: "task-current", videoTaskId: "task-current",
+        videoUrl: "https://example.com/current.mp4", status: "success",
+      }) }),
+    ] } });
+  });
+
+  it.each(["error", "failed", "canceled"])(
+    "checks the exact persisted receipt for %s even while a previous video URL is present",
+    async (status) => {
+      const nodeId = "video-with-history";
+      const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+        kind: "video", status, workflowSubmissionState: "accepted",
+        taskId: "task-previous", videoTaskId: "task-current",
+        videoTaskKind: "text_to_video", vendor: "newapi", prompt: "current attempt",
+        videoModel: "video-model", videoDurationSeconds: 10,
+        videoUrl: "https://example.com/previous.mp4",
+        videoResults: [{ url: "https://example.com/previous.mp4", assetId: "previous-asset" }],
+      } }], edges: [] };
+      const row: FlowRow = { id: "chapter-video-with-history", name: "Video with history",
+        data: JSON.stringify(flow), owner_id: "user-1", project_id: "project-1",
+        created_at: "2026-09-25T00:00:00.000Z", updated_at: "2026-09-25T00:00:00.000Z" };
+      mockedFetchTaskResultForPolling.mockResolvedValueOnce({ ok: false });
+
+      const result = await reconcileVideoNodesForFlow({
+        c: { env: { DB: {} } } as AppContext,
+        requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row,
+        target: { nodeId, taskId: "task-current" },
+      });
+
+      expect(mockedFetchTaskResultForPolling).toHaveBeenCalledTimes(1);
+      expect(mockedFetchTaskResultForPolling).toHaveBeenCalledWith(expect.anything(), "user-1",
+        expect.objectContaining({ taskId: "task-current" }));
+      expect(result).toMatchObject({ reconciled: 0, failed: 0, stillRunning: 1 });
+      expect(mockedRunPublicTask).not.toHaveBeenCalled();
+    },
+  );
+
+  it("materializes a confirmed current receipt over historical video output and archives that output", async () => {
+    const nodeId = "video-new-receipt-with-history";
+    const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "canceled", workflowSubmissionState: "accepted",
+      taskId: "task-previous", videoTaskId: "task-current",
+      videoTaskKind: "text_to_video", vendor: "newapi", prompt: "current attempt",
+      videoModel: "video-model", videoDurationSeconds: 10,
+      videoUrl: "https://example.com/previous.mp4",
+      videoResults: [{ url: "https://example.com/previous.mp4", assetId: "previous-asset" }],
+    } }], edges: [] };
+    const row: FlowRow = { id: "chapter-new-receipt-with-history", name: "Video with history",
+      data: JSON.stringify(flow), owner_id: "user-1", project_id: "project-1",
+      created_at: "2026-09-25T00:00:00.000Z", updated_at: "2026-09-25T00:00:00.000Z" };
+    mockedGetChapterCanvasFlow.mockResolvedValue({ revision: 4, flow });
+    mockedPutChapterCanvasFlow.mockResolvedValue({ revision: 5 });
+    mockedFetchTaskResultForPolling.mockResolvedValueOnce({ ok: true, vendor: "newapi", result: {
+      id: "task-current", kind: "text_to_video", status: "succeeded",
+      assets: [{ type: "video", url: "https://example.com/current.mp4" }], raw: {},
+    } });
+
+    const result = await reconcileVideoNodesForFlow({
+      c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row,
+      target: { nodeId, taskId: "task-current" },
+    });
+
+    expect(mockedFetchTaskResultForPolling).toHaveBeenCalledWith(expect.anything(), "user-1",
+      expect.objectContaining({ taskId: "task-current" }));
+    expect(result.reconciled).toBe(1);
+    expect(mockedRunPublicTask).not.toHaveBeenCalled();
+    const persistence = mockedPutChapterCanvasFlow.mock.calls[0]?.[3] as {
+      flow: { nodes: Array<{ id: string; data: Record<string, unknown> }> };
+    };
+    expect(persistence.flow.nodes.find((node) => node.id === nodeId)?.data).toMatchObject({
+      status: "success", taskId: "task-current", videoTaskId: "task-current",
+      videoUrl: "https://example.com/current.mp4",
+    });
+    expect(persistence.flow.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ data: expect.objectContaining({
+        archivedFromNodeId: nodeId,
+        archivedTaskId: "task-previous",
+        videoUrl: "https://example.com/previous.mp4",
+      }) }),
+    ]));
+  });
+
+  it("allows explicit GET of a materialized original receipt without replacing current output or charging again", async () => {
+    const nodeId = "video-already-materialized";
+    const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "success", workflowSubmissionState: "materialized",
+      taskId: "task-current", videoTaskId: "task-current",
+      videoUrl: "https://example.com/current.mp4",
+      videoResults: [{ url: "https://example.com/current.mp4", assetId: "current-asset" }],
+      videoPosterBackfillStatus: "failed",
+    } }], edges: [] };
+    const row: FlowRow = { id: "chapter-video-materialized", name: "Materialized video",
+      data: JSON.stringify(flow), owner_id: "user-1", project_id: "project-1",
+      created_at: "2026-09-25T00:00:00.000Z", updated_at: "2026-09-25T00:00:00.000Z" };
+
+    mockedFetchTaskResultForPolling.mockResolvedValueOnce({ ok: true, vendor: "newapi", result: {
+      id: "task-current", kind: "text_to_video", status: "succeeded", raw: {},
+      assets: [{ type: "video", url: "https://example.com/current.mp4", assetId: "current-asset" }],
+    } });
+
+    const result = await reconcileVideoNodesForFlow({
+      c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row,
+      target: { nodeId, taskId: "task-current" },
+    });
+
+    expect(result.reconciled).toBe(0);
+    expect(mockedFetchTaskResultForPolling).toHaveBeenCalledWith(expect.anything(), "user-1",
+      expect.objectContaining({ taskId: "task-current", refreshProviderResult: true }));
+    expect(mockedRunPublicTask).not.toHaveBeenCalled();
+    expect(mockedPutChapterCanvasFlow).not.toHaveBeenCalled();
+    expect(mockedSettleTeamCreditsOnSuccess).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale target task ID even when the node still displays an older video", async () => {
+    const nodeId = "video-stale-receipt-target";
+    const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "error", workflowSubmissionState: "accepted",
+      taskId: "task-previous", videoTaskId: "task-current",
+      videoUrl: "https://example.com/previous.mp4",
+      videoResults: [{ url: "https://example.com/previous.mp4" }],
+    } }], edges: [] };
+    const row: FlowRow = { id: "chapter-stale-receipt-target", name: "Stale target",
+      data: JSON.stringify(flow), owner_id: "user-1", project_id: "project-1",
+      created_at: "2026-09-25T00:00:00.000Z", updated_at: "2026-09-25T00:00:00.000Z" };
+
+    await expect(reconcileVideoNodesForFlow({
+      c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row,
+      target: { nodeId, taskId: "stale-requested-task" },
+    })).rejects.toMatchObject({ code: "video_reconcile_target_not_eligible" });
+
+    expect(mockedFetchTaskResultForPolling).not.toHaveBeenCalled();
+    expect(mockedRunPublicTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["failed", "rejected_by_provider", "uncertain", undefined])("recovers a targeted receipt with submission projection %s without submitting again", async (submissionState) => {
     const nodeId = "late-video";
     const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
       kind: "video", status: "failed", workflowSubmissionState: submissionState, workflowEffectId: "effect-late",
@@ -1613,6 +1970,118 @@ describe("generateVideoToCanvas", () => {
     expect(mockedPutChapterCanvasFlow.mock.calls[0]?.[3]).toMatchObject({ flow: { nodes: [expect.objectContaining({
       id: nodeId, data: expect.objectContaining({ status: "success", taskId: "late-task", workflowSubmissionState: "materialized" }),
     })] } });
+  });
+
+  it("continues background reconciliation of a typed late receipt without refund or a new submission", async () => {
+    const nodeId = "late-pending-video";
+    const receiptRecovery = { disposition: "awaiting_late_result", failureKind: "timeout", observedAt: 1 };
+    const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "failed", workflowSubmissionState: "failed",
+      videoTaskId: "late-pending-task", videoReceiptRecovery: receiptRecovery,
+      videoTaskKind: "text_to_video", prompt: "frozen prompt", videoModel: "video-model",
+    } }], edges: [] };
+    const row: FlowRow = { id: "chapter-late-pending", name: "Late pending", data: JSON.stringify(flow),
+      owner_id: "user-1", project_id: "project-1", created_at: "2026-09-07T00:00:00.000Z", updated_at: "2026-09-07T00:00:00.000Z" };
+    mockedGetChapterCanvasFlow.mockResolvedValue({ revision: 1, flow });
+    mockedPutChapterCanvasFlow.mockResolvedValue({ revision: 2 });
+    mockedFetchTaskResultForPolling.mockResolvedValueOnce({ ok: true, vendor: "newapi", result: {
+      id: "late-pending-task", kind: "text_to_video", status: "failed", assets: [], raw: {}, receiptRecovery,
+    } });
+    const result = await reconcileVideoNodesForFlow({ c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row });
+    expect(result).toMatchObject({ failed: 0, stillRunning: 1, details: [{ status: "awaiting_late_result" }] });
+    expect(mockedPutChapterCanvasFlow.mock.calls[0]?.[3]).toMatchObject({ flow: { nodes: [expect.objectContaining({
+      id: nodeId, data: expect.objectContaining({ status: "running", videoReceiptRecovery: receiptRecovery }),
+    })] } });
+    expect(mockedReleaseTeamCreditsOnFailure).not.toHaveBeenCalled();
+    expect(mockedRunPublicTask).not.toHaveBeenCalled();
+  });
+
+  it("discovers a failed original handle once and persists authoritative provider failure disposition", async () => {
+    const nodeId = "unknown-failed-receipt";
+    const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "failed", videoTaskId: "original-accepted", videoTaskKind: "text_to_video",
+      prompt: "frozen", videoModel: "video-model", errorMessage: "timeout download error",
+    } }], edges: [] };
+    const row: FlowRow = { id: "unknown-failed-chapter", name: "Unknown failed", data: JSON.stringify(flow), owner_id: "user-1",
+      project_id: "project-1", created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z" };
+    mockedGetChapterCanvasFlow.mockResolvedValue({ revision: 1, flow });
+    mockedPutChapterCanvasFlow.mockResolvedValue({ revision: 2 });
+    mockedFetchTaskResultForPolling.mockResolvedValueOnce({ ok: true, vendor: "newapi", result: {
+      id: "original-accepted", kind: "text_to_video", status: "failed", assets: [], raw: { error: { message: "definite rejection" } },
+    } });
+    const result = await reconcileVideoNodesForFlow({ c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row });
+    expect(result).toMatchObject({ failed: 1, stillRunning: 0 });
+    const persisted = mockedPutChapterCanvasFlow.mock.calls[0]?.[3] as { flow: typeof flow };
+    expect(persisted.flow.nodes[0].data).toMatchObject({ status: "failed", videoReceiptRecovery: { disposition: "action_failed" } });
+    mockedFetchTaskResultForPolling.mockClear();
+    await reconcileVideoNodesForFlow({ c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id,
+      row: { ...row, data: JSON.stringify(persisted.flow) } });
+    expect(mockedFetchTaskResultForPolling).not.toHaveBeenCalled();
+    expect(mockedRunPublicTask).not.toHaveBeenCalled();
+  });
+
+  it("delivers late success with preserved terminal billing without settling credits again", async () => {
+    const nodeId = "refunded-late-video";
+    const flow = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "failed", workflowSubmissionState: "failed", videoTaskId: "refunded-late-task",
+      videoTaskKind: "text_to_video", prompt: "frozen prompt", videoModel: "video-model",
+    } }], edges: [] };
+    const row: FlowRow = { id: "chapter-refunded-late", name: "Late refund", data: JSON.stringify(flow),
+      owner_id: "user-1", project_id: "project-1", created_at: "2026-09-07T00:00:00.000Z", updated_at: "2026-09-07T00:00:00.000Z" };
+    mockedGetChapterCanvasFlow.mockResolvedValue({ revision: 1, flow });
+    mockedPutChapterCanvasFlow.mockResolvedValue({ revision: 2 });
+    mockedFetchTaskResultForPolling.mockResolvedValueOnce({ ok: true, vendor: "newapi", result: {
+      id: "refunded-late-task", kind: "text_to_video", status: "succeeded", raw: {},
+      assets: [{ type: "video", url: "https://example.com/late-refunded.mp4" }],
+      receiptRecovery: { disposition: "terminal", terminalBillingPreserved: true },
+    } });
+    const result = await reconcileVideoNodesForFlow({ c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row,
+      target: { nodeId, taskId: "refunded-late-task" } });
+    expect(result.reconciled).toBe(1);
+    expect(mockedResolveTeamCreditsCostForTask).not.toHaveBeenCalled();
+    expect(mockedSettleTeamCreditsOnSuccess).not.toHaveBeenCalled();
+    expect(mockedRunPublicTask).not.toHaveBeenCalled();
+  });
+
+  it("reconciles owned historical assets after current success without replacing current video or settling again", async () => {
+    const nodeId = "completed-with-history";
+    const currentUrl = "https://owned.example/current.mp4";
+    const initial = { nodes: [{ id: nodeId, type: "taskNode", position: { x: 0, y: 0 }, data: {
+      kind: "video", status: "success", taskId: "public-current", videoTaskId: "public-current",
+      videoUrl: currentUrl, videoResults: [{ url: currentUrl }], videoPrimaryIndex: 0,
+      videoReceiptRecovery: { disposition: "terminal" },
+      videoReceiptReconciliation: { revision: 1, pendingReceipts: 1, observedReceipts: 1 },
+    } }], edges: [] };
+    const row: FlowRow = { id: "chapter-history", name: "History", data: JSON.stringify(initial), owner_id: "user-1",
+      project_id: "project-1", created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z" };
+    mockedGetChapterCanvasFlow.mockResolvedValue({ revision: 1, flow: initial });
+    mockedPutChapterCanvasFlow.mockResolvedValue({ revision: 2 });
+    mockedFetchTaskResultForPolling.mockResolvedValue({ ok: true, vendor: "newapi", result: {
+      id: "public-current", kind: "text_to_video", status: "succeeded", raw: {}, assets: [{ type: "video", url: currentUrl }],
+      receiptAssets: [{ type: "video", url: "https://owned.example/history.mp4", observedAt: 100, sourceUrl: "https://provider.example/history.mp4" }],
+      receiptReconciliation: { revision: 2, pendingReceipts: 0, observedReceipts: 2 },
+    } });
+    const result = await reconcileVideoNodesForFlow({ c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id, row });
+    expect(result).toMatchObject({ reconciled: 1, failed: 0, stillRunning: 0, details: [{ status: "historical_assets_reconciled" }] });
+    const saved = mockedPutChapterCanvasFlow.mock.calls[0]?.[3] as { flow: typeof initial };
+    expect(saved.flow.nodes[0].data).toMatchObject({ status: "success", videoUrl: currentUrl, videoResults: [{ url: currentUrl }],
+      videoPrimaryIndex: 0, videoReceiptReconciliation: { revision: 2, pendingReceipts: 0, observedReceipts: 2 },
+      videoReceiptHistory: [{ historicalReceipt: true, assets: [{ type: "video", url: "https://owned.example/history.mp4", observedAt: 100, sourceUrl: "https://provider.example/history.mp4" }] }] });
+    expect(mockedSettleTeamCreditsOnSuccess).not.toHaveBeenCalled();
+    expect(mockedReleaseTeamCreditsOnFailure).not.toHaveBeenCalled();
+    mockedPutChapterCanvasFlow.mockClear();
+    mockedGetChapterCanvasFlow.mockResolvedValue({ revision: 2, flow: saved.flow });
+    await reconcileVideoNodesForFlow({ c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1", devBypass: false, flowId: row.id, chapterId: row.id,
+      row: { ...row, data: JSON.stringify(saved.flow) }, target: { nodeId, taskId: "public-current" } });
+    expect(mockedPutChapterCanvasFlow).not.toHaveBeenCalled();
+    expect(mockedSettleTeamCreditsOnSuccess).not.toHaveBeenCalled();
+    expect(mockedRunPublicTask).not.toHaveBeenCalled();
   });
 
   it.each(["uncertain", undefined])("retains a failed targeted receipt with submission projection %s without submitting again", async (submissionState) => {
@@ -1901,6 +2370,176 @@ describe("resolveChapterDesignBoardNodes", () => {
 });
 
 describe("direct workflow video effect claim", () => {
+  it("accepts only the exact server-authorized V2 retry attempt identity", async () => {
+    const family = "family-v2-retry";
+    const clipId = "source:clip:0";
+    const source = buildWorkflowVideoEffectV2Identity({ executionFamilyId: family, clipId });
+    const retryKey = "receipt-retry-key";
+    const identity = buildWorkflowVideoEffectRetryV2Identity({ executionFamilyId: family, clipId,
+      sourceCanvasNodeId: source.canvasNodeId, retryKey });
+    const authorization = {
+      sourceCanvasNodeId: source.canvasNodeId,
+      failedCanvasNodeId: source.canvasNodeId,
+      failedTaskId: null,
+      executionId: "execution-retry",
+      runtimeNodeId: "clip-pipeline::step::video-submit::item::source:clip:0",
+      retryKey,
+      retryIndex: 1,
+      idempotencyKey: "exact-retry-request",
+      preUpstreamRejected: true,
+    } as const;
+    const node = {
+      id: identity.canvasNodeId, type: "taskNode", position: { x: 0, y: 0 },
+      data: {
+        kind: "video", status: "queued", prompt: "Frozen clip prompt",
+        videoModel: "doubao-seedance-2-0-260128", videoDurationSeconds: 5,
+        videoResolution: "1080p", aspectRatio: "16:9",
+        referenceAudioRequired: false, referenceAudioMode: "disabled",
+        workflowEffectId: identity.effectId, workflowEffectOperation: "video.generate",
+        workflowClipId: clipId, workflowExecutionFamilyId: family,
+        workflowExecutionId: authorization.executionId,
+        workflowRuntimeNodeId: identity.canvasNodeId,
+        workflowEffectSourceSnapshot: { clipId, sourceHash: "frozen-source" },
+        videoRetrySourceNodeId: source.canvasNodeId,
+        videoRetryIndex: 1,
+        videoRetryIdempotencyKey: authorization.idempotencyKey,
+        workflowVideoRetryAttempt: { ...authorization },
+      },
+    };
+    const row = workflowRow([]);
+    let currentRow = row;
+    mockedGetFlowForOwner.mockImplementation(async () => currentRow);
+    mockedUpdateFlow.mockImplementation(async (_db, value: unknown) => {
+      const next = value as { data: string };
+      currentRow = { ...currentRow, data: next.data };
+      return currentRow;
+    });
+    mockedCreateFlowVersion.mockResolvedValue(undefined);
+    mockedRunPublicTask.mockResolvedValue({ vendor: "newapi", result: {
+      id: "provider-retry-task", kind: "text_to_video", status: "running", assets: [], raw: {},
+    } });
+    const input = { c: { env: { DB: {} } } as AppContext, requestUserId: "user-1", devBypass: false,
+      flowId: row.id, row, bodyArgs: { node } };
+
+    await expect(generateVideoToCanvas({ ...input, workflowRetryAuthorization: authorization }))
+      .resolves.toMatchObject({ nodeId: identity.canvasNodeId, taskId: "provider-retry-task" });
+    expect(mockedRunPublicTask).toHaveBeenCalledTimes(1);
+    mockedRunPublicTask.mockClear();
+    await expect(generateVideoToCanvas({ ...input, bodyArgs: { node: {
+      ...node, data: { ...node.data, videoRetryIdempotencyKey: "changed-key" },
+    } }, workflowRetryAuthorization: authorization })).rejects.toMatchObject({
+      code: "workflow_video_retry_identity_conflict",
+    });
+    expect(mockedRunPublicTask).not.toHaveBeenCalled();
+  });
+
+  it("recognizes a planned image-node reference and the same generated asset without weakening paid-input identity", () => {
+    const prepared = {
+      kind: "video", status: "idle", workflowPreparedOnly: true,
+      prompt: "frozen clip", workflowEffectId: "family:video.generate:clip-1",
+      workflowClipId: "clip-1", workflowEffectOperation: "video.generate",
+      workflowExecutionFamilyId: "family", workflowVideoInputMode: "reference_to_video",
+      modelKey: "model-1", videoModel: "model-1", videoDurationSeconds: 5,
+      videoResolution: "auto", aspectRatio: "16:9",
+      referenceImageNodeIds: ["image-1", "image-2"], referenceAssetIds: [],
+    };
+    const submitted = { ...prepared, workflowPreparedOnly: false,
+      referenceImageNodeIds: [], referenceAssetIds: ["asset-1", "asset-2"] };
+    const images = [
+      { id: "image-1", data: { kind: "image", status: "success", imageUrl: "https://assets.test/1.png",
+        assetId: "asset-1", imageResults: [{ assetId: "asset-1", url: "https://assets.test/1.png" }] } },
+      { id: "image-2", data: { kind: "image", status: "success", imageUrl: "https://assets.test/2.png",
+        assetId: "asset-2", imageResults: [{ assetId: "asset-2", url: "https://assets.test/2.png" }] } },
+    ];
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, images)).toBe(true);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, images.map((image) => ({
+      ...image, data: { ...image.data, kind: "imageEdit" },
+    })))).toBe(true);
+    expect(isMatchingPreparedWorkflowVideoNode({ ...prepared, clipIndex: 4 },
+      { ...submitted, clipIndex: 0 }, images)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, { ...submitted, referenceAssetIds: ["asset-2", "asset-1"] }, images)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, { ...submitted, prompt: "changed clip" }, images)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, { ...submitted, modelKey: "model-2" }, images)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, { ...submitted, referenceAssetIds: ["asset-1", "missing"] }, images)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, images.map((image) =>
+      image.id === "image-2" ? { ...image, data: { ...image.data, status: "failed" } } : image))).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, images.map((image) =>
+      image.id === "image-2" ? { ...image, data: { ...image.data, imageUrl: "https://assets.test/changed.png" } } : image))).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode({ ...prepared, workflowVideoInputMode: "image_to_video",
+      firstFrameImageNodeId: "image-1" }, { ...submitted, workflowVideoInputMode: "image_to_video",
+      firstFrameUrl: "https://assets.test/1.png" }, images)).toBe(true);
+    expect(isMatchingPreparedWorkflowVideoNode({ ...prepared, workflowVideoInputMode: "image_to_video",
+      firstFrameImageNodeId: "image-1" }, { ...submitted, workflowVideoInputMode: "image_to_video",
+      firstFrameUrl: "https://assets.test/1.png" }, images.map((image) => ({
+      ...image, data: { ...image.data, kind: "imageEdit" },
+    })))).toBe(true);
+    expect(isMatchingPreparedWorkflowVideoNode({ ...prepared, workflowVideoInputMode: "image_to_video",
+      firstFrameImageNodeId: "image-1" }, { ...submitted, workflowVideoInputMode: "image_to_video",
+      firstFrameUrl: "https://assets.test/2.png" }, images)).toBe(false);
+  });
+
+  it("binds a prepared image handle to its authorized successful retry without submitting a different clip", () => {
+    const runtimeNodeId = "image-collection::item::asset-a";
+    const commonImage = {
+      kind: "image", workflowExecutionFamilyId: "family-1", assetReuseKey: "reuse-a",
+      workflowObjectId: "object-a", workflowRuntimeNodeId: runtimeNodeId,
+    };
+    const original = { id: "image-a", data: { ...commonImage, status: "error", taskId: "task-a" } };
+    const failedRetry = { id: "image-a::retry::retry-1", data: {
+      ...commonImage, status: "error", taskId: "task-b",
+      workflowMediaRetry: { canvasNodeId: original.id, taskId: "task-a", nodeId: "image-collection",
+        itemId: "asset-a", executorRef: "tapcanvas.image.generate/v1", executionMode: "each", retryKey: "retry-1" },
+    } };
+    const successfulRetry = { id: "image-a::retry::retry-2", data: {
+      ...commonImage, status: "success", taskId: "task-c", assetId: "asset-final",
+      imageUrl: "https://assets.test/final.png",
+      imageResults: [{ assetId: "asset-final", url: "https://assets.test/final.png" }],
+      workflowMediaRetry: { canvasNodeId: failedRetry.id, taskId: "task-b", nodeId: "image-collection",
+        itemId: "asset-a", executorRef: "tapcanvas.image.generate/v1", executionMode: "each", retryKey: "retry-2" },
+    } };
+    const prepared = {
+      kind: "video", status: "idle", workflowPreparedOnly: true,
+      prompt: "frozen clip", modelKey: "model-1", videoModel: "model-1",
+      workflowEffectId: "family-1:video.generate:clip-a", workflowClipId: "clip-a",
+      workflowEffectOperation: "video.generate", workflowExecutionFamilyId: "family-1",
+      workflowVideoInputMode: "image_to_video", referenceImageNodeIds: [original.id],
+      referenceAssetIds: [], firstFrameImageNodeId: original.id,
+    };
+    const submitted = { ...prepared, workflowPreparedOnly: false, referenceImageNodeIds: [],
+      referenceAssetIds: ["asset-final"], firstFrameUrl: "https://assets.test/final.png" };
+    const nodes = [original, failedRetry, successfulRetry];
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, nodes)).toBe(true);
+    const referenceHeader = "\n\n参考图绑定：\n@图1：角色A（character）";
+    const preparedWithBinding = { ...prepared, prompt: `frozen clip${referenceHeader}`,
+      workflowPromptSourceProtocol: "tapcanvas.clip-production-packets/v2",
+      workflowSourcePrompt: "frozen clip", workflowReferenceHeader: referenceHeader,
+      workflowReferenceBindings: [{ nodeId: original.id, name: "角色A", referenceType: "character" }] };
+    const submittedWithBinding = { ...submitted, prompt: `frozen clip${referenceHeader}`,
+      workflowPromptSourceProtocol: "tapcanvas.clip-production-packets/v2",
+      workflowSourcePrompt: "frozen clip", workflowReferenceHeader: referenceHeader,
+      workflowReferenceBindings: [{ nodeId: successfulRetry.id, name: "角色A", referenceType: "character" }] };
+    expect(isMatchingPreparedWorkflowVideoNode(preparedWithBinding, submittedWithBinding, nodes)).toBe(true);
+    expect(isMatchingPreparedWorkflowVideoNode(preparedWithBinding, { ...submittedWithBinding,
+      workflowReferenceBindings: [{ nodeId: successfulRetry.id, name: "别的角色", referenceType: "character" }] }, nodes)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, { ...submitted, prompt: "changed clip" }, nodes)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, { ...submitted, modelKey: "other" }, nodes)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, { ...submitted, referenceAssetIds: ["other"] }, nodes)).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, [original, failedRetry, {
+      ...successfulRetry, data: { ...successfulRetry.data, assetId: "", imageResults: [] },
+    }])).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, [original, failedRetry, {
+      ...successfulRetry, data: { ...successfulRetry.data,
+        workflowMediaRetry: { ...successfulRetry.data.workflowMediaRetry, taskId: "other" } },
+    }])).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, [{
+      ...original, data: { ...original.data, imageUrl: "https://assets.test/earlier.png" },
+    }, failedRetry, successfulRetry])).toBe(false);
+    expect(isMatchingPreparedWorkflowVideoNode(prepared, submitted, [original, failedRetry, successfulRetry, {
+      ...successfulRetry, id: "image-a::retry::retry-3", data: { ...successfulRetry.data,
+        workflowMediaRetry: { ...successfulRetry.data.workflowMediaRetry, retryKey: "retry-3" } },
+    }])).toBe(false);
+  });
+
   function workflowRow(nodes: readonly Record<string, unknown>[]): FlowRow {
     return {
       id: "flow-workflow-effect",
@@ -1951,6 +2590,87 @@ describe("direct workflow video effect claim", () => {
       },
     })).rejects.toMatchObject({ code: "workflow_video_submission_uncertain" });
     expect(mockedRunPublicTask).not.toHaveBeenCalled();
+  });
+
+  it("reuses the provider receipt across runtime nodes for an identical stable clip and rejects changed paid input", async () => {
+    const executionFamilyId = "family-v2";
+    const clipId = "source-hash:clip:0";
+    const identity = buildWorkflowVideoEffectV2Identity({ executionFamilyId, clipId });
+    const row = workflowRow([]);
+    let currentRow = row;
+    mockedGetFlowForOwner.mockImplementation(async () => currentRow);
+    mockedUpdateFlow.mockImplementation(async (_db, value: unknown) => {
+      const input = value as { id: string; name: string; data: string; ownerId: string; projectId: string | null; nowIso: string };
+      currentRow = { ...currentRow, id: input.id, name: input.name, data: input.data, owner_id: input.ownerId,
+        project_id: input.projectId, updated_at: input.nowIso };
+      return currentRow;
+    });
+    mockedCreateFlowVersion.mockResolvedValue(undefined);
+    mockedRunPublicTask.mockResolvedValue({ vendor: "newapi", result: {
+      id: "provider-task-v2", kind: "text_to_video", status: "running", assets: [], raw: {},
+    } });
+
+    const submit = (runtimeNodeId: string, prompt: string) => generateVideoToCanvas({
+      c: { env: { DB: {} } } as AppContext,
+      requestUserId: "user-1",
+      devBypass: false,
+      flowId: currentRow.id,
+      row: currentRow,
+      bodyArgs: { node: {
+        id: identity.canvasNodeId,
+        type: "taskNode",
+        position: { x: 0, y: 0 },
+        data: {
+          kind: "video",
+          status: "idle",
+          prompt,
+          videoModel: "doubao-seedance-2-0-260128",
+          videoDurationSeconds: 5,
+          videoResolution: "1080p",
+          aspectRatio: "16:9",
+          referenceAudioRequired: false,
+          referenceAudioMode: "disabled",
+          workflowEffectId: identity.effectId,
+          workflowEffectOperation: "video.generate",
+          workflowClipId: clipId,
+          workflowExecutionFamilyId: executionFamilyId,
+          workflowExecutionId: "execution-v2",
+          workflowRuntimeNodeId: runtimeNodeId,
+          workflowEffectSourceSnapshot: {
+            clipId,
+            sourceRange: { start: 0, end: 12 },
+            sourceHash: "source-sha256-v2",
+            structuredClip: { clipId, sourceSpan: { start: 0, end: 12 } },
+          },
+        },
+      } },
+    });
+
+    await expect(submit("opening-clip", "same frozen prompt")).resolves.toMatchObject({
+      status: "running", taskId: "provider-task-v2", nodeId: identity.canvasNodeId,
+    });
+    await expect(submit("full-video-clip-0", "same frozen prompt")).resolves.toMatchObject({
+      status: "running", taskId: "provider-task-v2", nodeId: identity.canvasNodeId, reused: true,
+    });
+    expect(mockedRunPublicTask).toHaveBeenCalledTimes(1);
+
+    await expect(submit("full-video-clip-0", "different final prompt")).rejects.toMatchObject({
+      code: "workflow_video_effect_fingerprint_conflict",
+      details: expect.objectContaining({
+        executionFamilyId,
+        clipId,
+        providerTaskId: "provider-task-v2",
+        upstreamRequestAttempted: false,
+      }),
+    });
+    expect(mockedRunPublicTask).toHaveBeenCalledTimes(1);
+    const graph = JSON.parse(currentRow.data) as { nodes: Array<{ id: string; data: Record<string, unknown> }> };
+    expect(graph.nodes.find((node) => node.id === identity.canvasNodeId)?.data).toMatchObject({
+      status: "running",
+      taskId: "provider-task-v2",
+      workflowEffectId: identity.effectId,
+      workflowEffectFingerprint: expect.any(String),
+    });
   });
 
   it.each([false, true])("persists submitting with a revision claim before provider call (concurrent claimant=%s)", async (concurrentClaim) => {

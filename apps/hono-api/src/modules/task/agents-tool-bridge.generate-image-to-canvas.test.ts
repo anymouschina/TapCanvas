@@ -768,6 +768,107 @@ describe("makeProgressCounter", () => {
 });
 
 describe("generateImageToCanvas", () => {
+	it("submits a manual image derivative as a new node while preserving the workflow receipt", async () => {
+		const sourceNode = {
+			id: "workflow-image-output",
+			type: "taskNode",
+			position: { x: 0, y: 0 },
+			data: {
+				kind: "image",
+				status: "success",
+				workflowExecutionId: "execution-1",
+				workflowExecutionFamilyId: "family-1",
+				workflowRuntimeNodeId: "images::item::hero",
+				workflowEffectId: "effect-1",
+				taskId: "source-task",
+				imageTaskId: "source-task",
+				imageUrl: "https://assets.example/original.png",
+				imageResults: [{ url: "https://assets.example/original.png", assetId: "source-asset" }],
+			},
+		};
+		const row: FlowRow = {
+			id: "flow-manual-image",
+			name: "Flow",
+			data: JSON.stringify({ nodes: [sourceNode], edges: [] }),
+			owner_id: "user-1",
+			project_id: "project-1",
+			created_at: "2026-09-27T00:00:00.000Z",
+			updated_at: "2026-09-27T00:00:00.000Z",
+		};
+		const sourceSnapshot = structuredClone(sourceNode);
+		mockedResolveExecutionImageReferences.mockResolvedValueOnce([{
+			referenceId: "node:workflow-image-output",
+			source: "node",
+			nodeId: sourceNode.id,
+			assetId: "source-asset",
+			assetRefId: null,
+			name: "Original image",
+			url: "https://assets.example/original.png",
+			previewOnly: false,
+		}]);
+		mockedRunPublicTask.mockResolvedValueOnce({
+			vendor: "newapi",
+			result: { id: "manual-image-task", status: "running", assets: [] },
+		});
+		mockedUpdateFlow.mockImplementationOnce(async (_db, input) => ({
+			id: input.id,
+			name: input.name,
+			data: input.data,
+			owner_id: "user-1",
+			project_id: "project-1",
+			created_at: row.created_at,
+			updated_at: input.nowIso,
+		}));
+		mockedCreateFlowVersion.mockResolvedValueOnce(undefined);
+
+		const result = await generateImageToCanvas({
+			c: { env: { DB: {} } } as AppContext,
+			requestUserId: "user-1",
+			devBypass: false,
+			flowId: row.id,
+			row,
+			bodyArgs: { node: {
+				id: "manual-image-attempt-1",
+				type: "taskNode",
+				position: { x: 540, y: 0 },
+				data: {
+					kind: "imageEdit",
+					status: "idle",
+					prompt: "当前编辑后的图片提示词",
+					modelAlias: "gpt-image-2",
+					referenceImageNodeIds: [sourceNode.id],
+					mediaTaskExecutionOwner: "manual",
+					sourceWorkflowOutput: { nodeId: sourceNode.id, executionId: "execution-1" },
+				},
+			} },
+		});
+
+		expect(result).toMatchObject({ ok: true, nodeId: "manual-image-attempt-1", taskId: "manual-image-task", status: "running" });
+		expect(mockedRunPublicTask).toHaveBeenCalledTimes(1);
+		const taskInput = mockedRunPublicTask.mock.calls[0]?.[2] as { request: { prompt: string; extras: Record<string, unknown> }; workflowTaskId?: string };
+		expect(taskInput.request).toMatchObject({
+			kind: "image_edit",
+			prompt: "当前编辑后的图片提示词",
+			extras: { referenceImages: ["https://assets.example/original.png"] },
+		});
+		expect(taskInput).not.toHaveProperty("workflowTaskId");
+
+		const persisted = JSON.parse(String(mockedUpdateFlow.mock.calls[0]?.[1]?.data ?? "{}")) as {
+			nodes: Array<{ id: string; data: Record<string, unknown> }>;
+		};
+		expect(persisted.nodes.find((node) => node.id === sourceNode.id)).toEqual(sourceSnapshot);
+		expect(persisted.nodes.find((node) => node.id === "manual-image-attempt-1")?.data).toMatchObject({
+			kind: "imageEdit",
+			prompt: "当前编辑后的图片提示词",
+			mediaTaskExecutionOwner: "manual",
+			sourceWorkflowOutput: { nodeId: sourceNode.id, executionId: "execution-1" },
+			status: "running",
+			taskId: "manual-image-task",
+		});
+		expect(persisted.nodes.find((node) => node.id === "manual-image-attempt-1")?.data)
+			.not.toHaveProperty("workflowExecutionId");
+	});
+
 	it("故事板未绑定项目锚时记录非阻塞候选诊断并继续提交", async () => {
 		mockedListProjectNodeAssetsForOwner.mockResolvedValueOnce([
 			{

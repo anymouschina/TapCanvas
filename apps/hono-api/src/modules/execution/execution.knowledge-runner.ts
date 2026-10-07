@@ -81,7 +81,7 @@ export async function searchWorkflowKnowledge(
 
 export async function readWorkflowKnowledge(
 	env: WorkerEnv,
-	request: Readonly<{ candidateSet: WorkflowKnowledgeCandidateSetV2; cardId: string }>,
+	request: Readonly<{ ownerId: string; candidateSet: WorkflowKnowledgeCandidateSetV2; cardId: string }>,
 ): Promise<WorkflowKnowledgeCardV1> {
 	return parseWorkflowKnowledgeCardV1(await requestWorkflowKnowledge(
 		env,

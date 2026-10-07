@@ -25,6 +25,8 @@ type DocumentPromptStage = Readonly<{
   overrides: Record<string, unknown>
 }>
 
+const TEXT_EXPANSION_WORKFLOW_INSTRUCTION = String.raw`依据本轮用户意图与真实来源，交付可供后续影视化的完整故事正文。使用已预载 tapcanvas-screenwriter 自主判断是否需要扩写或补足；来源完整时保留剧情，不为扩写另造冲突、悬念或固定段落结构。表达与篇幅服从用户目标，专业方法和案例按需读取。只返回正文，不附内部分析或检查记录。`
+
 export const DOCUMENT_SOURCE_STRUCTURE_SCRIPT = String.raw`const source = String(input ?? '').replace(/\r\n?/gu, '\n').trim();
 if (!source) throw new Error('文档输入为空，无法整理正文结构');
 
@@ -164,6 +166,151 @@ const DOCUMENT_PROMPT_STAGES: readonly DocumentPromptStage[] = [
     },
   },
 ]
+
+function textExpansionPatchScript(targetNodeId: string): string {
+  const encodedTargetNodeId = JSON.stringify(targetNodeId)
+  return String.raw`const inputRecord = input && typeof input === 'object' && !Array.isArray(input) ? input : null;
+const expandedText = inputRecord && typeof inputRecord.text === 'string'
+  ? inputRecord.text.replace(/\r\n?/gu, '\n').trim()
+  : String(input ?? '').replace(/\r\n?/gu, '\n').trim();
+if (!expandedText) throw new Error('扩写结果为空，无法写回完整剧情文本');
+return {
+  allowOverwrite: true,
+  patchNodeData: [{
+    id: ${encodedTargetNodeId},
+    data: {
+      kind: 'text',
+      content: expandedText,
+      workflowSourceRole: 'expanded_story_source',
+      workflowSourceUpdatedAt: new Date().toISOString(),
+    },
+  }],
+  ...(inputRecord && inputRecord.deliveryEvidence ? { deliveryEvidence: inputRecord.deliveryEvidence } : {}),
+  ...(inputRecord && inputRecord.deliveryVerification ? { deliveryVerification: inputRecord.deliveryVerification } : {}),
+};`
+}
+
+/**
+ * Pre-production authoring workflow for turning a rough premise or chapter
+ * excerpt into the single ready text source consumed by one-click production.
+ * The Agent owns the writing decision and may progressively read existing
+ * Skills/knowledge; the final tool node only persists the returned text.
+ */
+export function createTextExpansionWorkflowCanvasTemplate(): AgentWorkflowCanvasTemplateResult {
+  if (!isCurrentUserAdmin()) throw new Error('只有管理员可以创建工作流编排节点')
+  const targetNodeId = createIdentity('expanded-story-source')
+  const result = createDocumentPromptWorkflowCanvasTemplate({
+    stages: [
+      {
+        id: 'source-text',
+        presetId: 'textInput',
+        label: '待扩写剧情输入',
+        overrides: {
+          workflowTextInput: '',
+        },
+      },
+      {
+        id: 'story-expansion-agent',
+        presetId: 'agent',
+        label: '剧情扩写 Agent',
+        executionMode: 'once',
+        overrides: {
+          workflowAtomicSpec: {
+            ...atomicSpec(ATOMIC_WORKFLOW_PRESETS.agent),
+            inputPorts: ['input', 'skills', 'tools', 'knowledge-candidates', 'knowledge-evidence'],
+            optionalInputPorts: ['skills', 'tools', 'knowledge-candidates', 'knowledge-evidence'],
+            executionMode: 'once',
+          },
+          workflowInputPorts: ['input', 'skills', 'tools', 'knowledge-candidates', 'knowledge-evidence'],
+          workflowInstruction: TEXT_EXPANSION_WORKFLOW_INSTRUCTION,
+          workflowAgentOutputArtifactType: 'tapcanvas.text/v1',
+          workflowAgentOutputEncoding: 'plain_text',
+          workflowAgentDeliveryRequirement: '交付一份非空、连续、可直接作为后续视频改编唯一来源的完整故事正文。',
+          workflowAgentDefinitionId: 'writer',
+          workflowAgentMaxOutputTokens: 12288,
+          // 前置扩写产出的是交给一键成片的可拍正文，owner 是编剧 skill 而不是小说散文 skill。
+          workflowRequiredSkills: ['tapcanvas-screenwriter'],
+          workflowAllowedTools: [
+            'Skill',
+            'knowledge_search',
+            'knowledge_read',
+            'tapcanvas_project_context_get',
+            'tapcanvas_project_chapter_get',
+          ],
+        },
+      },
+      {
+        id: 'patch-arguments',
+        presetId: 'javascript',
+        label: '编译写回参数',
+        executionMode: 'once',
+        overrides: {
+          workflowJavascriptCode: textExpansionPatchScript(targetNodeId),
+        },
+      },
+      {
+        id: 'persist-expanded-text',
+        presetId: 'toolInvocation',
+        label: '写回完整剧情文本',
+        executionMode: 'once',
+        overrides: {
+          workflowToolInvocationName: 'tapcanvas_flow_patch',
+          workflowToolInvocationArgs: '{}',
+        },
+      },
+      {
+        id: 'expansion-delivery',
+        presetId: 'delivery',
+        label: '验收扩写来源',
+        executionMode: 'collect',
+        overrides: {
+          workflowDeliveryTargetNodeId: targetNodeId,
+          workflowDeliveryRequirement: `完整剧情文本必须已写入目标节点 ${targetNodeId}；验收必须读取持久化写回回执，确认节点身份与非空正文。`,
+          workflowDeliveryArtifactType: 'workflow.tool-result/v1',
+        },
+      },
+    ],
+    groupLabel: '文本扩写 · 一键成片前置',
+  })
+  const store = useRFStore.getState()
+  const targetPosition = workflowAnchor(store.nodes)
+  store.addNode('taskNode', '完整剧情文本（成片来源）', {
+    nodeId: targetNodeId,
+    autoLabel: false,
+    position: { x: targetPosition.x, y: targetPosition.y + WORKFLOW_ICON_NODE_SIZE + 96 },
+    kind: 'text',
+    content: '',
+    workflowSourceRole: 'expanded_story_source',
+    sourceBindingStatus: 'workflow_output_target',
+    workflowKey: AGENT_WORKFLOW_KEY,
+    workflowDefinitionVersion: 1,
+    workflowInstanceId: result.workflowInstanceId,
+    workflowNodeId: 'expanded-story-source',
+    workflowNodeKind: 'output',
+    workflowAtomicSpec: {
+      version: 1,
+      category: 'delivery',
+      operation: 'output',
+      executorRef: 'workflow.output/v1',
+      executionMode: 'once',
+      inputPorts: ['input'],
+      outputPorts: ['output'],
+    },
+    workflowInputPorts: ['input'],
+    workflowOutputPorts: ['output'],
+    workflowOptionalInputPorts: [],
+    workflowSelectiveOutputPorts: [],
+    workflowOperationDescription: '持久化扩写正文的工作流输出目标；写回后由验收节点读取真实节点快照。',
+    adminWorkflow: true,
+  })
+  connectWorkflowEdge({
+    source: `${result.workflowInstanceId}:persist-expanded-text`,
+    sourcePort: 'result',
+    target: targetNodeId,
+    targetPort: 'input',
+  })
+  return result
+}
 
 function createDocumentPromptWorkflowCanvasTemplate(input: Readonly<{
   stages: readonly DocumentPromptStage[]

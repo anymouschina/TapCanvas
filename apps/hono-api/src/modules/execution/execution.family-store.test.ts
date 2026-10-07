@@ -1,3 +1,4 @@
+import { encodeWorkflowOutput } from "./execution.output-storage";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKFLOW_EXECUTION_SEMANTICS_PROTOCOL_VERSION } from "@tapcanvas/workflow-kernel-protocol";
 import {
@@ -126,7 +127,7 @@ describe("workflow execution family projection", () => {
 				failureStage: "media_generation",
 			}),
 			input_refs: JSON.stringify({ prompt: ["scene"] }),
-			output_refs: JSON.stringify({ evidence: { taskId: "provider-1" } }),
+			output_refs: JSON.stringify(encodeWorkflowOutput({ evidence: { taskId: "provider-1" } })),
 			tool_calls: null,
 			provider_receipts: JSON.stringify(["provider-1"]),
 			token_usage: null,

@@ -32,7 +32,7 @@ export function parseWorkflowKnowledgeDiagnostics(value) {
     output[key] = input[key];
   }
   if (input.mode !== undefined) {
-    if (input.mode !== "vector") throw new Error("Workflow knowledge diagnostics.mode must be vector");
+    if (input.mode !== "vector" && input.mode !== "database") throw new Error("Workflow knowledge diagnostics.mode must be vector or database");
     output.mode = input.mode;
   }
   if (input.searchBodyAccess !== undefined) {

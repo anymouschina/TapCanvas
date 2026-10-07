@@ -1,3 +1,5 @@
+import { hydrateExecutionHistoryFocus, type ExecutionHistoryFocus, type ExecutionHistoryNodeMetadata } from "./execution.history-focus";
+import { decodeWorkflowOutput } from "./execution.output-storage";
 import type { PrismaClient } from "../../types";
 import { getPrismaClient } from "../../platform/node/prisma";
 import type {
@@ -8,6 +10,11 @@ import type {
 	WorkflowNodeRunDto,
 } from "./execution.schemas";
 import { resolveWorkflowWaitingReason } from "./execution.workflow-waiting-reason";
+import { Prisma } from "@prisma/client";
+import {
+	parseWorkflowNodeAgentProgress,
+	type WorkflowNodeAgentProgress,
+} from "./execution.agent-progress";
 export {
 	ensureNodeRuns,
 	incrementNodeRunAttempt,
@@ -54,6 +61,7 @@ export type NodeRunRow = {
 	failure_stage?: string | null;
 	input_refs?: string | null;
 	output_refs: string | null;
+	agent_progress?: WorkflowNodeAgentProgress | null;
 	tool_calls?: string | null;
 	retry_count?: number;
 	node_type?: string | null;
@@ -64,10 +72,7 @@ export type NodeRunRow = {
 	finished_at: string | null;
 };
 
-export type ExecutionHistoryNodeRow = Pick<
-	NodeRunRow,
-	"node_id" | "status" | "error_message" | "created_at" | "output_refs"
->;
+export type ExecutionHistoryNodeRow = ExecutionHistoryNodeMetadata;
 
 export class WorkflowRecoveryAdmissionError extends Error {
 	constructor(
@@ -76,11 +81,61 @@ export class WorkflowRecoveryAdmissionError extends Error {
 			| "recovery_source_missing"
 			| "recovery_source_owner_mismatch"
 			| "recovery_source_status_changed"
+			| "recovery_family_active"
+			| "recovery_family_not_latest"
 			| "recovery_family_canceled",
 	) {
 		super(message);
 		this.name = "WorkflowRecoveryAdmissionError";
 	}
+}
+
+/**
+ * One caller canvas is the delivery target of at most one active full run of a
+ * given workflow. Two concurrent families writing the same chapter canvas double
+ * the paid Agent/media work and race each other's canvas projections (AI chat
+ * launching while a manual recovery of the same chapter was already running).
+ */
+export type WorkflowExclusiveDeliveryScope = Readonly<{
+	projectId: string;
+	canvasId: string;
+}>;
+
+export class WorkflowDeliveryScopeBusyError extends Error {
+	constructor(public readonly activeExecutionId: string) {
+		super(`当前画布已有同一工作流在运行（${activeExecutionId}），不能重复发起`);
+		this.name = "WorkflowDeliveryScopeBusyError";
+	}
+}
+
+async function assertDeliveryScopeIdle(
+	transaction: Prisma.TransactionClient,
+	params: Readonly<{
+		ownerId: string;
+		flowId: string;
+		executionFamilyId: string;
+		scope: WorkflowExclusiveDeliveryScope;
+	}>,
+): Promise<void> {
+	// Serializes concurrent admissions for the same scope; released at commit.
+	await transaction.$queryRawUnsafe(
+		"SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext($1))",
+		`workflow-delivery-scope:${params.ownerId}:${params.flowId}:${params.scope.projectId}:${params.scope.canvasId}`,
+	);
+	const active = await transaction.workflow_executions.findFirst({
+		where: {
+			owner_id: params.ownerId,
+			flow_id: params.flowId,
+			project_id: params.scope.projectId,
+			canvas_id: params.scope.canvasId,
+			status: { in: ["queued", "running"] },
+			// The same family (idempotent retry, or the recovery's own source) is not a competitor.
+			NOT: { execution_family_id: params.executionFamilyId },
+		},
+		select: { id: true },
+		orderBy: [{ created_at: "desc" }, { id: "desc" }],
+	});
+	if (active) throw new WorkflowDeliveryScopeBusyError(active.id);
 }
 
 /**
@@ -96,19 +151,29 @@ export class WorkflowRecoveryAdmissionError extends Error {
  * is the authority for this mode.
  */
 function requiredRecoverySourceStatus(
-	admission: "failed_source" | "cancellation_revocation" | "provider_balance_recovery",
+	admission: "failed_source" | "cancellation_revocation" | "provider_balance_recovery" | "media_retry",
 ): readonly string[] {
 	if (admission === "failed_source") return ["failed"];
 	if (admission === "cancellation_revocation") return ["canceled"];
+	if (admission === "media_retry") return ["success", "failed", "canceled"];
 	return ["canceled", "failed"];
 }
 
 export type ExecutionHistoryRow = ExecutionRow & {
 	workflow_node_runs: ExecutionHistoryNodeRow[];
-	flow_versions: {
-		data: string;
-	};
+	focus_node: ExecutionHistoryFocus | null;
 };
+
+// History exposes execution metadata, never the frozen project/media payloads.
+// Select at the database boundary so Prisma does not materialize those strings.
+const executionHistoryMetadataSelect = {
+	id: true, flow_id: true, flow_version_id: true, owner_id: true,
+	status: true, concurrency: true, trigger: true,
+	error_message: true, error_code: true, failure_stage: true,
+	project_id: true, canvas_id: true, user_input: true,
+	retry_count: true, recovery_of_execution_id: true, execution_family_id: true,
+	uses_project_assets: true, created_at: true, started_at: true, finished_at: true,
+} as const;
 
 export type ExecutionSnapshotRow = {
 	id: string;
@@ -188,46 +253,9 @@ function durationMs(startedAt: string | null, finishedAt: string | null): number
 	return Number.isFinite(duration) && duration >= 0 ? Math.trunc(duration) : null;
 }
 
-const NODE_FOCUS_PRIORITY: Readonly<Record<WorkflowNodeRunDto["status"], number>> = {
-	failed: 0,
-	waiting_external: 1,
-	running: 2,
-	queued: 3,
-	canceled: 4,
-	success: 5,
-	skipped: 6,
-	not_selected: 7,
-};
-
-function frozenNodeLabel(snapshotData: string, nodeId: string): string {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(snapshotData) as unknown;
-	} catch (error: unknown) {
-		throw new Error(`Workflow execution history has an invalid immutable flow snapshot: ${error instanceof Error ? error.message : String(error)}`);
-	}
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-		throw new Error("Workflow execution history immutable flow snapshot must be an object");
-	}
-	const nodes = (parsed as Record<string, unknown>).nodes;
-	if (!Array.isArray(nodes)) throw new Error("Workflow execution history immutable flow snapshot must contain nodes");
-	const node = nodes.find((value) => (
-		Boolean(value)
-		&& typeof value === "object"
-		&& !Array.isArray(value)
-		&& (value as Record<string, unknown>).id === nodeId
-	));
-	if (!node || typeof node !== "object" || Array.isArray(node)) return nodeId;
-	const data = (node as Record<string, unknown>).data;
-	if (!data || typeof data !== "object" || Array.isArray(data)) return nodeId;
-	const record = data as Record<string, unknown>;
-	const label = typeof record.label === "string" ? record.label.trim() : "";
-	const workflowNodeId = typeof record.workflowNodeId === "string" ? record.workflowNodeId.trim() : "";
-	return label || workflowNodeId || nodeId;
-}
-
 export function mapExecutionHistoryRow(row: ExecutionHistoryRow): WorkflowExecutionDto {
-	const { projectContext: _projectContext, assetSnapshot: _assetSnapshot, ...execution } = mapExecutionRow(row);
+	const { project_context: _projectContext, asset_snapshot: _assetSnapshot, ...metadata } = row;
+	const execution = mapExecutionRow(metadata);
 	const summary = {
 		total: row.workflow_node_runs.length,
 		queued: 0,
@@ -249,25 +277,15 @@ export function mapExecutionHistoryRow(row: ExecutionHistoryRow): WorkflowExecut
 		else if (nodeRun.status === "skipped") summary.skipped += 1;
 		else if (nodeRun.status === "not_selected") summary.notSelected += 1;
 	}
-	const focus = [...row.workflow_node_runs].sort((left, right) => {
-		const statusDelta = (NODE_FOCUS_PRIORITY[left.status as WorkflowNodeRunDto["status"]] ?? 99)
-			- (NODE_FOCUS_PRIORITY[right.status as WorkflowNodeRunDto["status"]] ?? 99);
-		if (statusDelta !== 0) return statusDelta;
-		return left.created_at.localeCompare(right.created_at);
-	})[0];
-	// The waiting reason is projected from the same versioned receipt the node
-	// run and canvas surfaces read, so the history list can name the exact
-	// external boundary instead of the generic wait state.
-	const focusWaitingReason = focus?.status === "waiting_external"
-		? resolveWorkflowWaitingReason(parseStoredJson(focus.output_refs))
-		: null;
+	const focus = row.focus_node?.node;
+	const focusWaitingReason = row.focus_node?.waitingReason;
 	return {
 		...execution,
 		nodeSummary: summary,
-		focusNode: focus && NODE_FOCUS_PRIORITY[focus.status as WorkflowNodeRunDto["status"]] <= 3
+		focusNode: focus && row.focus_node
 			? {
 				nodeId: focus.node_id,
-				nodeLabel: frozenNodeLabel(row.flow_versions.data, focus.node_id),
+				nodeLabel: row.focus_node.label,
 				status: (focus.status === "pending" ? "queued" : focus.status) as WorkflowNodeRunDto["status"],
 				errorMessage: focus.error_message,
 				waitingReasonCode: focusWaitingReason?.code ?? null,
@@ -298,7 +316,7 @@ export function mapExecutionSnapshotRow(row: ExecutionSnapshotRow): WorkflowExec
 
 export function mapNodeRunRow(row: NodeRunRow): WorkflowNodeRunDto {
 	const inputRefs = parseStoredJson(row.input_refs ?? null);
-	const outputRefs = parseStoredJson(row.output_refs);
+	const outputRefs = row.output_refs === null ? undefined : decodeWorkflowOutput(row.output_refs);
 	const toolCalls = parseStoredJson(row.tool_calls ?? null);
 	return {
 		id: row.id,
@@ -311,6 +329,7 @@ export function mapNodeRunRow(row: NodeRunRow): WorkflowNodeRunDto {
 		failureStage: row.failure_stage ?? null,
 		...(inputRefs !== undefined ? { inputRefs } : {}),
 		...(outputRefs !== undefined ? { outputRefs } : {}),
+		...(row.agent_progress ? { agentProgress: row.agent_progress } : {}),
 		...(toolCalls !== undefined ? { toolCalls } : {}),
 		retryCount: Number(row.retry_count || 0),
 		nodeType: row.node_type ?? null,
@@ -374,9 +393,11 @@ export async function createExecution(
 		projectContext?: unknown;
 		assetSnapshot?: unknown;
 		recoveryOfExecutionId?: string | null;
-		recoveryAdmission?: "failed_source" | "cancellation_revocation" | "provider_balance_recovery";
+		recoveryAdmission?: "failed_source" | "cancellation_revocation" | "provider_balance_recovery" | "media_retry";
 		executionFamilyId: string;
 		usesProjectAssets?: boolean;
+		/** Reject admission while another family is actively delivering into this canvas. */
+		exclusiveDeliveryScope?: WorkflowExclusiveDeliveryScope;
 		nowIso: string;
 	},
 ): Promise<void> {
@@ -401,14 +422,35 @@ export async function createExecution(
 			uses_project_assets: params.usesProjectAssets === true,
 			created_at: nowIso,
 	};
+	const exclusiveDeliveryScope = params.exclusiveDeliveryScope;
 	if (!params.recoveryOfExecutionId) {
-		await getPrismaClient().workflow_executions.create({ data });
+		if (!exclusiveDeliveryScope) {
+			await getPrismaClient().workflow_executions.create({ data });
+			return;
+		}
+		await getPrismaClient().$transaction(async (transaction) => {
+			await assertDeliveryScopeIdle(transaction, {
+				ownerId,
+				flowId,
+				executionFamilyId: params.executionFamilyId,
+				scope: exclusiveDeliveryScope,
+			});
+			await transaction.workflow_executions.create({ data });
+		}, { timeout: 20_000, maxWait: 10_000 });
 		return;
 	}
 
 	const sourceExecutionId = params.recoveryOfExecutionId;
 	const admission = params.recoveryAdmission ?? "failed_source";
 	await getPrismaClient().$transaction(async (transaction) => {
+		if (exclusiveDeliveryScope) {
+			await assertDeliveryScopeIdle(transaction, {
+				ownerId,
+				flowId,
+				executionFamilyId: params.executionFamilyId,
+				scope: exclusiveDeliveryScope,
+			});
+		}
 		// The same source-row lock is contended by cancellation's status UPDATE.
 		// Whichever operation wins becomes observable to the loser before a child
 		// execution can be inserted, closing the cancel-vs-resume admission race.
@@ -441,6 +483,49 @@ export async function createExecution(
 				`Workflow recovery source status changed from ${requiredStatuses.join("/")} to ${source.status}`,
 				"recovery_source_status_changed",
 			);
+		}
+		if (admission === "media_retry") {
+			const existingAttempt = await transaction.workflow_executions.findFirst({
+				where: { id, owner_id: ownerId, execution_family_id: source.execution_family_id },
+				select: { id: true, recovery_of_execution_id: true },
+			});
+			if (existingAttempt) {
+				if (existingAttempt.recovery_of_execution_id !== sourceExecutionId) {
+					throw new WorkflowRecoveryAdmissionError(
+						"The media retry identity belongs to a different source execution",
+						"recovery_source_owner_mismatch",
+					);
+				}
+				// Let the primary-key conflict converge duplicate clicks onto the
+				// existing immutable attempt in startWorkflowExecution.
+			} else {
+				const [latest, activeCount] = await Promise.all([
+					transaction.workflow_executions.findFirst({
+						where: { execution_family_id: source.execution_family_id, owner_id: ownerId },
+						select: { id: true },
+						orderBy: [{ created_at: "desc" }, { id: "desc" }],
+					}),
+					transaction.workflow_executions.count({
+						where: {
+							execution_family_id: source.execution_family_id,
+							owner_id: ownerId,
+							status: { in: ["queued", "running"] },
+						},
+					}),
+				]);
+				if (latest?.id !== sourceExecutionId) {
+					throw new WorkflowRecoveryAdmissionError(
+						"Media retry requires the latest execution-family member",
+						"recovery_family_not_latest",
+					);
+				}
+				if (activeCount > 0) {
+					throw new WorkflowRecoveryAdmissionError(
+						"Media retry requires an inactive execution family",
+						"recovery_family_active",
+					);
+				}
+			}
 		}
 		if (admission === "failed_source") {
 			const canceledFamilyMember = await transaction.workflow_execution_events.findFirst({
@@ -522,35 +607,49 @@ export async function listExecutionsForOwnerFlow(
 	});
 }
 
+export async function listSuccessfulNodeRunsForOwnerCanvas(
+	db: PrismaClient,
+	params: { ownerId: string; canvasId: string },
+): Promise<Array<{ execution_id: string; output_refs: string | null }>> {
+	void db;
+	return getPrismaClient().workflow_node_runs.findMany({
+		where: {
+			status: "success",
+			output_refs: { not: null },
+			workflow_executions: { owner_id: params.ownerId, canvas_id: params.canvasId },
+		},
+		select: { execution_id: true, output_refs: true },
+		orderBy: [{ created_at: "desc" }, { id: "desc" }],
+	});
+}
+
 export async function listExecutionHistoryForOwnerFlow(
 	db: PrismaClient,
 	params: { ownerId: string; flowId: string; limit?: number; activeOnly?: boolean },
 ): Promise<ExecutionHistoryRow[]> {
 	void db;
 	const limit = Math.max(1, Math.min(100, Math.floor(params.limit ?? 30)));
-	return getPrismaClient().workflow_executions.findMany({
+	const rows = await getPrismaClient().workflow_executions.findMany({
 		where: {
 			owner_id: params.ownerId,
 			OR: [{ flow_id: params.flowId }, { canvas_id: params.flowId }],
 			...(params.activeOnly === true ? { status: { in: ["queued", "running"] } } : {}),
 		},
-		include: {
-			flow_versions: {
-				select: { data: true },
-			},
+		select: {
+			...executionHistoryMetadataSelect,
 			workflow_node_runs: {
 				select: {
 					node_id: true,
 					status: true,
 					error_message: true,
 					created_at: true,
-					output_refs: true,
 				},
 			},
 		},
 		orderBy: { created_at: "desc" },
 		take: limit,
 	});
+	return hydrateExecutionHistoryFocus(getPrismaClient(), rows);
 }
 
 export async function listExecutionHistoryPageForOwner(
@@ -566,16 +665,15 @@ export async function listExecutionHistoryPageForOwner(
 				? { OR: [{ flow_id: params.flowId }, { canvas_id: params.flowId }] }
 				: {}),
 		},
-		include: {
+		select: {
+			...executionHistoryMetadataSelect,
 			flows: { select: { name: true } },
-			flow_versions: { select: { data: true } },
 			workflow_node_runs: {
 				select: {
 					node_id: true,
 					status: true,
 					error_message: true,
 					created_at: true,
-					output_refs: true,
 				},
 			},
 		},
@@ -586,7 +684,7 @@ export async function listExecutionHistoryPageForOwner(
 	const hasMore = rows.length > limit;
 	const items = hasMore ? rows.slice(0, limit) : rows;
 	return {
-		items,
+		items: await hydrateExecutionHistoryFocus(getPrismaClient(), items),
 		nextCursor: hasMore ? items.at(-1)?.id ?? null : null,
 	};
 }
@@ -618,7 +716,8 @@ export async function listNodeRunsForExecutionOwner(
 	params: { ownerId: string; executionId: string },
 ): Promise<NodeRunRow[]> {
 	void db;
-	return getPrismaClient().workflow_node_runs.findMany({
+	const prisma = getPrismaClient();
+	const rows = await prisma.workflow_node_runs.findMany({
 		where: {
 			execution_id: params.executionId,
 			workflow_executions: {
@@ -627,6 +726,68 @@ export async function listNodeRunsForExecutionOwner(
 		},
 		orderBy: { created_at: "asc" },
 	});
+	if (rows.length === 0) return rows;
+	let progressRows: Array<{ node_id: string; data: string | null }>;
+	try {
+		progressRows = await prisma.$queryRaw<Array<{ node_id: string; data: string | null }>>(Prisma.sql`
+			SELECT DISTINCT ON (activity."node_id") activity."node_id", activity."data"
+			FROM "workflow_execution_events" AS activity
+			JOIN "workflow_node_runs" AS current_run
+				ON current_run."execution_id" = activity."execution_id"
+				AND current_run."node_id" = activity."node_id"
+			JOIN "workflow_executions" AS execution
+				ON execution."id" = activity."execution_id"
+			WHERE activity."execution_id" = ${params.executionId}
+				AND execution."owner_id" = ${params.ownerId}
+				AND activity."event_type" = 'node_agent_activity'
+				AND activity."node_id" IS NOT NULL
+				AND activity."data" IS NOT NULL
+				AND activity."data"::jsonb ->> 'attempt' = current_run."attempt"::text
+			ORDER BY activity."node_id", activity."seq" DESC
+		`);
+	} catch (error: unknown) {
+		console.warn(JSON.stringify({
+			message: "workflow_node_agent_activity_poll_projection_failed",
+			executionId: params.executionId,
+			ownerId: params.ownerId,
+			errorName: error instanceof Error ? error.name : "unknown",
+		}));
+		return rows;
+	}
+	const progressByNodeId = new Map<string, WorkflowNodeAgentProgress>();
+	const runByNodeId = new Map(rows.map((run) => [run.node_id, run] as const));
+	for (const row of progressRows) {
+		if (typeof row.data !== "string") continue;
+		let raw: unknown;
+		try {
+			raw = JSON.parse(row.data) as unknown;
+		} catch {
+			console.warn(JSON.stringify({
+				message: "workflow_node_agent_activity_poll_event_invalid_json",
+				executionId: params.executionId,
+				nodeId: row.node_id,
+			}));
+			continue;
+		}
+		const progress = parseWorkflowNodeAgentProgress(raw);
+		const run = runByNodeId.get(row.node_id);
+		if (!progress || !run || progress.attempt !== run.attempt) {
+			console.warn(JSON.stringify({
+				message: "workflow_node_agent_activity_poll_event_invalid_contract",
+				executionId: params.executionId,
+				nodeId: row.node_id,
+				attempt: run?.attempt ?? null,
+			}));
+			continue;
+		}
+		progressByNodeId.set(row.node_id, progress);
+	}
+	return rows.map((row) => ({
+		...row,
+		...(progressByNodeId.has(row.node_id)
+			? { agent_progress: progressByNodeId.get(row.node_id) }
+			: {}),
+	}));
 }
 
 export async function listNodeRunHistoryForOwnerFlow(

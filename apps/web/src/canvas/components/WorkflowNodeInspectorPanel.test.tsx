@@ -808,6 +808,7 @@ describe('WorkflowNodeInspectorPanel', () => {
     expect(screen.getByRole('tabpanel')).toHaveAccessibleName('输入')
     fireEvent.keyDown(inputTab, { key: 'End' })
     expect(screen.getByRole('tab', { name: '诊断' })).toHaveFocus()
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('诊断')
 
     fireEvent.keyDown(screen.getByRole('complementary', { name: '文本输入' }), { key: 'Escape' })
     expect(screen.queryByRole('complementary', { name: '文本输入' })).not.toBeInTheDocument()

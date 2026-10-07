@@ -76,3 +76,37 @@ export function previousWorkflowAgentTurnOrdinal(input: Readonly<{
   }
   return null;
 }
+
+/**
+ * Resolve the physical retry generation encoded in a public turn id.
+ *
+ * This is deliberately derived by round-tripping the canonical identity
+ * builder rather than accepting a loose suffix. A status response can expose
+ * the latest owner of a durable session while an older reconciler is still
+ * polling its predecessor; callers need a structural proof that the observed
+ * id belongs to this exact workflow node before treating it as a newer owner.
+ */
+export function workflowAgentTurnOrdinal(input: Readonly<{
+  executionId: string;
+  nodeId: string;
+  observedTurnId: string;
+}>): number | null {
+  const base = workflowAgentPublicTurnId({
+    executionId: input.executionId,
+    nodeId: input.nodeId,
+    physicalRetryOrdinal: null,
+  });
+  if (input.observedTurnId === base) return 0;
+  const marker = ":physical-retry:";
+  const markerIndex = input.observedTurnId.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const suffix = input.observedTurnId.slice(markerIndex + marker.length);
+  if (!/^\d+$/.test(suffix)) return null;
+  const ordinal = Number(suffix);
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1) return null;
+  return workflowAgentPublicTurnId({
+    executionId: input.executionId,
+    nodeId: input.nodeId,
+    physicalRetryOrdinal: ordinal,
+  }) === input.observedTurnId ? ordinal : null;
+}

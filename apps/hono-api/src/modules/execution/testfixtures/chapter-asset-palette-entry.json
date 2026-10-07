@@ -1,0 +1,26 @@
+{
+  "objectId": "obj-01",
+  "kind": "palette",
+  "name": "原创工坊样例资产",
+  "physicalIdentityKey": null,
+  "referenceRole": "palette",
+  "identityInvariant": "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+  "imageSource": {
+    "mode": "generate",
+    "referenceAssetBindings": [],
+    "plan": {
+      "prompt": "原创社区工坊参考图：窗边工作台和测量工具，保持当前资产的身份与尺寸。",
+      "negativePrompt": "不添加人物、品牌或无关道具。",
+      "identityAnchors": [
+        "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+        "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+        "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+      ],
+      "prohibitedDrift": [
+        "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+        "原创样例：保持工作台、窗户与测量工具的位置及比例。",
+        "原创样例：保持工作台、窗户与测量工具的位置及比例。"
+      ]
+    }
+  }
+}

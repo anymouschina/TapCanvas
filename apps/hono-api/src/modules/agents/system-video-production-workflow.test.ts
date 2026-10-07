@@ -19,14 +19,14 @@ describe("system video production workflow", () => {
 		expect(descriptor.invocation?.requiredTriggerPayloadFields).toContain("videoModelKey");
 		expect(descriptor.requiredSkills).toContain("tapcanvas-video-authoring-stages");
 		expect(definition.flowData).toContain("chapter-assets-agent");
-		expect(definition.flowData).toContain("clip-segmentation-agent");
+		expect(definition.flowData).toContain("chapter-sequence-agent");
 		expect(definition.flowData).toContain("clip-production-pipeline");
 		expect(definition.flowData).toContain("clip-media-pipeline");
 		expect(definition.flowData).toContain("tapcanvas.video.prepare/v1");
 	});
 	it("publishes a new immutable release without rewriting executions or the character-splitting workflow", () => {
 		const sql = builtInVideoProductionWorkflowSql();
-		expect(readFileSync("sql/releases/20260924_video_production_v114.sql", "utf8")).toBe(sql);
+		expect(readFileSync("sql/releases/20261007_video_production_v135.sql", "utf8")).toBe(sql);
 		expect(sql).toContain(identity.flowVersionId);
 		expect(sql).toContain("ON CONFLICT (id) DO NOTHING");
 		expect(sql).not.toMatch(/\b(?:UPDATE|DELETE|TRUNCATE)\s+(?:flows|flow_versions|executions|agent_capability_attachments)\b/u);

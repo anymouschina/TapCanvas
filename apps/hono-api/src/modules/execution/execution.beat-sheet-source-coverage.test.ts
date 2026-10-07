@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	BEAT_SHEET_SPEECH_MAX_CHARS_PER_SECOND,
 	deriveBeatSheetSourceProfile,
 	validateBeatSheetSourceCoverage,
 	diagnoseBeatSheetSpeechCapacity,
@@ -56,35 +55,67 @@ const FULL_SPEECH = [
 ];
 
 describe("deriveBeatSheetSourceProfile", () => {
-	it("counts canonical source speech spans and derives a deterministic duration budget", () => {
-		const profile = deriveBeatSheetSourceProfile(deliveryContract(), { maxDurationSeconds: 15 });
+	it("extracts canonical quoted spans without classifying speech or deriving a duration budget", () => {
+		const profile = deriveBeatSheetSourceProfile(deliveryContract());
 		expect(profile).not.toBeNull();
-		expect(profile?.sourceSpeechUnits.map((unit) => unit.verbatim)).toEqual(FULL_SPEECH);
+		expect(profile?.sourceQuotedUnits.map((unit) => unit.verbatim)).toEqual(FULL_SPEECH);
 		const speechChars = FULL_SPEECH.join("").length;
-		expect(profile?.sourceSpeechChars).toBe(speechChars);
-		expect(profile?.minimumPlannedSeconds).toBe(Math.ceil(speechChars / BEAT_SHEET_SPEECH_MAX_CHARS_PER_SECOND));
-		expect(profile?.minimumClipCount).toBe(Math.ceil((profile?.minimumPlannedSeconds ?? 0) / 15));
+		expect(profile?.sourceQuotedChars).toBe(speechChars);
+		expect(profile?.protocolVersion).toBe("tapcanvas.beat-sheet-source-profile/v2");
+		expect(profile).not.toHaveProperty("sourceSpeechUnits");
+		expect(profile).not.toHaveProperty("minimumPlannedSeconds");
+		expect(profile).not.toHaveProperty("minimumClipCount");
+	});
+
+	it("preserves exact UTF-16 spans and original source indexes after filtering unusable sources", () => {
+		const content = "标题\n“🌟同一句。”\n“🌟同一句。”";
+		const profile = deriveBeatSheetSourceProfile({
+			canvasFacts: {
+				authoritativeSources: [
+					null,
+					{ sourceId: "empty-source", content: " \n " },
+					{ sourceId: "chapter-source", content },
+				],
+			},
+		});
+
+		const firstOpen = content.indexOf("“");
+		const firstStart = firstOpen + 1;
+		const firstEnd = content.indexOf("”", firstStart);
+		const secondOpen = content.indexOf("“", firstEnd + 1);
+		const secondStart = secondOpen + 1;
+		const secondEnd = content.indexOf("”", secondStart);
+		const units = profile?.sourceQuotedUnits ?? [];
+
+		expect(units).toHaveLength(2);
+		expect(units.map(({ sourceIndex }) => sourceIndex)).toEqual([2, 2]);
+		expect(units.map(({ sourceId }) => sourceId)).toEqual(["chapter-source", "chapter-source"]);
+		expect(units.map(({ startOffset, endOffset }) => [startOffset, endOffset])).toEqual([
+			[firstStart, firstEnd],
+			[secondStart, secondEnd],
+		]);
+		expect(units[0]?.startOffset).not.toBe(units[1]?.startOffset);
+		expect(units.map(({ verbatim }) => verbatim)).toEqual(["🌟同一句。", "🌟同一句。"]);
+		for (const unit of units) {
+			expect(content.slice(unit.startOffset, unit.endOffset)).toBe(unit.verbatim);
+		}
+		// The emoji occupies two UTF-16 code units, so its inclusion is observable in the exact end offset.
+		expect(firstEnd - firstStart).toBe("🌟同一句。".length);
 	});
 
 	it("returns null when the delivery contract carries no authoritative source", () => {
 		expect(deriveBeatSheetSourceProfile({ canvasFacts: { authoritativeSources: [] } })).toBeNull();
 	});
 
-	it("states the natural delivery rate for window arithmetic without inflating the chapter plan", () => {
-		/*
-		 * 自然语速只用来把"冻结的交付时长"换算成该窗口能承载的人声字数（作者据此选择内容，
-		 * 而不是把整章压进窗口）。它不得被当成整章计划时长的换算基准：那样产物会增大约 45%，
-		 * 越过本次执行的生产片段预算，并让单次生成耗时越过上游渠道的请求超时。
-		 */
-		const profile = deriveBeatSheetSourceProfile(deliveryContract(), { maxDurationSeconds: 15 });
-		expect(profile?.speechPlanningCharsPerSecond).toBeLessThan(
-			profile?.speechMaxCharsPerSecond ?? Number.POSITIVE_INFINITY,
-		);
-		expect(profile?.minimumPlannedSeconds).toBe(
-			Math.ceil((profile?.sourceSpeechChars ?? 0) / BEAT_SHEET_SPEECH_MAX_CHARS_PER_SECOND),
-		);
-		expect(profile).not.toHaveProperty("plannedSecondsAtNaturalPace");
-		expect(profile).not.toHaveProperty("plannedClipCountAtNaturalPace");
+	it("preserves sound, written text and dialogue alike as unclassified quote addresses", () => {
+		const content = '她说“你好。”，纸上写着「安静」，屋外传来“沙沙~”的摩擦声。';
+		const profile = deriveBeatSheetSourceProfile(deliveryContract({ content }));
+		expect(profile?.sourceQuotedUnits.map(({ verbatim }) => verbatim)).toEqual(["你好。", "安静", "沙沙~"]);
+		for (const unit of profile?.sourceQuotedUnits ?? []) {
+			expect(content.slice(unit.startOffset, unit.endOffset)).toBe(unit.verbatim);
+			expect(unit).not.toHaveProperty("speaker");
+			expect(unit).not.toHaveProperty("delivery");
+		}
 	});
 });
 
@@ -112,13 +143,20 @@ describe("validateBeatSheetSourceCoverage", () => {
 		expect(observation).toContain("not a provider limit");
 	});
 
-	it("rejects silently dropped source speech spans", () => {
-		const reason = validateBeatSheetSourceCoverage({
-			beatSheetText: beatSheet({ speech: FULL_SPEECH.slice(0, 2), beatSeconds: [15, 15, 15, 15, 15] }),
-			deliveryContract: deliveryContract(),
-		});
-		expect(reason).toContain("does not cover the canonical source's speech");
-		expect(reason).toContain("989号考生，张羽。");
+	it("accepts author-selected speech without requiring every quoted source span to be spoken", () => {
+		const content = '她说“你好。”，纸上写着「安静」，屋外传来“沙沙~”的摩擦声。';
+		expect(validateBeatSheetSourceCoverage({
+			beatSheetText: beatSheet({ speech: ["你好。"], beatSeconds: [15] }),
+			deliveryContract: deliveryContract({ content }),
+		})).toBeNull();
+	});
+
+	it("does not turn unspoken quoted prose into speech capacity pressure", () => {
+		const input = {
+			beatSheetText: beatSheet({ speech: ["你好。"], beatSeconds: [15] }),
+			deliveryContract: deliveryContract({ content: `她说“你好。”，纸上写着“${"刻纹".repeat(200)}”。` }),
+		};
+		expect(diagnoseBeatSheetSpeechCapacity(input)).toBeNull();
 	});
 
 	it("accepts a beat sheet that preserves every source speech span with enough duration", () => {

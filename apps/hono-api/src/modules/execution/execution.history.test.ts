@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	mapExecutionHistoryRow,
 	mapExecutionSnapshotRow,
@@ -21,14 +21,29 @@ const baseExecution = {
 } as const;
 
 describe("workflow execution history projection", () => {
+	it("never parses frozen snapshots that the history response does not expose", () => {
+		const snapshot = '{"snapshot":"not-for-history"}';
+		const parse = vi.spyOn(JSON, "parse");
+		try {
+			const dto = mapExecutionHistoryRow({ ...baseExecution, project_context: snapshot, asset_snapshot: snapshot,
+				focus_node: null, workflow_node_runs: [] });
+			expect(parse).not.toHaveBeenCalledWith(snapshot);
+			expect(dto).not.toHaveProperty("projectContext");
+			expect(dto).not.toHaveProperty("assetSnapshot");
+			expect(dto.id).toBe(baseExecution.id);
+		} finally {
+			parse.mockRestore();
+		}
+	});
+
 	it("surfaces a waiting node ahead of ordinary running and queued nodes", () => {
 		const row: ExecutionHistoryRow = {
 			...baseExecution,
-			flow_versions: { data: JSON.stringify({ nodes: [{ id: "approval", data: { label: "人工审批" } }] }) },
+			focus_node: { node: { node_id: "approval", status: "waiting_external", error_message: null, created_at: "2026-08-14T09:00:04.000Z" }, label: "人工审批", waitingReason: null },
 			workflow_node_runs: [
-				{ node_id: "queued", status: "queued", error_message: null, created_at: "2026-08-14T09:00:02.000Z", output_refs: null },
-				{ node_id: "running", status: "running", error_message: null, created_at: "2026-08-14T09:00:03.000Z", output_refs: null },
-				{ node_id: "approval", status: "waiting_external", error_message: null, created_at: "2026-08-14T09:00:04.000Z", output_refs: null },
+				{ node_id: "queued", status: "queued", error_message: null, created_at: "2026-08-14T09:00:02.000Z" },
+				{ node_id: "running", status: "running", error_message: null, created_at: "2026-08-14T09:00:03.000Z" },
+				{ node_id: "approval", status: "waiting_external", error_message: null, created_at: "2026-08-14T09:00:04.000Z" },
 			],
 		};
 
@@ -45,65 +60,15 @@ describe("workflow execution history projection", () => {
 		expect(dto.nodeSummary).toMatchObject({ total: 3, queued: 1, running: 1, waitingExternal: 1 });
 	});
 
-	it("names the exact external boundary of the waiting focus node from its receipt", () => {
-		const row: ExecutionHistoryRow = {
-			...baseExecution,
-			flow_versions: { data: JSON.stringify({ nodes: [{ id: "beat-sheet-agent", data: { label: "BeatSheet 创作 Agent" } }] }) },
-			workflow_node_runs: [
-				{
-					node_id: "beat-sheet-agent",
-					status: "waiting_external",
-					error_message: null,
-					created_at: "2026-08-14T09:00:04.000Z",
-					output_refs: JSON.stringify({ evidence: {
-						continuationReason: "provider_balance_required",
-						requestTerminal: { status: "suspended", reason: "provider_balance_required" },
-						deliveryEvidence: { recoveryCheckpoint: { reasonCode: "provider_balance_required" } },
-					} }),
-				},
-			],
-		};
-
-		expect(mapExecutionHistoryRow(row).focusNode).toMatchObject({
-			nodeId: "beat-sheet-agent",
-			waitingReasonCode: "provider_balance_required",
-			waitingReasonLabel: "等待余额恢复",
-		});
-	});
-
-	it("keeps the generic wait when the receipt declares conflicting reasons", () => {
-		const row: ExecutionHistoryRow = {
-			...baseExecution,
-			flow_versions: { data: JSON.stringify({ nodes: [{ id: "beat-sheet-agent", data: { label: "BeatSheet 创作 Agent" } }] }) },
-			workflow_node_runs: [
-				{
-					node_id: "beat-sheet-agent",
-					status: "waiting_external",
-					error_message: null,
-					created_at: "2026-08-14T09:00:04.000Z",
-					output_refs: JSON.stringify({ evidence: {
-						continuationReason: "provider_balance_required",
-						requestTerminal: { status: "suspended", reason: "provider_stream_interrupted" },
-					} }),
-				},
-			],
-		};
-
-		expect(mapExecutionHistoryRow(row).focusNode).toMatchObject({
-			waitingReasonCode: null,
-			waitingReasonLabel: null,
-		});
-	});
-
 	it("surfaces the failed node and its exact persisted error", () => {
 		const row: ExecutionHistoryRow = {
 			...baseExecution,
 			status: "failed",
 			finished_at: "2026-08-14T09:01:00.000Z",
-			flow_versions: { data: JSON.stringify({ nodes: [{ id: "video", data: { workflowNodeId: "video-generator" } }] }) },
+			focus_node: { node: { node_id: "video", status: "failed", error_message: "provider task rejected", created_at: "2026-08-14T09:00:04.000Z" }, label: "video-generator", waitingReason: null },
 			workflow_node_runs: [
-				{ node_id: "video", status: "failed", error_message: "provider task rejected", created_at: "2026-08-14T09:00:04.000Z", output_refs: null },
-				{ node_id: "downstream", status: "queued", error_message: null, created_at: "2026-08-14T09:00:05.000Z", output_refs: null },
+				{ node_id: "video", status: "failed", error_message: "provider task rejected", created_at: "2026-08-14T09:00:04.000Z" },
+				{ node_id: "downstream", status: "queued", error_message: null, created_at: "2026-08-14T09:00:05.000Z" },
 			],
 		};
 
