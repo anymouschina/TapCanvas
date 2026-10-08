@@ -42,9 +42,9 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 
 约 1 分钟的完整剧情成片，包含清晰字幕，分辨率为 1280 × 720。
 
-[![完整剧情·清晰字幕版视频封面](./assets/showcases/full-story-subtitled/cover.jpg)](./assets/showcases/full-story-subtitled/video.mp4)
+https://github.com/user-attachments/assets/69274e49-11b9-49bf-97bb-d9a8676052e8
 
-[观看或下载完整视频（MP4，约 28.2 MiB）](./assets/showcases/full-story-subtitled/video.mp4)
+[观看或下载完整视频（MP4，9.36 MB）](./assets/showcases/full-story-subtitled/video.mp4)
 
 ## 项目历史
 
