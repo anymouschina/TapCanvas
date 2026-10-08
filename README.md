@@ -34,6 +34,18 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 - **项目化资产**：素材库、版本、生成历史、任务状态、交付证据与项目本地元数据持续沉淀，生成成功的资产不会被后处理丢弃。
 - **工作流与协作**：支持可复用 DAG、异步 Worker、失败恢复、分享/发布、团队作用域与实时画布状态。
 
+## 作品案例
+
+以下作品基于当前 TapCanvas 项目制作，后续案例将持续补充。
+
+### 完整剧情 · 清晰字幕版
+
+约 1 分钟的完整剧情成片，包含清晰字幕，分辨率为 1280 × 720。
+
+[![完整剧情·清晰字幕版视频封面](./assets/showcases/full-story-subtitled/cover.jpg)](./assets/showcases/full-story-subtitled/video.mp4)
+
+[观看或下载完整视频（MP4，约 28.2 MiB）](./assets/showcases/full-story-subtitled/video.mp4)
+
 ## 项目历史
 
 https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
