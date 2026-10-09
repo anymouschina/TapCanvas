@@ -38,6 +38,29 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 
 以下作品基于当前 TapCanvas 项目制作，后续案例将持续补充。
 
+### 开局相亲女神捕，获独孤九剑 · 第一章
+
+一键成片 v135 从小说第一章直接产出 10 段 Clip，再用 HyperFrames 剪辑合成：补字幕、调节奏与转场，并补回视频里缺失的台词。全章剧情规划、分镜脚本和资产创作均由 **claude-sonnet-5-5** 完成。
+
+[![开局相亲女神捕，获独孤九剑 · 第一章](./assets/showcases/kaiju-xiangqin-ch1/cover.jpg)](https://file.beqlee.icu/showcase/20261009/kaiju-xiangqin-nvshenbu-ch1-hyperframes-recut-720p.mp4)
+
+[在线观看完整视频（MP4，4 分 41 秒，184 MB）](https://file.beqlee.icu/showcase/20261009/kaiju-xiangqin-nvshenbu-ch1-hyperframes-recut-720p.mp4)
+
+| 项目 | 内容 |
+| --- | --- |
+| 原著 | 《开局相亲女神捕，获独孤九剑》，作者：今日问道（全书 64 章） |
+| 章节 | 第一章「独孤九剑」，原文 3,826 字 |
+| 一键成片版本 | v135（定义指纹 `sha256:6d24ad34…3faed`），改编模式：创意改编 |
+| 创作模型 | claude-sonnet-5-5（全章剧情与时间线规划、逐 Clip 脚本、角色与场景资产设定） |
+| 图像 / 视频模型 | gpt-image-2.5-sunburst（27 张角色、场景与色彩资产图）/ dola-seedance-2.5（10 段 × 30 秒） |
+| 画风 | 国风 3D 动画电影 CG（风格化，非写实） |
+| 一键成片原始输出 | 300.7 秒，1280 × 720，24 fps |
+| 剪辑版 | HyperFrames 0.8.142 合成，281.4 秒（4 分 41 秒），1280 × 720，24 fps，H.264 + AAC |
+| 剪辑内容 | 80 条字幕；补回 4 句视频未说出的旁白、台词与系统播报；剪掉 21 秒无台词静止镜头；9 处静止长镜头加推镜；回忆处叠化，跳切软化，片头书名卡与片尾黑场 |
+| 制作日期 | 2026-10-09 |
+
+完整元数据见 [metadata.json](./assets/showcases/kaiju-xiangqin-ch1/metadata.json)。
+
 ### 完整剧情 · 清晰字幕版
 
 约 1 分钟的完整剧情成片，包含清晰字幕，分辨率为 1280 × 720。
