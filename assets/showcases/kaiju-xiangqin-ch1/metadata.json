@@ -1,0 +1,48 @@
+{
+  "title": "开局相亲女神捕，获独孤九剑 · 第一章（HyperFrames 剪辑版）",
+  "videoUrl": "https://file.beqlee.icu/showcase/20261009/kaiju-xiangqin-nvshenbu-ch1-hyperframes-recut-720p.mp4",
+  "producedAt": "2026-10-09",
+  "source": {
+    "book": "开局相亲女神捕，获独孤九剑",
+    "author": "今日问道",
+    "bookChapterCount": 64,
+    "chapter": 1,
+    "chapterTitle": "第一章：独孤九剑",
+    "chapterChars": 3826
+  },
+  "oneClickFilm": {
+    "workflow": "一键成片",
+    "version": "v135",
+    "definitionFingerprint": "sha256:6d24ad34ffb3520ae8bf6c87f9a60cb32516722bf65c0d2b5a0e27dd25d3faed",
+    "adaptationMode": "creative",
+    "models": {
+      "authoring": "claude-sonnet-5-5",
+      "image": "gpt-image-2.5-sunburst",
+      "video": "dola-seedance-2.5"
+    },
+    "style": "国风3D动画电影CG（风格化，非写实）",
+    "assetImages": 27,
+    "clips": 10,
+    "clipSeconds": 30,
+    "output": { "durationSeconds": 300.7, "width": 1280, "height": 720, "fps": 24 }
+  },
+  "recut": {
+    "tool": "HyperFrames",
+    "toolVersion": "0.8.142",
+    "durationSeconds": 281.4,
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "sizeBytes": 193354145,
+    "edits": {
+      "subtitles": 80,
+      "restoredLines": 4,
+      "pushIns": 9,
+      "trimmedStaticSeconds": 21.0,
+      "transitions": "回忆蒙太奇叠化 0.6s，跳切软化 0.2–0.3s，对话硬切，片头书名卡与片尾黑场"
+    },
+    "subtitleTiming": "gemini-3.8-flash 与 gemini-3.7-flash 交叉对齐，再按句短窗复核"
+  }
+}
