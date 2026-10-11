@@ -51,6 +51,7 @@ https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
 
 默认展示最新 10 条，较早记录展开查看。
 
+- **2026-10-11 · Factory / Droid 号池管理**：移植 TapCanvasPro 的 Droid 渠道与账号管理，支持批量追加 Key、账号启停与测试、Standard / Core 额度窗口和订阅信息展示，以及额度不足时同池换号重试。新增部署 patch SQL，自动预置停用的空号池；管理员配置自己的 Key、模型协议与价格后启用。详见 [Droid 接入说明](apps/new-api/docs/channel/droid.md)。
 - **2026-10-07 · 一键成片 v135**：同步全章剧情与时间线规划、分项资产创作、逐 Clip 提示词与媒体生产，以及最新创作 Skills；编辑器与执行器共用工作流定义，继续使用社区版 DeepSeek Harness Bridge。新增 v135 系统工作流发布文件，保留历史执行和生成资产。
 - **2026-10-07 · 画布修复**：复制节点和分组时保留素材与提示词、隔离执行身份并重映射引用；修复分组下载遗漏视觉组内素材的问题。
 - **2026-09-23 · 导演台升级**：同步 TapCanvasPro 的独立导演台，基于 [DirectorDesk](https://github.com/mangfufu/director-desk) 提供三维场景搭建、角色走位与摄影机预演；接入 TapCanvas AI 对话、工具中继和参考视频导出回画布，替换旧内嵌实现，并补充 MIT 许可鸣谢。Web 开发和构建会自动构建导演台，本地首次使用需安装其独立依赖。
@@ -60,11 +61,11 @@ https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
 - **2026-09-21**：整理项目说明，移除过期截止日期与能力完成度待办章节。
 - **2026-09-20**：同步 v90 视频生产工作流并适配 DeepSeek Harness 运行时；画布生成操作统一接入主 AI 对话，修复章节资产与设计操作的模型传递及本地登录会话问题。
 - **2026-09-16**：补充 AtomGit 徽章、项目鸣谢与贡献者说明。
-- **2026-09-11**：扩展 HeyRoute 渠道与模型配置，补充文本、图片和视频的渠道独立计价。
 
 <details>
-<summary>更早更新记录（6 条）</summary>
+<summary>更早更新记录（7 条）</summary>
 
+- **2026-09-11**：扩展 HeyRoute 渠道与模型配置，补充文本、图片和视频的渠道独立计价。
 - **2026-09-10**：接入 HeyRoute 渠道，新增推广注册链接与 API Key 申请入口。
 - **2026-09-08**：更新一键成片相关实现与配套技能。
 
@@ -80,6 +81,10 @@ https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
 通过 [HeyRoute 推广链接注册](https://heyroute.ai/r/c/ch_iiq2tvtmrc)可领取 **$15 额度**，可使用 Codex、Claude、Gemini 对话及平台提供的生图能力（具体领取条件与可用模型以 HeyRoute 页面为准）。
 
 社区版内置 7 个 HeyRoute 渠道，共 31 个模型：15 个对话模型（Claude、GPT、Grok、Gemini、Kimi）、5 个图片模型和 11 个视频模型。新增视频包括 Grok、MiniMax H3 与 Seedance 系列，文本、图片和视频均支持渠道独立计价。首次部署后，在鲁班 API（new-api）管理台的渠道列表或编辑窗口点击 **申请 API Key**，通过上述链接注册，填写自己的 Key 并启用所需渠道。新增渠道默认停用且 Key 为空，不包含维护者私人凭据；升级保留已有 Key 和启用状态。初始化配置见 [`004-expand-heyroute-channels.sql`](apps/new-api/patches/2026-09-11/004-expand-heyroute-channels.sql)，详细说明见 [HeyRoute 接入说明](apps/new-api/docs/heyroute.md)。
+
+## Factory / Droid 号池管理
+
+社区版内置 Factory / Droid 渠道和账号会话管理，支持 Key 追加与去重、账号启停、单号测试、额度刷新、订阅与有效期展示。部署补丁自动创建空号池，默认停用；在鲁班 API 管理台添加自己的 Factory Key，从动态模型目录选择模型、配置明确的 Droid 协议绑定与价格后启用。补丁重复执行保留已有账号和配置，不预置未经确认的模型授权或价格。配置步骤和协议说明见 [Droid 接入说明](apps/new-api/docs/channel/droid.md)。
 
 ## 当前架构
 

@@ -4,6 +4,8 @@
 
 - `2026-08-31/001-bootstrap-lluban-channel-and-models.sql`
 - `2026-09-02/003-add-heyroute-image-channel.sql`
+- `2026-09-11/004-expand-heyroute-channels.sql`
+- `2026-10-11/005-bootstrap-droid-factory-channel.sql`
 
 鲁班初始化 patch 面向空的 new-api PostgreSQL 数据库，一次建立以下完整运行事实：
 
@@ -49,6 +51,12 @@ Key。管理员后续在 new-api 中替换 Key 或修改渠道启停状态后，
 渠道首次创建时 `key = ''`、`status = 2`，abilities 同步禁用。管理员在渠道列表或编辑窗口点击“申请 API Key”，打开 [HeyRoute 推广注册链接](https://heyroute.ai/r/c/ch_iiq2tvtmrc)，领取注册 $15 额度后填写自己的 Key 并启用渠道。活动条件以 HeyRoute 为准。重复执行保留已有 Key 与启停状态；SQL 不读取环境变量或 Pro 数据库，不包含私人凭据。该文件是现有 Compose PostgreSQL 部署链的数据补丁，不是 new-api 跨数据库 schema migration。
 
 OpenAI 图片响应层同步支持 HeyRoute 返回的 SSE 完成事件，将真实图片结果转换为 Images API JSON；没有图片结果时显式报错。此预置 SQL 只包含 Pro 中实际定义的三款图片模型；对话模型需管理员根据实际账户与模型协议单独配置。
+
+## Factory / Droid 预置号池
+
+[`2026-10-11/005-bootstrap-droid-factory-channel.sql`](2026-10-11/005-bootstrap-droid-factory-channel.sql) 在没有 Droid 渠道时创建 `droid-factory`（类型 `77`），基址为 `https://api.factory.ai`。初始 Key 与模型列表为空、渠道手动停用，多 Key 号池开启并使用轮询，账号数为零。部署后可在账号会话管理中添加自己的 Factory Key，再配置模型协议与价格并启用渠道。
+
+已有任意 Droid 渠道时不创建额外号池，重复执行保留所有已有渠道与账号配置；同名被其他渠道类型占用时显式失败。补丁不创建模型、价格或 abilities，不导入 Pro 凭据。它仅适用于现有 PostgreSQL 部署数据初始化，不改变数据库结构。账号管理与协议说明见 [Droid 文档](../docs/channel/droid.md)。
 
 ## 启动时同步上游目录
 
