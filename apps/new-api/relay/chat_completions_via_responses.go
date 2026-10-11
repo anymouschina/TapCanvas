@@ -187,6 +187,7 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 
 	if info.IsStream {
 		usage, neoSparkMartErr := openaichannel.OaiResponsesToChatStreamHandler(c, info, httpResp)
+		annotateAdaptorResponseError(adaptor, httpResp, neoSparkMartErr)
 		if neoSparkMartErr != nil {
 			upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
 				UpstreamURL:         upstreamURL,
@@ -200,6 +201,7 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	}
 
 	usage, neoSparkMartErr := openaichannel.OaiResponsesToChatHandler(c, info, httpResp)
+	annotateAdaptorResponseError(adaptor, httpResp, neoSparkMartErr)
 	if neoSparkMartErr != nil {
 		responseBody := ""
 		if responseRecorder != nil {

@@ -72,9 +72,9 @@ const (
 	ContextKeyLanguage ContextKey = "language"
 	ContextKeyIsStream ContextKey = "is_stream"
 
-	// ContextKeyRetryTriedKeys stores the per-request set of (channelId -> keyIndex -> tried)
+	// ContextKeyRetryTriedKeys stores the per-request set of (channelId -> credential SHA-256 identity -> tried)
 	// account/key combinations already attempted during retry. It lets multi-key channels
 	// rotate to a sibling account (key) within the same request instead of failing outright
-	// when one account is disabled mid-flight. Value type: map[int]map[int]bool.
+	// when one account is disabled mid-flight. Value type: map[int]map[model.ChannelKeyIdentity]bool.
 	ContextKeyRetryTriedKeys ContextKey = "retry_tried_keys"
 )

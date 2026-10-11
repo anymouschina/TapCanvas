@@ -27,7 +27,7 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 
 	var success bool
 	if channelError.KeyIndex != nil {
-		success = model.UpdateChannelStatusByKeyIndex(channelError.ChannelId, *channelError.KeyIndex, common.ChannelStatusAutoDisabled, reason)
+		success = model.UpdateChannelStatusWithKeyIndex(channelError.ChannelId, channelError.UsingKey, *channelError.KeyIndex, common.ChannelStatusAutoDisabled, reason)
 	} else {
 		success = model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
 	}

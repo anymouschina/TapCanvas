@@ -34,6 +34,8 @@ import {
   CLAUDE_CHANNEL_TYPE,
   GEMINI_CHANNEL_TYPE,
   AI_STUDIO_TO_API_CHANNEL_TYPE,
+  DROID_CHANNEL_TYPE,
+  DROID_FACTORY_BASE_URL,
   LLUBAN_CHANNEL_TYPE,
   LLUBAN_PROVIDER_URL,
 } from '../../../../constants';
@@ -72,6 +74,8 @@ import CodexOAuthModal from './CodexOAuthModal';
 import ClaudeOAuthModal from './ClaudeOAuthModal';
 import GeminiOAuthModal from './GeminiOAuthModal';
 import AIStudioAccountModal from './AIStudioAccountModal';
+import ApiKeyImportModal from './ApiKeyImportModal';
+import { normalizeApiKeyLines } from '../utils/apiKeyImport';
 import ParamOverrideEditorModal from './ParamOverrideEditorModal';
 import JSONEditor from '../../../common/ui/JSONEditor';
 import SecureVerificationModal from '../../../common/modals/SecureVerificationModal';
@@ -220,6 +224,8 @@ function type2secretPrompt(type) {
       return '请输入 JSON 格式的 Kiro 凭据（包含 refreshToken / clientId / clientSecret，可选 region）；多账号每行一个';
     case AI_STUDIO_TO_API_CHANNEL_TYPE:
       return '请输入 aistudio-to-api Runtime 的 OpenAI 兼容 API Key；Google storageState 请在渠道保存后通过账号池导入';
+    case DROID_CHANNEL_TYPE:
+      return '请输入 Factory API Key，每行一条；API Key 不需要 OAuth 刷新';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -296,6 +302,7 @@ const EditChannelModal = (props) => {
     upstream_model_update_last_detected_models: [],
     upstream_model_update_ignored_models: '',
   };
+  const [apiKeyImportVisible, setApiKeyImportVisible] = useState(false);
   const [batch, setBatch] = useState(false);
   const [multiToSingle, setMultiToSingle] = useState(false);
   const [multiKeyMode, setMultiKeyMode] = useState('random');
@@ -733,6 +740,22 @@ const EditChannelModal = (props) => {
           formApiRef.current.setValue('vertex_files', []);
         }
         setInputs((prev) => ({ ...prev, vertex_files: [] }));
+      }
+      if (!isEdit && value === DROID_CHANNEL_TYPE) {
+        setBatch(true);
+        setMultiToSingle(true);
+        setMultiKeyMode('polling');
+        const defaults = {
+          base_url: DROID_FACTORY_BASE_URL,
+          multi_key_mode: 'polling',
+          default_protocol: '',
+          default_protocol_options: {},
+          model_protocols: {},
+        };
+        Object.entries(defaults).forEach(([field, fieldValue]) =>
+          formApiRef.current?.setValue(field, fieldValue),
+        );
+        setInputs((previous) => ({ ...previous, ...defaults }));
       }
       if (value === AI_STUDIO_TO_API_CHANNEL_TYPE) {
         formApiRef.current?.setValue('default_protocol', 'openai');
@@ -1917,6 +1940,10 @@ const EditChannelModal = (props) => {
       }
     }
 
+    if (localInputs.type === DROID_CHANNEL_TYPE && localInputs.key) {
+      localInputs.key = normalizeApiKeyLines(localInputs.key).join('\n');
+    }
+
     // 如果是编辑模式且 key 为空字符串，避免提交空值覆盖旧密钥
     if (isEdit && (!localInputs.key || localInputs.key.trim() === '')) {
       delete localInputs.key;
@@ -2625,8 +2652,8 @@ const EditChannelModal = (props) => {
               loading={loading}
               disabled={Boolean(
                 channelLoadError ||
-                protocolCatalogError ||
-                protocolCatalogLoading,
+                  protocolCatalogError ||
+                  protocolCatalogLoading,
               )}
             >
               {t('提交')}
@@ -4110,6 +4137,27 @@ const EditChannelModal = (props) => {
                         </>
                       )}
 
+                      {inputs.type === DROID_CHANNEL_TYPE && (
+                        <Banner
+                          className='droid-channel-credentials-info mt-2'
+                          type='info'
+                          closeIcon={null}
+                          description={t(
+                            'Factory API Key 每行一条，API Key 不需要 OAuth 刷新。请选择与上游模型对应的 Droid 接口协议；新建渠道默认聚合为轮询号池。',
+                          )}
+                        />
+                      )}
+                      {inputs.type === DROID_CHANNEL_TYPE &&
+                        isEdit &&
+                        isMultiKeyChannel && (
+                          <Button
+                            className='droid-channel-append-key mt-2'
+                            theme='borderless'
+                            onClick={() => setApiKeyImportVisible(true)}
+                          >
+                            {t('添加 Droid API Key')}
+                          </Button>
+                        )}
                       {isEdit && isMultiKeyChannel && (
                         <Form.Select
                           field='key_mode'
@@ -4946,6 +4994,22 @@ const EditChannelModal = (props) => {
           onVisibleChange={(visible) => setIsModalOpenurl(visible)}
         />
       </SideSheet>
+      {apiKeyImportVisible && (
+        <ApiKeyImportModal
+          className='droid-channel-api-key-import'
+          channel={{
+            id: Number(channelId),
+            name: inputs.name,
+            type: inputs.type,
+            channel_info: { is_multi_key: isMultiKeyChannel },
+          }}
+          onCancel={() => setApiKeyImportVisible(false)}
+          onSuccess={async () => {
+            setApiKeyImportVisible(false);
+            props.refresh();
+          }}
+        />
+      )}
       <StatusCodeRiskGuardModal
         visible={statusCodeRiskConfirmVisible}
         detailItems={statusCodeRiskDetailItems}

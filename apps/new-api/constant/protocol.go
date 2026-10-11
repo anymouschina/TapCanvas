@@ -76,6 +76,13 @@ const (
 	ProtocolNativeMJ      = "native.midjourney"
 )
 
+const (
+	ProtocolDroidAnthropic = "droid-anthropic"
+	ProtocolDroidResponses = "droid-responses"
+	ProtocolDroidChat      = "droid-chat"
+	ProtocolDroidGemini    = "droid-gemini"
+)
+
 // ProtocolDefinition is the single registry entry used by runtime routing,
 // model management, endpoint publication, and the console. APIType and
 // TaskPlatform are implementation details and are therefore not serialized.
@@ -164,7 +171,27 @@ func nativeProtocol(
 	}
 }
 
+// droidProtocol keeps provider selection explicit in the model binding.
+func droidProtocol(id, name, description string, streamOptions bool, endpoints []EndpointType) ProtocolDefinition {
+	options := []ProtocolOptionDefinition{
+		ProtocolOptionDefinition{Key: "provider", Label: "API Provider", Description: "Explicit X-Api-Provider; protocol defaults are anthropic, openai, fireworks, or google.", Placeholder: "fireworks"},
+		ProtocolOptionDefinition{Key: "user_agent", Label: "Factory User Agent", Description: "Factory client version header; default factory-cli/0.234.0 from the installed official Factory CLI.", Placeholder: "factory-cli/0.234.0"},
+	}
+	options = append(options, ProtocolOptionDefinition{Key: "client_version", Label: "Factory Client Version", Description: "X-Client-Version header; default 0.234.0 from the installed official Factory CLI.", Placeholder: "0.234.0"})
+	if id == ProtocolDroidAnthropic {
+		options = append(options, ProtocolOptionDefinition{Key: "anthropic_version", Label: "Anthropic Version", Description: "Overrides anthropic-version; default 2023-06-01.", Placeholder: "2023-06-01"})
+	}
+	if id == ProtocolDroidAnthropic || id == ProtocolDroidResponses {
+		options = append(options, ProtocolOptionDefinition{Key: "fast", Label: "Fast Mode", Description: "Explicit true enables Anthropic fast-mode beta or OpenAI priority tier. May affect upstream billing.", Placeholder: "false"})
+	}
+	return withProtocolOptions(relayProtocol(id, name, "Factory", description, APITypeOpenAI, streamOptions, endpoints, ChannelTypeDroid), options...)
+}
+
 var protocolDefinitions = []ProtocolDefinition{
+	droidProtocol(ProtocolDroidAnthropic, "Droid Anthropic", "Factory Anthropic Messages API using a Factory Bearer API key.", false, []EndpointType{EndpointTypeAnthropic, EndpointTypeOpenAI}),
+	droidProtocol(ProtocolDroidResponses, "Droid Responses", "Factory OpenAI Responses API, including Chat Completions conversion.", false, []EndpointType{EndpointTypeOpenAIResponse, EndpointTypeOpenAI, EndpointTypeAnthropic}),
+	droidProtocol(ProtocolDroidChat, "Droid Chat", "Factory OpenAI Chat Completions API with explicit upstream provider.", true, []EndpointType{EndpointTypeOpenAI, EndpointTypeAnthropic}),
+	droidProtocol(ProtocolDroidGemini, "Droid Gemini", "Factory Gemini generate API with model in the request body.", false, []EndpointType{EndpointTypeGemini, EndpointTypeOpenAI}),
 	taskProtocol(ProtocolTaskHeyRoute, "HeyRoute Video", "HeyRoute", "JSON video generation, polling and signed video results.", TaskPlatform(ProtocolTaskHeyRoute), ChannelTypeOpenAI),
 	withProtocolOptions(
 		relayProtocol(ProtocolOpenAI, "OpenAI Compatible", "OpenAI", "OpenAI Chat Completions, Responses, Images and Embeddings compatible protocol.", APITypeOpenAI, true,

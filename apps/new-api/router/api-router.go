@@ -236,6 +236,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/:id/codex/accounts", controller.AddCodexChannelCredential)
 			channelRoute.POST("/:id/codex/refresh", controller.RefreshCodexChannelCredential)
 			channelRoute.GET("/:id/codex/usage", controller.GetCodexChannelUsage)
+			channelRoute.GET("/:id/droid/usage", controller.GetDroidChannelUsage)
 			channelRoute.POST("/claude/oauth/start", controller.StartClaudeOAuth)
 			channelRoute.POST("/claude/oauth/complete", controller.CompleteClaudeOAuth)
 			channelRoute.POST("/claude/credentials/normalize", controller.NormalizeClaudeChannelCredentials)

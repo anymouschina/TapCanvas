@@ -191,6 +191,8 @@ docker-compose exec api dreamina version
 
 ## AI 对话架构（当前）
 
+- Droid / Factory 号池统一接入 `apps/new-api`（渠道 type `77`），模型仍取动态目录，协议由渠道显式 binding 决定。Key 追加去重、额度快照、账号启停与同池重试均由网关负责，Hono 与 agents 不维护平行账号池、不猜测模型协议、不自动换模型。上游真实额度拒绝与本地余额不足分别处理，已输出响应或取消的请求不重放；账号管理与部署边界见 [Droid 号池说明](../new-api/docs/channel/droid.md)。
+
 - 运行时上下文测量只投影实际提供且通过共享数值 schema 的 `upstreamRequestContextMetrics`；原始正文、推理文本与工具参数不会进入该测量摘要。缺失数据保持缺失，格式非法保留 `invalid_request_context_metrics` 诊断，不制造测量值或阻断已完成产物。
 
 - 一键成片的源码与发布文件同步到 v135：冻结章节来源、章级脚本与逐对象资产注册表；逐 Clip 时间轴、镜头、资产准备和媒体提交采用同一持久执行链。节点、item、物理尝试和供应商回执以真实身份对账，存储采用内容块与增量 checkpoint，数据库提交不确定时保留观察记录并核对同一尝试，禁止直接重复付费生成。执行终态保留所有已产出节点、资产与历史尝试，不再自动剥离 fan-out 输出。源码同步未执行数据库迁移、服务发布或真实媒体生成。

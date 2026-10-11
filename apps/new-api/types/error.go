@@ -92,16 +92,18 @@ const (
 )
 
 type NewAPIError struct {
-	Err            error
-	RelayError     any
-	skipRetry      bool
-	recordErrorLog *bool
-	errorType      ErrorType
-	errorCode      ErrorCode
-	StatusCode     int
-	Metadata       json.RawMessage
-	retryAtUnix    int64
-	retryAtSource  string
+	UpstreamStatusCode   int
+	UpstreamResponseBody string
+	Err                  error
+	RelayError           any
+	skipRetry            bool
+	recordErrorLog       *bool
+	errorType            ErrorType
+	errorCode            ErrorCode
+	StatusCode           int
+	Metadata             json.RawMessage
+	retryAtUnix          int64
+	retryAtSource        string
 }
 
 // Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.

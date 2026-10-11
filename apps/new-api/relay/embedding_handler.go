@@ -42,7 +42,7 @@ func EmbeddingHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
-	adaptor := GetAdaptor(info.ApiType)
+	adaptor := GetAdaptor(info.ApiType, info.ProtocolID)
 	if adaptor == nil {
 		errorMessage := fmt.Sprintf("invalid api type: %d", info.ApiType)
 		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{ErrorMessage: errorMessage})

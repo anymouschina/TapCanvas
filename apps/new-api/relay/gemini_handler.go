@@ -89,7 +89,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 		}
 	}
 
-	adaptor := GetAdaptor(info.ApiType)
+	adaptor := GetAdaptor(info.ApiType, info.ProtocolID)
 	if adaptor == nil {
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
@@ -243,7 +243,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (NewAPI
 
 	req.SetModelName("models/" + info.UpstreamModelName)
 
-	adaptor := GetAdaptor(info.ApiType)
+	adaptor := GetAdaptor(info.ApiType, info.ProtocolID)
 	if adaptor == nil {
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}

@@ -1,0 +1,124 @@
+.droid-quota-summary {
+  width: 370px;
+  max-width: 100%;
+  font-size: 12px;
+}
+
+.droid-quota-matrix {
+  display: grid;
+  grid-template-columns: 70px repeat(3, minmax(0, 1fr));
+  gap: 6px 12px;
+  align-items: center;
+}
+
+.droid-quota-heading,
+.droid-quota-scope {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.droid-quota-heading:not(:first-child) {
+  text-align: center;
+}
+
+.droid-quota-window {
+  min-width: 0;
+  text-align: center;
+}
+
+.droid-quota-caption {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 12px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--semi-color-text-0);
+}
+
+.droid-quota-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--semi-color-fill-1);
+}
+
+.droid-quota-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--semi-color-text-0);
+}
+
+.droid-quota-window--unknown .droid-quota-track,
+.droid-quota-window--expired .droid-quota-track {
+  background: var(--semi-color-fill-1);
+}
+
+.droid-quota-window--unknown .droid-quota-caption,
+.droid-quota-window--expired .droid-quota-caption {
+  color: var(--semi-color-text-2);
+}
+
+.droid-quota-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 7px;
+  white-space: nowrap;
+}
+
+.droid-quota-plan {
+  flex: 1;
+  min-width: 0;
+  max-width: 155px;
+}
+
+.droid-quota-stale {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.droid-account-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 24px;
+  padding-top: 6px;
+}
+
+.droid-account-section {
+  min-width: 0;
+}
+
+.droid-account-section--wide {
+  grid-column: 1 / -1;
+}
+
+.droid-account-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.droid-account-detail-value {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.droid-account-window-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+  margin-top: 10px;
+}
+
+@media (max-width: 640px) {
+  .droid-account-details,
+  .droid-account-window-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

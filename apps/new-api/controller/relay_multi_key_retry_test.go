@@ -19,6 +19,7 @@ func TestShouldSwitchAccountWithinForcedChannel(t *testing.T) {
 		http.StatusPaymentRequired,
 	)
 
+	err.UpstreamStatusCode = http.StatusPaymentRequired
 	if !shouldSwitchAccount(ctx, err) {
 		t.Fatal("a forced channel must still rotate to an untried sibling account")
 	}

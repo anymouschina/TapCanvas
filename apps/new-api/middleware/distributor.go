@@ -42,6 +42,7 @@ func normalizeRequestedModelName(modelName string) (original string, routing str
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var channel *model.Channel
+		var reschedule *service.RetryParam
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
@@ -195,20 +196,34 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 		}
+		if _, pinned := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId); !pinned && channel != nil {
+			reschedule = &service.RetryParam{Ctx: c, ModelName: routingModel, TokenGroup: common.GetContextKeyString(c, constant.ContextKeyUsingGroup), Retry: common.GetPointer(0)}
+		}
+
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		originalModel := requestedModel
 		if originalModel == "" {
 			originalModel = routingModel
 		}
-		if setupErr := SetupContextForSelectedChannel(c, channel, originalModel); setupErr != nil {
+		setupErr := SetupContextForSelectedChannel(c, channel, originalModel)
+		for reschedule != nil && ChannelSetupFallsThrough(c, setupErr) {
+			reschedule.ExcludeChannelIds = append(reschedule.ExcludeChannelIds, channel.Id)
+			next, _, selectErr := service.CacheGetRandomSatisfiedChannel(reschedule)
+			if selectErr != nil || next == nil {
+				break
+			}
+			channel = next
+			setupErr = SetupContextForSelectedChannel(c, channel, originalModel)
+		}
+		if setupErr != nil {
 			displayModel := requestedModel
 			if displayModel == "" {
 				displayModel = routingModel
 			}
 			abortWithOpenAiMessage(
 				c,
-				http.StatusServiceUnavailable,
-				fmt.Sprintf("模型 %s 的渠道协议配置无效: %s", displayModel, setupErr.Error()),
+				setupErr.StatusCode,
+				fmt.Sprintf("模型 %s 的渠道初始化失败: %s", displayModel, setupErr.Error()),
 				setupErr.GetErrorCode(),
 			)
 			return
@@ -473,9 +488,11 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	// re-picking the account that just failed. Pull this channel's tried-key set, if any.
 	var excludeKeyIdx map[int]bool
 	if raw, ok := common.GetContextKey(c, constant.ContextKeyRetryTriedKeys); ok {
-		if triedKeys, ok := raw.(map[int]map[int]bool); ok {
-			excludeKeyIdx = triedKeys[channel.Id]
+		triedKeys, valid := raw.(map[int]map[model.ChannelKeyIdentity]bool)
+		if !valid {
+			return types.NewError(errors.New("retry credential identities have an invalid structure"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 		}
+		excludeKeyIdx = channel.TriedKeyIndices(triedKeys[channel.Id])
 	}
 
 	preferredKeyIndex := -1
@@ -486,7 +503,27 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 			preferredKeyIndex = cachedIndex
 		}
 	}
-	key, index, NewAPIError := channel.GetNextEnabledKeyWithPreference(excludeKeyIdx, preferredKeyIndex)
+	var key string
+	var index int
+	var NewAPIError *types.NewAPIError
+	if spent, scope, until := service.DroidSpentKeys(channel, resolvedProtocol.Binding.Protocol, time.Now().Unix()); len(spent) > 0 {
+		// Accounts whose Factory quota for this scope is spent sit out until the window resets.
+		skip := make(map[int]bool, len(excludeKeyIdx)+len(spent))
+		for idx := range excludeKeyIdx {
+			skip[idx] = true
+		}
+		for idx := range spent {
+			skip[idx] = true
+		}
+		key, index, NewAPIError = channel.GetNextEnabledKeyWithPreference(skip, preferredKeyIndex)
+		if NewAPIError != nil && NewAPIError.GetErrorCode() == types.ErrorCodeChannelNoAvailableKey {
+			NewAPIError = types.NewErrorWithStatusCode(
+				fmt.Errorf("本次无可用账号；已记录的 Droid %s 额度窗口最早于 %s 重置", scope, time.Unix(until, 0).Format(time.RFC3339)),
+				types.ErrorCodeChannelNoAvailableKey, http.StatusTooManyRequests)
+		}
+	} else {
+		key, index, NewAPIError = channel.GetNextEnabledKeyWithPreference(excludeKeyIdx, preferredKeyIndex)
+	}
 	if NewAPIError != nil {
 		return NewAPIError
 	}
@@ -554,4 +591,16 @@ func extractModelNameFromGeminiPath(path string) string {
 
 	// 返回模型名部分
 	return path[startIndex : startIndex+colonIndex]
+}
+
+// ChannelSetupFallsThrough reports whether a selected channel that has no
+// schedulable account for this request (all disabled or tried, or every Droid
+// account spent in the request's quota scope) yields to the next channel by
+// priority. A channel the caller pinned never yields.
+func ChannelSetupFallsThrough(c *gin.Context, err *types.NewAPIError) bool {
+	if err == nil || err.GetErrorCode() != types.ErrorCodeChannelNoAvailableKey {
+		return false
+	}
+	_, pinned := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
+	return !pinned
 }
