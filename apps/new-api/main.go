@@ -113,6 +113,8 @@ func main() {
 	service.StartCodexCredentialAutoRefreshTask()
 	// Codex account usage guard: persist quota windows, cool accounts below 5%, and restore after reset.
 	service.StartCodexUsageLifecycleTask()
+	// Factory quota metadata is refreshed without submitting generation requests.
+	service.StartDroidUsageLifecycleTask()
 	// Claude (Anthropic) OAuth credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartClaudeCredentialAutoRefreshTask()
 	// Gemini OAuth credential auto-refresh check every 10 minutes, refresh when expires within 15 minutes

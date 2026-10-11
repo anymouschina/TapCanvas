@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/coze"
 	"github.com/QuantumNous/new-api/relay/channel/deepseek"
 	"github.com/QuantumNous/new-api/relay/channel/dify"
+	"github.com/QuantumNous/new-api/relay/channel/droid"
 	"github.com/QuantumNous/new-api/relay/channel/evolink"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/jimeng"
@@ -70,7 +71,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func GetAdaptor(apiType int) channel.Adaptor {
+func GetAdaptor(apiType int, protocolID string) channel.Adaptor {
+	switch protocolID {
+	case constant.ProtocolDroidAnthropic, constant.ProtocolDroidResponses, constant.ProtocolDroidChat, constant.ProtocolDroidGemini:
+		return droid.NewAdaptor(protocolID)
+	}
 	switch apiType {
 	case constant.APITypeAli:
 		return &ali.Adaptor{}

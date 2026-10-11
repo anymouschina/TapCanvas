@@ -108,7 +108,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
-	adaptor := GetAdaptor(info.ApiType)
+	adaptor := GetAdaptor(info.ApiType, info.ProtocolID)
 	if adaptor == nil {
 		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
 			ErrorMessage: fmt.Sprintf("invalid api type: %d", info.ApiType),

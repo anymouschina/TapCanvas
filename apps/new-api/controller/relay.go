@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -89,18 +90,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if NewAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", NewAPIError.Error()))
-			NewAPIError.SetMessage(common.MessageWithRequestId(NewAPIError.Error(), requestId))
+			presented := accountQuotaErrorPresentation(common.GetContextKeyInt(c, constant.ContextKeyChannelType), "", NewAPIError)
+			presented = relayErrorWithMessage(presented, common.MessageWithRequestId(presented.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
-				helper.WssError(c, ws, NewAPIError.ToOpenAIError())
+				helper.WssError(c, ws, presented.ToOpenAIError())
 			case types.RelayFormatClaude:
-				c.JSON(NewAPIError.StatusCode, gin.H{
+				c.JSON(presented.StatusCode, gin.H{
 					"type":  "error",
-					"error": NewAPIError.ToClaudeError(),
+					"error": presented.ToClaudeError(),
 				})
 			default:
-				c.JSON(NewAPIError.StatusCode, gin.H{
-					"error": NewAPIError.ToOpenAIError(),
+				c.JSON(presented.StatusCode, gin.H{
+					"error": presented.ToOpenAIError(),
 				})
 			}
 		}
@@ -198,12 +200,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.RetryIndex = 0
 		relayInfo.LastError = nil
 
-		// triedKeysByChannel records which (channelId -> keyIndex) accounts were already
+		// triedKeysByChannel records which (channelId -> credential identity) accounts were already
 		// attempted this request. A multi-key channel stays eligible (not excluded) until
 		// all its accounts are exhausted, so a single disabled account never breaks the
 		// request — we rotate to a sibling account and resend. These account switches do
 		// not consume the cross-channel RetryTimes budget; only channel-level fallback does.
-		triedKeysByChannel := make(map[int]map[int]bool)
+		triedKeysByChannel := make(map[int]map[model.ChannelKeyIdentity]bool)
 		// crossChannelRetry counts only channel-level retries (the RetryTimes budget).
 		crossChannelRetry := 0
 		// oauthRefreshTried[channelId] 记录本请求已为该 claude OAuth 渠道刷新过几次凭证，
@@ -219,10 +221,23 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			var channel *model.Channel
 			var channelErr *types.NewAPIError
 			if retryWithinChannel != nil {
-				channel = retryWithinChannel
+				retryID := retryWithinChannel.Id
 				retryWithinChannel = nil
-				channelErr = middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName)
+				fresh, loadErr := model.GetChannelById(retryID, true)
+				if loadErr != nil || fresh == nil {
+					channelErr = types.NewError(fmt.Errorf("reload account pool #%d before retry: %v", retryID, loadErr), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+				} else {
+					channel = fresh
+					channelErr = middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName)
+				}
 			} else {
+				channel, channelErr = getChannel(c, relayInfo, retryParam)
+			}
+			if channel != nil && middleware.ChannelSetupFallsThrough(c, channelErr) && shouldRetry(c, relayInfo.LastError, common.RetryTimes-crossChannelRetry) {
+				triedChannelIds = appendUniqueInt(triedChannelIds, channel.Id)
+				crossChannelRetry++
+				retryParam.SetRetry(crossChannelRetry)
+				retryParam.ExcludeChannelIds = triedChannelIds
 				channel, channelErr = getChannel(c, relayInfo, retryParam)
 			}
 			if channelErr != nil {
@@ -237,6 +252,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				break
 			}
 
+			freshChannel, credentialErr := validateSelectedCredential(c, channel)
+			if credentialErr != nil {
+				NewAPIError = credentialErr
+				relayInfo.LastError = credentialErr
+				break
+			}
+			channel = freshChannel
+
 			addUsedChannel(c, channel.Id)
 			// Record the (channel, key) account about to be used so a retry skips it.
 			usedKeyIndex := 0
@@ -244,9 +267,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				usedKeyIndex = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 			}
 			if triedKeysByChannel[channel.Id] == nil {
-				triedKeysByChannel[channel.Id] = make(map[int]bool)
+				triedKeysByChannel[channel.Id] = make(map[model.ChannelKeyIdentity]bool)
 			}
-			triedKeysByChannel[channel.Id][usedKeyIndex] = true
+			triedKeysByChannel[channel.Id][model.IdentifyChannelKey(common.GetContextKeyString(c, constant.ContextKeyChannelKey))] = true
 			bodyStorage, bodyErr := common.GetBodyStorage(c)
 			if bodyErr != nil {
 				// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
@@ -280,8 +303,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 						NewAPIError = capErr
 						relayInfo.LastError = capErr
 						// 优先换同渠道其他未试账号(getChannel 下轮读 tried keys 自动跳过本账号)。
-						if channelHasUntriedKey(channel, triedKeysByChannel[channel.Id]) {
+						if channel.ChannelInfo.IsMultiKey {
 							logger.LogInfo(c, fmt.Sprintf("渠道 #%d 账号 #%d 并发已满，切换同渠道其他账号（不计入重试次数）", channel.Id, usedKeyIndex))
+							retryWithinChannel = channel
 							continue
 						}
 						// 本渠道账号全满:排除本渠道,花一次跨渠道重试预算另寻渠道;耗尽则退出。
@@ -343,7 +367,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				service.RefreshCodexUsageAfterLimit(channel.Id)
 			}
 
-			if c.Writer.Written() {
+			if channel.Type == constant.ChannelTypeDroid && channel.ChannelInfo.IsMultiKey && service.IsUpstreamAccountQuotaRejection(NewAPIError) {
+				service.RefreshDroidUsageAfterLimit(channel.Id)
+			}
+
+			if c.Writer.Written() || c.Request.Context().Err() != nil || types.IsSkipRetryError(NewAPIError) {
 				break
 			}
 
@@ -356,7 +384,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				service.IsClaudeOAuthKey(common.GetContextKeyString(c, constant.ContextKeyChannelKey)) {
 				oauthRefreshTried[channel.Id]++
 				if _, _, rErr := service.RefreshClaudeChannelCredential(c.Request.Context(), channel.Id, service.ClaudeCredentialRefreshOptions{ResetCaches: true}); rErr == nil {
-					delete(triedKeysByChannel[channel.Id], usedKeyIndex) // 允许用刷新后的 token 重选同账号
+					delete(triedKeysByChannel[channel.Id], model.IdentifyChannelKey(common.GetContextKeyString(c, constant.ContextKeyChannelKey))) // 允许用刷新后的 token 重选同账号
 					logger.LogInfo(c, fmt.Sprintf("渠道 #%d Claude OAuth 401，已刷新凭证并重试同账号（不计入重试次数）", channel.Id))
 					continue
 				} else {
@@ -370,7 +398,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				service.IsGeminiOAuthKey(common.GetContextKeyString(c, constant.ContextKeyChannelKey)) {
 				oauthRefreshTried[channel.Id]++
 				if _, _, rErr := service.RefreshGeminiChannelKeyCredential(c.Request.Context(), channel.Id, usedKeyIndex, service.GeminiCredentialRefreshOptions{ResetCaches: true}); rErr == nil {
-					delete(triedKeysByChannel[channel.Id], usedKeyIndex)
+					delete(triedKeysByChannel[channel.Id], model.IdentifyChannelKey(common.GetContextKeyString(c, constant.ContextKeyChannelKey)))
 					logger.LogInfo(c, fmt.Sprintf("渠道 #%d Gemini OAuth 401，已刷新凭证并重试同账号（不计入重试次数）", channel.Id))
 					continue
 				} else {
@@ -384,7 +412,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			// Prefer rotating to a sibling account within the SAME multi-key channel before
 			// falling back to another channel. This keeps the request alive when one Claude
 			// account is disabled mid-flight, without consuming the cross-channel retry budget.
-			if channelHasUntriedKey(channel, triedKeysByChannel[channel.Id]) &&
+			if channel.ChannelInfo.IsMultiKey &&
 				shouldSwitchAccount(c, NewAPIError) {
 				logger.LogInfo(c, fmt.Sprintf("渠道 #%d 当前账号失败，切换同渠道其他未尝试账号重发（不计入跨渠道重试次数）", channel.Id))
 				retryWithinChannel = channel
@@ -475,34 +503,44 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
 	if info.ChannelMeta == nil {
-		autoBan := c.GetBool("auto_ban")
-		autoBanInt := 1
-		if !autoBan {
-			autoBanInt = 0
+		// Distribution already selected the first account. Load its complete
+		// channel without selecting a second key: sibling rotation and receipt
+		// identity need the pool metadata before the first upstream dispatch.
+		channelID := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		channel, err := model.CacheGetChannel(channelID)
+		if err != nil || channel == nil {
+			return nil, types.NewError(fmt.Errorf("读取已选择渠道 #%d 失败: %v", channelID, err), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 		}
-		return &model.Channel{
-			Id:      c.GetInt("channel_id"),
-			Type:    c.GetInt("channel_type"),
-			Name:    c.GetString("channel_name"),
-			AutoBan: &autoBanInt,
-		}, nil
+		return channel, nil
 	}
-	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
+	// A channel with no schedulable account for this request yields to the
+	// next one; its error stands when no other channel remains.
+	var passedOver *types.NewAPIError
+	for {
+		channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 
-	if err != nil {
-		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
-	}
-	if channel == nil {
-		return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
-	}
+		if (err != nil || channel == nil) && passedOver != nil {
+			return nil, passedOver
+		}
+		if err != nil {
+			return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
+		if channel == nil {
+			return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
 
-	NewAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
-	if NewAPIError != nil {
-		return nil, NewAPIError
+		NewAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
+		if NewAPIError == nil {
+			return channel, nil
+		}
+		if !middleware.ChannelSetupFallsThrough(c, NewAPIError) {
+			return nil, NewAPIError
+		}
+		passedOver = NewAPIError
+		retryParam.ExcludeChannelIds = appendUniqueInt(slices.Clone(retryParam.ExcludeChannelIds), channel.Id)
 	}
-	return channel, nil
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
@@ -542,50 +580,31 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
-// channelHasUntriedKey reports whether a multi-key channel still has at least one enabled
-// account (key) that has not been tried this request. tried is the set of key indices already
-// attempted for this channel. The just-failed account is in tried, so even though its status
-// may not be marked disabled yet (auto-disable is async), it is correctly excluded here.
-func channelHasUntriedKey(channel *model.Channel, tried map[int]bool) bool {
-	if channel == nil || !channel.ChannelInfo.IsMultiKey {
-		return false
-	}
-	keys := channel.GetKeys()
-	statusList := channel.ChannelInfo.MultiKeyStatusList
-	for i := range keys {
-		status := common.ChannelStatusEnabled
-		if statusList != nil {
-			if s, ok := statusList[i]; ok {
-				status = s
-			}
-		}
-		if status == common.ChannelStatusEnabled && !tried[i] {
-			return true
-		}
-	}
-	return false
-}
-
 // shouldSwitchAccount reports whether the error means the current account/key is the problem
 // (disabled, auth-rejected, rate-limited, or a transient upstream failure) such that retrying
 // the same request with a sibling account is worthwhile. A forced channel still permits
 // sibling-account rotation; it only forbids leaving that channel. Skip-retry errors never rotate.
-func shouldSwitchAccount(c *gin.Context, err *types.NewAPIError) bool {
+func shouldSwitchAccount(_ *gin.Context, err *types.NewAPIError) bool {
 	if err == nil || types.IsSkipRetryError(err) {
 		return false
 	}
-	// A forced channel forbids cross-channel fallback, but it must not forbid rotating
-	// between accounts inside that same channel. triedKeysByChannel guarantees that each
-	// account is attempted at most once, so exhausting every enabled sibling cannot loop.
-	// ShouldDisableChannel catches bad-account errors (401/403/429/keyword) that
-	// shouldRetry's status-code list may not; shouldRetry catches transient 5xx/timeouts.
-	if service.ShouldDisableChannel(err) {
+	if isUpstreamAccountRejection(err) {
 		return true
 	}
-	if _, forced := c.Get("specific_channel_id"); forced {
-		return operation_setting.ShouldRetryByStatusCode(err.StatusCode)
+	if operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode()) {
+		return false
 	}
-	return shouldRetry(c, err, 1)
+	status := err.UpstreamStatusCode
+	if status == 0 {
+		if isAccountRejectionStatus(err.StatusCode) {
+			return false
+		}
+		status = err.StatusCode
+	}
+	if status >= http.StatusOK && status < http.StatusMultipleChoices {
+		return false
+	}
+	return types.IsChannelError(err) || operation_setting.ShouldRetryByStatusCode(status)
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, recordErrorLog bool) {
@@ -601,7 +620,8 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	isGeminiOAuthAuthError := err.StatusCode == 401 &&
 		channelError.ChannelType == constant.ChannelTypeGemini &&
 		service.IsGeminiOAuthKey(channelError.UsingKey)
-	if !isClaudeOAuthAuthError && !isGeminiOAuthAuthError && service.ShouldDisableChannel(err) && channelError.AutoBan {
+	isDroidQuotaError := channelError.ChannelType == constant.ChannelTypeDroid && service.IsUpstreamAccountQuotaRejection(err)
+	if !isClaudeOAuthAuthError && !isGeminiOAuthAuthError && !isDroidQuotaError && service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})
@@ -630,6 +650,8 @@ func recordFinalRelayErrorLog(c *gin.Context, err *types.NewAPIError) {
 	other["error_type"] = err.GetErrorType()
 	other["error_code"] = err.GetErrorCode()
 	other["status_code"] = err.StatusCode
+	other["upstream_status_code"] = err.UpstreamStatusCode
+	other["upstream_response_body"] = err.UpstreamResponseBody
 	if retryAt, retrySource, ok := err.GetRetryAt(); ok {
 		other["upstream_retry_at"] = retryAt
 		other["upstream_retry_source"] = retrySource

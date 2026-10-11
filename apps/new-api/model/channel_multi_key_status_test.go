@@ -25,7 +25,7 @@ func TestHandlerMultiKeyUpdateWithIndexDoesNotFallbackToFirstKey(t *testing.T) {
 	}
 
 	invalidIndex := 99
-	if updated := handlerMultiKeyUpdateWithIndex(channel, "account-a", &invalidIndex, common.ChannelStatusAutoDisabled, "stale index"); updated {
+	if updated := handlerMultiKeyUpdateWithIndex(channel, "", &invalidIndex, common.ChannelStatusAutoDisabled, "stale index"); updated {
 		t.Fatal("expected an invalid explicit index to leave channel state unchanged")
 	}
 	if len(channel.ChannelInfo.MultiKeyStatusList) != 0 {
@@ -33,7 +33,7 @@ func TestHandlerMultiKeyUpdateWithIndexDoesNotFallbackToFirstKey(t *testing.T) {
 	}
 
 	selectedIndex := 1
-	if updated := handlerMultiKeyUpdateWithIndex(channel, "refreshed-account-b", &selectedIndex, common.ChannelStatusAutoDisabled, "account b failed"); !updated {
+	if updated := handlerMultiKeyUpdateWithIndex(channel, "", &selectedIndex, common.ChannelStatusAutoDisabled, "account b failed"); !updated {
 		t.Fatal("expected the explicit account index to be updated")
 	}
 	if got := channel.ChannelInfo.MultiKeyStatusList[selectedIndex]; got != common.ChannelStatusAutoDisabled {

@@ -69,6 +69,7 @@ type ChannelInfo struct {
 	MultiKeySessionAffinity bool                    `json:"multi_key_session_affinity,omitempty"`
 	MultiKeySessionTTL      int                     `json:"multi_key_session_ttl,omitempty"`
 	MultiKeyUsage           map[int]ChannelKeyUsage `json:"multi_key_usage,omitempty"`
+	MultiKeyEmail           map[int]string          `json:"multi_key_email,omitempty"`
 }
 
 type ChannelKeyUsage struct {
@@ -85,12 +86,53 @@ type ChannelKeyUsage struct {
 	// Antigravity credits are returned by loadCodeAssist. They are deliberately
 	// separate from percentage fields: Google does not guarantee a percentage
 	// representation or even return a numeric balance for every subscription.
-	CreditKnown         bool    `json:"credit_known,omitempty"`
-	CreditAvailable     bool    `json:"credit_available,omitempty"`
-	CreditAmount        float64 `json:"credit_amount,omitempty"`
-	MinimumCreditAmount float64 `json:"minimum_credit_amount,omitempty"`
-	PaidTierID          string  `json:"paid_tier_id,omitempty"`
-	QuotaSource         string  `json:"quota_source,omitempty"`
+	CreditKnown                bool                 `json:"credit_known,omitempty"`
+	CreditAvailable            bool                 `json:"credit_available,omitempty"`
+	CreditAmount               float64              `json:"credit_amount,omitempty"`
+	MinimumCreditAmount        float64              `json:"minimum_credit_amount,omitempty"`
+	PaidTierID                 string               `json:"paid_tier_id,omitempty"`
+	QuotaSource                string               `json:"quota_source,omitempty"`
+	QuotaWindows               []ChannelQuotaWindow `json:"quota_windows,omitempty"`
+	ExtraUsageBalanceCents     *int64               `json:"extra_usage_balance_cents,omitempty"`
+	ExtraUsageAllowed          *bool                `json:"extra_usage_allowed,omitempty"`
+	OveragePreference          string               `json:"overage_preference,omitempty"`
+	UsesTokenRateLimitsBilling *bool                `json:"uses_token_rate_limits_billing,omitempty"`
+	UsageError                 string               `json:"usage_error,omitempty"`
+	UsageCheckedAt             int64                `json:"usage_checked_at,omitempty"`
+	SubscriptionStatus         string               `json:"subscription_status,omitempty"`
+	BillingPeriodStartAt       *int64               `json:"billing_period_start_at,omitempty"`
+	BillingPeriodEndAt         *int64               `json:"billing_period_end_at,omitempty"`
+	SubscriptionEndAt          *int64               `json:"subscription_end_at"`
+	SubscriptionEndKnown       bool                 `json:"subscription_end_known"`
+	TrialEndAt                 *int64               `json:"trial_end_at,omitempty"`
+	QuotaTotals                []ChannelQuotaTotal  `json:"quota_totals,omitempty"`
+	QuotaTotalsSource          string               `json:"quota_totals_source,omitempty"`
+	QuotaTotalsStartAt         *int64               `json:"quota_totals_start_at,omitempty"`
+	QuotaTotalsEndAt           *int64               `json:"quota_totals_end_at,omitempty"`
+	QuotaWindowsCheckedAt      int64                `json:"quota_windows_checked_at,omitempty"`
+	QuotaTotalsCheckedAt       int64                `json:"quota_totals_checked_at,omitempty"`
+	SubscriptionCheckedAt      int64                `json:"subscription_checked_at,omitempty"`
+	CredentialCheckedAt        int64                `json:"credential_checked_at,omitempty"`
+	CredentialExpiresAt        *int64               `json:"credential_expires_at"`
+	CredentialExpiryKnown      bool                 `json:"credential_expiry_known"`
+	CredentialRevoked          *bool                `json:"credential_revoked,omitempty"`
+}
+
+// Nullable fields distinguish a reported zero from an unavailable measurement.
+type ChannelQuotaWindow struct {
+	Scope       string   `json:"scope"`
+	Window      string   `json:"window"`
+	UsedPercent *float64 `json:"used_percent"`
+	ResetAt     *int64   `json:"reset_at"`
+}
+
+type ChannelQuotaTotal struct {
+	Scope           string   `json:"scope"`
+	UserTokens      *float64 `json:"user_tokens"`
+	OrgUsedTokens   *float64 `json:"org_used_tokens"`
+	TotalAllowance  *float64 `json:"total_allowance"`
+	OrgOverageUsed  *float64 `json:"org_overage_used"`
+	OrgOverageLimit *float64 `json:"org_overage_limit"`
 }
 
 // Value implements driver.Valuer interface
@@ -145,16 +187,17 @@ func (channel *Channel) GetNextEnabledKeyWithPreference(excludeIdx map[int]bool,
 		return channel.Key, 0, nil
 	}
 
-	// Obtain all keys (split by \n)
+	lock := GetChannelPollingLock(channel.Id)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Obtain all keys (split by \n), including lazy cache initialization,
+	// under the same lock used by account status changes.
 	keys := channel.GetKeys()
 	if len(keys) == 0 {
 		// No keys available, return error, should disable the channel
 		return "", 0, types.NewError(errors.New("no keys available"), types.ErrorCodeChannelNoAvailableKey)
 	}
-
-	lock := GetChannelPollingLock(channel.Id)
-	lock.Lock()
-	defer lock.Unlock()
 
 	statusList := channel.ChannelInfo.MultiKeyStatusList
 	// helper to get key status, default to enabled when missing
@@ -625,18 +668,22 @@ func handlerMultiKeyUpdateWithIndex(channel *Channel, usingKey string, keyIndex 
 		return true
 	} else {
 		selectedIndex := -1
-		if keyIndex != nil {
-			if *keyIndex < 0 || *keyIndex >= len(keys) {
-				return false
-			}
-			selectedIndex = *keyIndex
-		} else {
-			for i, key := range keys {
-				if key == usingKey {
-					selectedIndex = i
-					break
+		if usingKey != "" {
+			// The original credential is authoritative even when deletion made
+			// the captured index invalid or shifted it onto a different account.
+			if keyIndex != nil && *keyIndex >= 0 && *keyIndex < len(keys) && keys[*keyIndex] == usingKey {
+				selectedIndex = *keyIndex
+			} else {
+				for index, key := range keys {
+					if key == usingKey {
+						selectedIndex = index
+						break
+					}
 				}
 			}
+		} else if keyIndex != nil && *keyIndex >= 0 && *keyIndex < len(keys) {
+			// Administrative actions address the current index without a receipt.
+			selectedIndex = *keyIndex
 		}
 		if selectedIndex < 0 {
 			return false
@@ -657,12 +704,15 @@ func handlerMultiKeyUpdateWithIndex(channel *Channel, usingKey string, keyIndex 
 			channel.ChannelInfo.MultiKeyDisabledReason[selectedIndex] = reason
 			channel.ChannelInfo.MultiKeyDisabledTime[selectedIndex] = common.GetTimestamp()
 		}
-		if len(channel.ChannelInfo.MultiKeyStatusList) >= channel.ChannelInfo.MultiKeySize {
+		if !channel.hasEnabledMultiKey() && channel.Status != common.ChannelStatusManuallyDisabled {
 			channel.Status = common.ChannelStatusAutoDisabled
 			info := channel.GetOtherInfo()
 			info["status_reason"] = "All keys are disabled"
 			info["status_time"] = common.GetTimestamp()
 			channel.SetOtherInfo(info)
+		}
+		if status == common.ChannelStatusEnabled {
+			channel.RestoreAutoDisabledMultiKey()
 		}
 		return true
 	}
@@ -676,25 +726,33 @@ func UpdateChannelStatusByKeyIndex(channelId int, keyIndex int, status int, reas
 	return updateChannelStatus(channelId, "", &keyIndex, status, reason)
 }
 
-func updateChannelStatus(channelId int, usingKey string, keyIndex *int, status int, reason string) bool {
-	if common.MemoryCacheEnabled {
-		channelStatusLock.Lock()
-		defer channelStatusLock.Unlock()
+// UpdateChannelStatusWithKeyIndex validates an asynchronous receipt against the
+// selected credential before mutating any current account status.
+func UpdateChannelStatusWithKeyIndex(channelId int, usingKey string, keyIndex int, status int, reason string) bool {
+	if usingKey == "" {
+		common.SysError(fmt.Sprintf("discarded channel status receipt without key identity: channel_id=%d, key_index=%d", channelId, keyIndex))
+		return false
+	}
+	return updateChannelStatus(channelId, usingKey, &keyIndex, status, reason)
+}
 
+func updateChannelStatus(channelId int, usingKey string, keyIndex *int, status int, reason string) bool {
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+	pollingLock := GetChannelPollingLock(channelId)
+	pollingLock.Lock()
+	defer pollingLock.Unlock()
+	if common.MemoryCacheEnabled {
 		channelCache, _ := CacheGetChannel(channelId)
 		if channelCache == nil {
 			return false
 		}
 		if channelCache.ChannelInfo.IsMultiKey {
-			// Use per-channel lock to prevent concurrent map read/write with GetNextEnabledKey
-			pollingLock := GetChannelPollingLock(channelId)
-			pollingLock.Lock()
-			// 如果是多Key模式，更新缓存中的状态
+			// The pool edit lock covers both the cached and persisted account set.
 			if !handlerMultiKeyUpdateWithIndex(channelCache, usingKey, keyIndex, status, reason) {
-				pollingLock.Unlock()
+				common.SysLog(fmt.Sprintf("discarded stale channel status receipt: channel_id=%d", channelId))
 				return false
 			}
-			pollingLock.Unlock()
 			//CacheUpdateChannel(channelCache)
 			//return true
 		} else {
@@ -719,20 +777,16 @@ func updateChannelStatus(channelId int, usingKey string, keyIndex *int, status i
 	if err != nil {
 		return false
 	} else {
-		if channel.Status == status {
+		if !channel.ChannelInfo.IsMultiKey && channel.Status == status {
 			return false
 		}
 
 		if channel.ChannelInfo.IsMultiKey {
 			beforeStatus := channel.Status
-			// Protect map writes with the same per-channel lock used by readers
-			pollingLock := GetChannelPollingLock(channelId)
-			pollingLock.Lock()
 			if !handlerMultiKeyUpdateWithIndex(channel, usingKey, keyIndex, status, reason) {
-				pollingLock.Unlock()
+				common.SysLog(fmt.Sprintf("discarded stale channel status receipt: channel_id=%d", channelId))
 				return false
 			}
-			pollingLock.Unlock()
 			if beforeStatus != channel.Status {
 				shouldUpdateAbilities = true
 			}

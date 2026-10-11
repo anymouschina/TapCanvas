@@ -270,7 +270,7 @@ func testChannelWithPrompt(channel *model.Channel, testModel string, endpointTyp
 			NewAPIError: types.NewError(fmt.Errorf("unsupported api type: %d", apiType), types.ErrorCodeInvalidApiType),
 		}
 	}
-	adaptor := relay.GetAdaptor(apiType)
+	adaptor := relay.GetAdaptor(apiType, info.ChannelMeta.ProtocolID)
 	if adaptor == nil {
 		return testResult{
 			context:     c,

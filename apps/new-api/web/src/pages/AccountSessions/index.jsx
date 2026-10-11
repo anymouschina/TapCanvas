@@ -27,8 +27,6 @@ import {
   Space,
   Button,
   Select,
-  Popconfirm,
-  Tooltip,
   Empty,
   Spin,
   Modal,
@@ -36,28 +34,24 @@ import {
   Input,
   TextArea,
   Banner,
-  Progress,
 } from '@douyinfe/semi-ui';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
-import {
-  API,
-  copy,
-  showError,
-  showSuccess,
-  timestamp2string,
-  renderQuota,
-  getLogOther,
-} from '../../helpers';
+import { API, copy, showError, showSuccess } from '../../helpers';
 import CodexOAuthModal from '../../components/table/channels/modals/CodexOAuthModal';
 import GeminiOAuthModal from '../../components/table/channels/modals/GeminiOAuthModal';
 import VertexAccountModal from '../../components/table/channels/modals/VertexAccountModal';
+import ApiKeyImportModal from '../../components/table/channels/modals/ApiKeyImportModal';
+import { accountPageSize, useAccountData } from './useAccountData';
+import { useSessionHistory } from './useSessionHistory';
+import { createAccountSessionColumns } from './account-columns';
 import {
   CODEX_CHANNEL_TYPE,
   GEMINI_CHANNEL_TYPE,
   VERTEX_CHANNEL_TYPE,
+  DROID_CHANNEL_TYPE,
 } from '../../constants/channel.constants';
 
 const { Text, Title } = Typography;
@@ -78,35 +72,6 @@ const getVertexKeyType = (channel) => {
   }
 };
 
-const statusTag = (status, t) => {
-  switch (status) {
-    case 1:
-      return (
-        <Tag color='green' shape='circle' size='small'>
-          {t('已启用')}
-        </Tag>
-      );
-    case 2:
-      return (
-        <Tag color='red' shape='circle' size='small'>
-          {t('手动禁用')}
-        </Tag>
-      );
-    case 3:
-      return (
-        <Tag color='orange' shape='circle' size='small'>
-          {t('自动禁用')}
-        </Tag>
-      );
-    default:
-      return (
-        <Tag color='grey' shape='circle' size='small'>
-          {t('未知')}
-        </Tag>
-      );
-  }
-};
-
 const AccountSessionsPage = () => {
   const { t } = useTranslation();
 
@@ -115,20 +80,35 @@ const AccountSessionsPage = () => {
   const [channelLoading, setChannelLoading] = useState(false);
   const [selectedChannelId, setSelectedChannelId] = useState(null);
 
-  // 账号（key）列表
-  const [accounts, setAccounts] = useState([]);
-  const [accountLoading, setAccountLoading] = useState(false);
+  const {
+    accounts,
+    accountLoading,
+    accountPage,
+    accountTotal,
+    accountStats,
+    accountStatus,
+    setAccountStatus,
+    accountEmail,
+    setAccountEmail,
+    accountError,
+    observedAt,
+    loadAccounts,
+  } = useAccountData(selectedChannelId);
+  const [emailQuery, setEmailQuery] = useState('');
   const [usageRefreshing, setUsageRefreshing] = useState(false);
-  const [accountPage, setAccountPage] = useState(1);
-  const [accountTotal, setAccountTotal] = useState(0);
-  const accountPageSize = 20;
+  const [usageRefreshError, setUsageRefreshError] = useState('');
+  const usageRequests = useRef(new Set());
+  const usageScope = useRef(selectedChannelId);
+  usageScope.current = selectedChannelId;
   const [opLoading, setOpLoading] = useState({});
+  const [apiKeyImportVisible, setApiKeyImportVisible] = useState(false);
 
   // 单账号 chat 可用性测试
   const [chatTestAccount, setChatTestAccount] = useState(null);
   const [chatTestPrompt, setChatTestPrompt] = useState('请只回复：账号可用');
   const [chatTestLoading, setChatTestLoading] = useState(false);
   const [chatTestResult, setChatTestResult] = useState(null);
+  const [chatTestError, setChatTestError] = useState('');
 
   // 添加账号弹窗（贴 JSON）
   const [addVisible, setAddVisible] = useState(false);
@@ -147,9 +127,15 @@ const AccountSessionsPage = () => {
   const [codexFilesLoading, setCodexFilesLoading] = useState(false);
   const codexFilesInputRef = useRef(null);
 
-  // 会话历史
-  const [sessions, setSessions] = useState([]);
-  const [sessionLoading, setSessionLoading] = useState(false);
+  const {
+    sessions,
+    sessionLoading,
+    sessionError,
+    loadSessions,
+    sessionLogCount,
+    sessionLogTotal,
+    hasMoreSessions,
+  } = useSessionHistory(selectedChannelId);
 
   const selectedChannel = useMemo(
     () => channels.find((c) => c.id === selectedChannelId),
@@ -160,95 +146,89 @@ const AccountSessionsPage = () => {
     [selectedChannel],
   );
 
-  // index -> email 映射（供会话历史展示「服务账号」）
-  const indexEmailMap = useMemo(() => {
-    const m = {};
-    accounts.forEach((a) => {
-      m[a.index] = a.email || a.account_id || `#${a.index + 1}`;
-    });
-    return m;
-  }, [accounts]);
-
   // 加载多 key 渠道列表
   const loadChannels = async () => {
     setChannelLoading(true);
     try {
-      const res = await API.get('/api/channel/?p=1&page_size=200&id_sort=true');
-      if (res.data.success) {
-        const items = res.data.data?.items || [];
-        const multiKey = items.filter((c) => c.channel_info?.is_multi_key);
-        setChannels(multiKey);
-        if (multiKey.length > 0 && selectedChannelId == null) {
-          setSelectedChannelId(multiKey[0].id);
-        }
-      } else {
-        showError(res.data.message);
-      }
+      const items = [];
+      let page = 1;
+      let total;
+      do {
+        const res = await API.get('/api/channel/', {
+          params: { p: page, page_size: 100, id_sort: true },
+          skipErrorHandler: true,
+        });
+        if (!res.data?.success)
+          throw new Error(res.data?.message || t('加载渠道失败'));
+        const batch = res.data.data.items || [];
+        total = res.data.data.total;
+        if (
+          !Number.isInteger(total) ||
+          (batch.length === 0 && items.length < total)
+        )
+          throw new Error(t('渠道分页响应不完整'));
+        items.push(...batch);
+        page += 1;
+      } while (items.length < total);
+      const multiKey = items.filter(
+        (channel) => channel.channel_info?.is_multi_key,
+      );
+      setChannels(multiKey);
+      setSelectedChannelId((current) =>
+        multiKey.some((channel) => channel.id === current)
+          ? current
+          : (multiKey[0]?.id ?? null),
+      );
     } catch (e) {
-      showError(t('加载渠道失败'));
+      showError(e.message || t('加载渠道失败'));
     } finally {
       setChannelLoading(false);
     }
   };
 
-  // 加载账号（key 状态 + OAuth email）
-  const loadAccounts = async (
-    channelId = selectedChannelId,
-    page = accountPage,
-  ) => {
-    if (!channelId) return;
-    setAccountLoading(true);
+  const refreshAccountLifecycle = async (channelId = selectedChannelId) => {
+    if (!channelId || usageRequests.current.has(channelId)) return;
+    const channel = channels.find((item) => item.id === channelId);
+    const provider = {
+      [CODEX_CHANNEL_TYPE]: 'codex',
+      [GEMINI_CHANNEL_TYPE]: 'gemini',
+      [DROID_CHANNEL_TYPE]: 'droid',
+    }[channel?.type];
+    if (!provider) {
+      await loadAccounts(channelId);
+      return;
+    }
+    usageRequests.current.add(channelId);
+    setUsageRefreshing(true);
+    setUsageRefreshError('');
     try {
-      const res = await API.post('/api/channel/multi_key/manage', {
-        channel_id: channelId,
-        action: 'get_key_status',
-        page,
-        page_size: accountPageSize,
-      });
-      if (res.data.success) {
-        setAccounts(res.data.data?.keys || []);
-        setAccountTotal(res.data.data?.total || 0);
-        setAccountPage(res.data.data?.page || page);
-      } else {
-        showError(res.data.message);
+      const response = await API.get(
+        `/api/channel/${channelId}/${provider}/usage`,
+        { skipErrorHandler: true },
+      );
+      if (!response.data?.success)
+        throw new Error(response.data?.message || t('刷新账号用量失败'));
+    } catch (error) {
+      if (usageScope.current === channelId) {
+        const message = error.message || t('刷新账号用量失败');
+        setUsageRefreshError(message);
+        showError(message);
       }
-    } catch (e) {
-      showError(t('获取账号状态失败'));
     } finally {
-      setAccountLoading(false);
+      await loadAccounts(channelId);
+      usageRequests.current.delete(channelId);
+      if (usageScope.current === channelId) setUsageRefreshing(false);
     }
   };
 
-  const refreshAccountLifecycle = async (channelId = selectedChannelId) => {
-    if (!channelId) return;
-    const channel = channels.find((item) => item.id === channelId);
-    if (channel?.type === CODEX_CHANNEL_TYPE) {
-      setUsageRefreshing(true);
-      try {
-        const usageRes = await API.get(`/api/channel/${channelId}/codex/usage`);
-        if (!usageRes.data.success) {
-          showError(usageRes.data.message || t('刷新账号用量失败'));
-        }
-      } catch (e) {
-        showError(t('刷新账号用量失败'));
-      } finally {
-        setUsageRefreshing(false);
-      }
-    } else if (channel?.type === GEMINI_CHANNEL_TYPE) {
-      setUsageRefreshing(true);
-      try {
-        const usageRes = await API.get(`/api/channel/${channelId}/gemini/usage`);
-        if (!usageRes.data.success) {
-          showError(usageRes.data.message || t('刷新 Gemini 额度失败'));
-        }
-      } catch (e) {
-        showError(t('刷新 Gemini 额度失败'));
-      } finally {
-        setUsageRefreshing(false);
-      }
-    }
-    await loadAccounts(channelId, accountPage);
-  };
+  useEffect(() => {
+    setUsageRefreshError('');
+    setUsageRefreshing(usageRequests.current.has(selectedChannelId));
+    if (selectedChannel?.type === DROID_CHANNEL_TYPE)
+      void refreshAccountLifecycle(selectedChannelId);
+    // Pagination and filters only read account snapshots.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChannelId, selectedChannel?.type]);
 
   const parseCodexAccountFile = async (file) => {
     if (!file.name.toLowerCase().endsWith('.json')) {
@@ -264,7 +244,9 @@ const AccountSessionsPage = () => {
       throw new Error(t('{{name}} 不是合法 JSON', { name: file.name }));
     }
     if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-      throw new Error(t('{{name}} 必须包含一个账号 JSON 对象', { name: file.name }));
+      throw new Error(
+        t('{{name}} 必须包含一个账号 JSON 对象', { name: file.name }),
+      );
     }
     return JSON.stringify(parsed);
   };
@@ -284,11 +266,13 @@ const AccountSessionsPage = () => {
       if (!res?.data?.success) {
         throw new Error(res?.data?.message || t('账号文件导入失败'));
       }
-      showSuccess(t('导入完成：新增 {{added}}，更新 {{replaced}}，共 {{total}} 个账号', {
-        added: res.data.data?.added_count || 0,
-        replaced: res.data.data?.replaced_count || 0,
-        total: res.data.data?.account_count || 0,
-      }));
+      showSuccess(
+        t('导入完成：新增 {{added}}，更新 {{replaced}}，共 {{total}} 个账号', {
+          added: res.data.data?.added_count || 0,
+          replaced: res.data.data?.replaced_count || 0,
+          total: res.data.data?.account_count || 0,
+        }),
+      );
       await loadChannels();
       await refreshAccountLifecycle(selectedChannelId);
     } catch (error) {
@@ -298,69 +282,10 @@ const AccountSessionsPage = () => {
     }
   };
 
-  // 加载会话历史并按 conversation_id 聚合
-  const loadSessions = async (channelId = selectedChannelId) => {
-    if (!channelId) return;
-    setSessionLoading(true);
-    try {
-      const res = await API.get(
-        `/api/log/?type=2&channel=${channelId}&p=1&page_size=200`,
-      );
-      const items = res?.data?.data?.items ?? [];
-      const groups = new Map();
-      items.forEach((log) => {
-        const cid = log.conversation_id || '__none__';
-        if (!groups.has(cid)) {
-          groups.set(cid, {
-            conversationId: log.conversation_id || '',
-            latest: 0,
-            count: 0,
-            quota: 0,
-            models: new Set(),
-            keyIndexes: new Set(),
-          });
-        }
-        const g = groups.get(cid);
-        g.latest = Math.max(g.latest, log.created_at || 0);
-        g.count += 1;
-        g.quota += log.quota || 0;
-        if (log.model_name) g.models.add(log.model_name);
-        const other = getLogOther(log.other);
-        const idx = other?.admin_info?.multi_key_index;
-        if (idx !== undefined && idx !== null) g.keyIndexes.add(idx);
-      });
-      const rows = Array.from(groups.values())
-        .map((g, i) => ({
-          key: g.conversationId || `none_${i}`,
-          conversationId: g.conversationId,
-          latest: g.latest,
-          count: g.count,
-          quota: g.quota,
-          models: Array.from(g.models),
-          keyIndexes: Array.from(g.keyIndexes),
-        }))
-        .sort((a, b) => b.latest - a.latest);
-      setSessions(rows);
-    } catch (e) {
-      showError(t('获取会话历史失败'));
-    } finally {
-      setSessionLoading(false);
-    }
-  };
-
   useEffect(() => {
     loadChannels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (selectedChannelId != null) {
-      setAccountPage(1);
-      loadAccounts(selectedChannelId, 1);
-      loadSessions(selectedChannelId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedChannelId]);
 
   // 启用 / 禁用 / 删除 单个账号
   const keyAction = async (action, keyIndex, successMsg) => {
@@ -388,6 +313,7 @@ const AccountSessionsPage = () => {
   const openChatTest = (account) => {
     setChatTestAccount(account);
     setChatTestPrompt(t('请只回复：账号可用'));
+    setChatTestError('');
     setChatTestResult(null);
   };
 
@@ -399,6 +325,7 @@ const AccountSessionsPage = () => {
     }
     setChatTestLoading(true);
     setChatTestResult(null);
+    setChatTestError('');
     try {
       const res = await API.post(
         `/api/channel/test/${selectedChannelId}/account-chat`,
@@ -422,7 +349,9 @@ const AccountSessionsPage = () => {
       setChatTestResult({ response, time: data.time });
       showSuccess(t('账号可用'));
     } catch (error) {
-      showError(error?.message || t('账号测试失败'));
+      const message = error?.message || t('账号测试失败');
+      setChatTestError(message);
+      showError(message);
     } finally {
       setChatTestLoading(false);
     }
@@ -476,7 +405,11 @@ const AccountSessionsPage = () => {
     await loadChannels();
     await loadAccounts(selectedChannelId, 1);
     if (importData?.importedCount) {
-      showSuccess(t('已处理 {{count}} 个 Gemini 账号', { count: importData.importedCount }));
+      showSuccess(
+        t('已处理 {{count}} 个 Gemini 账号', {
+          count: importData.importedCount,
+        }),
+      );
     }
   };
 
@@ -569,260 +502,13 @@ const AccountSessionsPage = () => {
     }
   };
 
-  const accountColumns = [
-    {
-      title: t('序号'),
-      dataIndex: 'index',
-      width: 70,
-      render: (v) => `#${Number(v) + 1}`,
-    },
-    {
-      title: t('账号'),
-      dataIndex: 'email',
-      render: (email, record) => {
-        if (!record.is_oauth && !record.is_account) {
-          return (
-            <Space>
-              <Text type='tertiary'>{t('API Key')}</Text>
-              <Text code style={{ fontSize: 12 }}>
-                {record.key_preview}
-              </Text>
-            </Space>
-          );
-        }
-        return (
-          <Space vertical align='start' spacing={2}>
-            <Text strong>{email || t('（未知邮箱）')}</Text>
-            {record.account_id && (
-              <Text type='tertiary' style={{ fontSize: 12 }}>
-                {record.account_id}
-              </Text>
-            )}
-          </Space>
-        );
-      },
-    },
-    {
-      title: t('状态'),
-      dataIndex: 'status',
-      width: 100,
-      render: (s) => statusTag(s, t),
-    },
-    {
-      title: t('额度状态'),
-      dataIndex: 'usage',
-      width: 190,
-      render: (usage, record) => {
-        if (!usage) {
-          if (selectedChannel?.type === GEMINI_CHANNEL_TYPE) {
-            return record.status === 1 ? (
-              <Text className='account-quota-status' type='quaternary' size='small'>{t('尚未查询上游额度')}</Text>
-            ) : (
-              <Text className='account-quota-status' type='danger' size='small'>{t('已移出负载均衡')}</Text>
-            );
-          }
-          return <Text type='quaternary'>{t('等待同步')}</Text>;
-        }
-        if (usage.quota_source === 'antigravity_load_code_assist') {
-          if (!usage.credit_known) {
-            return (
-              <Space vertical align='start' spacing={2} style={{ width: 180 }}>
-                <Text type='tertiary' size='small'>{usage.paid_tier_id || t('已发现套餐')}</Text>
-                <Text type='quaternary' size='small'>{t('上游未返回数值余额')}</Text>
-              </Space>
-            );
-          }
-          const available = Boolean(usage.credit_available);
-          return (
-            <Space vertical align='start' spacing={2} style={{ width: 180 }}>
-              <Text strong type={available ? 'success' : 'danger'}>
-                {available ? t('余额可用') : t('余额不足')}
-              </Text>
-              <Text type='tertiary' size='small'>
-                {Number(usage.credit_amount).toFixed(2)} / {Number(usage.minimum_credit_amount).toFixed(2)}
-              </Text>
-              <Text type='quaternary' size='small'>{usage.paid_tier_id || '-'}</Text>
-            </Space>
-          );
-        }
-        const remaining = Number(usage.remaining_percent || 0);
-        const color = remaining < 5 ? 'var(--semi-color-danger)' : remaining < 20 ? 'var(--semi-color-warning)' : 'var(--semi-color-success)';
-        return (
-          <Space vertical align='start' spacing={2} style={{ width: 160 }}>
-            <Space spacing={6}>
-              <Text strong style={{ color }}>{remaining.toFixed(1)}%</Text>
-              <Text type='tertiary' size='small'>{usage.plan_type || '-'}</Text>
-            </Space>
-            <Progress percent={remaining} showInfo={false} stroke={color} />
-            <Text type='tertiary' size='small'>
-              {t('5小时')} {Number(usage.primary_used_percent || 0).toFixed(0)}% · {t('7天')} {Number(usage.secondary_used_percent || 0).toFixed(0)}%
-            </Text>
-          </Space>
-        );
-      },
-    },
-    {
-      title: t('额度重置'),
-      dataIndex: 'usage',
-      width: 170,
-      render: (usage, record) => {
-        const primaryResetAt = usage?.primary_reset_at;
-        const secondaryResetAt = usage?.secondary_reset_at;
-        if (!primaryResetAt && !secondaryResetAt && !record.cooldown_until) {
-          return <Text type='quaternary'>-</Text>;
-        }
-        return (
-          <Space vertical align='start' spacing={2}>
-            {primaryResetAt ? <Text style={{ fontSize: 12 }}>{t('5小时')} · {timestamp2string(primaryResetAt)}</Text> : null}
-            {secondaryResetAt ? <Text style={{ fontSize: 12 }}>{t('7天')} · {timestamp2string(secondaryResetAt)}</Text> : null}
-            {record.cooldown_until ? <Text type='warning' style={{ fontSize: 12 }}>{t('恢复')} · {timestamp2string(record.cooldown_until)}</Text> : null}
-          </Space>
-        );
-      },
-    },
-    {
-      title: t('Token 过期'),
-      dataIndex: 'expired',
-      render: (v) =>
-        v ? (
-          <Text style={{ fontSize: 12 }}>{v}</Text>
-        ) : (
-          <Text type='quaternary'>-</Text>
-        ),
-    },
-    {
-      title: t('禁用原因'),
-      dataIndex: 'reason',
-      render: (reason, record) => {
-        if (record.status === 1 || !reason)
-          return <Text type='quaternary'>-</Text>;
-        return (
-          <Tooltip content={reason}>
-            <Text style={{ maxWidth: 180, display: 'block' }} ellipsis>
-              {reason}
-            </Text>
-          </Tooltip>
-        );
-      },
-    },
-    {
-      title: t('操作'),
-      key: 'action',
-      fixed: 'right',
-      width: 210,
-      render: (_, record) => (
-        <Space>
-          <Button
-            type='primary'
-            size='small'
-            disabled={record.status !== 1}
-            onClick={() => openChatTest(record)}
-          >
-            {t('Chat 测试')}
-          </Button>
-          {record.status === 1 ? (
-            <Button
-              type='danger'
-              size='small'
-              loading={opLoading[`disable_key_${record.index}`]}
-              onClick={() =>
-                keyAction('disable_key', record.index, t('账号已禁用'))
-              }
-            >
-              {t('禁用')}
-            </Button>
-          ) : (
-            <Button
-              type='primary'
-              size='small'
-              loading={opLoading[`enable_key_${record.index}`]}
-              onClick={() =>
-                keyAction('enable_key', record.index, t('账号已启用'))
-              }
-            >
-              {t('启用')}
-            </Button>
-          )}
-          <Popconfirm
-            title={t('确定要删除此账号吗？')}
-            content={t('此操作不可撤销，将从渠道永久移除该账号的凭证')}
-            onConfirm={() => keyAction('delete_key', record.index, t('账号已删除'))}
-            okType='danger'
-            position='topRight'
-          >
-            <Button
-              type='danger'
-              size='small'
-              loading={opLoading[`delete_key_${record.index}`]}
-            >
-              {t('删除')}
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-
-  const sessionColumns = [
-    {
-      title: t('会话 ID'),
-      dataIndex: 'conversationId',
-      render: (v) =>
-        v ? (
-          <Text code style={{ fontSize: 12 }} ellipsis={{ showTooltip: true }}>
-            {v}
-          </Text>
-        ) : (
-          <Text type='tertiary'>{t('（无会话ID）')}</Text>
-        ),
-    },
-    {
-      title: t('服务账号'),
-      dataIndex: 'keyIndexes',
-      render: (indexes) => {
-        if (!indexes || indexes.length === 0)
-          return <Text type='quaternary'>-</Text>;
-        return (
-          <Space wrap spacing={4}>
-            {indexes.map((idx) => (
-              <Tag key={idx} color='blue' shape='circle' size='small'>
-                {indexEmailMap[idx] || `#${idx + 1}`}
-              </Tag>
-            ))}
-          </Space>
-        );
-      },
-    },
-    {
-      title: t('模型'),
-      dataIndex: 'models',
-      render: (models) => (
-        <Space wrap spacing={4}>
-          {(models || []).map((m) => (
-            <Tag key={m} size='small' color='white' shape='circle'>
-              {m}
-            </Tag>
-          ))}
-        </Space>
-      ),
-    },
-    {
-      title: t('请求数'),
-      dataIndex: 'count',
-      width: 90,
-    },
-    {
-      title: t('消耗'),
-      dataIndex: 'quota',
-      width: 110,
-      render: (v) => renderQuota(v),
-    },
-    {
-      title: t('最近时间'),
-      dataIndex: 'latest',
-      render: (v) => (v ? timestamp2string(v) : '-'),
-    },
-  ];
+  const { accountColumns, sessionColumns } = createAccountSessionColumns({
+    t,
+    selectedChannel,
+    opLoading,
+    openChatTest,
+    keyAction,
+  });
 
   const emptyNode = (title, desc) => (
     <Empty
@@ -845,7 +531,9 @@ const AccountSessionsPage = () => {
             <Title heading={5} style={{ margin: 0 }}>
               {t('账号会话管理')}
             </Title>
-            <Text type='tertiary'>{t('管理渠道内的多个账号并查看会话归属')}</Text>
+            <Text type='tertiary'>
+              {t('管理渠道内的多个账号并查看会话归属')}
+            </Text>
           </Space>
           <Space>
             <Text type='tertiary'>{t('渠道')}：</Text>
@@ -897,28 +585,41 @@ const AccountSessionsPage = () => {
         }
         headerExtraContent={
           <Space>
-            <Button onClick={() => refreshAccountLifecycle()} loading={usageRefreshing}>
-              {selectedChannel?.type === CODEX_CHANNEL_TYPE ? t('刷新用量') : selectedChannel?.type === GEMINI_CHANNEL_TYPE ? t('刷新额度') : t('刷新')}
+            <Button
+              onClick={() => refreshAccountLifecycle()}
+              loading={usageRefreshing}
+            >
+              {selectedChannel?.type === CODEX_CHANNEL_TYPE
+                ? t('刷新用量')
+                : [GEMINI_CHANNEL_TYPE, DROID_CHANNEL_TYPE].includes(
+                      selectedChannel?.type,
+                    )
+                  ? t('刷新额度')
+                  : t('刷新')}
             </Button>
             <Button
               type='primary'
               theme='solid'
               disabled={!selectedChannelId}
               onClick={() =>
-                selectedChannel?.type === CODEX_CHANNEL_TYPE
-                  ? setCodexImportVisible(true)
-                  : selectedChannel?.type === GEMINI_CHANNEL_TYPE
-                    ? setGeminiImportVisible(true)
-                    : selectedChannel?.type === VERTEX_CHANNEL_TYPE
-                      ? setVertexImportVisible(true)
-                      : openOAuth()
+                selectedChannel?.type === DROID_CHANNEL_TYPE
+                  ? setApiKeyImportVisible(true)
+                  : selectedChannel?.type === CODEX_CHANNEL_TYPE
+                    ? setCodexImportVisible(true)
+                    : selectedChannel?.type === GEMINI_CHANNEL_TYPE
+                      ? setGeminiImportVisible(true)
+                      : selectedChannel?.type === VERTEX_CHANNEL_TYPE
+                        ? setVertexImportVisible(true)
+                        : openOAuth()
               }
             >
-              {selectedChannel?.type === GEMINI_CHANNEL_TYPE
-                ? t('添加 Gemini 账号')
-                : selectedChannel?.type === VERTEX_CHANNEL_TYPE
-                  ? t('添加 Vertex AI 账号')
-                  : t('授权新账号')}
+              {selectedChannel?.type === DROID_CHANNEL_TYPE
+                ? t('添加 Droid API Key')
+                : selectedChannel?.type === GEMINI_CHANNEL_TYPE
+                  ? t('添加 Gemini 账号')
+                  : selectedChannel?.type === VERTEX_CHANNEL_TYPE
+                    ? t('添加 Vertex AI 账号')
+                    : t('授权新账号')}
             </Button>
             {selectedChannel?.type === CODEX_CHANNEL_TYPE && (
               <>
@@ -943,6 +644,7 @@ const AccountSessionsPage = () => {
             )}
             <Button
               type='tertiary'
+              hidden={selectedChannel?.type === DROID_CHANNEL_TYPE}
               disabled={!selectedChannelId}
               onClick={() =>
                 selectedChannel?.type === GEMINI_CHANNEL_TYPE
@@ -961,6 +663,78 @@ const AccountSessionsPage = () => {
           </Space>
         }
       >
+        {selectedChannel?.type === DROID_CHANNEL_TYPE && (
+          <Banner
+            className='droid-account-pool-info'
+            type='info'
+            closeIcon={null}
+            description={t(
+              'Droid 号池使用 Factory API Key，按配置的随机或轮询策略调度。上游拒绝额度不足时，会尝试其他已启用账号并保持原模型；若没有账号可用，将显示额度不足原因。API Key 不需要 OAuth 刷新。',
+            )}
+          />
+        )}
+        <Space
+          className='account-pool-filters'
+          wrap
+          style={{ marginBottom: 12 }}
+        >
+          <Input
+            className='account-email-search'
+            aria-label={t('搜索账号邮箱')}
+            value={emailQuery}
+            onChange={setEmailQuery}
+            onEnterPress={() => setAccountEmail(emailQuery)}
+            placeholder={t('搜索账号邮箱')}
+          />
+          <Button
+            className='account-email-search-submit'
+            theme='borderless'
+            onClick={() => setAccountEmail(emailQuery)}
+          >
+            {t('搜索')}
+          </Button>
+          <Select
+            className='account-status-filter'
+            aria-label={t('账号状态筛选')}
+            value={accountStatus ?? 'all'}
+            onChange={(value) =>
+              setAccountStatus(value === 'all' ? null : value)
+            }
+            optionList={[
+              { value: 'all', label: t('全部状态') },
+              { value: 1, label: t('已启用') },
+              { value: 2, label: t('手动禁用') },
+              { value: 3, label: t('自动禁用') },
+            ]}
+          />
+          {accountStats && (
+            <Text className='account-pool-statistics' type='tertiary'>
+              {t('已启用')} {accountStats.enabled} · {t('手动禁用')}{' '}
+              {accountStats.manual} · {t('自动禁用')} {accountStats.automatic}
+            </Text>
+          )}
+          {observedAt && (
+            <Text className='account-observed-at' type='tertiary'>
+              {t('状态读取时间')} {observedAt.toLocaleTimeString()}
+            </Text>
+          )}
+        </Space>
+        {accountError && (
+          <Banner
+            className='account-read-error'
+            type='danger'
+            closeIcon={null}
+            description={t(accountError)}
+          />
+        )}
+        {usageRefreshError && (
+          <Banner
+            className='account-usage-refresh-error'
+            type='danger'
+            closeIcon={null}
+            description={usageRefreshError}
+          />
+        )}
         <Spin spinning={accountLoading}>
           <Table
             columns={accountColumns}
@@ -980,14 +754,25 @@ const AccountSessionsPage = () => {
             size='small'
             bordered={false}
             rowKey='index'
-            scroll={{ x: 'max-content' }}
+            scroll={{
+              x:
+                selectedChannel?.type === DROID_CHANNEL_TYPE
+                  ? 1110
+                  : 'max-content',
+            }}
             empty={emptyNode(
-              t('暂无账号'),
+              accountError
+                ? t('读取账号失败')
+                : accountStatus !== null || accountEmail
+                  ? t('没有符合筛选条件的账号')
+                  : t('暂无账号'),
               selectedChannel?.type === VERTEX_CHANNEL_TYPE
                 ? selectedVertexKeyType === 'api_key'
                   ? t('点击「添加 Vertex AI 账号」批量导入 API Key')
                   : t('点击「添加 Vertex AI 账号」批量导入服务账号 JSON')
-                : t('点击「添加账号」粘贴 OAuth JSON 接入'),
+                : selectedChannel?.type === DROID_CHANNEL_TYPE
+                  ? t('请输入 Factory API Key，每行一条')
+                  : t('点击「添加账号」粘贴 OAuth JSON 接入'),
             )}
           />
         </Spin>
@@ -1003,6 +788,23 @@ const AccountSessionsPage = () => {
           </Button>
         }
       >
+        <Banner
+          className='account-session-history-scope'
+          type='info'
+          closeIcon={null}
+          description={t(
+            '已读取 {{count}} / {{total}} 条消费日志；以下按用户、令牌及会话 ID 聚合。历史账号序号不代表当前绑定，删除或重排账号后请勿用当前列表反推归属。',
+            { count: sessionLogCount, total: sessionLogTotal },
+          )}
+        />
+        {sessionError && (
+          <Banner
+            className='account-session-read-error'
+            type='danger'
+            closeIcon={null}
+            description={t(sessionError)}
+          />
+        )}
         <Spin spinning={sessionLoading}>
           <Table
             columns={sessionColumns}
@@ -1018,7 +820,30 @@ const AccountSessionsPage = () => {
             )}
           />
         </Spin>
+        {hasMoreSessions && (
+          <Button
+            className='account-session-load-more'
+            theme='borderless'
+            loading={sessionLoading}
+            onClick={() => loadSessions(selectedChannelId, true)}
+          >
+            {t('加载更多历史')}
+          </Button>
+        )}
       </Card>
+
+      {apiKeyImportVisible && (
+        <ApiKeyImportModal
+          className='account-api-key-import'
+          channel={selectedChannel}
+          onCancel={() => setApiKeyImportVisible(false)}
+          onSuccess={async () => {
+            setApiKeyImportVisible(false);
+            await loadChannels();
+            await refreshAccountLifecycle(selectedChannelId);
+          }}
+        />
+      )}
 
       {/* 添加账号弹窗 */}
       <Modal
@@ -1043,7 +868,9 @@ const AccountSessionsPage = () => {
             field='oauth'
             noLabel
             autosize={{ minRows: 8, maxRows: 16 }}
-            placeholder={'{\n  "access_token": "...",\n  "refresh_token": "...",\n  "email": "you@example.com",\n  "account_id": "..."\n}'}
+            placeholder={
+              '{\n  "access_token": "...",\n  "refresh_token": "...",\n  "email": "you@example.com",\n  "account_id": "..."\n}'
+            }
             value={addJson}
             onChange={(v) => setAddJson(v)}
           />
@@ -1059,10 +886,19 @@ const AccountSessionsPage = () => {
         width={720}
         footer={
           <Space>
-            <Button theme='borderless' onClick={() => setOauthVisible(false)} disabled={oauthLoading}>
+            <Button
+              theme='borderless'
+              onClick={() => setOauthVisible(false)}
+              disabled={oauthLoading}
+            >
               {t('取消')}
             </Button>
-            <Button theme='solid' type='primary' onClick={completeOAuth} loading={oauthLoading}>
+            <Button
+              theme='solid'
+              type='primary'
+              onClick={completeOAuth}
+              loading={oauthLoading}
+            >
               {t('完成并加入渠道')}
             </Button>
           </Space>
@@ -1079,7 +915,9 @@ const AccountSessionsPage = () => {
 
           <div style={{ width: '100%' }}>
             <Text type='tertiary' size='small'>
-              {t('账号备注（写入该账号的 email 字段，便于在列表/会话历史里识别）')}
+              {t(
+                '账号备注（写入该账号的 email 字段，便于在列表/会话历史里识别）',
+              )}
             </Text>
             <Input
               value={oauthLabel}
@@ -1118,7 +956,11 @@ const AccountSessionsPage = () => {
 
       <CodexOAuthModal
         visible={codexImportVisible}
-        channelId={selectedChannel?.type === CODEX_CHANNEL_TYPE ? selectedChannelId : null}
+        channelId={
+          selectedChannel?.type === CODEX_CHANNEL_TYPE
+            ? selectedChannelId
+            : null
+        }
         onCancel={() => setCodexImportVisible(false)}
         onSuccess={async () => {
           setCodexImportVisible(false);
@@ -1179,17 +1021,40 @@ const AccountSessionsPage = () => {
           </Space>
         }
       >
-        <Space className='account-chat-test-content' vertical spacing='loose' style={{ width: '100%' }}>
+        <Space
+          className='account-chat-test-content'
+          vertical
+          spacing='loose'
+          style={{ width: '100%' }}
+        >
           <Banner
             className='account-chat-test-account'
             type='info'
             closeIcon={null}
-            description={t('本次请求只使用账号 {{account}}，失败时不会切换到渠道内其他账号。', {
-              account: chatTestAccount?.email || chatTestAccount?.account_id || `#${Number(chatTestAccount?.index || 0) + 1}`,
-            })}
+            description={t(
+              '本次请求只使用账号 {{account}}，失败时不会切换到渠道内其他账号。',
+              {
+                account:
+                  chatTestAccount?.email ||
+                  chatTestAccount?.account_id ||
+                  `#${Number(chatTestAccount?.index || 0) + 1}`,
+              },
+            )}
           />
+          {chatTestError && (
+            <Banner
+              className='account-chat-test-error'
+              type='danger'
+              closeIcon={null}
+              description={chatTestError}
+            />
+          )}
           <div className='account-chat-test-prompt'>
-            <Text className='account-chat-test-prompt-label' type='tertiary' size='small'>
+            <Text
+              className='account-chat-test-prompt-label'
+              type='tertiary'
+              size='small'
+            >
               {t('测试消息')}
             </Text>
             <TextArea
@@ -1204,15 +1069,35 @@ const AccountSessionsPage = () => {
           {chatTestResult && (
             <div className='account-chat-test-result'>
               <Space className='account-chat-test-result-header' spacing={8}>
-                <Tag className='account-chat-test-result-status' color='green' shape='circle'>
+                <Tag
+                  className='account-chat-test-result-status'
+                  color='green'
+                  shape='circle'
+                >
                   {t('可用')}
                 </Tag>
-                <Text className='account-chat-test-result-time' type='tertiary' size='small'>
+                <Text
+                  className='account-chat-test-result-time'
+                  type='tertiary'
+                  size='small'
+                >
                   {t('耗时')} {Number(chatTestResult.time || 0).toFixed(2)}s
                 </Text>
               </Space>
-              <pre className='account-chat-test-response' style={{ margin: '12px 0 0', padding: 12, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--semi-color-fill-0)' }}>
-                <code className='account-chat-test-response-code'>{chatTestResult.response}</code>
+              <pre
+                className='account-chat-test-response'
+                style={{
+                  margin: '12px 0 0',
+                  padding: 12,
+                  overflowX: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  background: 'var(--semi-color-fill-0)',
+                }}
+              >
+                <code className='account-chat-test-response-code'>
+                  {chatTestResult.response}
+                </code>
               </pre>
             </div>
           )}

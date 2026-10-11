@@ -248,6 +248,7 @@ export const CHANNEL_OPTIONS = [
     color: 'orange',
     label: 'AI Studio To API',
   },
+  { value: 77, color: 'grey', label: 'Droid (Factory API Key)' },
 ];
 
 // Channel types that support upstream model list fetching in UI.
@@ -265,6 +266,9 @@ export const GEMINI_CHANNEL_TYPE = 24;
 
 // Browser-backed Google AI Studio runtime managed through Studio Importer.
 export const AI_STUDIO_TO_API_CHANNEL_TYPE = 74;
+
+export const DROID_CHANNEL_TYPE = 77;
+export const DROID_FACTORY_BASE_URL = 'https://api.factory.ai';
 
 export const VERTEX_CHANNEL_TYPE = 41;
 

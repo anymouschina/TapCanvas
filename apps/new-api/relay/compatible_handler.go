@@ -70,7 +70,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *types
 
 	info.ShouldIncludeUsage = includeUsage
 
-	adaptor := GetAdaptor(info.ApiType)
+	adaptor := GetAdaptor(info.ApiType, info.ProtocolID)
 	if adaptor == nil {
 		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
 			ErrorMessage: fmt.Sprintf("invalid api type: %d", info.ApiType),
@@ -80,10 +80,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *types
 	adaptor.Init(info)
 
 	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
-	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
-		!passThroughGlobal &&
-		!info.ChannelSetting.PassThroughBodyEnabled &&
-		(service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) ||
+	if info.RelayMode == relayconstant.RelayModeChatCompletions && shouldUseResponsesForChat(
+		adaptor, info.UpstreamModelName,
+		passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled,
+		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) ||
 			service.ShouldChatCompletionsUseResponsesForUpstream(info.ProtocolID, info.UpstreamModelName)) {
 		applySystemPromptIfNeeded(c, info, request)
 		usage, neoSparkMartErr := chatCompletionsViaResponses(c, info, adaptor, request)

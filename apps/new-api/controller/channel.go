@@ -854,6 +854,7 @@ type PatchChannel struct {
 	model.Channel
 	MultiKeyMode            *string `json:"multi_key_mode"`
 	KeyMode                 *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	KeyEmail                *string `json:"key_email,omitempty"`
 	MultiKeySessionAffinity *bool   `json:"multi_key_session_affinity"`
 	MultiKeySessionTTL      *int    `json:"multi_key_session_ttl"`
 }
@@ -874,6 +875,10 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
+	lock := model.GetChannelPollingLock(channel.Id)
+	lock.Lock()
+	defer lock.Unlock()
+
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
@@ -881,6 +886,12 @@ func UpdateChannel(c *gin.Context) {
 			"success": false,
 			"message": err.Error(),
 		})
+		return
+	}
+
+	keyEmail, annotatedKeys, err := prepareAPIKeyEmail(&channel, originChannel)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
 		return
 	}
 
@@ -956,6 +967,19 @@ func UpdateChannel(c *gin.Context) {
 		case "replace":
 			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
 		}
+	}
+	if channel.ChannelInfo.IsMultiKey && strings.TrimSpace(channel.Key) != "" {
+		channel.ReconcileMultiKeyMetadata(originChannel.GetKeys())
+	}
+	applyAPIKeyEmail(&channel.Channel, annotatedKeys, keyEmail)
+	if channel.KeyMode != nil && *channel.KeyMode == "append" {
+		if channel.Status == 0 {
+			channel.Status = originChannel.Status
+		}
+		if channel.OtherInfo == "" {
+			channel.OtherInfo = originChannel.OtherInfo
+		}
+		channel.RestoreAutoDisabledMultiKey()
 	}
 	err = channel.Update()
 	if err != nil {
@@ -1228,6 +1252,7 @@ type MultiKeyManageRequest struct {
 	Page      int    `json:"page,omitempty"`      // for get_key_status pagination
 	PageSize  int    `json:"page_size,omitempty"` // for get_key_status pagination
 	Status    *int   `json:"status,omitempty"`    // for get_key_status filtering: 1=enabled, 2=manual_disabled, 3=auto_disabled, nil=all
+	Email     string `json:"email,omitempty"`
 }
 
 // MultiKeyStatusResponse represents the response for key status query
@@ -1322,6 +1347,14 @@ func TestMultiKeyAccountChat(c *gin.Context) {
 		response := gin.H{"success": false, "message": result.localErr.Error(), "time": consumedTime}
 		if result.NewAPIError != nil {
 			response["error_code"] = result.NewAPIError.GetErrorCode()
+			requestID := c.GetString(common.RequestIdKey)
+			if result.context != nil {
+				requestID = result.context.GetString(common.RequestIdKey)
+			}
+			presented := accountQuotaErrorPresentation(selected.Type, requestID, result.NewAPIError)
+			if presented != result.NewAPIError {
+				response["message"] = presented.Error()
+			}
 		}
 		c.JSON(http.StatusOK, response)
 		return
@@ -1343,6 +1376,10 @@ func ManageMultiKeys(c *gin.Context) {
 		return
 	}
 
+	lock := model.GetChannelPollingLock(request.ChannelId)
+	lock.Lock()
+	defer lock.Unlock()
+
 	channel, err := model.GetChannelById(request.ChannelId, true)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -1359,10 +1396,6 @@ func ManageMultiKeys(c *gin.Context) {
 		})
 		return
 	}
-
-	lock := model.GetChannelPollingLock(channel.Id)
-	lock.Lock()
-	defer lock.Unlock()
 
 	switch request.Action {
 	case "get_key_status":
@@ -1425,6 +1458,7 @@ func ManageMultiKeys(c *gin.Context) {
 				DisabledTime: disabledTime,
 				Reason:       reason,
 				KeyPreview:   keyPreview,
+				Email:        channel.ChannelInfo.MultiKeyEmail[i],
 			}
 			if usage, exists := channel.ChannelInfo.MultiKeyUsage[i]; exists {
 				usageCopy := usage
@@ -1475,17 +1509,7 @@ func ManageMultiKeys(c *gin.Context) {
 			allKeyStatusList = append(allKeyStatusList, ks)
 		}
 
-		// Apply status filter if specified
-		var filteredKeyStatusList []KeyStatus
-		if request.Status != nil {
-			for _, keyStatus := range allKeyStatusList {
-				if keyStatus.Status == *request.Status {
-					filteredKeyStatusList = append(filteredKeyStatusList, keyStatus)
-				}
-			}
-		} else {
-			filteredKeyStatusList = allKeyStatusList
-		}
+		filteredKeyStatusList := filterKeyStatuses(allKeyStatusList, request.Status, request.Email)
 
 		// Calculate pagination based on filtered results
 		filteredTotal := len(filteredKeyStatusList)
@@ -1602,6 +1626,7 @@ func ManageMultiKeys(c *gin.Context) {
 		if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
 			delete(channel.ChannelInfo.MultiKeyCooldownUntil, keyIndex)
 		}
+		channel.RestoreAutoDisabledMultiKey()
 
 		err = channel.Update()
 		if err != nil {
@@ -1629,6 +1654,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
 		channel.ChannelInfo.MultiKeyCooldownUntil = make(map[int]int64)
+		channel.RestoreAutoDisabledMultiKey()
 
 		err = channel.Update()
 		if err != nil {
@@ -1714,60 +1740,20 @@ func ManageMultiKeys(c *gin.Context) {
 		}
 
 		keys := channel.GetKeys()
-		var remainingKeys []string
-		var newStatusList = make(map[int]int)
-		var newDisabledTime = make(map[int]int64)
-		var newDisabledReason = make(map[int]string)
-		var newCooldownUntil = make(map[int]int64)
-
-		newIndex := 0
-		for i, key := range keys {
-			// 跳过要删除的密钥
-			if i == keyIndex {
-				continue
+		retained := make([]int, 0, len(keys))
+		for index := range keys {
+			if index != keyIndex {
+				retained = append(retained, index)
 			}
-
-			remainingKeys = append(remainingKeys, key)
-
-			// 保留其他密钥的状态信息，重新索引
-			if channel.ChannelInfo.MultiKeyStatusList != nil {
-				if status, exists := channel.ChannelInfo.MultiKeyStatusList[i]; exists && status != 1 {
-					newStatusList[newIndex] = status
-				}
-			}
-			if channel.ChannelInfo.MultiKeyDisabledTime != nil {
-				if t, exists := channel.ChannelInfo.MultiKeyDisabledTime[i]; exists {
-					newDisabledTime[newIndex] = t
-				}
-			}
-			if channel.ChannelInfo.MultiKeyDisabledReason != nil {
-				if r, exists := channel.ChannelInfo.MultiKeyDisabledReason[i]; exists {
-					newDisabledReason[newIndex] = r
-				}
-			}
-			if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
-				if until, exists := channel.ChannelInfo.MultiKeyCooldownUntil[i]; exists {
-					newCooldownUntil[newIndex] = until
-				}
-			}
-			newIndex++
 		}
-
-		if len(remainingKeys) == 0 {
+		if len(retained) == 0 {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": "不能删除最后一个密钥",
 			})
 			return
 		}
-
-		// Update channel with remaining keys
-		channel.Key = strings.Join(remainingKeys, "\n")
-		channel.ChannelInfo.MultiKeySize = len(remainingKeys)
-		channel.ChannelInfo.MultiKeyStatusList = newStatusList
-		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
-		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
-		channel.ChannelInfo.MultiKeyCooldownUntil = newCooldownUntil
+		channel.RetainMultiKeys(retained)
 
 		err = channel.Update()
 		if err != nil {
@@ -1786,50 +1772,15 @@ func ManageMultiKeys(c *gin.Context) {
 
 	case "delete_disabled_keys":
 		keys := channel.GetKeys()
-		var remainingKeys []string
+		retained := make([]int, 0, len(keys))
 		var deletedCount int
-		var newStatusList = make(map[int]int)
-		var newDisabledTime = make(map[int]int64)
-		var newDisabledReason = make(map[int]string)
-		var newCooldownUntil = make(map[int]int64)
-
-		newIndex := 0
-		for i, key := range keys {
-			status := 1 // default enabled
-			if channel.ChannelInfo.MultiKeyStatusList != nil {
-				if s, exists := channel.ChannelInfo.MultiKeyStatusList[i]; exists {
-					status = s
-				}
-			}
-
-			// 只删除自动禁用（status == 3）的密钥，保留启用（status == 1）和手动禁用（status == 2）的密钥
-			if status == 3 {
+		for index := range keys {
+			if channel.ChannelInfo.MultiKeyStatusList[index] == common.ChannelStatusAutoDisabled {
 				deletedCount++
 			} else {
-				remainingKeys = append(remainingKeys, key)
-				// 保留非自动禁用密钥的状态信息，重新索引
-				if status != 1 {
-					newStatusList[newIndex] = status
-					if channel.ChannelInfo.MultiKeyDisabledTime != nil {
-						if t, exists := channel.ChannelInfo.MultiKeyDisabledTime[i]; exists {
-							newDisabledTime[newIndex] = t
-						}
-					}
-					if channel.ChannelInfo.MultiKeyDisabledReason != nil {
-						if r, exists := channel.ChannelInfo.MultiKeyDisabledReason[i]; exists {
-							newDisabledReason[newIndex] = r
-						}
-					}
-				}
-				if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
-					if until, exists := channel.ChannelInfo.MultiKeyCooldownUntil[i]; exists {
-						newCooldownUntil[newIndex] = until
-					}
-				}
-				newIndex++
+				retained = append(retained, index)
 			}
 		}
-
 		if deletedCount == 0 {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
@@ -1837,14 +1788,14 @@ func ManageMultiKeys(c *gin.Context) {
 			})
 			return
 		}
-
-		// Update channel with remaining keys
-		channel.Key = strings.Join(remainingKeys, "\n")
-		channel.ChannelInfo.MultiKeySize = len(remainingKeys)
-		channel.ChannelInfo.MultiKeyStatusList = newStatusList
-		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
-		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
-		channel.ChannelInfo.MultiKeyCooldownUntil = newCooldownUntil
+		if len(retained) == 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "不能删除最后一个密钥",
+			})
+			return
+		}
+		channel.RetainMultiKeys(retained)
 
 		err = channel.Update()
 		if err != nil {

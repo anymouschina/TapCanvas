@@ -61,7 +61,7 @@ func getProtocolModels(definition constant.ProtocolDefinition) ([]string, string
 	}}
 	switch definition.Transport {
 	case constant.ProtocolTransportRelay:
-		adaptor := relay.GetAdaptor(definition.APIType)
+		adaptor := relay.GetAdaptor(definition.APIType, definition.ID)
 		if adaptor == nil {
 			return nil, "", fmt.Errorf(
 				"协议 %q 的 relay adaptor 未注册（API type %d）",

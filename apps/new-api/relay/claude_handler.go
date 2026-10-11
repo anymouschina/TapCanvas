@@ -46,7 +46,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
-	adaptor := GetAdaptor(info.ApiType)
+	adaptor := GetAdaptor(info.ApiType, info.ProtocolID)
 	if adaptor == nil {
 		upsertRequestTraceAttempt(c, info, model.RequestTraceAttemptPatch{
 			ErrorMessage: fmt.Sprintf("invalid api type: %d", info.ApiType),
@@ -136,9 +136,10 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (NewAPIError *typ
 		}
 	}
 
-	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
-		!info.ChannelSetting.PassThroughBodyEnabled &&
-		(service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) ||
+	if shouldUseResponsesForChat(
+		adaptor, info.UpstreamModelName,
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled,
+		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) ||
 			service.ShouldChatCompletionsUseResponsesForUpstream(info.ProtocolID, info.UpstreamModelName)) {
 		openAIRequest, convErr := service.ClaudeToOpenAIRequest(*request, info)
 		if convErr != nil {

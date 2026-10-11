@@ -86,17 +86,26 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (neoSparkMartErr *types.NewAPIError) {
 	neoSparkMartErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
+	defer func() {
+		if neoSparkMartErr != nil {
+			neoSparkMartErr.UpstreamStatusCode = resp.StatusCode
+		}
+	}()
 
+	defer CloseResponseBodyGracefully(resp)
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		neoSparkMartErr.UpstreamResponseBody = string(responseBody)
+		neoSparkMartErr.Err = fmt.Errorf("failed to read upstream error response: %w", err)
 		return
 	}
-	CloseResponseBodyGracefully(resp)
 	retryHint, retryHintDiagnostics := extractUpstreamRetryHint(resp, responseBody, time.Now())
 	for _, diagnostic := range retryHintDiagnostics {
 		logger.LogWarn(ctx, fmt.Sprintf("upstream retry metadata ignored: %v", diagnostic))
 	}
 	attachRetryHint := func(apiErr *types.NewAPIError) *types.NewAPIError {
+		apiErr.UpstreamStatusCode = resp.StatusCode
+		apiErr.UpstreamResponseBody = string(responseBody)
 		if retryHint.RetryAtUnix > 0 {
 			apiErr.SetRetryAt(retryHint.RetryAtUnix, retryHint.Source)
 		}
