@@ -16,6 +16,7 @@ TapCanvas is a multi-model AI content creation platform built around a visual ca
 
 ## Changelog
 
+- **2026-10-11 · Factory / Droid account pools**: Ported TapCanvasPro's Droid channel and account management, including key import, account controls and tests, Standard / Core usage windows, subscription details, and same-pool retries after quota rejection. A deployment SQL patch seeds a disabled, empty pool; configure your own keys, model protocols and pricing before enabling it. See [Droid setup](apps/new-api/docs/channel/droid.md).
 - **2026-09-23 · Director desk upgrade**: Synced TapCanvasPro's standalone director desk, based on [DirectorDesk](https://github.com/mangfufu/director-desk), for 3D scene blocking, character staging and camera previs. Connected TapCanvas AI chat, tool relay and reference-video export to the canvas, replaced the previous embedded implementation, and added MIT attribution. Web development and production builds now build the director desk automatically; install its standalone dependencies before first use.
 
 ## Latest Capabilities
@@ -31,6 +32,10 @@ TapCanvas is a multi-model AI content creation platform built around a visual ca
 [Register through our HeyRoute referral link](https://heyroute.ai/r/c/ch_iiq2tvtmrc) to claim **$15 in credits** for Codex, Claude and Gemini chat and the platform's image generation services (eligibility and model availability are subject to HeyRoute's terms).
 
 Seven built-in HeyRoute channels provide 31 models: 15 chat models (Claude, GPT, Grok, Gemini and Kimi), five image models and 11 video models (Grok, MiniMax H3 and Seedance), with per-channel pricing. In the new-api channel list or editor, click **Apply for API Key**, register through the link above, enter your own key and enable the desired channels. New channels start disabled with empty keys; upgrades preserve existing credentials and status. See the [initialization SQL](apps/new-api/patches/2026-09-11/004-expand-heyroute-channels.sql) and [integration notes](apps/new-api/docs/heyroute.md).
+
+## Factory / Droid account pools
+
+Factory / Droid management is built in, with key import and deduplication, per-account controls and tests, usage refresh, subscription details and key expiry. The deployment patch creates a disabled, empty pool. Add your own Factory keys in the gateway console, select models from the dynamic catalog, and configure explicit Droid protocol bindings and pricing before enabling the channel. Reapplying the patch preserves existing accounts and configuration. See [Droid setup](apps/new-api/docs/channel/droid.md).
 
 ## Quick Start
 

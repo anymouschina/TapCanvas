@@ -1529,7 +1529,7 @@ func ManageMultiKeys(c *gin.Context) {
 		}
 
 		// Get the page data
-		var pageKeyStatusList []KeyStatus
+		pageKeyStatusList := make([]KeyStatus, 0)
 		if start < filteredTotal {
 			pageKeyStatusList = filteredKeyStatusList[start:end]
 		}
