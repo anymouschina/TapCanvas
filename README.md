@@ -25,6 +25,20 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
   <img src="./apps/web/readme-canvas.png" width="100%" alt="TapCanvas 章节画布、角色场景资产与分镜预览" />
 </p>
 
+## 演示视频：长篇小说，一键成片
+
+从小说章节出发，把角色、场景、分镜与视频生成串联在同一张画布中。下面的 About 页面演示以两个章节的真实画布为例，展示角色与场景资产如何跨章节复用、同一人物的不同造型和受伤等状态如何分别管理，以及一键成片工作流如何组织从章节内容到视频的生产过程。
+
+<p align="center">
+  <a href="https://lluban.cn/about/">
+    <img src="https://tanvas-ai.tos-cn-guangzhou.volces.com/uploads/user/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20261014/0421ccb2-98d9-4489-8ea8-e02990a6e455.png" width="100%" alt="点击观看 TapCanvas 演示：跨章节资产复用、多状态管理与一键成片工作流" />
+  </a>
+</p>
+
+[▶ 在线观看完整演示](https://lluban.cn/about/) · [下载演示视频（MP4）](https://tanvas-ai.tos-cn-guangzhou.volces.com/uploads/user/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20261014/b3e6665f-3940-43e4-b4b7-df2b50872abf.mp4)
+
+视频录制于在线版；社区版的工作流入口与模型配置要求见下方[当前架构](#当前架构)。
+
 ## 核心能力
 
 - **无限画布**：用强类型节点、端口和连线组织文档、角色、分镜、图像、视频、音频、字幕与工作流。

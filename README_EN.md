@@ -14,6 +14,20 @@ TapCanvas is a multi-model AI content creation platform built around a visual ca
 
 **Language:** [中文](README.md) | English
 
+## Demo: From Novel Chapters to Video
+
+Bring chapters, characters, scenes, storyboards and video generation together on one canvas. This demo from the About page uses real canvases from two chapters to show how character and scene assets can be reused across chapters, how alternate appearances and states such as injuries are managed separately, and how the one-click video workflow connects chapter content to video production.
+
+<p align="center">
+  <a href="https://lluban.cn/about/">
+    <img src="https://tanvas-ai.tos-cn-guangzhou.volces.com/uploads/user/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20261014/0421ccb2-98d9-4489-8ea8-e02990a6e455.png" width="100%" alt="Watch the TapCanvas demo: asset reuse across chapters, character states and the one-click video workflow" />
+  </a>
+</p>
+
+[▶ Watch the full demo](https://lluban.cn/about/) · [Download the demo (MP4)](https://tanvas-ai.tos-cn-guangzhou.volces.com/uploads/user/phone_11dd9f14a3c25ed8947cd76e12fdc0123ea17f972ad99cf25d4d4abcdfda2272/20261014/b3e6665f-3940-43e4-b4b7-df2b50872abf.mp4)
+
+Recorded in the online edition. For the Community Edition's workflow entry points and required model configuration, see [Current architecture](./README.md#当前架构).
+
 ## Changelog
 
 - **2026-10-11 · Factory / Droid account pools**: Ported TapCanvasPro's Droid channel and account management, including key import, account controls and tests, Standard / Core usage windows, subscription details, and same-pool retries after quota rejection. A deployment SQL patch seeds a disabled, empty pool; configure your own keys, model protocols and pricing before enabling it. See [Droid setup](apps/new-api/docs/channel/droid.md).
