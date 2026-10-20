@@ -131,9 +131,17 @@ docker compose restart
 
 ## TODO / Roadmap
 
-- **Sora 2 watermark removal**: smarter cleanup for generated videos
-- **Video stitching**: seamless multi-clip concatenation + transitions
-- **Basic video editing**: trim/split/merge inside TapCanvas
+Features planned to be ported from TapCanvas Pro to the community edition:
+
+- [x] **Image compare node**: side-by-side / slider / overlay / toggle modes, reading images live from upstream nodes
+- [ ] **Video remake**: paste a share link (e.g. Douyin) or upload a video to remake it
+- [ ] **Creation composer**: new prompt box with @ asset mentions, attachments, canvas references and per-account model preferences
+- [ ] **Video compose + AI subtitles**: multi-clip concatenation, transitions, subtitle styles and chunked subtitle transcription via video-understanding models
+- [ ] **Media diagnostics API**: troubleshoot the media pipeline
+- [ ] **Changelog dialog**: show what's new in each release inside the app
+- [ ] **Product & SEO pages**: public product overview pages and page metadata
+- [ ] **parse-video service**: standalone Go service that resolves video links from multiple platforms
+- [ ] **TapOps ops panel**: multi-node host metrics, logs and database inventory
 
 ## Built with TapCanvas
 
