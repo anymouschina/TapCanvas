@@ -37,6 +37,12 @@ import { extractCanvasGraph, type CanvasImportData, type SerializedCanvas } from
 import { normalizeStoryboardNodeData } from './nodes/taskNode/storyboardEditor'
 import { buildVideoDurationPatch, readVideoDurationSeconds } from '../utils/videoDuration'
 import { createDefaultDirectorConsoleData } from './nodes/directorConsole/types'
+import {
+  IMAGE_COMPARE_DEFAULT_SIZE,
+  IMAGE_COMPARE_NODE_TYPE,
+  IMAGE_COMPARE_TARGET_HANDLE_ID,
+  createDefaultImageCompareData,
+} from './imageCompare/imageCompareNodeData'
 import { shouldVirtualizeCanvas } from './canvasPerformancePolicy'
 import { prepareVirtualizedTaskNodes } from './prepareVirtualizedTaskNodes'
 import { readWorkflowCanvasPorts, workflowPortHandleId } from './workflowCanvasPorts'
@@ -65,6 +71,12 @@ type RFState = {
   onConnect: OnConnect
   addNode: (type: string, label?: string, extra?: Record<string, any>) => void
   addDirectorConsoleNode: (opts?: { id?: string; position?: { x: number; y: number } }) => string
+  /** 新建图片对比节点；传 sourceNodeIds 时同时把这些图片节点连到对比节点输入端。 */
+  addImageCompareNode: (opts?: {
+    id?: string
+    position?: { x: number; y: number }
+    sourceNodeIds?: readonly string[]
+  }) => string
   addNodesAsGroup: (specs: { label?: string; extra?: Record<string, any> }[], groupName?: string) => { groupId: string | null; nodeIds: string[] }
   reset: () => void
   load: (data: { nodes: Node[]; edges: Edge[] } | null) => void
@@ -2571,6 +2583,41 @@ export const useRFStore = createWithEqualityFn<RFState>((set, get) => ({
             })(),
           }),
         ],
+        pendingFocusNodeId: id,
+      }
+    })
+    return id
+  },
+  addImageCompareNode: (opts) => {
+    const id = opts?.id ?? genNodeId()
+    if (get().nodes.some((n) => n.id === id)) return id
+    set((s) => {
+      const size = { w: IMAGE_COMPARE_DEFAULT_SIZE.width, h: IMAGE_COMPARE_DEFAULT_SIZE.height }
+      const position = opts?.position ?? computeContextAwarePosition(s.nodes, size)
+      const node = enforceNodeSelectability({
+        id,
+        type: IMAGE_COMPARE_NODE_TYPE,
+        position,
+        width: size.w,
+        height: size.h,
+        data: createDefaultImageCompareData() as Record<string, unknown>,
+      })
+      const sourceIds = (opts?.sourceNodeIds ?? []).filter((sourceId) => s.nodes.some((n) => n.id === sourceId))
+      const newEdges: Edge[] = sourceIds.map((sourceId) => ({
+        id: `e-${sourceId}-${id}-compare`,
+        source: sourceId,
+        sourceHandle: 'out-image',
+        target: id,
+        targetHandle: IMAGE_COMPARE_TARGET_HANDLE_ID,
+        type: 'typed',
+        animated: false,
+      }))
+      const past = [...s.historyPast, snapshotGraph(s.nodes, s.edges)].slice(-50)
+      return {
+        nodes: [...s.nodes, node],
+        edges: newEdges.length ? sanitizeEdgesForNodes([...s.nodes, node], [...s.edges, ...newEdges]) : s.edges,
+        historyPast: past,
+        historyFuture: [],
         pendingFocusNodeId: id,
       }
     })

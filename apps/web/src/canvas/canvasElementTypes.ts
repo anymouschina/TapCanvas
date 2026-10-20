@@ -3,6 +3,7 @@ import TaskNode from './nodes/TaskNodeCard'
 import IONode from './nodes/IONode'
 import GroupNode from './nodes/GroupNode'
 import { DirectorConsoleNode } from './nodes/directorConsole/DirectorConsoleNode'
+import { ImageCompareNode } from './imageCompare/ImageCompareNode'
 import { WorkflowExecutionPlaceholderNode } from './nodes/WorkflowExecutionPlaceholderNode'
 import TypedEdge from './edges/TypedEdge'
 import OrthTypedEdge from './edges/OrthTypedEdge'
@@ -19,6 +20,7 @@ const canvasNodeTypeComponents = Object.freeze({
   ioNode: IONode,
   groupNode: GroupNode,
   directorConsole: DirectorConsoleNode,
+  imageCompare: ImageCompareNode,
   workflowExecutionNode: WorkflowExecutionPlaceholderNode,
 })
 

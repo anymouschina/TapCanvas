@@ -116,6 +116,9 @@ import { useVideoCompareStore } from './videoCompare/videoCompareStore'
 import { resolveVideoCompareSelection } from './videoCompare/videoCompareSelection'
 import { filterAdminWorkflowCanvasGraph } from './adminWorkflowVisibility'
 import { VideoCompareSelectionAction } from './videoCompare/VideoCompareSelectionAction'
+import { resolveImageCompareSelection } from './imageCompare/imageCompareSelection'
+import { ImageCompareSelectionAction } from './imageCompare/ImageCompareSelectionAction'
+import { IMAGE_COMPARE_DEFAULT_SIZE } from './imageCompare/imageCompareNodeData'
 import { saveCurrentCanvasSnapshot } from './persistence/saveCurrentCanvasSnapshot'
 import { useModelOptionsState } from '../config/useModelOptions'
 import {
@@ -2514,6 +2517,11 @@ function CanvasInner({
     const selectedIds = new Set(selectedNodeIds)
     return resolveVideoCompareSelection(nodes.filter((node) => selectedIds.has(node.id)))
   }, [nodes, selectedNodeIds])
+  const imageCompareSelectionResolution = useMemo(() => {
+    if (selectedNodeIds.length !== 2) return resolveImageCompareSelection([])
+    const selectedIds = new Set(selectedNodeIds)
+    return resolveImageCompareSelection(nodes.filter((node) => selectedIds.has(node.id)))
+  }, [nodes, selectedNodeIds])
   const selectedGroupIds = useMemo(
     () => selectedNodeSummaries.filter((node) => node.type === 'groupNode').map((node) => node.id),
     [selectedNodeSummaries],
@@ -4225,6 +4233,27 @@ function CanvasInner({
                   )
                 }}
               />
+              <ImageCompareSelectionAction
+                className="tc-canvas__image-compare-selection-action"
+                resolution={imageCompareSelectionResolution}
+                onCompare={() => {
+                  // 对比节点放在两张图右侧、垂直居中，按画布视觉顺序连线
+                  const allNodes = useRFStore.getState().nodes
+                  const nodesById = new Map(allNodes.map((n) => [n.id, n] as const))
+                  const pair = selectedNodeIds
+                    .map((nodeId) => nodesById.get(nodeId))
+                    .filter((node): node is NonNullable<typeof node> => Boolean(node))
+                  if (pair.length !== 2) return
+                  const boxes = pair.map((node) => ({ ...getNodeAbsPosition(node, nodesById), ...getNodeSize(node) }))
+                  const right = Math.max(...boxes.map((box) => box.x + box.w))
+                  const top = Math.min(...boxes.map((box) => box.y))
+                  const bottom = Math.max(...boxes.map((box) => box.y + box.h))
+                  useRFStore.getState().addImageCompareNode({
+                    position: { x: right + 120, y: (top + bottom) / 2 - IMAGE_COMPARE_DEFAULT_SIZE.height / 2 },
+                    sourceNodeIds: pair.map((node) => node.id),
+                  })
+                }}
+              />
               {canCreateScriptBundleFromSelection && (
                 <Button
                   className="tc-canvas__selection-action-bar-action"
@@ -4475,6 +4504,18 @@ function CanvasInner({
                   }}
                 >
                   新建导演台
+                </Button>
+                <Button
+                  className="tc-canvas__context-menu-action"
+                  variant="subtle"
+                  onClick={() => {
+                    const menuState = menu
+                    if (!menuState || menuState.type !== 'canvas') return
+                    useRFStore.getState().addImageCompareNode({ position: screenToFlow({ x: menuState.x, y: menuState.y }) })
+                    setMenu(null)
+                  }}
+                >
+                  新建图片对比
                 </Button>
                 {clipboard && clipboard.nodes.length > 0 && (
                   <Button

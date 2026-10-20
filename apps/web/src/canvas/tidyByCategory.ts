@@ -82,6 +82,7 @@ export function categoryOfUnit(node: Node, childrenByParent: Map<string, Node[]>
   if (node.type === 'groupNode') return groupCategory(node, childrenByParent)
   if (node.type === 'taskNode') return taskNodeCategory(node)
   if (node.type === 'directorConsole') return 'director'
+  if (node.type === 'imageCompare') return 'image'
   if (node.type === 'ioNode') return null
   // 新增的非 taskNode 只要是画布内容节点，也不能因未加入枚举而漏排。
   return taskNodeCategory(node)
