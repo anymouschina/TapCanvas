@@ -30,6 +30,11 @@ Recorded in the online edition. For the Community Edition's workflow entry point
 
 ## Changelog
 
+- **2026-10-20 · Image compare node**: New canvas node for comparing images side by side, with a draggable slider, an opacity overlay, or press-to-toggle. Add it from the add-node panel or the context menu, or select two image nodes and click "图片对比" to create and connect it automatically. It follows upstream images live and saves the mode, split position, opacity and size with the node.
+
+  <img src="assets/changelog/2026-10-20-image-compare-overview.jpg" alt="Compare node created from two selected images (side-by-side mode)" width="100%">
+  <img src="assets/changelog/2026-10-20-image-compare-slider.jpg" alt="Compare node in slider mode" width="60%">
+
 - **2026-10-11 · Factory / Droid account pools**: Ported TapCanvasPro's Droid channel and account management, including key import, account controls and tests, Standard / Core usage windows, subscription details, and same-pool retries after quota rejection. A deployment SQL patch seeds a disabled, empty pool; configure your own keys, model protocols and pricing before enabling it. See [Droid setup](apps/new-api/docs/channel/droid.md).
 - **2026-09-23 · Director desk upgrade**: Synced TapCanvasPro's standalone director desk, based on [DirectorDesk](https://github.com/mangfufu/director-desk), for 3D scene blocking, character staging and camera previs. Connected TapCanvas AI chat, tool relay and reference-video export to the canvas, replaced the previous embedded implementation, and added MIT attribution. Web development and production builds now build the director desk automatically; install its standalone dependencies before first use.
 
