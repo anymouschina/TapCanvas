@@ -14,6 +14,7 @@ import {
   IconEye,
   IconLayoutGrid,
   IconMovie,
+  IconArrowsDiff,
   IconMusic,
   IconPhoto,
   IconScissors,
@@ -92,6 +93,7 @@ const ADD_NODE_CATEGORIES: readonly AddNodeCategory[] = [
       { id: 'storyboard', kind: 'storyboard', label: '分镜编辑', Icon: IconLayoutGrid, badge: null, action: 'node' },
       { id: 'shotTable', kind: 'shotTable', label: '分镜表', Icon: IconTable, badge: null, action: 'node' },
       { id: 'directorConsole', kind: 'directorConsole', label: '导演台', Icon: IconMovie, badge: 'Beta', action: 'node' },
+      { id: 'imageCompare', kind: 'imageCompare', label: '图片对比', Icon: IconArrowsDiff, badge: null, action: 'node' },
       { id: 'video', kind: 'video', label: '视频', Icon: IconVideo, badge: null, action: 'node' },
       { id: 'audio', kind: 'audio', label: '音频', Icon: IconMusic, badge: 'Beta', action: 'node' },
       { id: 'videoAnalysis', kind: 'videoAnalysis', label: '视频分析', Icon: IconEye, badge: null, action: 'node' },
@@ -142,6 +144,7 @@ export default function AddNodePanel({ className }: { className?: string }): JSX
   const anchorX = useUIStore(s => s.panelAnchorX)
   const addNode = useRFStore(s => s.addNode)
   const addDirectorConsoleNode = useRFStore(s => s.addDirectorConsoleNode)
+  const addImageCompareNode = useRFStore(s => s.addImageCompareNode)
   const isAdmin = useIsAdmin()
   const [activeCategoryId, setActiveCategoryId] = React.useState<AddNodeCategory['id']>('creation')
   const [query, setQuery] = React.useState('')
@@ -169,11 +172,13 @@ export default function AddNodePanel({ className }: { className?: string }): JSX
   const addTaskNode = React.useCallback((kind: string) => {
     if (kind === 'directorConsole') {
       addDirectorConsoleNode()
+    } else if (kind === 'imageCompare') {
+      addImageCompareNode()
     } else {
       addNode('taskNode', undefined, { kind })
     }
     setActivePanel(null)
-  }, [addNode, addDirectorConsoleNode, setActivePanel])
+  }, [addNode, addDirectorConsoleNode, addImageCompareNode, setActivePanel])
 
   React.useEffect(() => {
     if (!categories.some((category) => category.id === activeCategoryId)) {

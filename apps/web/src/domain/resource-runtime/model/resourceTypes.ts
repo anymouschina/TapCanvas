@@ -20,6 +20,7 @@ export type ResourceOwnerSurface =
   | 'asset-library'
   | 'storyboard-recipe-picker'
   | 'emotion-preview'
+  | 'image-compare-node'
 
 export type ImageTransportKind = 'none' | 'object-url' | 'worker-object-url' | 'direct-url'
 
