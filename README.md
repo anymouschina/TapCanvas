@@ -68,10 +68,20 @@ https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
 
 - **2026-10-21 · 创作流水线与画布双视图**：新增创作流水线，可与同一项目的节点画布切换。按故事剧本、角色与场景、分镜设计、视频片段、最终成片五个阶段查看已有内容、生成状态与异常；分镜和视频片段按场景组织，支持素材筛选和媒体预览。流水线内可选择章节或正文来源并进入「一键成片」，也可单项生成或批量生成当前阶段的未完成素材，复用画布执行与前置资产链路。
 
-  以下截图取自 TapCanvasPro 的同一章节，展示本次同步的流水线布局与画布切换。
+  TapCanvasPro 同一项目第二章的真实状态；最终成片展示阶段视图。点击缩略图查看原图。
 
-  <img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="创作流水线桌面总览：章节入口、制作阶段与素材内容" width="100%">
-  <img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="同一章节的节点画布局部视图，可切换回创作流水线" width="100%">
+  <table width="100%">
+    <tr>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-script.jpg"><img src="assets/changelog/2026-10-21-pipeline-script.jpg" alt="第二章故事剧本阶段" width="100%"></a><br>故事剧本</td>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-overview.jpg"><img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="第二章角色与场景资产" width="100%"></a><br>角色与场景</td>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-storyboard.jpg"><img src="assets/changelog/2026-10-21-pipeline-storyboard.jpg" alt="第二章分镜设计阶段" width="100%"></a><br>分镜设计</td>
+    </tr>
+    <tr>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-clips.jpg"><img src="assets/changelog/2026-10-21-pipeline-clips.jpg" alt="第二章视频片段阶段" width="100%"></a><br>视频片段</td>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-delivery.jpg"><img src="assets/changelog/2026-10-21-pipeline-delivery.jpg" alt="第二章最终成片阶段视图" width="100%"></a><br>最终成片（阶段视图）</td>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg"><img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="第二章节点画布，可切换回创作流水线" width="100%"></a><br>节点画布</td>
+    </tr>
+  </table>
 
 - **2026-10-20 · 图片对比节点**：新增画布图片对比节点，支持并排、滑动分割、叠加透明度、按住切换四种模式。可从添加节点面板或右键菜单新建；框选两张图片后点「图片对比」，会自动创建节点并连线。对比内容跟随上游图片实时更新，模式、分割位置、透明度与尺寸随节点保存。
 
