@@ -8606,11 +8606,13 @@ export async function runAgentsBridgeChatTask(
 	const maxOutputTokens = typeof maxOutputTokensRaw === "number"
 		&& Number.isInteger(maxOutputTokensRaw)
 		&& maxOutputTokensRaw >= 128
-		&& maxOutputTokensRaw <= 32_768
+		// 上限对齐 workflow-kernel-protocol 的 WORKFLOW_AGENT_MAX_OUTPUT_TOKENS_MAX（65536）。
+		// 原 32_768 与内置「一键成片 v135」graph 的 65536 声明矛盾，chapter-sequence-agent 必失败。
+		&& maxOutputTokensRaw <= 65_536
 		? maxOutputTokensRaw
 		: undefined;
 	if (options?.directForcedAgentExecution === true && maxOutputTokensRaw !== undefined && maxOutputTokens === undefined) {
-		throw new AppError("maxOutputTokens 必须是 128–32768 之间的整数", {
+		throw new AppError("maxOutputTokens 必须是 128–65536 之间的整数", {
 			status: 400,
 			code: "agents_max_output_tokens_invalid",
 		});
