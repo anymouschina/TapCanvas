@@ -87,6 +87,14 @@ async function executeFlowVersionRetentionSweep(
 				FROM workflow_executions execution
 				WHERE execution.flow_version_id = ranked_versions.id
 			)
+			-- 系统内置工作流的装配行指向规范版本行（created_at=发布日，
+			-- 早于 7 天窗口）。执行快照出现后规范行 version_rank>1 会被 GC 删掉，此后
+			-- 启动永久报「已装配的工作流版本不存在」。被装配引用的版本与执行引用同等受保护。
+			AND NOT EXISTS (
+				SELECT 1
+				FROM agent_capability_attachments attachment
+				WHERE attachment.source_version_id = ranked_versions.id
+			)
 		ORDER BY ranked_versions.created_at ASC, ranked_versions.id ASC
 	`);
 
