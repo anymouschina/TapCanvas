@@ -30,13 +30,48 @@ Recorded in the online edition. For the Community Edition's workflow entry point
 
 ## Changelog
 
+The latest 10 entries are shown below; expand the older updates for more history.
+
+- **2026-10-21 · Pipeline and canvas views**: Switch between a creative pipeline and the node canvas for the same project. Five stages—story and script, characters and scenes, storyboard design, video clips, and final film—show existing content, generation status and errors. Storyboards and clips are grouped by scene, with asset filters and media previews. Select a chapter or source text to launch the one-click video workflow, or generate individual items and unfinished assets in the current stage through the canvas execution and prerequisite-asset path.
+
+  Screenshots from the same chapter in TapCanvasPro show the pipeline layout and canvas view used as the reference for this update.
+
+  <img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="Creative pipeline desktop overview with chapter entry, production stages and assets" width="100%">
+  <img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="Detail of the same chapter's node canvas, with a switch back to the creative pipeline" width="100%">
+
 - **2026-10-20 · Image compare node**: New canvas node for comparing images side by side, with a draggable slider, an opacity overlay, or press-to-toggle. Add it from the add-node panel or the context menu, or select two image nodes and click "图片对比" to create and connect it automatically. It follows upstream images live and saves the mode, split position, opacity and size with the node.
 
   <img src="assets/changelog/2026-10-20-image-compare-overview.jpg" alt="Compare node created from two selected images (side-by-side mode)" width="100%">
   <img src="assets/changelog/2026-10-20-image-compare-slider.jpg" alt="Compare node in slider mode" width="60%">
 
 - **2026-10-11 · Factory / Droid account pools**: Ported TapCanvasPro's Droid channel and account management, including key import, account controls and tests, Standard / Core usage windows, subscription details, and same-pool retries after quota rejection. A deployment SQL patch seeds a disabled, empty pool; configure your own keys, model protocols and pricing before enabling it. See [Droid setup](apps/new-api/docs/channel/droid.md).
+- **2026-10-07 · One-click video v135**: Synced full-chapter story and timeline planning, asset creation, per-clip prompts and media production, and the latest creative Skills. The editor and executor share the workflow definition and continue to use the Community Edition's DeepSeek Harness Bridge. Added the v135 system workflow release while preserving execution history and generated assets.
+- **2026-10-07 · Canvas fixes**: Copying nodes and groups preserves assets and prompts, isolates execution identities and remaps references. Fixed missing assets from visual groups in group downloads.
 - **2026-09-23 · Director desk upgrade**: Synced TapCanvasPro's standalone director desk, based on [DirectorDesk](https://github.com/mangfufu/director-desk), for 3D scene blocking, character staging and camera previs. Connected TapCanvas AI chat, tool relay and reference-video export to the canvas, replaced the previous embedded implementation, and added MIT attribution. Web development and production builds now build the director desk automatically; install its standalone dependencies before first use.
+- **2026-09-21 · Agent configuration updates**: Added one-click update and replacement for installed workflows after checks pass, retaining their existing scope and confirmed replacement or parallel relationships, along with version history, executions and generated assets.
+- **2026-09-21 · Conflict checks**: Shared workflow tools or output formats are now informational rather than forcing a choice. Agents still assess responsibility conflicts; blocking errors and version races are reported explicitly.
+- **2026-09-21 · Configuration list fix**: Aligned frontend and backend update-time and first-load-time contracts to fix Agent configuration lists failing to load when time fields were missing. All 94 related configuration-update tests passed.
+- **2026-09-21**: Reorganized the project documentation and removed outdated deadlines and capability-completion checklists.
+
+<details>
+<summary>Older updates (9 entries)</summary>
+
+- **2026-09-20**: Synced the v90 video production workflow with the DeepSeek Harness runtime. Unified canvas generation actions through the main AI chat and fixed model propagation for chapter asset and design actions, plus local login sessions.
+- **2026-09-16**: Added the AtomGit badge, project acknowledgments and contributor information.
+- **2026-09-11**: Expanded HeyRoute channels and models, with separate per-channel text, image and video pricing.
+- **2026-09-10**: Added HeyRoute channels, the referral registration link and an API key application entry.
+- **2026-09-08**: Updated the one-click video implementation and supporting Skills.
+- **2026-09-06**: Restored Agent execution-result previews.
+- **2026-09-05**: Added Agnes image and video channels, improved model parameter contracts and GPT Image 2 request validation, and fixed video-duration pricing ranges and free reference-image quota calculation.
+- **2026-09-04**: Corrected Agnes video generation requests to match the official API contract.
+- **2026-09-03**: Improved Docker deployment and dependency builds, including Web and model-console builds inside containers and automatic local configuration and key initialization.
+
+</details>
+
+## Core Capabilities
+
+- **Pipeline / canvas views**: Switch between a node canvas for editing dependencies and a creative pipeline for reviewing scripts, characters and scenes, storyboard designs, video clips and final films. Both views use the same project content, assets and execution records.
+- **One-click video entry**: Choose a chapter or source text in the pipeline and submit creative requirements through the text node's production flow. Configure available Agent, image and video model channels and an installed workflow before running. Individual and stage-level generation reuse canvas execution and its prerequisite-asset chain.
 
 ## Latest Capabilities
 

@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { CanvasWorkspace } from './workbench/CanvasWorkspace'
+import { useWorkbenchViewStore } from './workbench/workbenchViewStore'
 import { useProjectImageSettingsStore } from './projectImageSettingsStore'
 import {
   ReactFlow,
@@ -1247,6 +1249,7 @@ function CanvasInner({
     ;(window as any).__tcFocusNode = (nodeId: string) => {
       try {
         if (!nodeId) return
+        useWorkbenchViewStore.getState().setView('canvas')
         useRFStore.setState((s) => ({
           nodes: (s.nodes || []).map((n) => ({ ...n, selected: n.id === nodeId })),
         }))
@@ -5079,11 +5082,13 @@ export default function Canvas({
 
   return (
     <ReactFlowProviderWithClass className="tc-canvas-provider">
-      <CanvasInner
-        className={innerClassName}
-        hideDevPerformancePanel={hideDevPerformancePanel}
-        onPerformanceApiReady={onPerformanceApiReady}
-      />
+      <CanvasWorkspace>
+        <CanvasInner
+          className={innerClassName}
+          hideDevPerformancePanel={hideDevPerformancePanel}
+          onPerformanceApiReady={onPerformanceApiReady}
+        />
+      </CanvasWorkspace>
     </ReactFlowProviderWithClass>
   )
 }

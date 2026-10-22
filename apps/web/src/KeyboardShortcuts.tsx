@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useRFStore, persistToLocalStorage } from './canvas/store'
 import { extractCanvasGraph, type CanvasImportData } from './canvas/utils/serialization'
 import { isCanvasTextInteractionTarget } from './canvas/utils/isCanvasTextInteractionTarget'
+import { useWorkbenchViewStore } from './canvas/workbench/workbenchViewStore'
 
 export function isCanvasCompositionKeyEvent(
   event: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>,
@@ -205,6 +206,7 @@ export default function KeyboardShortcuts({ className }: { className?: string })
       lastInteractionInsideApp = target ? rootEl.contains(target) : false
     }
     function onKey(e: KeyboardEvent) {
+      if (useWorkbenchViewStore.getState().view !== 'canvas') return
       // Canvas shortcuts must never act on keys owned by an active IME. In
       // particular, composition Escape/Enter can otherwise clear selection or
       // run a node, unmounting a focused contentEditable before it commits.

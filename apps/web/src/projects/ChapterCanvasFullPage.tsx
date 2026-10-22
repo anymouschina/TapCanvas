@@ -6,6 +6,7 @@ import { useIsAdmin } from '../auth/isAdmin'
 import AgentAdminWorkbenchPanel from '../ui/AgentAdminWorkbenchPanel'
 import { useAgentCanvasDeepLink } from '../ui/agent-task-execution/useAgentCanvasDeepLink'
 import { useRFStore } from '../canvas/store'
+import { CanvasViewSwitcher } from '../canvas/workbench/CanvasViewSwitcher'
 import GithubGate from '../auth/GithubGate'
 import BodyPortal from '../ui/BodyPortal'
 import { CanvasLoadingScreen } from '../ui/CanvasLoadingScreen'
@@ -282,6 +283,7 @@ export default function ChapterCanvasFullPage({
               {/* 返回与项目画布各自有明确入口；章节标题已去除（标题在内容区可见）。 */}
             </Group>
             <Group className="app-header-actions" gap="xs" wrap="nowrap">
+              <CanvasViewSwitcher />
               {auth.user && !auth.user.guest ? (
                 <Tooltip label="AI 执行台：查看当前任务进度与交付证据">
                   <ActionIcon
