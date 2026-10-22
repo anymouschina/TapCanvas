@@ -778,6 +778,9 @@ services:
       AGENTS_BRIDGE_TIMEOUT_MS: "1800000"
       WORKFLOW_NODE_WORKER_CONCURRENCY: ${WORKFLOW_NODE_WORKER_CONCURRENCY:-8}
       WORKFLOW_RUNTIME_PORT: "8790"
+      # Workflow node jobs (incl. Local JavaScript executor nodes) run in this
+      # worker process, not in `api`; the flag must be set here to take effect.
+      WORKFLOW_LOCAL_JAVASCRIPT_ENABLED: ${WORKFLOW_LOCAL_JAVASCRIPT_ENABLED:-true}
       # 显式清空，防止 env_file 把 Worker 自身错误切成远程代理。
       WORKFLOW_RUNTIME_REMOTE_BASE_URL: ""
       HTTP_PROXY: ""
