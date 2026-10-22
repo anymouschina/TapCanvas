@@ -2,6 +2,7 @@ import React from 'react'
 import { ActionIcon, Badge, Box, Button, Center, Container, Group, Loader, Stack, Text, Title, Tooltip } from '@mantine/core'
 import { IconCopy, IconCopyPlus, IconRefresh } from '@tabler/icons-react'
 import Canvas from '../canvas/Canvas'
+import { CanvasViewSwitcher } from '../canvas/workbench/CanvasViewSwitcher'
 import { cloneProject, getPublicProjectConversation, getPublicProjectFlows, listPublicProjects, type FlowDto, type ProjectDto, type PublicConversationSessionDto, type PublicProjectFlowDto } from '../api/server'
 import { useAuth } from '../auth/store'
 import { useRFStore } from '../canvas/store'
@@ -13,6 +14,7 @@ import { PublicProjectDirectory } from './PublicProjectDirectory'
 import { buildSharePath, canCopySharedProject, pickInitialPublicFlowId, sanitizeReadonlyGraph } from './shareCanvasModel'
 import { useUIStore } from './uiStore'
 import { toast } from './toast'
+import PreviewModal from './PreviewModal'
 
 type ShareLocation = {
   projectId: string | null
@@ -258,6 +260,7 @@ export default function ShareFullPage(): JSX.Element {
             ) : null}
           </Group>
           <Group className="tc-public-workspace__actions" gap="xs" align="center" wrap="nowrap">
+            <CanvasViewSwitcher />
             {canCopyProject ? (
               <Tooltip className="tc-public-workspace__tooltip" label="复制到我的项目" withArrow>
                 <Button
@@ -312,6 +315,7 @@ export default function ShareFullPage(): JSX.Element {
         )}
         <PublicConversationPanel sessions={conversation} />
       </Box>
+      <PreviewModal />
     </Box>
   )
 }

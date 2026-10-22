@@ -692,7 +692,7 @@ export default function ChapterCanvasPage(props: ChapterCanvasPageProps) {
       <Canvas />
       {/* 视频 run 真实进度 + 终止入口：章节画布同样需要（run-status 现已广播到 chapterId 房间）。
           显式传 projectId/chapterId，避免依赖可能滞后的 uiStore。 */}
-      <div style={{ position: 'absolute', left: 16, top: 100, zIndex: 30, pointerEvents: 'none' }}>
+      <div className="tc-canvas-only-overlay" style={{ position: 'absolute', left: 16, top: 100, zIndex: 30, pointerEvents: 'none' }}>
         <VideoRunIndicator projectId={props.projectId} currentChapterId={chapterId} />
       </div>
       {/* 冷启动（本地无快照可画）用与 Canvas 初载遮罩同款的浮层盖住空画布，就绪后同样 0.4s 淡出，

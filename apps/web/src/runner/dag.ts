@@ -46,13 +46,16 @@ function hasSettledTargetClipRuns(runs: readonly WorkflowNodeRunDto[], imageNode
 async function waitForWorkflowRecovery(
   executionId: string,
   ready: (runs: readonly WorkflowNodeRunDto[]) => boolean,
+  assertCurrentScope: () => void,
 ): Promise<void> {
   const { applyWorkflowNodeRuns } = await import('../canvas/workflowExecutionProjection')
   const deadline = Date.now() + MAX_WORKFLOW_RECOVERY_WAIT_MS
   while (true) {
+    assertCurrentScope()
     const [execution, runs] = await Promise.all([
       getWorkflowExecution(executionId), listWorkflowNodeRuns(executionId),
     ])
+    assertCurrentScope()
     applyWorkflowNodeRuns(executionId, runs, execution.status, execution.executionFamilyId)
     if (ready(runs)) return
     if (execution.status === 'success' || execution.status === 'failed' || execution.status === 'canceled') return
@@ -655,7 +658,7 @@ async function executeNodeDagToTarget(
       await waitForWorkflowRecovery(execution.id, (runs) => hasSettledTargetClipRuns(runs, failedUpstreamImages)
         && failedUpstreamImages.every((node) => hasExecutableNodeAsset(
           (get().nodes as Node[]).find((current) => current.id === node.id),
-        )))
+        )), get)
       const missing = failedUpstreamImages.filter((node) => !hasExecutableNodeAsset(
         (get().nodes as Node[]).find((current) => current.id === node.id),
       ))
@@ -684,7 +687,7 @@ async function executeNodeDagToTarget(
       const current = resolveWorkflowMediaOutputSlot(get().nodes as Node[], source.id)
       return current?.activeAttempt.executionId === execution.id
         && current.activeAttempt.status === 'success' && current.activeAttempt.assetUrls.length > 0
-    })
+    }, get)
     const completedSlot = resolveWorkflowMediaOutputSlot(get().nodes as Node[], source.id)
     if (completedSlot?.activeAttempt.executionId !== execution.id
       || completedSlot.activeAttempt.status !== 'success'

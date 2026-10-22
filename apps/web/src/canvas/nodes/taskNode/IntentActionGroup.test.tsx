@@ -48,6 +48,16 @@ beforeEach(() => {
 })
 
 describe('chapter toolbar to main AI conversation', () => {
+  it('shows only the existing film action in the pipeline and dispatches its unchanged text command', () => {
+    render(<MantineProvider env="test"><IntentActionGroup nodeId="chapter-source" kind="text" filmOnly /></MantineProvider>)
+    expect(screen.getAllByRole('button')).toHaveLength(1)
+    expect(useChatCommandStore.getState().pending).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '一键成片' }))
+    const command = useChatCommandStore.getState().consume()
+    expect(command?.requiredSkills).toEqual(['tapcanvas-video-workflow'])
+    expect(command?.text).toContain('本章真实正文')
+    expect(command?.text).toContain('chapter-source')
+  })
   it.each([
     ['生成场景/人物参考图', 'generate_scene_references'],
     ['拆分并生成设计板图片', 'generate_shot_placeholders'],

@@ -30,6 +30,8 @@ type Props = {
   nodeData?: Record<string, unknown>
   preset?: string
   isLastSegment?: boolean
+  /** Pipeline displays the existing film entry without the node's other intent tools. */
+  filmOnly?: boolean
 }
 
 type PendingConfig = {
@@ -107,7 +109,7 @@ export function IntentActionGroup(props: Props) {
   const [pendingConfig, setPendingConfig] = useState<PendingConfig | null>(null)
   const [filmSpecOpened, setFilmSpecOpened] = useState(false)
 
-  const actions = INTENT_ACTIONS.filter((a) =>
+  const actions = INTENT_ACTIONS.filter((a) => !props.filmOnly &&
     a.applicableTo({
       kind: props.kind,
       semanticKind: props.semanticKind,
@@ -276,21 +278,23 @@ export function IntentActionGroup(props: Props) {
   return (
     <>
       {/* 工具统一贴在节点上方一行、不换行：成片按钮 + 各 intent 图标横向排列 */}
-      <Group gap={6} wrap="nowrap" align="center">
+      <Group className="tc-intent-action-group" gap={6} wrap="nowrap" align="center">
         {isTextFilmNode ? (
           // 一键成片按钮只提交当前真实作用域，由已装配 Workflow IR 决定可观察的分段、资产、
           // 生成与合成节点；chapter-info 以整章为源，普通文本节点以本节点正文为源。
           <Button
+            className="tc-intent-film-button"
             size="compact-xs"
-            variant="gradient"
-            gradient={{ from: 'indigo', to: 'grape', deg: 110 }}
-            leftSection={<IconMovie size={13} />}
+            variant={props.filmOnly ? 'filled' : 'gradient'}
+            color={props.filmOnly ? 'blue' : undefined}
+            gradient={props.filmOnly ? undefined : { from: 'indigo', to: 'grape', deg: 110 }}
+            leftSection={<IconMovie className="tc-intent-film-icon" size={13} />}
             styles={{ root: { fontWeight: 600 } }}
             loading={filmPreparing}
             disabled={chatPreparing}
             onClick={handleMakeVideoClick}
           >
-            {isChapterScriptNode ? '本章做成视频' : '做成视频'}
+            {props.filmOnly ? '一键成片' : isChapterScriptNode ? '本章做成视频' : '做成视频'}
           </Button>
         ) : null}
         {uncategorized.map(renderActionButton)}

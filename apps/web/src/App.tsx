@@ -6,6 +6,7 @@ import { AppShell, ActionIcon, Group, Box, Button, Badge, Text, Tooltip, Unstyle
 import { notifications } from '@mantine/notifications'
 import { IconCoins, IconChartBar, IconBooks } from '@tabler/icons-react'
 import Canvas from './canvas/Canvas'
+import { CanvasViewSwitcher } from './canvas/workbench/CanvasViewSwitcher'
 import GithubGate from './auth/GithubGate'
 import { isCanvasNodeDragActive, sanitizeGraphForCanvas, useRFStore } from './canvas/store'
 import { isSelectionOnlyNodeDiff } from './canvas/persistence/isSelectionOnlyNodeDiff'
@@ -1652,6 +1653,7 @@ function CanvasApp({
           <GithubGate className="app-github-gate">
             <Canvas className="app-canvas" />
             <div
+              className="tc-canvas-only-overlay"
               style={{
                 position: 'absolute',
                 left: 16,
@@ -1663,10 +1665,12 @@ function CanvasApp({
               <VideoRunIndicator />
             </div>
             {!hasCanvasNodes && (
-              <CanvasEmptyOverlay
-                onStartStoryboardWizard={() => setStoryboardWizardOpen(true)}
-                onOpenNovelImport={() => useUIStore.getState().openAssetManager('catalog')}
-              />
+              <div className="tc-canvas-only-overlay">
+                <CanvasEmptyOverlay
+                  onStartStoryboardWizard={() => setStoryboardWizardOpen(true)}
+                  onOpenNovelImport={() => useUIStore.getState().openAssetManager('catalog')}
+                />
+              </div>
             )}
           </GithubGate>
           <StoryboardOnboardingWizard
@@ -1763,6 +1767,7 @@ function CanvasApp({
                   <IconBooks size={16} />
                 </ActionIcon>
               </Tooltip>
+              <CanvasViewSwitcher />
               <Tooltip label="按文本 / 图片 / 视频等节点类型自动分列；工作流组按执行链对齐" withArrow>
                 <Button
                   className="app-tidy-button"
