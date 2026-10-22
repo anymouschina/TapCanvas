@@ -34,10 +34,20 @@ The latest 10 entries are shown below; expand the older updates for more history
 
 - **2026-10-21 · Pipeline and canvas views**: Switch between a creative pipeline and the node canvas for the same project. Five stages—story and script, characters and scenes, storyboard design, video clips, and final film—show existing content, generation status and errors. Storyboards and clips are grouped by scene, with asset filters and media previews. Select a chapter or source text to launch the one-click video workflow, or generate individual items and unfinished assets in the current stage through the canvas execution and prerequisite-asset path.
 
-  Screenshots from the same chapter in TapCanvasPro show the pipeline layout and canvas view used as the reference for this update.
+  Actual state of Chapter 2 in the same TapCanvasPro project; Final film shows the stage view. Click a thumbnail for the full image.
 
-  <img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="Creative pipeline desktop overview with chapter entry, production stages and assets" width="100%">
-  <img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="Detail of the same chapter's node canvas, with a switch back to the creative pipeline" width="100%">
+  <table width="100%">
+    <tr>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-script.jpg"><img src="assets/changelog/2026-10-21-pipeline-script.jpg" alt="Chapter 2 story and script stage" width="100%"></a><br>Story and script</td>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-overview.jpg"><img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="Chapter 2 character and scene assets" width="100%"></a><br>Characters and scenes</td>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-storyboard.jpg"><img src="assets/changelog/2026-10-21-pipeline-storyboard.jpg" alt="Chapter 2 storyboard design stage" width="100%"></a><br>Storyboard design</td>
+    </tr>
+    <tr>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-clips.jpg"><img src="assets/changelog/2026-10-21-pipeline-clips.jpg" alt="Chapter 2 video clips stage" width="100%"></a><br>Video clips</td>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-delivery.jpg"><img src="assets/changelog/2026-10-21-pipeline-delivery.jpg" alt="Chapter 2 final film stage view" width="100%"></a><br>Final film (stage view)</td>
+      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg"><img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="Chapter 2 node canvas with a switch back to the creative pipeline" width="100%"></a><br>Node canvas</td>
+    </tr>
+  </table>
 
 - **2026-10-20 · Image compare node**: New canvas node for comparing images side by side, with a draggable slider, an opacity overlay, or press-to-toggle. Add it from the add-node panel or the context menu, or select two image nodes and click "图片对比" to create and connect it automatically. It follows upstream images live and saves the mode, split position, opacity and size with the node.
 
