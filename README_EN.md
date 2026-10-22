@@ -34,18 +34,20 @@ The latest 10 entries are shown below; expand the older updates for more history
 
 - **2026-10-21 · Pipeline and canvas views**: Switch between a creative pipeline and the node canvas for the same project. Five stages—story and script, characters and scenes, storyboard design, video clips, and final film—show existing content, generation status and errors. Storyboards and clips are grouped by scene, with asset filters and media previews. Select a chapter or source text to launch the one-click video workflow, or generate individual items and unfinished assets in the current stage through the canvas execution and prerequisite-asset path.
 
-  Actual state of Chapter 2 in the same TapCanvasPro project; Final film shows the stage view. Click a thumbnail for the full image.
+  Screenshots from the same TapCanvasPro project; click a thumbnail for the full image. **The Community Edition currently runs one chapter at a time. Pro membership tiers, multi-chapter / whole-book batches and the additional specification selectors have not been ported.** The final-film screenshot shows its pending state.
 
   <table width="100%">
     <tr>
-      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-script.jpg"><img src="assets/changelog/2026-10-21-pipeline-script.jpg" alt="Chapter 2 story and script stage" width="100%"></a><br>Story and script</td>
-      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-overview.jpg"><img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="Chapter 2 character and scene assets" width="100%"></a><br>Characters and scenes</td>
-      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-storyboard.jpg"><img src="assets/changelog/2026-10-21-pipeline-storyboard.jpg" alt="Chapter 2 storyboard design stage" width="100%"></a><br>Storyboard design</td>
+      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-film-chapter-selection.jpg"><img src="assets/changelog/2026-10-21-film-chapter-selection.jpg" alt="Chapter selection (Pro reference)" width="100%"></a><br>Chapter selection (Pro reference)</td>
+      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-film-options.jpg"><img src="assets/changelog/2026-10-21-film-options.jpg" alt="Film options (Pro reference)" width="100%"></a><br>Film options (Pro reference)</td>
+      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-script.jpg"><img src="assets/changelog/2026-10-21-pipeline-script.jpg" alt="Story and script" width="100%"></a><br>Story and script</td>
+      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-overview.jpg"><img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="Characters and scenes" width="100%"></a><br>Characters and scenes</td>
     </tr>
     <tr>
-      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-clips.jpg"><img src="assets/changelog/2026-10-21-pipeline-clips.jpg" alt="Chapter 2 video clips stage" width="100%"></a><br>Video clips</td>
-      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-pipeline-delivery.jpg"><img src="assets/changelog/2026-10-21-pipeline-delivery.jpg" alt="Chapter 2 final film stage view" width="100%"></a><br>Final film (stage view)</td>
-      <td width="33%" align="center"><a href="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg"><img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="Chapter 2 node canvas with a switch back to the creative pipeline" width="100%"></a><br>Node canvas</td>
+      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-storyboard.jpg"><img src="assets/changelog/2026-10-21-pipeline-storyboard.jpg" alt="Storyboard design" width="100%"></a><br>Storyboard design</td>
+      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-clips.jpg"><img src="assets/changelog/2026-10-21-pipeline-clips.jpg" alt="Video clips" width="100%"></a><br>Video clips</td>
+      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-delivery.jpg"><img src="assets/changelog/2026-10-21-pipeline-delivery.jpg" alt="Final film (pending)" width="100%"></a><br>Final film (pending)</td>
+      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg"><img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="Node canvas" width="100%"></a><br>Node canvas</td>
     </tr>
   </table>
 
