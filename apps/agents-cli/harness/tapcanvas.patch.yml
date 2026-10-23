@@ -16,11 +16,17 @@
         baseURL: !!js process.env.TAPCANVAS_DSH_API_BASE_URL
         defaultContextWindow: !!js Number(process.env.TAPCANVAS_DSH_CONTEXT_WINDOW)
         defaultMaxTokens: !!js Number(process.env.TAPCANVAS_DSH_MAX_OUTPUT_TOKENS)
-        reasoning: !!js process.env.TAPCANVAS_DSH_REASONING_EFFORT
+        reasoning: !!js "process.env.TAPCANVAS_DSH_REASONING_EFFORT === 'none' ? 'off' : process.env.TAPCANVAS_DSH_REASONING_EFFORT || undefined"
         models:
           - id: !!js process.env.TAPCANVAS_DSH_MODEL
             name: !!js process.env.TAPCANVAS_DSH_MODEL
             contextWindow: !!js Number(process.env.TAPCANVAS_DSH_CONTEXT_WINDOW)
+            # This private gateway has no pi-ai catalog entry. Declare its wire
+            # vocabulary explicitly so the selected effort reaches the gateway unchanged.
+            reasoningEfforts: !!js |
+              process.env.TAPCANVAS_DSH_REASONING_EFFORT
+                ? { off: 'none', minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' }
+                : false
 
 - id: skill-filesystem
   config:
