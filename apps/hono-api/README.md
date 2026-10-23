@@ -201,6 +201,8 @@ docker-compose exec api dreamina version
 
 - 节点与对话同步 TapCanvasPro：章节正文在懒加载编辑器挂载时同步；文本附件支持 TXT/Markdown/DOC/DOCX；图片节点按模型目录提交参数并使用同一规格计算报价；视频展示提交时的参考素材顺序。生成偏好启用状态与保存队列以服务端结果为准，章节成片提交前等待偏好保存并复核来源作用域。
 - 对话模型与思考设置在发送前等待真实目录加载，继续沿用当前项目的目录顺序选择策略；`reasoningEffort` 经公开请求 schema、task extras、Bridge 传入当前 Harness。当前 Harness 不支持请求级 `serviceTier`，界面禁用优先服务，历史启用状态要求显式关闭；不显示已生效的假象。节点快捷入口统一投递主对话，不引入 Pro 的旧 intent lifecycle 执行链。
+- `tapcanvas` 是 pi-ai 内置目录之外的私有网关；有本轮 `reasoningEffort` 时，Harness overlay 必须同时声明模型级 `reasoningEfforts` 与选定档位，防止模型被当作不支持推理而在请求发出前误拒绝。网关接收原选定值；`none` 仅在 Harness 内表示为 `off`，发出的参数仍为 `none`。未指定时清空旧环境档位且不声明推理能力。该适配不猜测供应商能力，上游不支持时仍显式失败，不自动换模型或调整强度。
+- Bridge 的 Harness SDK 子进程握手时限可通过 `AGENTS_INITIALIZE_TIMEOUT_MS` 以正安全整数毫秒显式配置；未配置时保留 SDK 默认时限，非法配置使 Bridge 启动失败，握手超时如实失败，不自动重启或重试。
 
 - 能力版本更新采用新版替换旧装配：Agent 配置同步 TapCanvasPro 的更新检查交互，展示工作流保存时间与初次装载时间；更新检查沿用原 `scope`，管理员可从已添加列表更新系统工作流。确认后在同一个 Serializable 事务中替换 attachment 的版本、descriptor/hash、检查报告与使用关系，实际执行只消费新装配版本；不把继续执行旧作者图当作消除 stale 的办法。历史版本和已产出资产保留。检查后作者图再次变化仍 CAS 失败，要求重新检查。
 - 能力关系支持显式 `replace_existing` / `coexist`。更新检查可能不再列出已经停用的被替换能力，因此未被本次新决策覆盖、且未成为新工作流依赖的原替换关系必须保留在 attachment 中，确保系统工作流对其他用户仍是已确认主能力。最新的并列决策覆盖旧替换关系，并释放该工作流自身写入的停用偏好；不可替换基础能力和必需 Skill 不允许被替换。配置读取不自动发布新版本。系统工作流启动发布只校验固定身份和版本引用完整性；允许已通过装配事务更新的版本继续生效，禁止在重启时要求恢复初始装配。

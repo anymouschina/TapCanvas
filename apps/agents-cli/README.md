@@ -55,6 +55,7 @@ curl http://127.0.0.1:8789/collab/status
 - `AGENTS_API_BASE_URL`：OpenAI-compatible 模型网关地址。
 - `AGENTS_API_KEY`：模型网关凭据。
 - `AGENTS_API_STYLE=chat|responses`：上游协议；未知值显式失败。
+- `AGENTS_INITIALIZE_TIMEOUT_MS`：以正安全整数毫秒显式覆盖 Harness SDK 子进程握手时限；未设置时沿用 SDK 默认值，非法配置使 Bridge 明确启动失败。
 - `AGENTS_REQUEST_TIMEOUT_MS`：单次 Harness SDK 请求超时。
 - `AGENTS_SKILLS_DIR`：TapCanvas bundled Skills 目录；未设置时使用本包 `skills/`。
 - `DSH_HOME`：DeepSeek Harness 会话、设置与持久化目录。
@@ -76,6 +77,8 @@ Hono 正常调用时不会把 new-api 管理令牌交给 Bridge。Hono 为当前
 ### 模型与 system prompt
 
 每轮 Hono 必须提供明确的 `systemPrompt`、模型身份、模型网关地址/凭据和 API style。缺少关键值时 Bridge 原地返回结构化错误，不选择默认模型、不切换 API 协议，也不做模型降级。
+
+自定义 `tapcanvas` 网关模型不在 pi-ai 内置目录中。有本轮 `reasoningEffort` 时，overlay 同时声明模型的 `reasoningEfforts` 与 provider 选定档位，按网关词汇原值发送；公开 `none` 仅在 Harness 内映射为 `off`，实际网关参数仍为 `none`。未指定时不声明推理能力，并清空继承环境中的旧档位。该声明只描述传输词汇，不替代动态模型目录或上游供应商的能力校验；上游拒绝仍原样失败，不换模型或自动调整档位。
 
 Bridge 在 Hono 事实型 prompt 之外固定注入唯一产品身份：面向用户的助手名为“小T”，
 身份是 TapCanvas AI 创作助手；DeepSeek Harness 只作为内部执行内核。普通身份问答不得主动

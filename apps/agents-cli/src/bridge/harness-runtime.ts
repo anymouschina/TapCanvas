@@ -419,6 +419,7 @@ export class HarnessRuntime {
   private readonly bridgeOrigin: string;
   private readonly gateway: RequestMcpGateway;
   private readonly environment: NodeJS.ProcessEnv;
+  private readonly initializeTimeoutMs: number | undefined;
   private readonly dshHome: string;
   private readonly skillDirectory: string;
   private readonly emptyRequestSkillDirectory: string;
@@ -429,6 +430,14 @@ export class HarnessRuntime {
     this.bridgeOrigin = options.bridgeOrigin.replace(/\/+$/u, "");
     this.gateway = options.mcpGateway;
     this.environment = { ...(options.environment ?? process.env) };
+    this.initializeTimeoutMs = positiveInteger(this.environment.AGENTS_INITIALIZE_TIMEOUT_MS);
+    if (this.environment.AGENTS_INITIALIZE_TIMEOUT_MS !== undefined && this.initializeTimeoutMs === undefined) {
+      throw new BridgeRequestError(
+        "AGENTS_INITIALIZE_TIMEOUT_MS 必须是正安全整数（毫秒）",
+        "deepseek_harness_initialize_timeout_invalid",
+        503,
+      );
+    }
     this.dshHome = resolveDshHome(this.environment);
     this.skillDirectory = resolveSkillDirectory(this.environment, this.workspaceRoot);
     this.emptyRequestSkillDirectory = path.join(this.dshHome, "tapcanvas-empty-request-skills");
@@ -539,9 +548,7 @@ export class HarnessRuntime {
       TAPCANVAS_DSH_MCP_ENABLED: "true",
       TAPCANVAS_DSH_MCP_TOKEN: mcpToken,
       TAPCANVAS_DSH_MCP_URL: `${this.bridgeOrigin}/internal/mcp/${encodeURIComponent(mcpToken)}`,
-      ...(request.reasoningEffort
-        ? { TAPCANVAS_DSH_REASONING_EFFORT: request.reasoningEffort }
-        : {}),
+      TAPCANVAS_DSH_REASONING_EFFORT: request.reasoningEffort ?? "",
     };
 
     const harness = new DeepSeekHarness({
@@ -551,6 +558,7 @@ export class HarnessRuntime {
       dshHome: this.dshHome,
       processCwd: this.workspaceRoot,
       env: childEnvironment,
+      ...(this.initializeTimeoutMs ? { initializeTimeoutMs: this.initializeTimeoutMs } : {}),
       ...(requestTimeoutMs ? { requestTimeoutMs } : {}),
       cwd: this.workspaceRoot,
       provider: "tapcanvas",
