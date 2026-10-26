@@ -64,6 +64,12 @@ vi.mock("../chapter/chapter.service", () => ({
 
 vi.mock("../flow/flow.service", () => ({ upsertUserFlow }));
 
+const scriptMocks = vi.hoisted(() => ({ list: vi.fn(), export: vi.fn() }));
+vi.mock("../chapter/chapter.script-export", () => ({
+	listChapterScriptPlansForUser: scriptMocks.list,
+	exportChapterScriptsForUser: scriptMocks.export,
+}));
+
 import { projectRouter } from "./project.routes";
 
 function createApp() {
@@ -258,5 +264,40 @@ describe("projectRouter auth wiring", () => {
 				}),
 			}),
 		);
+	});
+});
+
+
+describe("project script export HTTP contract", () => {
+	beforeEach(() => vi.clearAllMocks());
+	it("returns only authenticated saved script summaries without cache", async () => {
+		scriptMocks.list.mockResolvedValue([]);
+		const response = await createApp().request("/projects/project-1/script-plans");
+		expect(response.status).toBe(200);
+		expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+		expect(await response.json()).toEqual({ projectId: "project-1", items: [] });
+		expect(scriptMocks.list).toHaveBeenCalledWith(expect.anything(), "user-from-api-key", "project-1");
+	});
+	it("serves UTF-8 plain text and an encoded Chinese attachment filename", async () => {
+		scriptMocks.export.mockResolvedValue({ fileName: "原书-剧本.txt", text: "原始提示词\n" });
+		const response = await createApp().request("/projects/project-1/script-export", {
+			method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chapterIds: ["chapter-1"] }),
+		});
+		expect(response.status).toBe(200);
+		expect(response.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+		expect(response.headers.get("Content-Disposition")).toBe(`attachment; filename*=UTF-8''${encodeURIComponent("原书-剧本.txt")}`);
+		expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+		expect(await response.text()).toBe("原始提示词\n");
+		expect(scriptMocks.export).toHaveBeenCalledWith(expect.anything(), "user-from-api-key", "project-1", ["chapter-1"]);
+	});
+	it("rejects invalid JSON, empty, duplicate and mixed selections without calling export", async () => {
+		for (const body of ["{", "null", JSON.stringify({ chapterIds: [] }), JSON.stringify({ chapterIds: ["x", "x"] }), JSON.stringify({ chapterIds: ["x", 3] })]) {
+			const response = await createApp().request("/projects/project-1/script-export", {
+				method: "POST", headers: { "Content-Type": "application/json" }, body,
+			});
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ code: "script_export_selection_invalid" });
+		}
+		expect(scriptMocks.export).not.toHaveBeenCalled();
 	});
 });

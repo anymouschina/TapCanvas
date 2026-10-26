@@ -775,7 +775,7 @@ export const canvasNodeSpecs = {
 	imageEdit: {
 		label: "图片编辑",
 		purpose:
-			"统一图像编辑节点；以入图为基础做风格/构图/细节编辑，功能以可选能力启用。若编辑任务依赖明确角色或道具身份，必须保留原始 referenceImages / assetInputs / 绑定语义，避免编辑后漂移成默认人物或默认物体。",
+			"统一图像编辑节点；以入图为基础做风格/构图/细节编辑，功能以可选能力启用。若编辑任务依赖明确角色或道具身份，必须保留原始 referenceImages / assetInputs / 绑定语义，避免编辑后漂移成默认人物或默认物体。画布手动去噪以当前主图创建独立编辑节点，通过已有 visible_composite_only 内部策略隔离其他上游与项目画风；不承诺模型规格未提供的 8K，输出画幅沿用图片编辑规格。",
 		recommendedModels: [],
 		modelSelection:
 			"显式任务选择优先，否则使用账号 imageModel；必须在 enabledImageModels 中精确验证其 image_edit/reference-guided 能力。没有精确可执行项时显式失败，禁止换模型。",

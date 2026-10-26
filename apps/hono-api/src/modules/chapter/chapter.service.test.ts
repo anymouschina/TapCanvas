@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChapterDto } from "./chapter.schemas";
-import { sortChapterDtosForDisplay } from "./chapter.service";
+import { sortChaptersForDisplay } from "./chapter.order";
 
 function buildChapter(input: {
 	id: string;
@@ -14,7 +14,7 @@ function buildChapter(input: {
 		projectId: "project-1",
 		index: input.index,
 		title: input.title || input.id,
-		summary: null,
+		summary: undefined,
 		status: "draft",
 		sortOrder: input.sortOrder,
 		continuityContext: undefined,
@@ -29,9 +29,9 @@ function buildChapter(input: {
 	};
 }
 
-describe("sortChapterDtosForDisplay", () => {
+describe("sortChaptersForDisplay", () => {
 	it("prioritizes sourceBookChapter ordering over legacy sort order", () => {
-		const sorted = sortChapterDtosForDisplay([
+		const sorted = sortChaptersForDisplay([
 			buildChapter({ id: "chapter-3", index: 3, sortOrder: 20, sourceBookChapter: 3 }),
 			buildChapter({ id: "chapter-1", index: 1, sortOrder: 10, sourceBookChapter: 1 }),
 			buildChapter({ id: "chapter-2", index: 2, sortOrder: 30, sourceBookChapter: 2 }),
@@ -41,7 +41,7 @@ describe("sortChapterDtosForDisplay", () => {
 	});
 
 	it("keeps unmapped chapters after mapped chapters and preserves fallback order", () => {
-		const sorted = sortChapterDtosForDisplay([
+		const sorted = sortChaptersForDisplay([
 			buildChapter({ id: "mapped-2", index: 2, sortOrder: 30, sourceBookChapter: 2 }),
 			buildChapter({ id: "draft-a", index: 5, sortOrder: 10, sourceBookChapter: null }),
 			buildChapter({ id: "mapped-1", index: 1, sortOrder: 40, sourceBookChapter: 1 }),

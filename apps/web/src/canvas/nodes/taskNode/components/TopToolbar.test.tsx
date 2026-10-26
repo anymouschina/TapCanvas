@@ -247,4 +247,47 @@ describe('TopToolbar LibTV menu interaction', () => {
       .find((element) => !element.classList.contains('top-toolbar-divider--inline'))
     expect(utilityDivider?.nextElementSibling).toHaveAttribute('aria-label', '标注')
   })
+
+  it('opens denoise modes directly in the LibTV image toolbar while keeping more hidden', async () => {
+    const onClean = vi.fn()
+    const onEnhance = vi.fn()
+    render(
+      <MantineProvider>
+        <TopToolbar
+          isVisible
+          hasContent
+          toolbarBackground="#222"
+          toolbarShadow="none"
+          toolbarActionIconStyles={{ root: {}, icon: {} }}
+          inlineDividerColor="#555"
+          libtvImageMode
+          visibleDefs={[
+            {
+              key: 'denoise',
+              label: '去噪',
+              icon: <span className="denoise-toolbar-test-icon" aria-hidden="true">✦</span>,
+              showLabel: true,
+              menuItems: [
+                menuItem('denoise-clean', '轻度去噪 · 保留材质', onClean),
+                menuItem('denoise-enhance', '去噪与清晰度增强', onEnhance),
+              ],
+            },
+            { key: 'more', label: '更多', icon: <span className="denoise-toolbar-test-more-icon" />, onClick: vi.fn() },
+          ]}
+          onPreview={vi.fn()}
+          onDownload={vi.fn()}
+        />
+      </MantineProvider>,
+    )
+
+    expect(screen.queryByRole('button', { name: '更多' })).not.toBeInTheDocument()
+    fireEvent.mouseEnter(screen.getByRole('button', { name: '去噪' }))
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: '轻度去噪 · 保留材质' })).toBeVisible())
+    expect(screen.getByRole('menuitem', { name: '去噪与清晰度增强' })).toBeVisible()
+    expect(onClean).not.toHaveBeenCalled()
+    expect(onEnhance).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('menuitem', { name: '轻度去噪 · 保留材质' }))
+    expect(onClean).toHaveBeenCalledTimes(1)
+    expect(onEnhance).not.toHaveBeenCalled()
+  })
 })

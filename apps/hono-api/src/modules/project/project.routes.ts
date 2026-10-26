@@ -1,3 +1,5 @@
+import { parseScriptExportSelection } from "../../../../../packages/schemas/chapter-script-export";
+import { exportChapterScriptsForUser, listChapterScriptPlansForUser } from "../chapter/chapter.script-export";
 import { Hono } from "hono";
 import type { AppEnv } from "../../types";
 import { apiKeyAuthMiddleware } from "../apiKey/apiKey.middleware";
@@ -194,6 +196,33 @@ authed.get("/:id/chapters", async (c) => {
 			items,
 		}),
 	);
+});
+
+// Read persisted per-clip prompts; these endpoints never execute production.
+authed.get("/:id/script-plans", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const projectId = c.req.param("id");
+	const items = await listChapterScriptPlansForUser(c, userId, projectId);
+	c.header("Cache-Control", "private, no-store");
+	return c.json({ projectId, items });
+});
+
+authed.post("/:id/script-export", async (c) => {
+	const userId = c.get("userId");
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	let chapterIds: string[];
+	try {
+		chapterIds = parseScriptExportSelection(await c.req.json());
+	} catch (failure: unknown) {
+		return c.json({ error: failure instanceof Error ? failure.message : "Invalid request body",
+			code: "script_export_selection_invalid" }, 400);
+	}
+	const file = await exportChapterScriptsForUser(c, userId, c.req.param("id"), chapterIds);
+	c.header("Content-Type", "text/plain; charset=utf-8");
+	c.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+	c.header("Cache-Control", "private, no-store");
+	return c.body(file.text);
 });
 
 authed.post("/:id/chapters", async (c) => {

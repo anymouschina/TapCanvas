@@ -4,6 +4,7 @@ import { IconBook2 } from '@tabler/icons-react'
 import type { Node } from '@xyflow/react'
 import { useUIStore } from '../../ui/uiStore'
 import { useRFStore } from '../store'
+import { ScriptExportPopover } from './ScriptExportPopover'
 import { IntentActionGroup } from '../nodes/taskNode/IntentActionGroup'
 import { assertWorkbenchScope, requireWorkbenchScope, type WorkbenchScope } from './workbenchScope'
 
@@ -61,6 +62,7 @@ export function PipelineProductionControls({ active = true }: { active?: boolean
         onClick={() => useUIStore.getState().openAssetManager('catalog')}>
         {chapter ? '切换章节' : '选择章节'}
       </Button>
+      {project?.id && <ScriptExportPopover key={project.id} projectId={project.id} />}
       {!chapter && <Select className="tc-pipeline-production__source" label="正文来源" aria-label="选择成片文本来源"
         placeholder={textSources.length ? '选择要成片的正文' : '先选择章节或创建正文'}
         data={textSources.map(node => ({ value: node.id, label: typeof node.data.label === 'string' ? node.data.label : node.id }))}

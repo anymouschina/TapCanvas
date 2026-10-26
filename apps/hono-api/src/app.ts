@@ -155,8 +155,8 @@ export async function createTapCanvasApp(): Promise<OpenAPIHono<AppEnv>> {
 					"X-Team-Id",
 					"X-Canvas-Conn-Id",
 				],
-				// Expose the echo-back header so browser JS can read it
-				exposeHeaders: ["X-Trace-ID"],
+				// Expose trace ids and attachment filenames to browser clients.
+				exposeHeaders: ["X-Trace-ID", "Content-Disposition"],
 				credentials: true,
 				maxAge: 600,
 			}),

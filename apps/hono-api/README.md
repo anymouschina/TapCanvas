@@ -191,6 +191,8 @@ docker-compose exec api dreamina version
 
 ## AI 对话架构（当前）
 
+2026-10-26 精选功能同步不修改 DSH Harness 或对话编排。MCP 助手接入仅复用密钥签发与现有 `/public/mcp` 链路；多章剧本导出只读取当前用户已保存的 `tapcanvas.prompt-package/v2`，不触发生成。画布手动去噪复用图片编辑入口与 `visible_composite_only` 内部参考策略，只使用当前主图并隔离项目画风，保留原节点及资产；工具能力描述与仓库实际加载的 `tapcanvas-api` Skill 同步记录此边界。
+
 - Droid / Factory 号池统一接入 `apps/new-api`（渠道 type `77`），模型仍取动态目录，协议由渠道显式 binding 决定。Key 追加去重、额度快照、账号启停与同池重试均由网关负责，Hono 与 agents 不维护平行账号池、不猜测模型协议、不自动换模型。上游真实额度拒绝与本地余额不足分别处理，已输出响应或取消的请求不重放；账号管理与部署边界见 [Droid 号池说明](../new-api/docs/channel/droid.md)。
 
 - 运行时上下文测量只投影实际提供且通过共享数值 schema 的 `upstreamRequestContextMetrics`；原始正文、推理文本与工具参数不会进入该测量摘要。缺失数据保持缺失，格式非法保留 `invalid_request_context_metrics` 诊断，不制造测量值或阻断已完成产物。

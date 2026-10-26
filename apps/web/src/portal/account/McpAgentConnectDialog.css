@@ -1,0 +1,23 @@
+.mcp-agent-connect-modal .mantine-Modal-content { border: none; border-radius: var(--tc-radius-panel); background: var(--tc-color-surface); box-shadow: var(--tc-shadow-modal); }
+.mcp-agent-connect-modal .mantine-Modal-header { padding: 16px 20px 8px; background: transparent; }
+.mcp-agent-connect-modal .mantine-Modal-title { color: var(--tc-color-text-primary); font-size: 16px; font-weight: 600; }
+.mcp-agent-connect-modal .mantine-Modal-body { padding: 8px 20px 20px; }
+.mcp-agent-connect-dialog { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
+.mcp-agent-connect-dialog__description,
+.mcp-agent-connect-dialog__notice { margin: 0; color: var(--tc-color-text-secondary); font-size: 13px; line-height: 1.5; }
+.mcp-agent-connect-dialog__notice { font-size: 12px; }
+.mcp-agent-connect-dialog__prompt-section { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+.mcp-agent-connect-dialog__prompt-label { color: var(--tc-color-text-primary); font-size: 12px; font-weight: 600; }
+.mcp-agent-connect-dialog__prompt { display: block; max-height: 40vh; padding: 16px; overflow: auto; overflow-wrap: anywhere; background: var(--tc-color-surface-inline); color: var(--tc-color-text-primary); font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.mcp-agent-connect-dialog__error { margin: 0; overflow-wrap: anywhere; color: var(--tc-color-danger); font-size: 13px; }
+.mcp-agent-connect-dialog__actions { display: flex; justify-content: flex-end; }
+.mcp-agent-connect-dialog__button { border-radius: var(--tc-radius-field); font-size: 13px; }
+.account-mcp-agent-action { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; padding: 12px; background: var(--tc-color-surface-inline); }
+.account-mcp-agent-action__copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
+.account-mcp-agent-action__title { color: var(--tc-color-text-primary); font-size: 13px; font-weight: 600; }
+.account-mcp-agent-action__description { color: var(--tc-color-text-secondary); font-size: 12px; line-height: 1.5; }
+.account-mcp-agent-action__button { flex-shrink: 0; border-radius: var(--tc-radius-field); }
+@media (max-width: 640px) {
+  .account-mcp-agent-action { align-items: stretch; flex-direction: column; }
+  .mcp-agent-connect-dialog__button { width: 100%; }
+}

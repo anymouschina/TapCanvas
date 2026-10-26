@@ -2,6 +2,7 @@ import type { AppContext } from "../../types";
 import { AppError } from "../../middleware/error";
 import { getProjectForUserAccess, type ProjectRow } from "../project/project.repo";
 import type { ChapterDto, ChapterStyleProfileOverride } from "./chapter.schemas";
+import { sortChaptersForDisplay } from "./chapter.order";
 import {
 	createChapterRow,
 	deleteChapterRow,
@@ -245,12 +246,6 @@ export async function updateChapterNarrativeForUser(
 	});
 }
 
-function compareDateAsc(left?: string, right?: string): number {
-	const leftTs = Date.parse(String(left || ""));
-	const rightTs = Date.parse(String(right || ""));
-	return (Number.isFinite(leftTs) ? leftTs : 0) - (Number.isFinite(rightTs) ? rightTs : 0);
-}
-
 function mapChapterRowToDto(row: ChapterRow): ChapterDto {
 	return {
 		id: row.id,
@@ -280,27 +275,6 @@ function mapChapterRowToDto(row: ChapterRow): ChapterDto {
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
-}
-
-export function sortChapterDtosForDisplay(chapters: readonly ChapterDto[]): ChapterDto[] {
-	return [...chapters].sort((left, right) => {
-		const leftSource =
-			typeof left.sourceBookChapter === "number" && Number.isFinite(left.sourceBookChapter)
-				? Math.trunc(left.sourceBookChapter)
-				: null;
-		const rightSource =
-			typeof right.sourceBookChapter === "number" && Number.isFinite(right.sourceBookChapter)
-				? Math.trunc(right.sourceBookChapter)
-				: null;
-		if (leftSource !== null && rightSource !== null && leftSource !== rightSource) {
-			return leftSource - rightSource;
-		}
-		if (leftSource !== null && rightSource === null) return -1;
-		if (leftSource === null && rightSource !== null) return 1;
-		if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
-		if (left.index !== right.index) return left.index - right.index;
-		return compareDateAsc(left.createdAt, right.createdAt);
-	});
 }
 
 function normalizeRecentTaskStatus(value: string): string {
@@ -374,7 +348,7 @@ export async function listProjectChaptersForUser(
 		projectId,
 		ownerId: project.owner_id,
 	});
-	return sortChapterDtosForDisplay(rows.map(mapChapterRowToDto));
+	return sortChaptersForDisplay(rows.map(mapChapterRowToDto));
 }
 
 export async function createChapterForUser(

@@ -32,6 +32,17 @@ Recorded in the online edition. For the Community Edition's workflow entry point
 
 The latest 10 entries are shown below; expand the older updates for more history.
 
+- **2026-10-26 · Manual denoise, MCP assistant setup and script export**: Three independent features ported while keeping the community DSH Harness. Manual denoise preserves materials and isolates project style without forcing render styles or promising 8K. MCP setup issues a dedicated key and a copyable assistant prompt; closing the dialog clears the in-memory credential. Select chapters with saved per-clip prompts and export a TXT in chapter/clip order without generating or rewriting scripts.
+
+  Review fixes: exports now share source-book ordering with the chapter list. Added denoise execution and MCP route authorization coverage; 96 targeted tests and the Web type check pass. The full API type check still reports errors in other files. No real generation tasks or external client end-to-end acceptance were performed.
+
+  These are **actual Pro UI reference screenshots from lluban.cn**, not community deployment acceptance. No keys were issued or generation tasks submitted. Surrounding Pro membership/batch-production features are outside this port. The live toolbar currently hides the denoise entry, so no denoise screenshot is claimed. See [delivery notes](docs/deliveries/2026-10-26-manual-tools-sync.md).
+
+  <table width="100%"><tr>
+    <td width="50%"><a href="assets/changelog/2026-10-25-mcp-agent-connect-lluban.png"><img src="assets/changelog/2026-10-25-mcp-agent-connect-lluban.png" alt="Actual lluban.cn MCP setup dialog before key creation" width="100%"></a></td>
+    <td width="50%"><a href="assets/changelog/2026-10-26-script-export-lluban.png"><img src="assets/changelog/2026-10-26-script-export-lluban.png" alt="Actual lluban.cn chapter script export selector" width="100%"></a></td>
+  </tr></table>
+
 - **2026-10-21 · Pipeline and canvas views**: Switch between a creative pipeline and the node canvas for the same project. Five stages—story and script, characters and scenes, storyboard design, video clips, and final film—show existing content, generation status and errors. Storyboards and clips are grouped by scene, with asset filters and media previews. Select a chapter or source text to launch the one-click video workflow, or generate individual items and unfinished assets in the current stage through the canvas execution and prerequisite-asset path.
 
   Screenshots from the same TapCanvasPro project; click a thumbnail for the full image. **The Community Edition currently runs one chapter at a time. Pro membership tiers, multi-chapter / whole-book batches and the additional specification selectors have not been ported.** The final-film screenshot shows its pending state.
@@ -185,6 +196,8 @@ docker compose restart
 
 Features planned to be ported from TapCanvas Pro to the community edition:
 
+The review lists **16 features independent of the Pro Agent kernel; F04, F06 and F09 are now implemented**. See [sync TODO](./TODO.md) for IDs, source evidence, existing community capabilities and adaptation boundaries. The original roadmap below is retained; video remake is outside this review's shortlist.
+
 - [x] **Image compare node**: side-by-side / slider / overlay / toggle modes, reading images live from upstream nodes
 - [ ] **Video remake**: paste a share link (e.g. Douyin) or upload a video to remake it
 - [ ] **Creation composer**: new prompt box with @ asset mentions, attachments, canvas references and per-account model preferences
@@ -194,6 +207,17 @@ Features planned to be ported from TapCanvas Pro to the community edition:
 - [ ] **Product & SEO pages**: public product overview pages and page metadata
 - [ ] **parse-video service**: standalone Go service that resolves video links from multiple platforms
 - [ ] **TapOps ops panel**: multi-node host metrics, logs and database inventory
+
+Additional sync items (completed items checked; others await selection):
+
+- [x] **F04 Material-preserving manual denoise**: remove forced render styles and unverified 8K claims, and show busy state
+- [ ] **F05 Character portrait editing**: appearance/age variants, separate versions and canvas insertion
+- [x] **F06 MCP setup through an AI assistant**: issue a dedicated key and copy a setup prompt
+- [ ] **F07 CLI / Skill installation**: standalone platform commands, API calls, uploads and subscriptions without the Pro host worker
+- [ ] **F08 Inspiration directions**: homepage suggestions, refresh and prompt insertion
+- [x] **F09 Multi-chapter script export**: select chapters and export saved per-clip prompts as TXT
+- [ ] **F10 Canvas save coordination**: serialized saves and revision confirmation before submission
+- [ ] **F11 Dynamic model specifications**: capability fields, reference-image limits and media dimensions
 
 ## Built with TapCanvas
 

@@ -85,6 +85,8 @@ TapCanvas 对外 API 的唯一 skill：统一入口、统一凭据、明确失�
 
 ## 唯一路径
 
+画布手动「轻度去噪 / 去噪与清晰度增强」属于已有图片编辑动作：要求当前节点有真实主图 URL，保留原节点与资产，在独立节点中执行。Web 使用已有 `visible_composite_only` 内部策略，仅消费当前主图，不追加其他上游或项目全局画风；沿用已选编辑规格，画幅不匹配时如实提示。该内部字段不是新的 Agent 工具参数，不改变上面的 Agent 引用 ID 合同。
+
 凡调用下方 endpoint 清单中的任一接口（含视频理解 `videoUnderstand`），只能使用本 skill。
 
 禁止：再用分散的 TapCanvas API skill；在不同 skill 各自维护一套凭据；未经确认改用其他 endpoint 或本地伪造结果。

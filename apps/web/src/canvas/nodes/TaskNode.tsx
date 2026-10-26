@@ -1,4 +1,6 @@
 import { reconcileImageModelSettings } from './taskNode/mediaModelControls'
+import { type ImageDenoiseMode } from './taskNode/imageDenoiseAction'
+import { executeImageDenoise } from './taskNode/imageDenoiseExecution'
 import { useNodeGenerationPreference } from './taskNode/useNodeGenerationPreference'
 import React from 'react'
 import { createPortal } from 'react-dom'
@@ -4513,6 +4515,7 @@ function TaskNodeInner({ id, data, selected, dragging }: NodeProps<TaskNodeType>
   const [emotionLoading, setEmotionLoading] = React.useState(false)
   const [emotionError, setEmotionError] = React.useState<string | null>(null)
   const [denoiseLoading, setDenoiseLoading] = React.useState(false)
+  const denoiseRunningRef = React.useRef(false)
   const [expandPanelOpen, setExpandPanelOpen] = React.useState(false)
   const [expandLoading, setExpandLoading] = React.useState(false)
   const isRotatePreview = !!(data as any)?._rotatePreview
@@ -7023,6 +7026,9 @@ const rewritePromptWithCharacters = React.useCallback(
     col?: number                // 相对源节点的横向列偏移（默认 1）
     rowOffset?: number          // 纵向行偏移（多层分层时错开）
     imageOperationSpec?: ImageOperationSpec
+    referenceImageStrategy?: 'visible_composite_only'
+    referenceImages?: string[]
+    imageEditSize?: string
   }): string | null => {
     const parentId = opts.parentId ?? id
     const model = resolveImageEditModelForAction(opts.model || null)
@@ -7035,8 +7041,15 @@ const rewritePromptWithCharacters = React.useCallback(
     }
     if (opts.prompt != null) nodeData.prompt = opts.prompt
     if (opts.forceTaskKind) nodeData.forceTaskKind = opts.forceTaskKind
+    if (opts.referenceImageStrategy) nodeData.referenceImageStrategy = opts.referenceImageStrategy
+    if (opts.imageEditSize) {
+      nodeData.imageEditSize = opts.imageEditSize
+      nodeData.size = opts.imageEditSize
+      nodeData.aspect = toAspectRatioFromImageEditSize(opts.imageEditSize)
+    }
     // 串联到「尚未执行」的中间节点时不预置 referenceImages，靠画布连线在运行时收集上游产物。
-    if (opts.parentHasImage && primaryImageUrl) nodeData.referenceImages = [primaryImageUrl]
+    if (opts.referenceImages) nodeData.referenceImages = opts.referenceImages
+    else if (opts.parentHasImage && primaryImageUrl) nodeData.referenceImages = [primaryImageUrl]
     if (opts.imageOperationSpec) {
       nodeData.imageOperationSpec = opts.imageOperationSpec
       nodeData.imageOperationState = createImageOperationState(opts.imageOperationSpec)
@@ -7163,25 +7176,25 @@ const rewritePromptWithCharacters = React.useCallback(
     })
   }, [data, id, nodeWidth, uploadEditedImageBlob])
 
-  // 一键去噪：以当前图为参考图，用固定去噪/增强提示词生成新节点（复用 spawnImageNode 链路）
-  const handleDenoise = React.useCallback((mode: 'clean' | 'enhance') => {
-    if (denoiseLoading) return
-    if (!primaryImageUrl) {
-      toast('当前节点没有可增强的真实图片资产', 'error')
-      return
-    }
-    setDenoiseLoading(true)
-    const editableModel = String(imageModel || '').trim() || undefined
-    const label = mode === 'enhance' ? '8K 增强' : '去噪'
-    const prompt = mode === 'enhance'
-      ? '保持构图与所有物体位置不变，极度增强画面细节并提升至 8K 超高清质感；C4D+Octane 渲染器风格，电影级写实 CG，大师级光影，完美构图，film-like depth；仅优化质感，保持原有颜色与冷暖比例。'
-      : '对图片进行去噪与画质增强：消除噪点、涂抹感与压缩伪影，提升细节锐度、材质与光影质感；严格保持原有构图、物体位置、颜色、亮度与冷暖比例不变，不新增高光或色彩，不改变主体形态。'
-    const newNodeId = spawnImageNode({ label, prompt, parentHasImage: true, model: editableModel })
-    if (!newNodeId) { setDenoiseLoading(false); return }
-    runNodeDagToTarget(newNodeId, useRFStore.getState, useRFStore.setState, { concurrency: 1 })
-      .catch((err: unknown) => toast(err instanceof Error ? err.message : '去噪生成失败', 'error'))
-      .finally(() => setDenoiseLoading(false))
-  }, [denoiseLoading, imageModel, primaryImageUrl, spawnImageNode])
+  // 仅修复当前预览，不叠加项目画风或其它上游参考；结果落在独立的新节点。
+  const handleDenoise = React.useCallback(async (mode: ImageDenoiseMode) => {
+    const sourceData = data as Record<string, unknown>
+    await executeImageDenoise({
+      mode,
+      source: {
+        primaryImageUrl,
+        imageModel,
+        imageEditSize: sourceData.imageEditSize,
+        size: sourceData.size,
+        naturalSize: imageNaturalSize,
+      },
+      running: denoiseRunningRef,
+      setLoading: setDenoiseLoading,
+      notify: toast,
+      createNode: spawnImageNode,
+      submitNode: (nodeId, options) => runNodeDagToTarget(nodeId, useRFStore.getState, useRFStore.setState, options),
+    })
+  }, [data, imageModel, imageNaturalSize, primaryImageUrl, spawnImageNode])
 
   const handleCreateRotatePreview = React.useCallback(() => {
     if (!primaryImageUrl) {
@@ -7758,6 +7771,18 @@ const rewritePromptWithCharacters = React.useCallback(
       if (isPanoramic && panoramicSphereMode) return []
 
       const tools: ToolbarAction[] = []
+      const denoiseTool: ToolbarAction = {
+        key: 'denoise',
+        label: '去噪',
+        showLabel: true,
+        icon: <IconSparkles className="tc-image-denoise-icon" size={18} />,
+        loading: denoiseLoading,
+        disabled: denoiseLoading,
+        menuItems: [
+          { key: 'denoise-clean', label: '轻度去噪 · 保留材质', loading: denoiseLoading, disabled: denoiseLoading, onClick: () => { void handleDenoise('clean') } },
+          { key: 'denoise-enhance', label: '去噪与清晰度增强', loading: denoiseLoading, disabled: denoiseLoading, onClick: () => { void handleDenoise('enhance') } },
+        ],
+      }
 
       if (!isPanoramic && (kind === 'image' || kind === 'imageEdit') && hasImageResults) {
         const gridSplitMenuItems: ToolbarMenuItem[] = [
@@ -7805,8 +7830,6 @@ const rewritePromptWithCharacters = React.useCallback(
           })
         }
         moreMenuItems.push(
-          { key: 'denoise-clean', label: '精简去噪 · 保构图', icon: <IconSparkles size={14} />, onClick: () => handleDenoise('clean') },
-          { key: 'denoise-8k', label: '8K 极致增强', icon: <IconSparkles size={14} />, onClick: () => handleDenoise('enhance') },
           { key: 'smart-cutout', label: '智能抠图', icon: <IconScissors size={14} />, onClick: handleSmartCutout },
         )
         const nineGridMenuItems: ToolbarMenuItem[] = LIBTV_IMAGE_NINE_GRID_PRESET_KEYS.flatMap((presetKey) => {
@@ -7963,6 +7986,7 @@ const rewritePromptWithCharacters = React.useCallback(
               }
             }),
           },
+          denoiseTool,
           {
             key: 'element-edit',
             label: '元素编辑',
@@ -8091,17 +8115,7 @@ const rewritePromptWithCharacters = React.useCallback(
           }
         }
         if ((kind === 'image' || kind === 'imageEdit') && hasImageResults) {
-          tools.push({
-            key: 'denoise',
-            label: '一键去噪',
-            showLabel: true,
-            icon: <IconSparkles size={18} />,
-            loading: denoiseLoading,
-            menuItems: [
-              { key: 'denoise-clean', label: '精简去噪 · 保构图', onClick: () => handleDenoise('clean') },
-              { key: 'denoise-8k',    label: '8K 极致增强',      onClick: () => handleDenoise('enhance') },
-            ] as ToolbarMenuItem[],
-          })
+          tools.push(denoiseTool)
         }
         if ((kind === 'image' || kind === 'imageEdit') && hasImageResults) {
           tools.push({
