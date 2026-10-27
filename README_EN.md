@@ -32,6 +32,8 @@ Recorded in the online edition. For the Community Edition's workflow entry point
 
 The latest 10 entries are shown below; expand the older updates for more history.
 
+- **2026-10-26 · In-app changelog**: Ported Pro's lightweight dialog. Open “更新日志” from the portal header to review implemented Community Edition features and update dates. New entries display an unread indicator; opening the content records them as read locally, with visible storage errors. Close and reopen it at any time. Entries follow this repository's README and delivery notes. See [sync notes](docs/deliveries/2026-10-26-changelog-sync.md) for source and validation boundaries.
+
 - **2026-10-26 · Manual denoise, MCP assistant setup and script export**: Three independent features ported while keeping the community DSH Harness. Manual denoise preserves materials and isolates project style without forcing render styles or promising 8K. MCP setup issues a dedicated key and a copyable assistant prompt; closing the dialog clears the in-memory credential. Select chapters with saved per-clip prompts and export a TXT in chapter/clip order without generating or rewriting scripts.
 
   Review fixes: exports now share source-book ordering with the chapter list. Added denoise execution and MCP route authorization coverage; 96 targeted tests and the Web type check pass. The full API type check still reports errors in other files. No real generation tasks or external client end-to-end acceptance were performed.
@@ -73,11 +75,12 @@ The latest 10 entries are shown below; expand the older updates for more history
 - **2026-09-23 · Director desk upgrade**: Synced TapCanvasPro's standalone director desk, based on [DirectorDesk](https://github.com/mangfufu/director-desk), for 3D scene blocking, character staging and camera previs. Connected TapCanvas AI chat, tool relay and reference-video export to the canvas, replaced the previous embedded implementation, and added MIT attribution. Web development and production builds now build the director desk automatically; install its standalone dependencies before first use.
 - **2026-09-21 · Agent configuration updates**: Added one-click update and replacement for installed workflows after checks pass, retaining their existing scope and confirmed replacement or parallel relationships, along with version history, executions and generated assets.
 - **2026-09-21 · Conflict checks**: Shared workflow tools or output formats are now informational rather than forcing a choice. Agents still assess responsibility conflicts; blocking errors and version races are reported explicitly.
-- **2026-09-21 · Configuration list fix**: Aligned frontend and backend update-time and first-load-time contracts to fix Agent configuration lists failing to load when time fields were missing. All 94 related configuration-update tests passed.
-- **2026-09-21**: Reorganized the project documentation and removed outdated deadlines and capability-completion checklists.
 
 <details>
-<summary>Older updates (9 entries)</summary>
+<summary>Older updates (11 entries)</summary>
+
+- **2026-09-21 · Configuration list fix**: Aligned frontend and backend update-time and first-load-time contracts to fix Agent configuration lists failing to load when time fields were missing. All 94 related configuration-update tests passed.
+- **2026-09-21**: Reorganized the project documentation and removed outdated deadlines and capability-completion checklists.
 
 - **2026-09-20**: Synced the v90 video production workflow with the DeepSeek Harness runtime. Unified canvas generation actions through the main AI chat and fixed model propagation for chapter asset and design actions, plus local login sessions.
 - **2026-09-16**: Added the AtomGit badge, project acknowledgments and contributor information.
@@ -196,14 +199,14 @@ docker compose restart
 
 Features planned to be ported from TapCanvas Pro to the community edition:
 
-The review lists **16 features independent of the Pro Agent kernel; F04, F06 and F09 are now implemented**. See [sync TODO](./TODO.md) for IDs, source evidence, existing community capabilities and adaptation boundaries. The original roadmap below is retained; video remake is outside this review's shortlist.
+The review lists **16 features independent of the Pro Agent kernel; F04, F06, F09 and F13 are now implemented**. See [sync TODO](./TODO.md) for IDs, source evidence, existing community capabilities and adaptation boundaries. The original roadmap below is retained; video remake is outside this review's shortlist.
 
 - [x] **Image compare node**: side-by-side / slider / overlay / toggle modes, reading images live from upstream nodes
 - [ ] **Video remake**: paste a share link (e.g. Douyin) or upload a video to remake it
 - [ ] **Creation composer**: new prompt box with @ asset mentions, attachments, canvas references and per-account model preferences
 - [ ] **Video compose + AI subtitles**: multi-clip concatenation, transitions, subtitle styles and chunked subtitle transcription via video-understanding models
 - [ ] **Media diagnostics API**: troubleshoot the media pipeline
-- [ ] **Changelog dialog**: show what's new in each release inside the app
+- [x] **Changelog dialog (F13)**: open it manually from the portal header, with community updates, an unread indicator and local read state
 - [ ] **Product & SEO pages**: public product overview pages and page metadata
 - [ ] **parse-video service**: standalone Go service that resolves video links from multiple platforms
 - [ ] **TapOps ops panel**: multi-node host metrics, logs and database inventory

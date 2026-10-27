@@ -1,0 +1,14 @@
+.portal-changelog { border: 0; color: var(--mantine-color-text); }
+.portal-changelog__title { font-size: 16px; font-weight: 600; }
+.portal-changelog__body { max-height: min(70dvh, 640px); overflow-y: auto; }
+.portal-changelog__intro { margin: 0 0 16px; font-size: 13px; color: var(--mantine-color-dimmed); }
+.portal-changelog__error { margin: 0 0 16px; font-size: 13px; line-height: 1.47; }
+.portal-changelog__entries { list-style: none; margin: 0; padding: 0; }
+.portal-changelog__entry { padding: 0 0 20px; }
+.portal-changelog__entry + .portal-changelog__entry { padding-top: 4px; }
+.portal-changelog__entry:last-child { padding-bottom: 4px; }
+.portal-changelog__meta { display: flex; align-items: center; gap: 8px; color: var(--mantine-color-dimmed); font-size: 12px; }
+.portal-changelog__latest { font-weight: 600; }
+.portal-changelog__heading { margin: 8px 0; font-size: 14px; font-weight: 600; }
+.portal-changelog__changes { padding-left: 16px; margin: 0; font-size: 13px; line-height: 1.47; }
+.portal-changelog__change + .portal-changelog__change { margin-top: 4px; }

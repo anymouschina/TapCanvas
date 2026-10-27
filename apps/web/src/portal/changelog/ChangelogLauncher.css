@@ -1,0 +1,20 @@
+.portal-changelog-launcher {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #f5f5f7;
+  background: transparent;
+  cursor: pointer;
+}
+
+.portal-changelog-launcher:hover { background: #272729; }
+.portal-changelog-launcher:focus-visible { outline: 2px solid #0071e3; outline-offset: 2px; }
+.portal-changelog-launcher__unread { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: #2997ff; }
+.portal-changelog-launcher__loading { font-size: 12px; color: #f5f5f7; }

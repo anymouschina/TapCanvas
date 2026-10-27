@@ -12,6 +12,7 @@ import { useIsAdmin } from '../auth/isAdmin'
 import { TapCanvasWordmark } from '../ui/brand/TapCanvasMark'
 import { spaNavigate } from '../utils/spaNavigate'
 import { preloadPortalRoute } from './portalRouteModules'
+import { ChangelogLauncher } from './changelog/ChangelogLauncher'
 
 const PortalAccountRuntime = React.lazy(() => import('./PortalAccountRuntime'))
 const PortalLoginRuntime = React.lazy(() => import('./PortalLoginRuntime'))
@@ -133,6 +134,7 @@ export function PortalHeader({ active, onNavigate, onRequestLogin }: PortalHeade
         </nav>
 
         <div className="neo-portal-header__actions">
+          <ChangelogLauncher />
           {isAdmin && active === 'home' ? (
             <button
               className="neo-portal-header__admin"

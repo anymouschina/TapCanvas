@@ -1,6 +1,6 @@
 # TapCanvas Pro 功能同步 TODO
 
-核对日期：2026-10-25。来源为同级 `TapCanvas-pro` 工作区，HEAD `fb391726d23cf3c7a3ac85a5a46aec35f7079943`；目标 TapCanvas HEAD `6274546e6c38473b3a5596178f1904c6680bc003`。初轮仅整理候选；2026-10-26 按用户选择实施 F04、F06、F09，其他项仍待选。未部署或提交真实生成任务。
+核对日期：2026-10-25。初轮来源为同级 `TapCanvas-pro` 工作区，HEAD `fb391726d23cf3c7a3ac85a5a46aec35f7079943`；目标 TapCanvas HEAD `6274546e6c38473b3a5596178f1904c6680bc003`。2026-10-26 按用户选择实施 F04、F06、F09，随后同步 F13 应用内更新日志（来源与范围见独立交付记录），其他项仍待选。未部署或提交真实生成任务。
 
 ## 本轮筛选范围
 
@@ -24,7 +24,7 @@
 | F10 | [ ] 画布保存协调与提交版本确认 | 已有自动保存与快照保存；补串行保存协调、等待目标 revision、提交前保存校验，避免服务端读到旧画布 | 中 |
 | F11 | [ ] 动态模型规格与能力展示 | 已有动态模型目录；补 execution/specification 分离、能力字段、参考图上限、尺寸规格及前后端合同对齐 | 中 |
 | F12 | [ ] 按需媒体诊断接口 | 补按当前账户 storageKey 检测 SHA-256、解码、声道、LUFS/true peak 并保存独立报告；不改生成结果或交付状态 | 中 |
-| F13 | [ ] 应用内更新日志 | 补版本更新弹窗、内容展示和已读状态；内容改为社区版真实发布记录 | 小 |
+| F13 | [x] 应用内更新日志 | 门户顶部手动打开、关闭与重开日志弹窗，展示社区版已实现功能；补未读标记及本地已读状态，存储失败可见 | 小 |
 | F14 | [ ] 产品介绍与 SEO 页面 | 补公开产品页、页面标题/描述等 metadata；产品文案仅描述社区版实际能力 | 小中 |
 | F15 | [ ] parse-video 独立服务 | 补 Go 视频链接解析服务及社区版接入、任务错误反馈；本项只导入视频，不包含自动复刻或 Agent 创作流程 | 中大 |
 | F16 | [ ] TapOps 运维面板 | 补主机指标、日志、数据库清单等监控能力；只纳入运维界面及服务，不纳入 Pro 运维 Agent、自动部署或网站交付能力 | 大 |
@@ -47,7 +47,7 @@
 | F10 | `apps/web/src/canvas/persistence/createCanvasSaveCoordinator.ts`、`createCanvasAutosaveScheduler.ts`、`persistCanvasBeforeSubmission.ts` | 社区版 `App.tsx`、现有 `saveCurrentCanvasSnapshot.ts` 和提交入口；覆盖并发编辑、切项目、保存失败、版本不一致；不能在拖动每帧全量扫描/序列化 |
 | F11 | `apps/hono-api/src/modules/new-api-models/new-api-models.service.ts` 及 `new-api-video-analysis-model.ts` | 同名社区模块及 SDK/前端模型选择；规格可读不等于渠道可执行；不移植默认模型、自动替换模型或 Pro 工作流媒体配置 |
 | F12 | `apps/hono-api/src/modules/media-diagnostics/media-diagnostics.ts` 及公开 API 注册 | 社区版 API 与 media-worker 协议；按需独立调用，验证用户归属，保留所有已生成资产，不变成生成后质量门禁 |
-| F13 | `apps/web/src/portal/changelog/ChangelogDialog.tsx`、`entries.ts` | 社区版门户入口；用社区版日志替换 Pro 发布记录，首次打开/关闭/已读持久化均可验证 |
+| F13 | `apps/web/src/portal/changelog/ChangelogDialog.tsx`、`entries.ts` | 适配社区版 `PortalHeader` 入口；用社区版已实现功能替换 Pro 发布记录，验证手动打开、关闭、重开和已读状态；来源实现没有已读持久化，社区版按本清单补全，不自动弹出 |
 | F14 | `apps/web/src/seo/ProductOverview.tsx`、`productContent.ts`、`pageMetadata.ts` | 社区版公开路由；核对路由标题/描述、公开访问与实际功能文案，不复制商业承诺 |
 | F15 | `apps/parse-video/` | 社区版新增独立服务及其实际 API 接入；先核对上游 LICENSE、平台接口配置和容器依赖，不携带源仓库凭据或用户样例，不静默跳过解析错误 |
 | F16 | `apps/server-ops/src/web/`、`src/server/` 及节点监控采集相关模块 | 社区版独立运维服务；移除 Pro 环境/主机信息并适配鉴权，仅监控范围；数据库变更、部署或真实主机操作须在实施时单独明确范围 |
@@ -58,4 +58,4 @@ README 原有待办继续保留：视频合成/字幕细化为 F01/F02，新版�
 
 原路线图的“视频复刻”暂不列入本轮可选清单：Pro 完整链路涉及其工作流启动与执行，尚不能按纯界面同步认定为独立功能。故事线/小说工作台、全章仅节点交付、音色卡生产、资产规划 Jobs API、内核记忆和编排等候选同样不在本轮范围。
 
-本轮已实施 F04、F06、F09，未选择项保持待办。实现、截图与验证边界见 `docs/deliveries/2026-10-26-manual-tools-sync.md`。
+本轮已实施 F04、F06、F09、F13，未选择项保持待办。前三项的实现、截图与验证边界见 `docs/deliveries/2026-10-26-manual-tools-sync.md`；F13 见 `docs/deliveries/2026-10-26-changelog-sync.md`。
