@@ -1,0 +1,39 @@
+.subtitle-panel {
+  --ve-text: #ffffff;
+  --ve-muted: #a1a1a6;
+  --ve-surface: #272729;
+  --ve-raised: #3a3a3c;
+  --ve-border: transparent;
+  --ve-accent: #2997ff;
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #1d1d1f;
+  color: var(--ve-text);
+}
+
+.subtitle-panel__tabs,
+.subtitle-panel__font-presets {
+  background: var(--ve-surface);
+}
+
+.subtitle-panel .mantine-SegmentedControl-indicator {
+  background: var(--ve-raised);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.subtitle-panel .mantine-SegmentedControl-label,
+.subtitle-panel .mantine-InputWrapper-label {
+  color: var(--ve-muted);
+}
+
+.subtitle-panel .mantine-SegmentedControl-label[data-active] {
+  color: var(--ve-text);
+}
+
+.subtitle-panel__body {
+  overflow: hidden;
+}

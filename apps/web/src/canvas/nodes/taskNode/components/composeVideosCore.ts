@@ -1,7 +1,8 @@
 import { resolveComposeFrame, containComposeFrame, type ComposeAspect } from './composeFrameLayout'
-import { AudioClip, EmbedSubtitlesClip, MP4Clip, OffscreenSprite, Combinator } from '@webav/av-cliper'
+import { AudioClip, MP4Clip, OffscreenSprite, Combinator } from '@webav/av-cliper'
 import { fetchClip } from './reliableClipFetch'
-import { SUBTITLE_FONT_RATIO, SUBTITLE_BOTTOM_OFFSET_RATIO, SUBTITLE_MIN_FONT_PX, type SubtitleFontSizeTier } from './subtitles/types'
+import { resolveSubtitleStyle, type SubtitleFontSizeTier, type SubtitleStyle } from './subtitles/subtitleStyle'
+import { StyledSubtitleClip } from './subtitles/StyledSubtitleClip'
 
 export type ComposeVideoSource = {
   url: string
@@ -39,6 +40,7 @@ export type PreparedAudioTrack = {
 export type ComposeSubtitlesInput = {
   segments: Array<{ startUs: number; endUs: number; text: string }>
   fontSize: SubtitleFontSizeTier
+  style?: SubtitleStyle
 }
 
 export type ComposePhase =
@@ -79,26 +81,6 @@ export type ComposeWorkerOutbound =
 export const WEBAV_SAMPLE_RATE = 48000
 
 /**
- * EmbedSubtitlesClip 样式：白字黑描边+阴影（库默认），字号/边距按视频高换算。
- * 注意：EmbedSubtitlesClip 传数组时 start/end 单位是微秒。
- */
-export function buildEmbedSubtitleOpts(
-  videoWidth: number,
-  videoHeight: number,
-  tier: SubtitleFontSizeTier,
-) {
-  return {
-    videoWidth,
-    videoHeight,
-    fontSize: Math.max(SUBTITLE_MIN_FONT_PX, Math.round(videoHeight * SUBTITLE_FONT_RATIO[tier])),
-    fontFamily: 'sans-serif',
-    color: '#FFF',
-    strokeStyle: '#000',
-    bottomOffset: Math.round(videoHeight * SUBTITLE_BOTTOM_OFFSET_RATIO),
-  }
-}
-
-/**
  * 内联（当前线程）合成实现：把多个视频片段按顺序拼接成一个 MP4 Blob。
  * 不依赖 React / DOM，可在 Web Worker 与 DAG runner 等上下文中调用。
  *
@@ -119,6 +101,7 @@ export async function composeVideosToBlobInline(
   if (sources.length < 1) {
     throw new Error('至少需要 1 个视频才能剪辑')
   }
+  if (options?.subtitles) resolveSubtitleStyle(options.subtitles.fontSize, options.subtitles.style)
 
   const signal = options?.signal
   const onProgress = options?.onProgress
@@ -131,7 +114,7 @@ export async function composeVideosToBlobInline(
   // split 产生的 after clips，仅用于 finally 清理，不参与迭代
   const extraClips: MP4Clip[] = []
   const audioClips: AudioClip[] = []
-  let subtitlesClip: EmbedSubtitlesClip | null = null
+  let subtitlesClip: StyledSubtitleClip | null = null
 
   try {
     options?.onPhase?.('loading_media')
@@ -220,7 +203,7 @@ export async function composeVideosToBlobInline(
 
     const totalDuration = offset
 
-    // 字幕烧录：单个 EmbedSubtitlesClip sprite 盖在最上层（后 add 的在上）
+    // 字幕烧录：与预览共用 painter 的透明 sprite 盖在视频上层。
     const subs = options?.subtitles
     if (subs && subs.segments.length > 0) {
       const clipped = subs.segments
@@ -228,10 +211,7 @@ export async function composeVideosToBlobInline(
         .filter((s) => s.start < totalDuration && s.end - s.start > 0)
         .sort((a, b) => a.start - b.start)
       if (clipped.length > 0) {
-        subtitlesClip = new EmbedSubtitlesClip(
-          clipped,
-          buildEmbedSubtitleOpts(width, height, subs.fontSize),
-        )
+        subtitlesClip = new StyledSubtitleClip(clipped, width, height, subs.fontSize, subs.style)
         const subSprite = new OffscreenSprite(subtitlesClip)
         subSprite.time = { offset: 0, duration: clipped[clipped.length - 1].end }
         await combinator.addSprite(subSprite)
@@ -254,14 +234,13 @@ export async function composeVideosToBlobInline(
       throw new Error('合成已取消')
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chunks: any[] = []
+    const chunks: ArrayBuffer[] = []
     options?.onPhase?.('encoding')
     const reader = combinator.output().getReader()
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      if (value) chunks.push(value)
+      if (value) chunks.push(new Uint8Array(value).buffer)
     }
 
     combinator.destroy()
@@ -375,6 +354,7 @@ export async function composeVideosToBlob(
   if (sources.length < 1) {
     throw new Error('至少需要 1 个视频才能剪辑')
   }
+  if (options?.subtitles) resolveSubtitleStyle(options.subtitles.fontSize, options.subtitles.style)
   const signal = options?.signal
   options?.onPhase?.('preparing')
   const hasAudioTracks = (options?.audioTracks?.length ?? 0) > 0

@@ -15,8 +15,9 @@ import { fetchClip } from './reliableClipFetch'
 import { SubtitlePanel } from './subtitles/SubtitlePanel'
 import { drawSubtitleOverlay } from './subtitles/drawSubtitle'
 import { projectSegmentsToTimeline, type ClipWindow } from './subtitles/timeline'
-import type { ComposeSubtitleState, SubtitleSegment, SubtitleFontSizeTier } from './subtitles/types'
+import type { ComposeSubtitleState, SubtitleSegment, SubtitleFontSizeTier, SubtitleStyle } from './subtitles/types'
 import { safeSubtitleId } from './subtitles/types'
+import { parseSubtitleStyle } from './subtitles/subtitleStyle'
 import { speechAuditToSubtitleSegments } from './subtitles/speechAuditSubtitles'
 import { analyzeVideoToSpeechTranscript } from '../../../../api/server'
 import { findModelOptionByIdentifier, getModelOptionRequestAlias, useModelOptionsState } from '../../../../config/useModelOptions'
@@ -146,6 +147,7 @@ export function VideoComposeEditorModal({
   // ── 字幕 ──────────────────────────────────────────────────────────────────
   const [subtitleSegments, setSubtitleSegments] = React.useState<SubtitleSegment[]>([])
   const [subtitleFontTier, setSubtitleFontTier] = React.useState<SubtitleFontSizeTier>('md')
+  const [subtitleStyle, setSubtitleStyle] = React.useState<SubtitleStyle | undefined>()
   const [subtitlePanelOpen, setSubtitlePanelOpen] = React.useState(false)
   const [subtitleGenerating, setSubtitleGenerating] = React.useState(false)
   const [subtitleError, setSubtitleError] = React.useState<string | null>(null)
@@ -247,6 +249,7 @@ export function VideoComposeEditorModal({
     if (!opened) return
     setSubtitleSegments(initialSubtitles?.segments ?? [])
     setSubtitleFontTier(initialSubtitles?.fontSize ?? 'md')
+    setSubtitleStyle(parseSubtitleStyle(initialSubtitles?.style))
     setSubtitlePanelOpen((initialSubtitles?.segments?.length ?? 0) > 0)
     setSubtitleModel(initialSubtitles?.model ?? '')
     setSubtitleError(null)
@@ -432,7 +435,7 @@ export function VideoComposeEditorModal({
           frameCacheRef.current = cache
         }
         cache.getContext('2d')?.drawImage(c, 0, 0)
-        drawSubtitleOverlay(c, subtitleTextRef.current, subtitleTierRef.current)
+        drawSubtitleOverlay(c, subtitleTextRef.current, subtitleTierRef.current, subtitleStyleRef.current)
       })
       .catch(() => {})
       .finally(() => { renderingRef.current = false })
@@ -442,16 +445,18 @@ export function VideoComposeEditorModal({
   // 进解码 effect deps，播放中每次换词都整帧 decode 一次）。
   const subtitleTextRef = React.useRef('')
   const subtitleTierRef = React.useRef<SubtitleFontSizeTier>('md')
+  const subtitleStyleRef = React.useRef<SubtitleStyle | undefined>()
   const frameCacheRef = React.useRef<HTMLCanvasElement | null>(null)
   React.useEffect(() => {
     subtitleTextRef.current = currentSubtitleText
     subtitleTierRef.current = subtitleFontTier
+    subtitleStyleRef.current = subtitleStyle
     const c = canvasRef.current
     const cache = frameCacheRef.current
     if (!c || !cache) return
     c.getContext('2d')?.drawImage(cache, 0, 0)
-    drawSubtitleOverlay(c, currentSubtitleText, subtitleFontTier)
-  }, [currentSubtitleText, subtitleFontTier])
+    drawSubtitleOverlay(c, currentSubtitleText, subtitleFontTier, subtitleStyle)
+  }, [currentSubtitleText, subtitleFontTier, subtitleStyle])
 
   // ── Sync preview audio to playhead ─────────────────────────────────────────
   // canvas 只画帧、无声。这里用隐藏 <audio> 跟随播放头放「当前片段」的原声（含 seedance 原生对白）：
@@ -797,9 +802,10 @@ export function VideoComposeEditorModal({
     onSubtitlesChange?.({
       segments: subtitleSegments,
       fontSize: subtitleFontTier,
+      style: subtitleStyle,
       ...(resolvedSubtitleModel ? { model: resolvedSubtitleModel.value } : {}),
     })
-  }, [onSubtitlesChange, resolvedSubtitleModel, subtitleSegments, subtitleFontTier])
+  }, [onSubtitlesChange, resolvedSubtitleModel, subtitleSegments, subtitleFontTier, subtitleStyle])
 
   const handleClose = React.useCallback(() => {
     emitSubtitles()
@@ -825,6 +831,7 @@ export function VideoComposeEditorModal({
         ? {
             segments: timelineSubtitles.map((t) => ({ startUs: t.startUs, endUs: t.endUs, text: t.text })),
             fontSize: subtitleFontTier,
+            style: subtitleStyle,
           }
         : undefined,
     })
@@ -881,10 +888,12 @@ export function VideoComposeEditorModal({
             size="sm"
             onClick={() => setSubtitlePanelOpen((v) => !v)}
             title="智能字幕"
+            aria-label="智能字幕"
+            className="video-compose-editor__subtitle-toggle"
           >
             <IconBadgeCc size={15} />
           </ActionIcon>
-          <ActionIcon variant="subtle" color="gray" size="sm" onClick={handleClose}><IconX size={14} /></ActionIcon>
+          <ActionIcon className="video-compose-editor__close" aria-label="关闭视频编辑器" variant="subtle" color="gray" size="sm" onClick={handleClose}><IconX size={14} /></ActionIcon>
         </Group>
       </Group>
 
@@ -895,6 +904,8 @@ export function VideoComposeEditorModal({
             segments={subtitleSegments}
             projected={projectedById}
             fontTier={subtitleFontTier}
+            subtitleStyle={subtitleStyle}
+            onChangeStyle={setSubtitleStyle}
             generating={subtitleGenerating}
             error={subtitleError}
             skipped={subtitleSkipped}
@@ -905,7 +916,14 @@ export function VideoComposeEditorModal({
             modelError={subtitleModelState.error?.message ?? null}
             onGenerate={() => void handleGenerateSubtitles()}
             onChangeModel={(value) => setSubtitleModel(value ?? '')}
-            onChangeFontTier={setSubtitleFontTier}
+            onChangeFontTier={(tier) => {
+              setSubtitleFontTier(tier)
+              setSubtitleStyle((current) => {
+                if (!current) return current
+                const { fontSizeRatio: _fontSizeRatio, ...style } = current
+                return style
+              })
+            }}
             onUpdateText={handleUpdateSubtitleText}
             onDelete={handleDeleteSubtitle}
             onAddAtPlayhead={handleAddSubtitleAtPlayhead}

@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react'
+import type { ComposeSubtitleState } from './taskNode/components/subtitles/types'
 import type { IconProps } from '@tabler/icons-react'
 import { createEmptyShotTable, serializeShotTable } from '@tapcanvas/shot-table-protocol'
 import {
@@ -94,6 +95,8 @@ export interface TaskNodeSchema {
 }
 
 export interface TaskNodeData {
+  /** 视频剪辑中保存的字幕及显示样式 */
+  composeSubtitles?: ComposeSubtitleState
   /** 节点展示名称 */
   label?: string
   /** 节点业务类型；运行时允许读取尚未注册的新类型 */

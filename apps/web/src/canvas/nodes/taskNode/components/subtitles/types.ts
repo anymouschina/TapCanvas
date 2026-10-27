@@ -1,4 +1,6 @@
-export type SubtitleFontSizeTier = 'sm' | 'md' | 'lg'
+import type { SubtitleFontSizeTier, SubtitleStyle } from './subtitleStyle'
+export type { SubtitleFontSizeTier, SubtitleStyle } from './subtitleStyle'
+export { SUBTITLE_FONT_RATIO, SUBTITLE_BOTTOM_OFFSET_RATIO, SUBTITLE_MIN_FONT_PX } from './subtitleStyle'
 
 export type SubtitleSegment = {
   id: string
@@ -15,20 +17,9 @@ export type SubtitleSegment = {
 export type ComposeSubtitleState = {
   segments: SubtitleSegment[]
   fontSize: SubtitleFontSizeTier
+  style?: SubtitleStyle
   /** 生成真实人声时间轴时使用的 new-api 视频理解模型。 */
   model?: string
-}
-
-/** 字幕底边距 = 视频高 × 此比例（烧录与预览同源） */
-export const SUBTITLE_BOTTOM_OFFSET_RATIO = 0.06
-/** 烧录字号下限（px）——低分辨率下防不可读 */
-export const SUBTITLE_MIN_FONT_PX = 12
-
-/** 烧录字号 = 视频高 × 比例（预览叠画同比例） */
-export const SUBTITLE_FONT_RATIO: Record<SubtitleFontSizeTier, number> = {
-  sm: 0.035,
-  md: 0.045,
-  lg: 0.06,
 }
 
 /**

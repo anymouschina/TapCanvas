@@ -11013,8 +11013,8 @@ const rewritePromptWithCharacters = React.useCallback(
           upstreamVideos={upstreamVideos}
           upstreamAudioTracks={upstreamComposeAudioTracks}
           onComposeDone={handleComposeDone}
-          title={(data as any)?.smartEdit === true ? '智能剪辑' : '视频合成'}
-          initialSubtitles={(data as any)?.composeSubtitles}
+          title={data.smartEdit === true ? '智能剪辑' : '视频合成'}
+          initialSubtitles={data.composeSubtitles}
           onSubtitlesChange={(s) => updateNodeData(id, { composeSubtitles: s })}
         />
       )}

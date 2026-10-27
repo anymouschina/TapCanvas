@@ -64,4 +64,25 @@ describe('composeVideosToBlob worker lifecycle', () => {
       { url: 'https://example.com/a.mp4' },
     ])).rejects.toThrow('视频合成 Worker 响应无法解析')
   })
+
+  it('forwards subtitle styles unchanged to the worker export pipeline', async () => {
+    const sent: unknown[] = []
+    class CapturingWorker extends SuccessfulComposeWorker {
+      override postMessage(message?: unknown): void { sent.push(message); super.postMessage() }
+    }
+    vi.stubGlobal('Worker', CapturingWorker)
+    const subtitles = { fontSize: 'md' as const, segments: [{ startUs: 0, endUs: 1_000_000, text: 'Subtitle' }],
+      style: { color: '#00FF00', bold: true, position: 'top' as const, backgroundOpacity: 0.5 } }
+    await composeVideosToBlob([{ url: 'https://example.com/a.mp4' }], { subtitles })
+    expect(sent[0]).toMatchObject({ type: 'start', subtitles })
+  })
+
+  it('rejects an invalid subtitle style before creating a worker', async () => {
+    const worker = vi.fn()
+    vi.stubGlobal('Worker', worker)
+    await expect(composeVideosToBlob([{ url: 'https://example.com/a.mp4' }], {
+      subtitles: { fontSize: 'md', segments: [], style: { strokeWidth: -1 } },
+    })).rejects.toThrow('strokeWidth')
+    expect(worker).not.toHaveBeenCalled()
+  })
 })

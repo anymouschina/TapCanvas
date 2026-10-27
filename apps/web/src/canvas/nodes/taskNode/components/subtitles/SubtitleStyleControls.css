@@ -1,0 +1,22 @@
+.subtitle-style-controls .mantine-InputWrapper-label,
+.subtitle-style-controls .mantine-Switch-label {
+  color: var(--ve-text, var(--mantine-color-text));
+}
+
+.subtitle-style-controls .mantine-InputWrapper-description {
+  color: var(--ve-muted, var(--mantine-color-dimmed));
+}
+
+.subtitle-style-controls .mantine-Input-input {
+  background: var(--ve-surface, var(--mantine-color-default));
+  color: var(--ve-text, var(--mantine-color-text));
+  border-color: var(--ve-border, var(--mantine-color-default-border));
+}
+
+.subtitle-style-controls .mantine-Input-input:focus {
+  border-color: var(--ve-accent, var(--mantine-primary-color-filled));
+}
+
+.subtitle-style-controls .mantine-Input-input[data-error] {
+  border-color: var(--ve-danger, var(--mantine-color-error));
+}
