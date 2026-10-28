@@ -71,6 +71,27 @@ describe('shared subtitle painter', () => {
 })
 
 describe('StyledSubtitleClip', () => {
+  it('draws every overlapping caption and clears ended lines on the next frame', async () => {
+    const { ctx, canvasContext } = drawingContext()
+    class TestCanvas {
+      constructor(public width: number, public height: number) {}
+      getContext() { return canvasContext }
+    }
+    class TestFrame { close() {} }
+    vi.stubGlobal('OffscreenCanvas', TestCanvas)
+    vi.stubGlobal('VideoFrame', TestFrame)
+    const clip = new StyledSubtitleClip([
+      { start: 0, end: 2_000_000, text: 'First' },
+      { start: 1_000_000, end: 3_000_000, text: 'Second' },
+    ], 640, 360, 'md')
+    await clip.tick(1_500_000)
+    expect(ctx.fillText.mock.calls.map(call => call[0])).toEqual(['First', 'Second'])
+    ctx.fillText.mockClear()
+    await clip.tick(2_000_000)
+    expect(ctx.fillText.mock.calls.map(call => call[0])).toEqual(['Second'])
+    clip.destroy()
+  })
+
   it('renders the selected style in microsecond intervals, clears gaps and releases frames', async () => {
     const { ctx, canvasContext } = drawingContext()
     class TestCanvas {

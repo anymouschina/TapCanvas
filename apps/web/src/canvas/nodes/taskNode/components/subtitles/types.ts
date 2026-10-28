@@ -6,6 +6,8 @@ export type SubtitleSegment = {
   id: string
   /** 归属源视频 URL（EditableClip.sourceUrl）；split 后多个子片段共享同一 sourceUrl */
   sourceUrl: string
+  /** 独立素材引用的稳定标识；未指定时字幕适用于该 URL 的所有引用。分割子片段继承。 */
+  sourceInstanceId?: string
   /** 相对源视频原始 0 点（µs） */
   startUs: number
   endUs: number

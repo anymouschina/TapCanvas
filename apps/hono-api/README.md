@@ -191,6 +191,8 @@ docker-compose exec api dreamina version
 
 ## AI 对话架构（当前）
 
+2026-10-28 字幕时间轴同步仅扩展手动视频合成编辑器。`composeSubtitles.segments` 的可选 `sourceInstanceId` 使用真实上游节点 ID 隔离重复 URL 的素材实例，起止时间仍为源视频相对微秒；前端负责投影、编辑、预览与本地烧录。工具契约注释及实际仓库 `tapcanvas-api` Skill 同步记录该状态边界，未新增 AI 工具、服务端导出接口或修改 DSH 对话编排。
+
 2026-10-26 精选功能同步不修改 DSH Harness 或对话编排。MCP 助手接入仅复用密钥签发与现有 `/public/mcp` 链路；多章剧本导出只读取当前用户已保存的 `tapcanvas.prompt-package/v2`，不触发生成。画布手动去噪复用图片编辑入口与 `visible_composite_only` 内部参考策略，只使用当前主图并隔离项目画风，保留原节点及资产；工具能力描述与仓库实际加载的 `tapcanvas-api` Skill 同步记录此边界。
 
 - Droid / Factory 号池统一接入 `apps/new-api`（渠道 type `77`），模型仍取动态目录，协议由渠道显式 binding 决定。Key 追加去重、额度快照、账号启停与同池重试均由网关负责，Hono 与 agents 不维护平行账号池、不猜测模型协议、不自动换模型。上游真实额度拒绝与本地余额不足分别处理，已输出响应或取消的请求不重放；账号管理与部署边界见 [Droid 号池说明](../new-api/docs/channel/droid.md)。

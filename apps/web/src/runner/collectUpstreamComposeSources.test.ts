@@ -56,6 +56,37 @@ function connections(ids: string[]): Edge[] {
 }
 
 describe('composition chronology', () => {
+  it('distinguishes connected source nodes that share the same asset URL', () => {
+    const sharedUrl = 'https://example.com/shared.mp4'
+    const nodes = [video('first', 0), video('second', 1)].map(node => ({
+      ...node, data: { ...node.data, videoUrl: sharedUrl },
+    }))
+    expect(collectUpstreamComposeSources(composeNode.id, [...nodes, composeNode], connections(['first', 'second']))
+      .map(({ url, sourceInstanceId }) => ({ url, sourceInstanceId })))
+      .toEqual([
+        { url: sharedUrl, sourceInstanceId: 'first' },
+        { url: sharedUrl, sourceInstanceId: 'second' },
+      ])
+  })
+  it('keeps source identities when nodes, edges and clip chronology are reordered', () => {
+    const first = video('first', 0)
+    const second = video('second', 1)
+    const initial = collectUpstreamComposeSources(composeNode.id, [first, second, composeNode], connections(['first', 'second']))
+    const reordered = collectUpstreamComposeSources(composeNode.id, [
+      { ...second, data: { ...second.data, clipIndex: 0 } },
+      composeNode,
+      { ...first, data: { ...first.data, clipIndex: 1 } },
+    ], connections(['second', 'first']))
+    expect(reordered.map(source => source.sourceInstanceId)).toEqual(['second', 'first'])
+    expect(new Map(reordered.map(source => [source.url, source.sourceInstanceId])))
+      .toEqual(new Map(initial.map(source => [source.url, source.sourceInstanceId])))
+  })
+  it('uses the same source identity for explicit edges and run membership', () => {
+    const target = { ...composeNode, data: { ...composeNode.data, clipRunId: 'run-a' } }
+    const nodes = [video('first', 0), video('second', 1), target]
+    expect(collectUpstreamComposeSources(target.id, [...nodes].reverse(), []))
+      .toEqual(collectUpstreamComposeSources(target.id, nodes, connections(['second', 'first'])))
+  })
   it('orders explicit connections by numeric clip position, not connection order or title', () => {
     const nodes = [video('ten', 10), video('two', 2), video('zero', 0), composeNode]
     expect(collectUpstreamComposeSources(composeNode.id, nodes, connections(['ten', 'zero', 'two'])).map(item => item.url))

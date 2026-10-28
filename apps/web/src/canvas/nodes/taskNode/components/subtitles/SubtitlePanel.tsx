@@ -17,6 +17,9 @@ function fmtUs(us: number): string {
 
 export type SubtitlePanelProps = {
   segments: SubtitleSegment[]
+  selectedSegmentId?: string | null
+  selectionRevision?: number
+  onSelect?: (segmentId: string) => void
   /** segmentId → 时间线位置（被完全裁掉的段无条目） */
   projected: Map<string, { startUs: number; endUs: number }>
   fontTier: SubtitleFontSizeTier
@@ -42,12 +45,20 @@ export type SubtitlePanelProps = {
 
 export function SubtitlePanel(props: SubtitlePanelProps) {
   const {
-    segments, projected, fontTier, subtitleStyle, onChangeStyle, generating, error, skipped, canGenerate,
+    segments, selectedSegmentId, selectionRevision, onSelect, projected, fontTier, subtitleStyle, onChangeStyle, generating, error, skipped, canGenerate,
     modelOptions, selectedModel, modelLoading, modelError,
     onGenerate, onChangeModel, onChangeFontTier, onUpdateText, onDelete, onAddAtPlayhead, onSeek, onClosePanel,
   } = props
 
   const [view, setView] = React.useState('content')
+  const selectedRowRef = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => {
+    if (!selectedSegmentId) return
+    setView('content')
+  }, [selectedSegmentId, selectionRevision])
+  React.useEffect(() => {
+    if (view === 'content') selectedRowRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [selectedSegmentId, selectionRevision, view])
 
   const ordered = React.useMemo(() => {
     return [...segments].sort((a, b) => {
@@ -125,10 +136,11 @@ export function SubtitlePanel(props: SubtitlePanelProps) {
             const pos = projected.get(seg.id)
             return (
               <Box className="subtitle-panel__segment"
+                ref={selectedSegmentId === seg.id ? selectedRowRef : undefined}
+                data-selected={selectedSegmentId === seg.id || undefined}
                 key={seg.id}
                 p={6}
                 style={{
-                  background: '#272729',
                   opacity: pos ? 1 : 0.45,
                 }}
               >
@@ -137,7 +149,10 @@ export function SubtitlePanel(props: SubtitlePanelProps) {
                     fz={10}
                     c={pos ? 'blue.4' : 'dimmed'}
                     style={{ fontFamily: 'monospace', cursor: pos ? 'pointer' : 'default' }}
-                    onClick={() => pos && onSeek(pos.startUs)}
+                    role={pos ? 'button' : undefined}
+                    tabIndex={pos ? 0 : undefined}
+                    onClick={() => { onSelect?.(seg.id); if (pos) onSeek(pos.startUs) }}
+                    onKeyDown={(event) => { if (pos && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onSelect?.(seg.id); onSeek(pos.startUs) } }}
                     title={pos ? '点击跳转' : '该段已被裁剪，不会烧录'}
                   >
                     {pos ? `${fmtUs(pos.startUs)} → ${fmtUs(pos.endUs)}` : '已被裁剪'}
@@ -154,6 +169,7 @@ export function SubtitlePanel(props: SubtitlePanelProps) {
                   minRows={1}
                   maxRows={3}
                   value={seg.text}
+                  onFocus={() => onSelect?.(seg.id)}
                   onChange={(e) => onUpdateText(seg.id, e.currentTarget.value)}
                   styles={{ input: { background: '#181818', color: '#eee', fontSize: 12 } }}
                 />

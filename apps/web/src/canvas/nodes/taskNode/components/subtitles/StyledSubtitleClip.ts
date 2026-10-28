@@ -1,5 +1,6 @@
 import type { IClip } from '@webav/av-cliper'
 import { paintSubtitle, resolveSubtitleStyle, type SubtitleFontSizeTier, type SubtitleStyle } from './subtitleStyle'
+import { resolveSubtitleTextAtTime, type RenderSubtitle } from './renderTimeline'
 
 type Caption = Readonly<{ start: number; end: number; text: string }>
 
@@ -10,6 +11,7 @@ export class StyledSubtitleClip implements IClip {
   private readonly canvas: OffscreenCanvas
   private readonly context: OffscreenCanvasRenderingContext2D
   private readonly style: ReturnType<typeof resolveSubtitleStyle>
+  private readonly renderCaptions: readonly RenderSubtitle[]
   private cached: VideoFrame | null = null
   private cachedText: string | null = null
   private destroyed = false
@@ -22,6 +24,7 @@ export class StyledSubtitleClip implements IClip {
     private readonly customStyle?: SubtitleStyle,
   ) {
     this.style = resolveSubtitleStyle(tier, customStyle)
+    this.renderCaptions = captions.map(caption => ({ startUs: caption.start, endUs: caption.end, text: caption.text }))
     this.meta = { width, height, duration: captions.reduce((end, caption) => Math.max(end, caption.end), 0) }
     this.canvas = new OffscreenCanvas(width, height)
     const context = this.canvas.getContext('2d')
@@ -33,7 +36,7 @@ export class StyledSubtitleClip implements IClip {
   async tick(time: number): ReturnType<IClip['tick']> {
     if (this.destroyed) throw new Error('字幕绘制素材已释放')
     if (time >= this.meta.duration) return { state: 'done' }
-    const text = this.captions.find(caption => caption.start <= time && time < caption.end)?.text ?? ''
+    const text = resolveSubtitleTextAtTime(this.renderCaptions, time)
     if (text !== this.cachedText || !this.cached) {
       this.cached?.close()
       this.context.clearRect(0, 0, this.meta.width, this.meta.height)

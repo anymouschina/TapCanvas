@@ -13,8 +13,10 @@ import { useVideoCompose } from './useVideoCompose'
 import type { ComposeAudioTrack } from './composeVideosCore'
 import { fetchClip } from './reliableClipFetch'
 import { SubtitlePanel } from './subtitles/SubtitlePanel'
+import { SubtitleTimelineTracks } from './subtitles/SubtitleTimelineTracks'
+import { resolveSubtitleTextAtTime } from './subtitles/renderTimeline'
 import { drawSubtitleOverlay } from './subtitles/drawSubtitle'
-import { projectSegmentsToTimeline, type ClipWindow } from './subtitles/timeline'
+import { editTimelineSubtitle, projectSegmentsToTimeline, subtitleSourceInstanceIds, type ClipWindow } from './subtitles/timeline'
 import type { ComposeSubtitleState, SubtitleSegment, SubtitleFontSizeTier, SubtitleStyle } from './subtitles/types'
 import { safeSubtitleId } from './subtitles/types'
 import { parseSubtitleStyle } from './subtitles/subtitleStyle'
@@ -78,7 +80,9 @@ type EditableClip = {
   id: string
   clip: MP4Clip
   sourceUrl: string
+  sourceInstanceId: string
   sourceMeta: { title?: string; thumbnailUrl?: string }
+  sourceDurationUs: number
   duration: number   // full duration of this specific clip (µs)
   trimStart: number  // µs to skip at beginning
   trimEnd: number    // µs to skip at end
@@ -88,7 +92,7 @@ type EditableClip = {
 }
 
 const usedDur = (ec: EditableClip) =>
-  Math.max(MIN_USED_US, ec.duration - ec.trimStart - ec.trimEnd)
+  Math.max(0, ec.duration - ec.trimStart - ec.trimEnd)
 
 type TrimRecord = { id: string; trimStart: number; trimEnd: number }
 
@@ -149,6 +153,8 @@ export function VideoComposeEditorModal({
   const [subtitleFontTier, setSubtitleFontTier] = React.useState<SubtitleFontSizeTier>('md')
   const [subtitleStyle, setSubtitleStyle] = React.useState<SubtitleStyle | undefined>()
   const [subtitlePanelOpen, setSubtitlePanelOpen] = React.useState(false)
+  const [selectedSubtitleId, setSelectedSubtitleId] = React.useState<string | null>(null)
+  const [subtitleSelectionRevision, setSubtitleSelectionRevision] = React.useState(0)
   const [subtitleGenerating, setSubtitleGenerating] = React.useState(false)
   const [subtitleError, setSubtitleError] = React.useState<string | null>(null)
   const [subtitleSkipped, setSubtitleSkipped] = React.useState<Array<{ url: string; title?: string }>>([])
@@ -210,6 +216,7 @@ export function VideoComposeEditorModal({
   const clipWindows = React.useMemo<ClipWindow[]>(
     () => editClips.map((ec, i) => ({
       sourceUrl: ec.sourceUrl,
+      sourceInstanceId: ec.sourceInstanceId,
       sourceOffsetUs: ec.sourceOffsetUs,
       trimStart: ec.trimStart,
       trimEnd: ec.trimEnd,
@@ -233,8 +240,13 @@ export function VideoComposeEditorModal({
     return m
   }, [timelineSubtitles])
 
+  const subtitlePanelSegments = React.useMemo(() => subtitleSegments.flatMap((segment) => {
+    const instances = timelineSubtitles.filter((item) => item.sourceSegmentId === segment.id)
+    return instances.length ? instances.map((item) => ({ ...segment, id: item.segmentId })) : [segment]
+  }), [subtitleSegments, timelineSubtitles])
+
   const currentSubtitleText = React.useMemo(
-    () => timelineSubtitles.find((t) => currentUs >= t.startUs && currentUs < t.endUs)?.text ?? '',
+    () => resolveSubtitleTextAtTime(timelineSubtitles, currentUs),
     [timelineSubtitles, currentUs],
   )
 
@@ -248,6 +260,7 @@ export function VideoComposeEditorModal({
   React.useEffect(() => {
     if (!opened) return
     setSubtitleSegments(initialSubtitles?.segments ?? [])
+    setSelectedSubtitleId(null)
     setSubtitleFontTier(initialSubtitles?.fontSize ?? 'md')
     setSubtitleStyle(parseSubtitleStyle(initialSubtitles?.style))
     setSubtitlePanelOpen((initialSubtitles?.segments?.length ?? 0) > 0)
@@ -282,7 +295,8 @@ export function VideoComposeEditorModal({
         // 先并行完成所有片段的网络读取和 MP4 元数据解析。此前这里是串行
         // fetch → ready → thumbnails，片段数量一多，打开编辑器的等待时间会
         // 线性叠加；缩略图不是时间轴可用性的前置条件，必须从首屏路径移出。
-        const settled = await Promise.allSettled(upstreamVideos.map(async (src): Promise<EditableClip> => {
+        const instanceIds = subtitleSourceInstanceIds(upstreamVideos)
+        const settled = await Promise.allSettled(upstreamVideos.map(async (src, sourceIndex): Promise<EditableClip> => {
           let clip: MP4Clip | null = null
           try {
             if (cancelled) throw new Error('加载已取消')
@@ -297,8 +311,10 @@ export function VideoComposeEditorModal({
               id: newClipId(),
               clip,
               sourceUrl: src.url,
+              sourceInstanceId: instanceIds[sourceIndex],
               sourceMeta: { title: src.title, thumbnailUrl: src.thumbnailUrl },
               duration,
+              sourceDurationUs: duration,
               trimStart: 0,
               trimEnd: 0,
               sourceOffsetUs: 0,
@@ -475,7 +491,7 @@ export function VideoComposeEditorModal({
       cum += ud
     }
     if (muted || !playing || !target) { if (!a.paused) a.pause(); return }
-    const desiredSec = Math.max(0, localUs) / 1e6
+    const desiredSec = Math.max(0, target.sourceOffsetUs + localUs) / 1e6
     if (a.getAttribute('data-src') !== target.sourceUrl) {
       a.setAttribute('data-src', target.sourceUrl)
       a.src = target.sourceUrl
@@ -557,13 +573,15 @@ export function VideoComposeEditorModal({
 
     const [before, after] = await ec.clip.split(splitAbsUs)
     const beforeClip: EditableClip = {
-      id: newClipId(), clip: before, sourceUrl: ec.sourceUrl, sourceMeta: ec.sourceMeta,
+      id: newClipId(), clip: before, sourceUrl: ec.sourceUrl, sourceInstanceId: ec.sourceInstanceId, sourceMeta: ec.sourceMeta,
+      sourceDurationUs: ec.sourceDurationUs,
       duration: splitAbsUs, trimStart: ec.trimStart, trimEnd: 0,
       sourceOffsetUs: ec.sourceOffsetUs,
       thumbs: ec.thumbs.filter((t) => t.ts < splitAbsUs),
     }
     const afterClip: EditableClip = {
-      id: newClipId(), clip: after, sourceUrl: ec.sourceUrl, sourceMeta: ec.sourceMeta,
+      id: newClipId(), clip: after, sourceUrl: ec.sourceUrl, sourceInstanceId: ec.sourceInstanceId, sourceMeta: ec.sourceMeta,
+      sourceDurationUs: ec.sourceDurationUs,
       duration: ec.duration - splitAbsUs, trimStart: 0, trimEnd: ec.trimEnd,
       sourceOffsetUs: ec.sourceOffsetUs + splitAbsUs,
       thumbs: ec.thumbs.filter((t) => t.ts >= splitAbsUs).map((t) => ({ ...t, ts: t.ts - splitAbsUs })),
@@ -607,6 +625,8 @@ export function VideoComposeEditorModal({
     if (!opened) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        const target = e.target
+        if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, [role="textbox"], [role="spinbutton"], .subtitle-panel, [data-subtitle-timeline]'))) return
         e.stopPropagation()
         handleDeleteClip()
       }
@@ -740,9 +760,9 @@ export function VideoComposeEditorModal({
       const model = resolvedSubtitleModel
       if (!model) throw new Error('没有可执行的视频理解模型；请先在 new-api 启用并配置按时长计费的模型。')
       const generated: SubtitleSegment[] = []
-      for (const source of upstreamVideos) {
+      for (const source of [...new Map(upstreamVideos.map((video) => [video.url, video])).values()]) {
         const loaded = editClipsRef.current.find((clip) => clip.sourceUrl === source.url)
-        const durationSeconds = loaded ? loaded.duration / US_PER_S : 0
+        const durationSeconds = loaded ? loaded.sourceDurationUs / US_PER_S : 0
         if (durationSeconds > 60) {
           throw new Error(`片段“${source.title || source.url}”时长超过视频理解接口 60 秒上限，请先裁剪后再生成字幕。`)
         }
@@ -779,6 +799,7 @@ export function VideoComposeEditorModal({
         setSubtitleSegments((prev) => [...prev, {
           id: safeSubtitleId(),
           sourceUrl: w.sourceUrl,
+          sourceInstanceId: w.sourceInstanceId,
           startUs: Math.round(srcStart),
           endUs: Math.round(srcEnd),
           text: '在这里输入字幕',
@@ -790,13 +811,39 @@ export function VideoComposeEditorModal({
     }
   }, [clipWindows, currentUs])
 
-  const handleUpdateSubtitleText = React.useCallback((segId: string, text: string) => {
-    setSubtitleSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, text } : s)))
+  const handleSelectSubtitle = React.useCallback((segmentId: string) => {
+    setSelectedIdx(null)
+    setSelectedSubtitleId(segmentId)
+    setSubtitleSelectionRevision((value) => value + 1)
+    setSubtitlePanelOpen(true)
   }, [])
 
-  const handleDeleteSubtitle = React.useCallback((segId: string) => {
-    setSubtitleSegments((prev) => prev.filter((s) => s.id !== segId))
-  }, [])
+  const applySubtitleEdit = React.useCallback((segmentId: string, edit: Parameters<typeof editTimelineSubtitle>[3]) => {
+    try {
+      const result = editTimelineSubtitle(subtitleSegments, clipWindows, segmentId, edit, safeSubtitleId)
+      setSubtitleSegments(result.segments)
+      setSelectedSubtitleId(result.selectedSegmentId)
+      setSubtitleError(null)
+    } catch (error: unknown) {
+      setSubtitleError(error instanceof Error ? error.message : '字幕修改失败')
+      setSubtitlePanelOpen(true)
+    }
+  }, [subtitleSegments, clipWindows])
+
+  const handleUpdateSubtitleText = React.useCallback((segmentId: string, text: string) => {
+    if (projectedById.has(segmentId)) applySubtitleEdit(segmentId, { text })
+    else setSubtitleSegments((segments) => segments.map((segment) => segment.id === segmentId ? { ...segment, text } : segment))
+  }, [projectedById, applySubtitleEdit])
+
+  const handleSubtitleTiming = React.useCallback((segmentId: string, startUs: number, endUs: number) => {
+    setPlaying(false)
+    applySubtitleEdit(segmentId, { startUs, endUs })
+  }, [applySubtitleEdit])
+
+  const handleDeleteSubtitle = React.useCallback((segmentId: string) => {
+    if (projectedById.has(segmentId)) applySubtitleEdit(segmentId, { delete: true })
+    else setSubtitleSegments((segments) => segments.filter((segment) => segment.id !== segmentId))
+  }, [projectedById, applySubtitleEdit])
 
   const emitSubtitles = React.useCallback(() => {
     onSubtitlesChange?.({
@@ -821,8 +868,8 @@ export function VideoComposeEditorModal({
       url: ec.sourceUrl,
       title: ec.sourceMeta.title,
       thumbnailUrl: ec.sourceMeta.thumbnailUrl,
-      trimStart: ec.trimStart,
-      trimEnd: ec.trimEnd,
+      trimStart: ec.sourceOffsetUs + ec.trimStart,
+      trimEnd: ec.sourceDurationUs - ec.sourceOffsetUs - ec.duration + ec.trimEnd,
     }))
     const blob = await compose(sources, {
       outputAspect,
@@ -901,7 +948,10 @@ export function VideoComposeEditorModal({
       <Box style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {subtitlePanelOpen ? (
           <SubtitlePanel
-            segments={subtitleSegments}
+            segments={subtitlePanelSegments}
+            selectedSegmentId={selectedSubtitleId}
+            selectionRevision={subtitleSelectionRevision}
+            onSelect={handleSelectSubtitle}
             projected={projectedById}
             fontTier={subtitleFontTier}
             subtitleStyle={subtitleStyle}
@@ -1055,35 +1105,16 @@ export function VideoComposeEditorModal({
                 })}
               </Box>
 
-              {/* Subtitle track */}
-              {timelineSubtitles.length > 0 && (
-                <Box style={{ position: 'relative', height: 18, background: '#101418', borderBottom: '1px solid #222' }}>
-                  {timelineSubtitles.map((t) => (
-                    <Box
-                      key={`${t.segmentId}-${t.startUs}`}
-                      title={t.text}
-                      style={{
-                        position: 'absolute',
-                        left: t.startUs * pxPerUs,
-                        width: Math.max(2, (t.endUs - t.startUs) * pxPerUs),
-                        top: 3,
-                        bottom: 3,
-                        borderRadius: 2,
-                        background: 'rgba(64,158,255,0.55)',
-                        overflow: 'hidden',
-                        whiteSpace: 'nowrap',
-                        fontSize: 9,
-                        color: '#dfe9f5',
-                        padding: '0 3px',
-                        lineHeight: '12px',
-                        pointerEvents: 'none',
-                      }}
-                    >
-                      {t.text}
-                    </Box>
-                  ))}
-                </Box>
-              )}
+              <SubtitleTimelineTracks
+                timelineSubtitles={timelineSubtitles}
+                pxPerUs={pxPerUs}
+                totalUs={totalUs}
+                selectedSegmentId={selectedSubtitleId}
+                isBusy={composing || subtitleGenerating}
+                onSeek={(us) => { setPlaying(false); setCurrentUs(us) }}
+                onSelect={handleSelectSubtitle}
+                onChangeTiming={handleSubtitleTiming}
+              />
 
               {/* Clip track */}
               <Box

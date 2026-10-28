@@ -6,6 +6,14 @@ import { MEDIA_ASSET_PURPOSES } from "../../../../../packages/schemas/media-asse
  *
  * NOTE: This file is intentionally a lightweight, implementation-aligned
  * source of truth for model/node capabilities (kept in sync with apps/web).
+ *
+ * The manual video-composition editor persists `data.composeSubtitles` locally:
+ * segments contain id/sourceUrl/startUs/endUs/text/source and optional
+ * sourceInstanceId (the upstream node ID). Times are source-relative microseconds;
+ * omitting sourceInstanceId applies the source caption to every matching URL.
+ * The editor projects these through cuts, isolates edited occurrences and renders
+ * overlapping captions as separate lines. This UI capability adds no AI tool or
+ * server-side subtitle export endpoint; do not infer a callable tool from it.
  */
 
 export type CanvasNodeKind =

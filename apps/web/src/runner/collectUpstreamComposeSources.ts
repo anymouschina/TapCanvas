@@ -20,7 +20,7 @@ function sourceFromNode(node: Node): ComposeVideoSource | null {
   const url = text(primary.url) || text(data.videoUrl)
   if (!url) return null
   return {
-    url, title: text(primary.title) || text(data.label),
+    url, sourceInstanceId: node.id, title: text(primary.title) || text(data.label),
     thumbnailUrl: text(primary.thumbnailUrl),
     durationSec: typeof primary.duration === 'number' ? primary.duration
       : typeof data.videoDuration === 'number' ? data.videoDuration

@@ -6,6 +6,8 @@ import { StyledSubtitleClip } from './subtitles/StyledSubtitleClip'
 
 export type ComposeVideoSource = {
   url: string
+  /** Stable identity of the upstream canvas source, independent of URL and ordering. */
+  sourceInstanceId?: string
   title?: string
   thumbnailUrl?: string
   durationSec?: number
@@ -36,7 +38,7 @@ export type PreparedAudioTrack = {
   title?: string
 }
 
-/** 烧录字幕输入：全局时间线（µs），调用方负责已按 start 排序、互不重叠 */
+/** 烧录字幕输入：按时间排序的全局时间线（µs）；重叠字幕按数组顺序分行显示。 */
 export type ComposeSubtitlesInput = {
   segments: Array<{ startUs: number; endUs: number; text: string }>
   fontSize: SubtitleFontSizeTier
@@ -213,7 +215,7 @@ export async function composeVideosToBlobInline(
       if (clipped.length > 0) {
         subtitlesClip = new StyledSubtitleClip(clipped, width, height, subs.fontSize, subs.style)
         const subSprite = new OffscreenSprite(subtitlesClip)
-        subSprite.time = { offset: 0, duration: clipped[clipped.length - 1].end }
+        subSprite.time = { offset: 0, duration: subtitlesClip.meta.duration }
         await combinator.addSprite(subSprite)
       }
     }

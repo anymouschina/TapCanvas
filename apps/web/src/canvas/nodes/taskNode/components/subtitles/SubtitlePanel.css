@@ -37,3 +37,17 @@
 .subtitle-panel__body {
   overflow: hidden;
 }
+
+.subtitle-panel__segment {
+  background: var(--tc-color-surface-inline, #272729);
+}
+
+.subtitle-panel__segment[data-selected] {
+  background: color-mix(in srgb, var(--tc-color-accent-blue, #60a5fa) 14%, var(--tc-color-surface, #0b0f14));
+  box-shadow: inset 2px 0 var(--tc-color-accent-cyan, #22d3ee);
+}
+
+.subtitle-panel__segment-time[role="button"]:focus-visible {
+  outline: 1px solid var(--tc-color-accent-cyan, #22d3ee);
+  outline-offset: 2px;
+}

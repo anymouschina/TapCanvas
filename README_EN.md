@@ -32,7 +32,9 @@ Recorded in the online edition. For the Community Edition's workflow entry point
 
 The latest 10 entries are shown below; expand the older updates for more history.
 
-- **2026-10-27 · Subtitle styles**: The video composition editor now offers font family, size, bold, text and outline colors, outline width, background color and opacity, position, alignment and vertical margins. Styles are saved with the node and restored when reopening the editor. Preview and browser-local export share the subtitle renderer. This ports only F02's style subtask; independent subtitle tracks and timing controls remain pending. See [delivery notes](docs/deliveries/2026-10-27-subtitle-style-sync.md) for implementation and validation boundaries.
+- **2026-10-28 · Editable subtitle timeline**: Move captions, drag either edge to adjust timing, view overlaps in separate lanes, and click a caption to seek and select its text. Keyboard adjustments are supported. Timing is saved with the node, repeated video instances can be edited independently, and preview and local export display all overlapping captions. Split-clip export now uses the correct original-source offsets. Existing recognition and styles are retained. See [delivery notes](docs/deliveries/2026-10-28-subtitle-timeline-sync.md) for usage and validation boundaries.
+
+- **2026-10-27 · Subtitle styles**: The video composition editor now offers font family, size, bold, text and outline colors, outline width, background color and opacity, position, alignment and vertical margins. Styles are saved with the node and restored when reopening the editor. Preview and browser-local export share the subtitle renderer. This entry covers subtitle styles; editable timing tracks followed on October 28. See [delivery notes](docs/deliveries/2026-10-27-subtitle-style-sync.md) for implementation and validation boundaries.
 
 - **2026-10-26 · In-app changelog**: Ported Pro's lightweight dialog. Open “更新日志” from the portal header to review implemented Community Edition features and update dates. New entries display an unread indicator; opening the content records them as read locally, with visible storage errors. Close and reopen it at any time. Entries follow this repository's README and delivery notes. See [sync notes](docs/deliveries/2026-10-26-changelog-sync.md) for source and validation boundaries.
 
@@ -75,10 +77,11 @@ The latest 10 entries are shown below; expand the older updates for more history
 - **2026-10-07 · One-click video v135**: Synced full-chapter story and timeline planning, asset creation, per-clip prompts and media production, and the latest creative Skills. The editor and executor share the workflow definition and continue to use the Community Edition's DeepSeek Harness Bridge. Added the v135 system workflow release while preserving execution history and generated assets.
 - **2026-10-07 · Canvas fixes**: Copying nodes and groups preserves assets and prompts, isolates execution identities and remaps references. Fixed missing assets from visual groups in group downloads.
 - **2026-09-23 · Director desk upgrade**: Synced TapCanvasPro's standalone director desk, based on [DirectorDesk](https://github.com/mangfufu/director-desk), for 3D scene blocking, character staging and camera previs. Connected TapCanvas AI chat, tool relay and reference-video export to the canvas, replaced the previous embedded implementation, and added MIT attribution. Web development and production builds now build the director desk automatically; install its standalone dependencies before first use.
-- **2026-09-21 · Agent configuration updates**: Added one-click update and replacement for installed workflows after checks pass, retaining their existing scope and confirmed replacement or parallel relationships, along with version history, executions and generated assets.
 
 <details>
-<summary>Older updates (12 entries)</summary>
+<summary>Older updates (13 entries)</summary>
+
+- **2026-09-21 · Agent configuration updates**: Added one-click update and replacement for installed workflows after checks pass, retaining their existing scope and confirmed replacement or parallel relationships, along with version history, executions and generated assets.
 
 - **2026-09-21 · Conflict checks**: Shared workflow tools or output formats are now informational rather than forcing a choice. Agents still assess responsibility conflicts; blocking errors and version races are reported explicitly.
 
@@ -202,12 +205,12 @@ docker compose restart
 
 Features planned to be ported from TapCanvas Pro to the community edition:
 
-The review lists **16 features independent of the Pro Agent kernel; F04, F06, F09 and F13, plus F02's subtitle-style subtask, are now implemented**. See [sync TODO](./TODO.md) for IDs, source evidence, existing community capabilities and adaptation boundaries. The original roadmap below is retained; video remake is outside this review's shortlist.
+The review lists **16 features independent of the Pro Agent kernel; F04, F06, F09 and F13, plus F02's subtitle styles and editable timeline, are now implemented**. See [sync TODO](./TODO.md) for IDs, source evidence, existing community capabilities and adaptation boundaries. The original roadmap below is retained; video remake is outside this review's shortlist.
 
 - [x] **Image compare node**: side-by-side / slider / overlay / toggle modes, reading images live from upstream nodes
 - [ ] **Video remake**: paste a share link (e.g. Douyin) or upload a video to remake it
 - [ ] **Creation composer**: new prompt box with @ asset mentions, attachments, canvas references and per-account model preferences
-- [ ] **Video compose + AI subtitles**: subtitle styles are ported for preview, local export and persistence; transitions, independent subtitle tracks and timing controls remain pending
+- [ ] **Video compose + AI subtitles**: subtitle styles, editable timing tracks and local export are ported; transitions and Pro server-side transcription remain pending
 - [ ] **Media diagnostics API**: troubleshoot the media pipeline
 - [x] **Changelog dialog (F13)**: open it manually from the portal header, with community updates, an unread indicator and local read state
 - [ ] **Product & SEO pages**: public product overview pages and page metadata

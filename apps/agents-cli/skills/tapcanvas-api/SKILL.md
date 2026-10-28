@@ -8,6 +8,10 @@ metadata:
 
 # TapCanvas API
 
+## 画布字幕状态
+
+手动视频合成编辑器的 `node.data.composeSubtitles` 保存 `segments`、`fontSize`、可选 `style/model`。每段包含 `id/sourceUrl/startUs/endUs/text/source`，时间以源视频原始零点为基准、单位微秒；可选 `sourceInstanceId` 是真实上游视频节点 ID，用于区分同 URL 的不同素材实例，省略表示源字幕应用到所有同 URL 实例。修改现有节点其他字段时保留这些已保存字幕与实例标识，不把源时间当作合成时间，也不根据名称猜实例 ID。编辑器负责裁剪/分割后的投影、手动对时与重叠字幕分行；新增交互没有新增公开字幕改时或服务端导出工具，不能把保存字段当作已经执行视频导出的证据。
+
 协议诊断或离线 Agent 评估需要直接测试已启用文本模型时，终端通过 `llmChat` endpoint 调用现有 `/agents/llm/v1/chat/completions` 用户鉴权代理，显式提供 model/messages 和所需协议字段。该调用不创建用户画布产物，也不自动执行返回的工具调用；不能作为一键成片的平行生产链。真实推理会正常计费，不切换模型或绕过自有网关。
 
 TapCanvas 对外 API 的唯一 skill：统一入口、统一凭据、明确失败（不静默降级、不猜默认接口、不切旧 skill）。

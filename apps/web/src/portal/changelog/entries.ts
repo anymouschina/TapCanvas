@@ -9,13 +9,23 @@ export type ChangelogEntry = {
 // not deployment or real-model acceptance results.
 export const CHANGELOG_ENTRIES: readonly [ChangelogEntry, ...ChangelogEntry[]] = [
   {
+    id: '2026-10-28-subtitle-timeline',
+    date: '2026-10-28',
+    title: '可编辑字幕时间轴',
+    changes: [
+      '字幕支持整段拖动、两端改时、重叠分行、点击定位和键盘微调，选中轨道同步定位字幕内容。',
+      '重复视频实例分别编辑，对时随节点保存；预览和本地导出同时显示重叠字幕。',
+      '修正分割视频导出的源时间偏移，保留现有字幕识别与样式设置。',
+    ],
+  },
+  {
     id: '2026-10-27-subtitle-style',
     date: '2026-10-27',
     title: '字幕样式',
     changes: [
       '视频合成编辑器支持字体、字号、粗体、颜色、描边、背景、位置、对齐和上下边距设置。',
       '字幕样式随节点保存，重开编辑器继续编辑；预览与浏览器本地导出共用绘制逻辑。',
-      '本次同步字幕样式子项，独立字幕轨与时间调整仍待同步。',
+      '当日同步字幕样式子项；可编辑字幕时间轴随后于 10 月 28 日同步。',
     ],
   },
   {
