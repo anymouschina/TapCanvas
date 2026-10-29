@@ -14,6 +14,26 @@ TapCanvas is a multi-model AI content creation platform built around a visual ca
 
 **Language:** [中文](README.md) | English
 
+## Sponsors & Support
+
+<p align="center">
+  <a href="https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link" target="_blank" rel="noopener noreferrer">
+    <img src="assets/sponsors/infistar-banner.png" width="728" alt="Infistar.cc · One-stop global LLM API service platform" />
+  </a>
+</p>
+
+**TapCanvas × Infistar.cc (无限星河) — a one-stop global LLM API platform**
+
+Thanks to [Infistar.cc](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link) for sponsoring TapCanvas!
+
+- 🔌 **Official access, full-strength models**: per the platform, models are reached through official channels with multi-route load balancing for stable long-running pipelines.
+- 💰 **Prices as low as 0.1× the official rate**: exact discounts, available models and billing rules are defined on the [Infistar.cc](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link) site.
+- 🧩 **How to connect**: the Community Edition serves text, image and video models through the Luban API gateway (`apps/new-api`). Register at Infistar.cc, get a key, then add a channel in the gateway admin console with your own key and the models you need. The repository ships no private credentials.
+
+👉 [Register via the referral link and try it](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)
+
+> Sponsors have no say in code or roadmap decisions. The links above are referral links; registration and usage are governed by the platform's own terms.
+
 ## Demo: From Novel Chapters to Video
 
 Bring chapters, characters, scenes, storyboards and video generation together on one canvas. This demo from the About page uses real canvases from two chapters to show how character and scene assets can be reused across chapters, how alternate appearances and states such as injuries are managed separately, and how the one-click video workflow connects chapter content to video production.
@@ -242,6 +262,7 @@ Open-source projects built on top of TapCanvas:
 
 Thanks to the following platform and open-source projects — TapCanvas' hosting, promotion and implementation are built on them.
 
+- **[Infistar.cc](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)** — sponsor of TapCanvas, providing a one-stop global LLM API service; see [Sponsors & Support](#sponsors--support).
 - **[AtomGit](https://atomgit.com/gcw_PzejWSbY/TapCanvas) / GitCode** — code hosting, open-source community promotion and badge data; the link above is this project's AtomGit entry.
 
 Upstream open-source projects:

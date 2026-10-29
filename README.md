@@ -25,6 +25,26 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
   <img src="./apps/web/readme-canvas.png" width="100%" alt="TapCanvas 章节画布、角色场景资产与分镜预览" />
 </p>
 
+## 赞助与支持
+
+<p align="center">
+  <a href="https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link" target="_blank" rel="noopener noreferrer">
+    <img src="./assets/sponsors/infistar-banner.png" width="728" alt="Infistar.cc 无限星河 · 一站式全球大模型 API 服务平台" />
+  </a>
+</p>
+
+**TapCanvas × Infistar.cc 无限星河｜一站式全球大模型 API 服务平台**
+
+感谢 [Infistar.cc 无限星河](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link) 对 TapCanvas 的赞助支持！
+
+- 🔌 **官方接入，满血保真**：按平台说明，通过官方渠道接入模型，多线路负载均衡，保持长链路生产的稳定性。
+- 💰 **价格低至官方 0.1 折**：具体折扣、可用模型与计费规则以 [无限星河官网](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link) 页面为准。
+- 🧩 **接入方式**：社区版的文本、图片、视频模型统一经鲁班 API（`apps/new-api`）下发。在 [无限星河](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link) 注册并获取 Key 后，在鲁班 API 管理台新增渠道并填入自己的 Key 与所需模型即可使用；仓库不预置任何私人凭据。
+
+👉 [通过专属链接注册并立即体验](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)
+
+> 赞助方不参与项目的代码与路线图决策；上述链接为推广链接，注册与消费行为以对应平台条款为准。
+
 ## 演示视频：长篇小说，一键成片
 
 从小说章节出发，把角色、场景、分镜与视频生成串联在同一张画布中。下面的 About 页面演示以两个章节的真实画布为例，展示角色与场景资产如何跨章节复用、同一人物的不同造型和受伤等状态如何分别管理，以及一键成片工作流如何组织从章节内容到视频的生产过程。
@@ -210,6 +230,20 @@ docker-compose --env-file apps/hono-api/.env ps # 当前主机使用 standalone 
 ./scripts/dev.sh docker-down                     # 停止服务，不删除数据卷
 ```
 
+## 文档导航
+
+| 文档 | 内容 |
+| ---- | ---- |
+| [文档中心](./docs/README.md) | 所有文档索引与推荐阅读顺序 |
+| [开发指南](./docs/development.md) | 本地开发、构建与测试流程 |
+| [Docker 部署](./docs/docker.md) | 一键全栈部署与常见问题 |
+| [项目索引](./docs/PROJECT_INDEX.zh-CN.md) | 目录结构与模块职责速查 |
+| [Public API](./docs/PublicAPI.zh-CN.md) | 对外接口契约，含 `/public/agents/chat` |
+| [API 与 AI 对话架构](./apps/hono-api/README.md) | Hono API、任务与 AI 对话链路 |
+| [Agents Bridge](./apps/agents-cli/README.md) | DeepSeek Harness Bridge 说明 |
+| [交付记录](./docs/deliveries) | 各次功能同步的实现与验证边界 |
+| [同步 TODO](./TODO.md) | Pro 到社区版的功能同步清单 |
+
 ## TODO / 路线图
 
 计划从 TapCanvas Pro 同步到社区版的功能：
@@ -245,6 +279,7 @@ TapCanvas 根项目及未另行声明的代码按 [MIT License](./LICENSE) 发�
 
 感谢以下平台与开源项目，TapCanvas 的托管、推广与实现都建立在它们之上。
 
+- **[Infistar.cc 无限星河](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)**：赞助 TapCanvas，并提供一站式全球大模型 API 服务，详见[赞助与支持](#赞助与支持)。
 - **[AtomGit](https://atomgit.com/gcw_PzejWSbY/TapCanvas) / GitCode**：提供代码托管、开源社区推广与 Badge 数据服务，上述链接即本项目在 AtomGit 的项目入口。
 
 上游开源项目：
