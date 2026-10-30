@@ -225,7 +225,7 @@ docker compose restart
 
 Features planned to be ported from TapCanvas Pro to the community edition:
 
-The review lists **16 features independent of the Pro Agent kernel; F04, F06, F09 and F13, plus F02's subtitle styles and editable timeline, are now implemented**. See [sync TODO](./TODO.md) for IDs, source evidence, existing community capabilities and adaptation boundaries. The original roadmap below is retained; video remake is outside this review's shortlist.
+The review lists **16 features independent of the Pro Agent kernel; F04, F06, F09, F10 and F13, plus F02's subtitle styles and editable timeline, are now implemented**. See [sync TODO](./TODO.md) for IDs, source evidence, existing community capabilities and adaptation boundaries. The original roadmap below is retained; video remake is outside this review's shortlist.
 
 - [x] **Image compare node**: side-by-side / slider / overlay / toggle modes, reading images live from upstream nodes
 - [ ] **Video remake**: paste a share link (e.g. Douyin) or upload a video to remake it
@@ -245,7 +245,7 @@ Additional sync items (completed items checked; others await selection):
 - [ ] **F07 CLI / Skill installation**: standalone platform commands, API calls, uploads and subscriptions without the Pro host worker
 - [ ] **F08 Inspiration directions**: homepage suggestions, refresh and prompt insertion
 - [x] **F09 Multi-chapter script export**: select chapters and export saved per-clip prompts as TXT
-- [ ] **F10 Canvas save coordination**: serialized saves and revision confirmation before submission
+- [x] **F10 Canvas save coordination**: autosave, manual save and pre-submission save of the project canvas run through one serialized queue, and autosave is scheduled by content revision
 - [ ] **F11 Dynamic model specifications**: capability fields, reference-image limits and media dimensions
 
 ## Built with TapCanvas

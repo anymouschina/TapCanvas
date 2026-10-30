@@ -131,6 +131,8 @@ import { applyCanvasGraphPatch } from './canvas/sync/applyCanvasGraphPatch'
 import { useYjsCanvasSync } from './canvas/sync/yjs/useYjsCanvasSync'
 import { getYjsMode } from './canvas/sync/yjs/yjsFlags'
 import { saveWithConflictRebase } from './canvas/persistence/saveWithConflictRebase'
+import { createCanvasAutosaveScheduler } from './canvas/persistence/createCanvasAutosaveScheduler'
+import { createCanvasSaveCoordinator } from './canvas/persistence/createCanvasSaveCoordinator'
 import { CanvasEmptyOverlay } from './canvas/components/CanvasEmptyOverlay'
 import { StoryboardOnboardingWizard } from './canvas/components/StoryboardOnboardingWizard'
 import { VideoRunIndicator } from './canvas/components/VideoRunIndicator'
@@ -314,12 +316,26 @@ function CanvasApp({
   // 每一次非视图型画布变更都递增。保存完成时只有快照仍是最新版本，
   // 才能清除脏标记；这避免保存请求期间的后续编辑被误判为已持久化。
   const canvasMutationRevisionRef = React.useRef(0)
+  const canvasAutosaveSchedulerRef = React.useRef<ReturnType<typeof createCanvasAutosaveScheduler<number>> | null>(null)
   const loadProjectRequestSeq = React.useRef(0)
   // CanvasApp survives query-only SPA navigation, while its graph lives in a
   // process-wide store. This epoch invalidates every async writer from the
   // previous route before the next route is allowed to paint or mutate state.
   const canvasSessionEpochRef = React.useRef(0)
   const canvasAppMountedRef = React.useRef(false)
+  // 每次保存读取快照时记录它对应的内容修订，协调器据此判断哪些等待者已被覆盖。
+  const lastCanvasSaveSnapshotRef = React.useRef<{ sessionEpoch: number; revision: number } | null>(null)
+  // 自动保存、手动保存与提交前保存（window.silentSaveProject）共用同一个串行队列。
+  const canvasSaveCoordinatorRef = React.useRef<ReturnType<typeof createCanvasSaveCoordinator<number>> | null>(null)
+  if (!canvasSaveCoordinatorRef.current) {
+    canvasSaveCoordinatorRef.current = createCanvasSaveCoordinator({
+      readCurrentRevision: (sessionEpoch) => (
+        canvasAppMountedRef.current && canvasSessionEpochRef.current === sessionEpoch
+          ? canvasMutationRevisionRef.current
+          : null
+      ),
+    })
+  }
   const skipNextProjectFlowLoadRef = React.useRef<string | null>(null)
   const isHydratingProjectFlowRef = React.useRef(false)
   const lastSilentSaveErrorRef = React.useRef('')
@@ -859,6 +875,7 @@ function CanvasApp({
         if (!useUIStore.getState().isDirty) {
           useUIStore.getState().setDirty(true)
         }
+        canvasAutosaveSchedulerRef.current?.request(canvasSessionEpochRef.current, canvasMutationRevisionRef.current)
       }
     })
   }, [])
@@ -1035,8 +1052,28 @@ function CanvasApp({
     return result.flow
   }
 
-  const doSave = async (): Promise<boolean> => {
-    if (saving) return false
+  // 同一画布会话内的保存全部经由协调器串行执行：调用方等到「自己请求的修订」已落盘才返回，
+  // 保存期间产生的新编辑会在释放队列前再存一轮，避免提交/运行读到服务端的旧画布。
+  const runCoordinatedCanvasSave = (attempt: () => Promise<boolean>): Promise<boolean> => {
+    const sessionEpoch = canvasSessionEpochRef.current
+    const targetRevision = canvasMutationRevisionRef.current
+    return canvasSaveCoordinatorRef.current!.save(sessionEpoch, targetRevision, async (saveSession) => {
+      lastCanvasSaveSnapshotRef.current = {
+        sessionEpoch: saveSession,
+        revision: canvasMutationRevisionRef.current,
+      }
+      const success = await attempt()
+      const savedSnapshot = lastCanvasSaveSnapshotRef.current
+      return {
+        success,
+        savedRevision: savedSnapshot?.sessionEpoch === saveSession
+          ? savedSnapshot.revision
+          : targetRevision,
+      }
+    })
+  }
+
+  const doSaveOnce = async (): Promise<boolean> => {
     const sessionEpoch = canvasSessionEpochRef.current
     const readUiSnapshot = () => {
       const uiState = useUIStore.getState()
@@ -1088,6 +1125,7 @@ function CanvasApp({
     // 项目即工作流：名称使用项目名
     const flowName = proj!.name || '未命名'
     const savingMutationRevision = canvasMutationRevisionRef.current
+    lastCanvasSaveSnapshotRef.current = { sessionEpoch, revision: savingMutationRevision }
     const { nodes, edges } = filterNodesForPersistence(
       useRFStore.getState().nodes,
       useRFStore.getState().edges,
@@ -1096,7 +1134,6 @@ function CanvasApp({
     const sceneCreationProgress = serializeCreationSessionForPersistence(useUIStore.getState().creationSession)
     const nid = 'saving-' + Date.now()
     notifications.show({ id: nid, title: $('保存中'), message: $('正在保存当前项目…'), loading: true, autoClose: false, withCloseButton: false })
-    setSaving(true)
     try {
       const saved = await persistFlowSnapshot({
         flowId: flow.id ?? null,
@@ -1132,8 +1169,16 @@ function CanvasApp({
     } catch (error: unknown) {
       notifications.update({ id: nid, title: $('保存失败'), message: resolveErrorMessage(error, $('网络或服务器错误')), loading: false, autoClose: 3000, color: 'red' })
       return false
+    }
+  }
+
+  const doSave = async (): Promise<boolean> => {
+    if (saving) return false
+    setSaving(true)
+    try {
+      return await runCoordinatedCanvasSave(doSaveOnce)
     } finally {
-      setSaving(false)
+      if (canvasAppMountedRef.current) setSaving(false)
     }
   }
 
@@ -1259,8 +1304,7 @@ function CanvasApp({
   })
 
   // 静默保存函数，不显示通知
-  const silentSave = async (): Promise<boolean> => {
-    if (saving) return false
+  const silentSaveOnce = async (): Promise<boolean> => {
     const sessionEpoch = canvasSessionEpochRef.current
     const readUiSnapshot = () => {
       const uiState = useUIStore.getState()
@@ -1313,6 +1357,7 @@ function CanvasApp({
     }
     const flowName = proj!.name || '未命名'
     const savingMutationRevision = canvasMutationRevisionRef.current
+    lastCanvasSaveSnapshotRef.current = { sessionEpoch, revision: savingMutationRevision }
     const nodes = useRFStore.getState().nodes
     const edges = useRFStore.getState().edges
     const { currentFlow: flow, canvasViewport: viewport } = readUiSnapshot()
@@ -1363,27 +1408,50 @@ function CanvasApp({
     }
   }
 
+  const silentSave = (): Promise<boolean> => runCoordinatedCanvasSave(silentSaveOnce)
+
+  // 始终指向最新渲染的保存闭包，使对外暴露的函数身份保持稳定。
+  const silentSaveRef = React.useRef(silentSave)
+  silentSaveRef.current = silentSave
+
   // 导出静默保存函数供其他组件使用
   React.useEffect(() => {
     const target = window as unknown as { silentSaveProject?: () => Promise<boolean> }
-    target.silentSaveProject = silentSave
+    const saveLatestCanvas = () => silentSaveRef.current()
+    target.silentSaveProject = saveLatestCanvas
     return () => {
-      if (target.silentSaveProject === silentSave) delete target.silentSaveProject
+      if (target.silentSaveProject === saveLatestCanvas) delete target.silentSaveProject
     }
-  }, [saving, currentFlow, currentProject, studioOwnerContext])
+  }, [])
 
   // 普通节点编辑没有额外的“提交”动作，必须由项目级画布自动落盘。
-  // `isDirty` 在保存成功前保持为真；若保存期间又发生编辑，revision 守卫会
-  // 保留脏状态，下一轮再写入，确保重新进入项目时恢复最后一次已确认的画布。
+  // 每次本地内容修订直接调度，不依赖 isDirty/saving 的 React 渲染边沿：保存期间又发生
+  // 编辑时 isDirty 不会再变化，旧的“依赖 isDirty 的 effect”会因此漏掉下一轮保存。
   React.useEffect(() => {
-    if (!isDirty || saving || isHydratingProjectFlowRef.current) return
-    const timer = window.setTimeout(() => {
-      void silentSave()
-    }, 800)
+    const scheduler = createCanvasAutosaveScheduler<number>({
+      delayMs: 800,
+      eligibility: (session) => {
+        if (!canvasAppMountedRef.current || canvasSessionEpochRef.current !== session) return 'session_changed'
+        if (isHydratingProjectFlowRef.current) return 'hydrating'
+        return useUIStore.getState().isDirty ? 'ready' : 'clean'
+      },
+      save: () => silentSaveRef.current(),
+      report: (event) => {
+        if (event.phase === 'failed') console.error('[canvas-autosave] save failed', event)
+      },
+    })
+    canvasAutosaveSchedulerRef.current = scheduler
     return () => {
-      window.clearTimeout(timer)
+      scheduler.dispose()
+      if (canvasAutosaveSchedulerRef.current === scheduler) canvasAutosaveSchedulerRef.current = null
     }
-  }, [isDirty, saving, silentSave])
+  }, [])
+
+  // 导入等路径会直接标脏而不一定经过画布订阅；脏标记变真时同样请求一次（调度器会合并重复请求）。
+  React.useEffect(() => {
+    if (!isDirty) return
+    canvasAutosaveSchedulerRef.current?.request(canvasSessionEpochRef.current, canvasMutationRevisionRef.current)
+  }, [isDirty])
 
   const persistedSceneProgressKey = React.useMemo(() => {
     const current = serializeCreationSessionForPersistence(creationSession)
@@ -1406,6 +1474,7 @@ function CanvasApp({
     if (!useUIStore.getState().isDirty) {
       useUIStore.getState().setDirty(true)
     }
+    canvasAutosaveSchedulerRef.current?.request(canvasSessionEpochRef.current, canvasMutationRevisionRef.current)
   }, [currentFlow.id, currentFlow.source, currentProject?.id, persistedSceneProgressKey])
 
   const tourSeenKey = React.useMemo(() => {
