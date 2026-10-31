@@ -4,13 +4,16 @@ ARG DOCKERHUB_REGISTRY=docker.io
 ARG GO_IMAGE=docker.m.daocloud.io/library/golang:1.24.4-alpine
 ARG RUNTIME_IMAGE=docker.m.daocloud.io/library/alpine:3.20
 
-FROM ${GO_IMAGE} AS build
+# 在构建机原生架构上交叉编译（CGO_ENABLED=0）：多架构发布时 qemu 模拟运行 Go 工具链会段错误。
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
 ARG GO_PROXY=https://goproxy.cn,direct
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN GOPROXY=${GO_PROXY} go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOPROXY=${GO_PROXY} go build -trimpath -ldflags="-s -w" -o /out/media-worker ./cmd/media-worker
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOPROXY=${GO_PROXY} go build -trimpath -ldflags="-s -w" -o /out/media-worker ./cmd/media-worker
 
 FROM ${RUNTIME_IMAGE}
 ARG APK_MIRROR=mirrors.aliyun.com

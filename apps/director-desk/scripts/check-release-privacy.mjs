@@ -18,7 +18,10 @@ const rules = [
     ['embedded-authorization', /Bearer\s+[A-Za-z0-9_.-]{20,}/],
     ['development-hook', /__director|sourceMappingURL\s*=/],
 ];
-const privateTerms = new Set([os.homedir(), path.resolve('.'), process.env.USERNAME, path.basename(os.homedir())].filter(s => s && s.length >= 4));
+// The root account home (/root in Docker builds) is not personal data, and "root" occurs in every
+// bundle (createRoot, :root), so only a real user's home directory joins the denylist.
+const homeTerms = path.basename(os.homedir()) === 'root' ? [] : [os.homedir(), path.basename(os.homedir())];
+const privateTerms = new Set([...homeTerms, path.resolve('.'), process.env.USERNAME].filter(s => s && s.length >= 4));
 // Optional local additions: actual names, internal URLs, project names, dialogue, credentials.
 // This file is excluded from release payloads and never copied into the manifest.
 try {

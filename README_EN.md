@@ -155,7 +155,44 @@ Factory / Droid management is built in, with key import and deduplication, per-a
 
 ## Quick Start
 
-### Local dev (recommended)
+### One-click deploy (recommended)
+
+One command, nothing to install first. If Docker is missing the script installs it (Docker Desktop on macOS, Docker Engine on Linux, WSL2 + Docker Desktop on Windows), then fetches the source, generates a private config with default admin accounts, pulls the prebuilt images (any service whose pull fails is built locally) and starts the whole stack.
+
+**macOS / Linux**:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/anymouschina/TapCanvas/main/deploy.sh -o deploy.sh && bash deploy.sh
+```
+
+**Windows 10 / 11** (PowerShell or cmd):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; iwr -useb https://raw.githubusercontent.com/anymouschina/TapCanvas/main/deploy.ps1 -OutFile deploy.ps1; .\deploy.ps1"
+```
+
+The source goes to `./TapCanvas` (override with `TAPCANVAS_DIR`). In an existing clone, run `bash deploy.sh` from the repo root, or double-click `deploy.cmd` on Windows. A first-time WSL2 install on Windows needs a reboot; the deploy resumes automatically after you log back in.
+
+When it finishes, the script prints the URLs and accounts and opens the browser:
+
+| Entry | URL | Default account |
+| ----- | --- | --------------- |
+| Web canvas | <http://localhost:5175> | `admin` / random password generated on first deploy |
+| Lluban API console | <http://localhost:4455> | `admin` / random password generated on first deploy |
+
+Run `bash deploy.sh info` (Windows: `.\deploy.ps1 info`) to show them again. To choose the password on first deploy, set e.g. `TAPCANVAS_ADMIN_PASSWORD=your-pass bash deploy.sh`. Busy ports are shifted automatically and the real ports are printed. Add your model provider API keys under Channels in the Lluban API console to start creating.
+
+```bash
+bash deploy.sh status    # service status
+bash deploy.sh logs api  # follow one service's logs
+bash deploy.sh update    # update source and images, then restart
+bash deploy.sh stop      # stop (data volumes are kept)
+bash deploy.sh info      # show URLs and accounts
+```
+
+On Windows replace `bash deploy.sh` with `.\deploy.ps1` or `deploy.cmd`. Give Docker at least 8 GB of memory and keep 20 GB of disk free. On restricted networks set `DOCKERHUB_REGISTRY` to a Docker Hub mirror; `TAPCANVAS_DEPLOY_MODE=build` builds every image from source instead.
+
+### Local dev
 
 ```bash
 # 1) Install deps
@@ -173,36 +210,17 @@ pnpm dev:api
 
 `pnpm install` now bootstraps the workspace and generates the Prisma client for `apps/hono-api` automatically. If your environment hits file watcher limits with `pnpm dev:api`, use `pnpm dev:api:stable`.
 
-### One-command full stack (Docker)
+### Build the Docker stack from source
 
-The `docker-compose.yml` lives in `apps/hono-api`. Run it from there to start the entire backend stack in one command:
-
-```bash
-cd apps/hono-api
-docker compose up -d
-```
-
-This starts:
-- `postgres` — database
-- `redis` — cache
-- `agents-bridge` — AI chat bridge
-- `api` — backend API (`http://localhost:8788`)
-- `new-api` — model gateway (`http://localhost:4455`)
-
-Then start the web frontend separately (from the repo root):
+Needs only Docker, Docker Compose and OpenSSL on the host (no Node.js, pnpm, Bun or Go):
 
 ```bash
-pnpm dev:web
+git clone https://github.com/anymouschina/TapCanvas.git
+cd TapCanvas
+./scripts/dev.sh docker
 ```
 
-Copy env files if you haven't already:
-
-```bash
-cp apps/web/.env.example apps/web/.env
-cp apps/hono-api/.env.example apps/hono-api/.env
-# Then restart if needed
-docker compose restart
-```
+This generates `apps/hono-api/.env` with strong random secrets on first run, builds every image one at a time from the committed source, and starts Web (`http://localhost:5175`), API (`http://localhost:8788`) and the Lluban API console (`http://localhost:4455`). See [docs/docker.md](./docs/docker.md).
 
 ## Architecture / Tech Stack
 

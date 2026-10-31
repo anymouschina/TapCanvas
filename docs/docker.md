@@ -15,7 +15,27 @@ API 只使用 PostgreSQL；SQLite 仅保留为显式迁移工具的来源格式�
 
 ## 快速开始
 
-### 1) 启动（推荐）
+### 0) 一键部署（推荐，面向使用者）
+
+根目录的 `deploy.sh`（macOS / Linux）和 `deploy.ps1` / `deploy.cmd`（Windows）会自动安装缺失的 Docker 环境、获取源码、生成私有配置与默认管理员账号，并拉取预构建镜像 `docker.io/beqlee/tapcanvas-{new-api,agents-bridge,api,web,media-worker}:latest` 后启动；某个镜像拉取失败时只对该服务回退到本地构建。用法见 [README 快速开始](../README.md#快速开始)。
+
+```bash
+bash deploy.sh            # 安装并启动
+bash deploy.sh info       # 显示访问地址与默认账号
+bash deploy.sh update     # 更新源码并重新拉取镜像
+```
+
+镜像由维护者通过 `scripts/release-images.sh` 发布：脚本从 `git archive` 导出的已跟踪文件构建 amd64 + arm64 镜像，未跟踪的 `.env`、`secrets/`、`cert/` 等本地文件不会进入公开镜像。
+
+```bash
+docker login
+./scripts/release-images.sh               # 构建并推送全部镜像（latest + 提交短哈希）
+./scripts/release-images.sh api web       # 只发布部分服务
+```
+
+`deploy.sh` 把镜像名写入 `apps/hono-api/.env` 的 `TAPCANVAS_*_IMAGE` / `NEW_API_IMAGE`；删除这些行即恢复使用 `tapcanvas/*:local` 本地构建镜像。
+
+### 1) 从源码构建启动（开发者）
 
 ```bash
 ./scripts/dev.sh docker

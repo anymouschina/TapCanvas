@@ -6,7 +6,9 @@
 ARG DOCKERHUB_REGISTRY=docker.io
 ARG NPM_REGISTRY=https://registry.npmjs.org
 
-FROM ${DOCKERHUB_REGISTRY}/node:22.19.0-bookworm-slim AS builder
+# The SPA output is architecture independent; build it natively on the build
+# host so multi-arch releases never run Vite/esbuild under qemu emulation.
+FROM --platform=$BUILDPLATFORM ${DOCKERHUB_REGISTRY}/node:22.19.0-bookworm-slim AS builder
 ARG NPM_REGISTRY
 ARG VITE_API_BASE=/api
 ARG VITE_OBJECT_STORAGE_PROVIDER=tos

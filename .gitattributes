@@ -1,0 +1,5 @@
+# Container shell scripts must keep LF even when cloned with core.autocrlf=true on Windows.
+*.sh text eol=lf
+# cmd.exe parses batch files more reliably with CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf

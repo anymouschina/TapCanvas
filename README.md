@@ -191,7 +191,46 @@ Monorepo 的职责边界：`apps/web` 负责交互与确定性画布执行，`ap
 
 ## 快速开始
 
-Docker 启动只需要 Docker、Docker Compose 和 OpenSSL；不要求宿主机安装 Node.js、pnpm、Bun 或 Go。
+### 一键部署（推荐）
+
+一条命令完成部署，无需预先安装任何东西：缺少 Docker 时脚本会自动安装（macOS 安装 Docker Desktop，Linux 安装 Docker Engine，Windows 安装 WSL2 + Docker Desktop），然后获取源码、生成私有配置与默认管理员账号、拉取预构建镜像（拉取失败的服务自动改为本地构建）并启动全部服务。
+
+**macOS / Linux**（终端中执行）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/anymouschina/TapCanvas/main/deploy.sh -o deploy.sh && bash deploy.sh
+```
+
+**Windows 10 / 11**（PowerShell 或 cmd 中执行）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; iwr -useb https://raw.githubusercontent.com/anymouschina/TapCanvas/main/deploy.ps1 -OutFile deploy.ps1; .\deploy.ps1"
+```
+
+源码会放在当前目录下的 `TapCanvas/`（可用环境变量 `TAPCANVAS_DIR` 指定）。已经 clone 了仓库的话，直接在仓库根目录运行 `bash deploy.sh`，Windows 双击 `deploy.cmd` 即可。Windows 首次安装 WSL2 需要重启电脑，重启并登录后脚本会自动继续部署。
+
+部署完成后终端会打印访问地址和默认账号，并自动打开浏览器：
+
+| 入口 | 地址 | 默认账号 |
+| ---- | ---- | -------- |
+| Web 画布 | <http://localhost:5175> | `admin` / 首次部署随机生成的密码 |
+| 鲁班 API 管理台 | <http://localhost:4455> | `admin` / 首次部署随机生成的密码 |
+
+忘记密码时运行 `bash deploy.sh info`（Windows：`.\deploy.ps1 info`）重新显示。想在首次部署时指定密码，可以设置环境变量，例如 `TAPCANVAS_ADMIN_PASSWORD=your-pass bash deploy.sh`。端口被占用时脚本会自动顺延并在输出中显示实际端口。登录鲁班 API 管理台，在「渠道」中填写模型供应商的 API Key 并启用后即可开始创作。
+
+```bash
+bash deploy.sh status    # 查看服务状态
+bash deploy.sh logs api  # 查看某个服务的日志
+bash deploy.sh update    # 更新源码与镜像后重启
+bash deploy.sh stop      # 停止服务（保留数据）
+bash deploy.sh info      # 显示访问地址与账号
+```
+
+Windows 下把 `bash deploy.sh` 换成 `.\deploy.ps1` 或 `deploy.cmd`。建议给 Docker 分配 8GB 以上内存，并预留 20GB 以上磁盘空间。网络受限时可以设置 `DOCKERHUB_REGISTRY` 指定 Docker Hub 镜像代理；`TAPCANVAS_DEPLOY_MODE=build` 会改为全部从源码本地构建。
+
+### 从源码构建（开发者）
+
+从源码构建只需要 Docker、Docker Compose 和 OpenSSL；不要求宿主机安装 Node.js、pnpm、Bun 或 Go。
 
 ```bash
 git clone https://github.com/anymouschina/TapCanvas.git
