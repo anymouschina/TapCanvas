@@ -86,7 +86,7 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 | 预览 | 作品 | 规格 | 制作 |
 | --- | --- | --- | --- |
 | <a href="https://file.beqlee.icu/showcase/20261009/kaiju-xiangqin-nvshenbu-ch1-hyperframes-recut-720p.mp4"><img src="./assets/showcases/kaiju-xiangqin-ch1/cover.jpg" width="220" alt="开局相亲女神捕 · 第一章"></a> | **开局相亲女神捕，获独孤九剑 · 第一章**<br>原著：今日问道，第一章「独孤九剑」3,826 字 | 4 分 41 秒 · 1280×720 · 24 fps<br>80 条字幕 | 一键成片 v135 + HyperFrames 剪辑<br>创作：claude-sonnet-5-5<br>[元数据](./assets/showcases/kaiju-xiangqin-ch1/metadata.json) · 2026-10-09 |
-| <a href="./assets/showcases/full-story-subtitled/video.mp4"><img src="./assets/showcases/full-story-subtitled/cover.jpg" width="220" alt="完整剧情 · 清晰字幕版"></a> | **完整剧情 · 清晰字幕版**<br>完整剧情成片，含清晰字幕 | 1 分 0 秒 · 1280×720 · 24 fps<br>MP4 9.36 MB | 2026-10-08 |
+| <a href="https://file.beqlee.icu/showcase/20261008/full-story-subtitled-720p.mp4"><img src="./assets/showcases/full-story-subtitled/cover.jpg" width="220" alt="完整剧情 · 清晰字幕版"></a> | **完整剧情 · 清晰字幕版**<br>完整剧情成片，含清晰字幕 | 1 分 0 秒 · 1280×720 · 24 fps<br>MP4 9.36 MB | 2026-10-08 |
 
 ## 项目历史
 
