@@ -199,7 +199,7 @@ export const getPricingTableColumns = ({
           <IconHelpCircle
             className='text-blue-500 cursor-pointer'
             onClick={() => {
-              setModalImageUrl('/ratio.png');
+              setModalImageUrl('https://file.beqlee.icu/tapcanvas-repo/apps/new-api/web/public/ratio.png');
               setIsModalOpenurl(true);
             }}
           />

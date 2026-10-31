@@ -27,8 +27,8 @@
 
 README 使用的两张截图是 lluban.cn 的 Pro 实际界面参考：
 
-- `assets/changelog/2026-10-25-mcp-agent-connect-lluban.png`
-- `assets/changelog/2026-10-26-script-export-lluban.png`
+- `https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-25-mcp-agent-connect-lluban.png`
+- `https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-26-script-export-lluban.png`
 
 截图不代表社区版部署验收；截图过程未签发密钥或提交生成任务，周边 Pro 会员与批量成片能力不属于本轮。没有提供去噪效果截图。
 

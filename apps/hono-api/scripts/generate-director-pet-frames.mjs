@@ -17,7 +17,7 @@ const requestedStates = (() => {
   return new Set(argument.slice('--states='.length).split(',').map((value) => value.trim()).filter(Boolean))
 })()
 const assetVersion = 'v3'
-const sourcePortraitPath = path.join(repoRoot, 'apps/web/src/assets/team/xiaot.png')
+const sourcePortraitUrl = 'https://file.beqlee.icu/tapcanvas-repo/apps/web/src/assets/team/xiaot.png'
 const chromaRemovalScript = path.join(
   process.env.CODEX_HOME || path.join(process.env.HOME || '', '.codex'),
   'skills/.system/imagegen/scripts/remove_chroma_key.py',
@@ -166,7 +166,9 @@ async function uploadBytes(objectKey, body, contentType) {
 
 async function ensureReferenceUrl() {
   const referenceKey = `static/team/xiaot-pet/reference-${assetVersion}.png`
-  return uploadBytes(referenceKey, fs.readFileSync(sourcePortraitPath), 'image/png')
+  const response = await fetch(sourcePortraitUrl, { signal: AbortSignal.timeout(90_000) })
+  if (!response.ok) throw new Error(`Failed to download source portrait: ${response.status} ${sourcePortraitUrl}`)
+  return uploadBytes(referenceKey, Buffer.from(await response.arrayBuffer()), 'image/png')
 }
 
 async function generateSheet(spec, referenceUrl) {

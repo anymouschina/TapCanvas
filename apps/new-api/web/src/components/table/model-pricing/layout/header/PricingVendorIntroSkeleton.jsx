@@ -49,7 +49,7 @@ const SIZES = {
 const SKELETON_STYLES = {
   cover: (primaryColor) => ({
     '--palette-primary-darkerChannel': primaryColor,
-    backgroundImage: `linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('/cover-4.webp')`,
+    backgroundImage: `linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('https://file.beqlee.icu/tapcanvas-repo/apps/new-api/web/public/cover-4.webp')`,
     backgroundSize: 'cover',
     backgroundPosition: 'center',
     backgroundRepeat: 'no-repeat',

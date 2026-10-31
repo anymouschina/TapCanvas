@@ -54,18 +54,6 @@ function readFrontmatterName(content, filePath) {
 	throw new Error(`Skill frontmatter name missing: ${filePath}`);
 }
 
-function assertSquare2kPng(buffer, filePath) {
-	const pngSignature = "89504e470d0a1a0a";
-	if (buffer.length < 24 || buffer.subarray(0, 8).toString("hex") !== pngSignature) {
-		throw new Error(`Marketplace Skill Logo must be a PNG: ${filePath}`);
-	}
-	const width = buffer.readUInt32BE(16);
-	const height = buffer.readUInt32BE(20);
-	if (width !== height || width < 2048) {
-		throw new Error(`Marketplace Skill Logo must be square and at least 2K: ${filePath} (${width}x${height})`);
-	}
-}
-
 async function loadCatalog() {
 	const catalogPath = path.join(marketplaceRoot, "catalog.json");
 	const parsed = JSON.parse(await fs.readFile(catalogPath, "utf8"));
@@ -86,9 +74,6 @@ async function loadCatalog() {
 		if (!Number.isSafeInteger(priceCredits) || priceCredits < 1 || priceCredits > 10_000_000) {
 			throw new Error(`Marketplace Skill ${key} has invalid priceCredits`);
 		}
-		const logoFile = requireString(raw.logoFile, "logoFile", key);
-		const logoPath = path.join(marketplaceRoot, key, logoFile);
-		assertSquare2kPng(await fs.readFile(logoPath), logoPath);
 		const logoKey = requireString(raw.logoKey, "logoKey", key);
 		const logoUrl = resolveMarketplaceLogoUrl(logoKey);
 		const filePath = path.join(marketplaceRoot, key, "SKILL.md");

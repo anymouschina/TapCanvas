@@ -2,13 +2,13 @@
 // 角色 id 与 agents-cli agent-definitions/defaults.json 的 name 对齐，
 // 也与服务端 agent_role SSE 下发的 role 字段对齐（见 AiChatDialog WORKING_ROLE_ICONS）。
 //
-// 头像为 gpt-image-2 2K 生成 → 降采样 512 的本地静态资产，按 CLAUDE.md
-// 「静态本地资源」例外直接 import 使用原生 <img>，不走 ManagedImage。
-import xiaotAvatar from '../../assets/team/xiaot.png'
-import editorAvatar from '../../assets/team/film-editor.png'
-import postAvatar from '../../assets/team/post-producer.png'
-import artDirectorAvatar from '../../assets/team/art-director.png'
-import directorReviewAvatar from '../../assets/team/director-review.png'
+// 头像为 gpt-image-2 2K 生成 → 降采样 512 的静态资产，托管在 file.beqlee.icu（图片不进 git），
+// 固定不可变 URL，直接用原生 <img>，不走 ManagedImage。
+const xiaotAvatar = 'https://file.beqlee.icu/tapcanvas-repo/apps/web/src/assets/team/xiaot.png'
+const editorAvatar = 'https://file.beqlee.icu/tapcanvas-repo/apps/web/src/assets/team/film-editor.png'
+const postAvatar = 'https://file.beqlee.icu/tapcanvas-repo/apps/web/src/assets/team/post-producer.png'
+const artDirectorAvatar = 'https://file.beqlee.icu/tapcanvas-repo/apps/web/src/assets/team/art-director.png'
+const directorReviewAvatar = 'https://file.beqlee.icu/tapcanvas-repo/apps/web/src/assets/team/director-review.png'
 
 export type TeamRole = {
   /** 与 agent_role SSE / agent-definitions name 对齐；小T 用保留值 'director' */
@@ -17,7 +17,7 @@ export type TeamRole = {
   name: string
   /** 一句话职责，用于花名册卡片 */
   description: string
-  /** 头像（已 import 的本地静态资源 URL） */
+  /** 头像 URL（托管静态资源） */
   avatar: string
   /** 强调色（chip / 选中描边） */
   accent: string

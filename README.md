@@ -22,14 +22,14 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 > **版本边界：** 本仓库是 TapCanvas 社区版，在线商业版是独立产品，功能、服务与条款均不相同。社区版不提供短信验证码与在线支付；模型渠道由使用者自行配置。
 
 <p align="center">
-  <img src="./apps/web/readme-canvas.png" width="100%" alt="TapCanvas 章节画布、角色场景资产与分镜预览" />
+  <img src="https://file.beqlee.icu/tapcanvas-repo/apps/web/readme-canvas.png" width="100%" alt="TapCanvas 章节画布、角色场景资产与分镜预览" />
 </p>
 
 ## 赞助与支持
 
 <p align="center">
   <a href="https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link" target="_blank" rel="noopener noreferrer">
-    <img src="./assets/sponsors/infistar-banner.png" width="728" alt="Infistar.cc 无限星河 · 一站式全球大模型 API 服务平台" />
+    <img src="https://file.beqlee.icu/tapcanvas-repo/assets/sponsors/infistar-banner.png" width="728" alt="Infistar.cc 无限星河 · 一站式全球大模型 API 服务平台" />
   </a>
 </p>
 
@@ -85,8 +85,8 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 
 | 预览 | 作品 | 规格 | 制作 |
 | --- | --- | --- | --- |
-| <a href="https://file.beqlee.icu/showcase/20261009/kaiju-xiangqin-nvshenbu-ch1-hyperframes-recut-720p.mp4"><img src="./assets/showcases/kaiju-xiangqin-ch1/cover.jpg" width="220" alt="开局相亲女神捕 · 第一章"></a> | **开局相亲女神捕，获独孤九剑 · 第一章**<br>原著：今日问道，第一章「独孤九剑」3,826 字 | 4 分 41 秒 · 1280×720 · 24 fps<br>80 条字幕 | 一键成片 v135 + HyperFrames 剪辑<br>创作：claude-sonnet-5-5<br>[元数据](./assets/showcases/kaiju-xiangqin-ch1/metadata.json) · 2026-10-09 |
-| <a href="https://file.beqlee.icu/showcase/20261008/full-story-subtitled-720p.mp4"><img src="./assets/showcases/full-story-subtitled/cover.jpg" width="220" alt="完整剧情 · 清晰字幕版"></a> | **完整剧情 · 清晰字幕版**<br>完整剧情成片，含清晰字幕 | 1 分 0 秒 · 1280×720 · 24 fps<br>MP4 9.36 MB | 2026-10-08 |
+| <a href="https://file.beqlee.icu/showcase/20261009/kaiju-xiangqin-nvshenbu-ch1-hyperframes-recut-720p.mp4"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/showcases/kaiju-xiangqin-ch1/cover.jpg" width="220" alt="开局相亲女神捕 · 第一章"></a> | **开局相亲女神捕，获独孤九剑 · 第一章**<br>原著：今日问道，第一章「独孤九剑」3,826 字 | 4 分 41 秒 · 1280×720 · 24 fps<br>80 条字幕 | 一键成片 v135 + HyperFrames 剪辑<br>创作：claude-sonnet-5-5<br>[元数据](./assets/showcases/kaiju-xiangqin-ch1/metadata.json) · 2026-10-09 |
+| <a href="https://file.beqlee.icu/showcase/20261008/full-story-subtitled-720p.mp4"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/showcases/full-story-subtitled/cover.jpg" width="220" alt="完整剧情 · 清晰字幕版"></a> | **完整剧情 · 清晰字幕版**<br>完整剧情成片，含清晰字幕 | 1 分 0 秒 · 1280×720 · 24 fps<br>MP4 9.36 MB | 2026-10-08 |
 
 ## 项目历史
 
@@ -109,8 +109,8 @@ https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
   以下为 **lluban.cn 的 Pro 实际界面参考截图**，不是社区版部署验收；截图未签发密钥或提交生成任务，周边 Pro 会员与批量成片能力不在本次同步范围。去噪入口在线上新版工具栏暂不可达，因此不提供伪造截图。实现与验证见 [交付记录](docs/deliveries/2026-10-26-manual-tools-sync.md)。
 
   <table width="100%"><tr>
-    <td width="50%" align="center"><a href="assets/changelog/2026-10-25-mcp-agent-connect-lluban.png"><img src="assets/changelog/2026-10-25-mcp-agent-connect-lluban.png" alt="lluban.cn MCP 助手接入弹窗，未签发密钥" width="100%"></a><br>MCP 助手接入（Pro 实际界面）</td>
-    <td width="50%" align="center"><a href="assets/changelog/2026-10-26-script-export-lluban.png"><img src="assets/changelog/2026-10-26-script-export-lluban.png" alt="lluban.cn 多章节剧本导出选择界面" width="100%"></a><br>多章节剧本导出（Pro 实际界面）</td>
+    <td width="50%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-25-mcp-agent-connect-lluban.png"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-25-mcp-agent-connect-lluban.png" alt="lluban.cn MCP 助手接入弹窗，未签发密钥" width="100%"></a><br>MCP 助手接入（Pro 实际界面）</td>
+    <td width="50%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-26-script-export-lluban.png"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-26-script-export-lluban.png" alt="lluban.cn 多章节剧本导出选择界面" width="100%"></a><br>多章节剧本导出（Pro 实际界面）</td>
   </tr></table>
 
 - **2026-10-21 · 创作流水线与画布双视图**：新增创作流水线，可与同一项目的节点画布切换。按故事剧本、角色与场景、分镜设计、视频片段、最终成片五个阶段查看已有内容、生成状态与异常；分镜和视频片段按场景组织，支持素材筛选和媒体预览。流水线内可选择章节或正文来源并进入「一键成片」，也可单项生成或批量生成当前阶段的未完成素材，复用画布执行与前置资产链路。
@@ -119,23 +119,23 @@ https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
 
   <table width="100%">
     <tr>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-film-chapter-selection.jpg"><img src="assets/changelog/2026-10-21-film-chapter-selection.jpg" alt="章节选择（Pro 参考）" width="100%"></a><br>章节选择（Pro 参考）</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-film-options.jpg"><img src="assets/changelog/2026-10-21-film-options.jpg" alt="成片选项（Pro 参考）" width="100%"></a><br>成片选项（Pro 参考）</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-script.jpg"><img src="assets/changelog/2026-10-21-pipeline-script.jpg" alt="故事剧本" width="100%"></a><br>故事剧本</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-overview.jpg"><img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="角色与场景" width="100%"></a><br>角色与场景</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-film-chapter-selection.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-film-chapter-selection.jpg" alt="章节选择（Pro 参考）" width="100%"></a><br>章节选择（Pro 参考）</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-film-options.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-film-options.jpg" alt="成片选项（Pro 参考）" width="100%"></a><br>成片选项（Pro 参考）</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-script.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-script.jpg" alt="故事剧本" width="100%"></a><br>故事剧本</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-overview.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-overview.jpg" alt="角色与场景" width="100%"></a><br>角色与场景</td>
     </tr>
     <tr>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-storyboard.jpg"><img src="assets/changelog/2026-10-21-pipeline-storyboard.jpg" alt="分镜设计" width="100%"></a><br>分镜设计</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-clips.jpg"><img src="assets/changelog/2026-10-21-pipeline-clips.jpg" alt="视频片段" width="100%"></a><br>视频片段</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-delivery.jpg"><img src="assets/changelog/2026-10-21-pipeline-delivery.jpg" alt="最终成片（待生成）" width="100%"></a><br>最终成片（待生成）</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg"><img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="节点画布" width="100%"></a><br>节点画布</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-storyboard.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-storyboard.jpg" alt="分镜设计" width="100%"></a><br>分镜设计</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-clips.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-clips.jpg" alt="视频片段" width="100%"></a><br>视频片段</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-delivery.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-delivery.jpg" alt="最终成片（待生成）" width="100%"></a><br>最终成片（待生成）</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-canvas-pipeline-switch.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="节点画布" width="100%"></a><br>节点画布</td>
     </tr>
   </table>
 
 - **2026-10-20 · 图片对比节点**：新增画布图片对比节点，支持并排、滑动分割、叠加透明度、按住切换四种模式。可从添加节点面板或右键菜单新建；框选两张图片后点「图片对比」，会自动创建节点并连线。对比内容跟随上游图片实时更新，模式、分割位置、透明度与尺寸随节点保存。
 
-  <img src="assets/changelog/2026-10-20-image-compare-overview.jpg" alt="框选两张图片后生成对比节点（并排模式）" width="100%">
-  <img src="assets/changelog/2026-10-20-image-compare-slider.jpg" alt="对比节点滑动分割模式" width="60%">
+  <img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-20-image-compare-overview.jpg" alt="框选两张图片后生成对比节点（并排模式）" width="100%">
+  <img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-20-image-compare-slider.jpg" alt="对比节点滑动分割模式" width="60%">
 
 - **2026-10-11 · Factory / Droid 号池管理**：移植 TapCanvasPro 的 Droid 渠道与账号管理，支持批量追加 Key、账号启停与测试、Standard / Core 额度窗口和订阅信息展示，以及额度不足时同池换号重试。新增部署 patch SQL，自动预置停用的空号池；管理员配置自己的 Key、模型协议与价格后启用。详见 [Droid 接入说明](apps/new-api/docs/channel/droid.md)。
 - **2026-10-07 · 一键成片 v135**：同步全章剧情与时间线规划、分项资产创作、逐 Clip 提示词与媒体生产，以及最新创作 Skills；编辑器与执行器共用工作流定义，继续使用社区版 DeepSeek Harness Bridge。新增 v135 系统工作流发布文件，保留历史执行和生成资产。
@@ -179,7 +179,7 @@ https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
 
 <p align="center">
   <a href="./docs/tapcanvas-high-level-architecture.html">
-    <img src="./assets/tapcanvas-high-level-architecture.png" width="100%" alt="TapCanvas 高层架构：Agents 调用生产工作流驱动 AIGC，并通过持久任务和交付验收实现稳定输出" />
+    <img src="https://file.beqlee.icu/tapcanvas-repo/assets/tapcanvas-high-level-architecture.png" width="100%" alt="TapCanvas 高层架构：Agents 调用生产工作流驱动 AIGC，并通过持久任务和交付验收实现稳定输出" />
   </a>
 </p>
 
@@ -325,7 +325,7 @@ TapCanvas 根项目及未另行声明的代码按 [MIT License](./LICENSE) 发�
 
 作者：**Beq（李碧强）** · 邮箱：[beq.li@qq.com](mailto:beq.li@qq.com)
 
-<img src="./assets/connect/wechat.jpg" width="180" alt="作者微信二维码" />
+<img src="https://file.beqlee.icu/tapcanvas-repo/assets/connect/wechat.jpg" width="180" alt="作者微信二维码" />
 
 Bug、功能建议与贡献请通过 [Issues](https://github.com/anymouschina/TapCanvas/issues) 或 Pull Request 提交。
 

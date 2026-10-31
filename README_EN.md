@@ -18,7 +18,7 @@ TapCanvas is a multi-model AI content creation platform built around a visual ca
 
 <p align="center">
   <a href="https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link" target="_blank" rel="noopener noreferrer">
-    <img src="assets/sponsors/infistar-banner.png" width="728" alt="Infistar.cc · One-stop global LLM API service platform" />
+    <img src="https://file.beqlee.icu/tapcanvas-repo/assets/sponsors/infistar-banner.png" width="728" alt="Infistar.cc · One-stop global LLM API service platform" />
   </a>
 </p>
 
@@ -75,8 +75,8 @@ The latest 10 entries are shown below; expand the older updates for more history
   These are **actual Pro UI reference screenshots from lluban.cn**, not community deployment acceptance. No keys were issued or generation tasks submitted. Surrounding Pro membership/batch-production features are outside this port. The live toolbar currently hides the denoise entry, so no denoise screenshot is claimed. See [delivery notes](docs/deliveries/2026-10-26-manual-tools-sync.md).
 
   <table width="100%"><tr>
-    <td width="50%"><a href="assets/changelog/2026-10-25-mcp-agent-connect-lluban.png"><img src="assets/changelog/2026-10-25-mcp-agent-connect-lluban.png" alt="Actual lluban.cn MCP setup dialog before key creation" width="100%"></a></td>
-    <td width="50%"><a href="assets/changelog/2026-10-26-script-export-lluban.png"><img src="assets/changelog/2026-10-26-script-export-lluban.png" alt="Actual lluban.cn chapter script export selector" width="100%"></a></td>
+    <td width="50%"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-25-mcp-agent-connect-lluban.png"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-25-mcp-agent-connect-lluban.png" alt="Actual lluban.cn MCP setup dialog before key creation" width="100%"></a></td>
+    <td width="50%"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-26-script-export-lluban.png"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-26-script-export-lluban.png" alt="Actual lluban.cn chapter script export selector" width="100%"></a></td>
   </tr></table>
 
 - **2026-10-21 · Pipeline and canvas views**: Switch between a creative pipeline and the node canvas for the same project. Five stages—story and script, characters and scenes, storyboard design, video clips, and final film—show existing content, generation status and errors. Storyboards and clips are grouped by scene, with asset filters and media previews. Select a chapter or source text to launch the one-click video workflow, or generate individual items and unfinished assets in the current stage through the canvas execution and prerequisite-asset path.
@@ -85,23 +85,23 @@ The latest 10 entries are shown below; expand the older updates for more history
 
   <table width="100%">
     <tr>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-film-chapter-selection.jpg"><img src="assets/changelog/2026-10-21-film-chapter-selection.jpg" alt="Chapter selection (Pro reference)" width="100%"></a><br>Chapter selection (Pro reference)</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-film-options.jpg"><img src="assets/changelog/2026-10-21-film-options.jpg" alt="Film options (Pro reference)" width="100%"></a><br>Film options (Pro reference)</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-script.jpg"><img src="assets/changelog/2026-10-21-pipeline-script.jpg" alt="Story and script" width="100%"></a><br>Story and script</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-overview.jpg"><img src="assets/changelog/2026-10-21-pipeline-overview.jpg" alt="Characters and scenes" width="100%"></a><br>Characters and scenes</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-film-chapter-selection.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-film-chapter-selection.jpg" alt="Chapter selection (Pro reference)" width="100%"></a><br>Chapter selection (Pro reference)</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-film-options.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-film-options.jpg" alt="Film options (Pro reference)" width="100%"></a><br>Film options (Pro reference)</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-script.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-script.jpg" alt="Story and script" width="100%"></a><br>Story and script</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-overview.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-overview.jpg" alt="Characters and scenes" width="100%"></a><br>Characters and scenes</td>
     </tr>
     <tr>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-storyboard.jpg"><img src="assets/changelog/2026-10-21-pipeline-storyboard.jpg" alt="Storyboard design" width="100%"></a><br>Storyboard design</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-clips.jpg"><img src="assets/changelog/2026-10-21-pipeline-clips.jpg" alt="Video clips" width="100%"></a><br>Video clips</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-pipeline-delivery.jpg"><img src="assets/changelog/2026-10-21-pipeline-delivery.jpg" alt="Final film (pending)" width="100%"></a><br>Final film (pending)</td>
-      <td width="25%" align="center"><a href="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg"><img src="assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="Node canvas" width="100%"></a><br>Node canvas</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-storyboard.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-storyboard.jpg" alt="Storyboard design" width="100%"></a><br>Storyboard design</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-clips.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-clips.jpg" alt="Video clips" width="100%"></a><br>Video clips</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-delivery.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-pipeline-delivery.jpg" alt="Final film (pending)" width="100%"></a><br>Final film (pending)</td>
+      <td width="25%" align="center"><a href="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-canvas-pipeline-switch.jpg"><img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-21-canvas-pipeline-switch.jpg" alt="Node canvas" width="100%"></a><br>Node canvas</td>
     </tr>
   </table>
 
 - **2026-10-20 · Image compare node**: New canvas node for comparing images side by side, with a draggable slider, an opacity overlay, or press-to-toggle. Add it from the add-node panel or the context menu, or select two image nodes and click "图片对比" to create and connect it automatically. It follows upstream images live and saves the mode, split position, opacity and size with the node.
 
-  <img src="assets/changelog/2026-10-20-image-compare-overview.jpg" alt="Compare node created from two selected images (side-by-side mode)" width="100%">
-  <img src="assets/changelog/2026-10-20-image-compare-slider.jpg" alt="Compare node in slider mode" width="60%">
+  <img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-20-image-compare-overview.jpg" alt="Compare node created from two selected images (side-by-side mode)" width="100%">
+  <img src="https://file.beqlee.icu/tapcanvas-repo/assets/changelog/2026-10-20-image-compare-slider.jpg" alt="Compare node in slider mode" width="60%">
 
 - **2026-10-11 · Factory / Droid account pools**: Ported TapCanvasPro's Droid channel and account management, including key import, account controls and tests, Standard / Core usage windows, subscription details, and same-pool retries after quota rejection. A deployment SQL patch seeds a disabled, empty pool; configure your own keys, model protocols and pricing before enabling it. See [Droid setup](apps/new-api/docs/channel/droid.md).
 - **2026-10-07 · One-click video v135**: Synced full-chapter story and timeline planning, asset creation, per-clip prompts and media production, and the latest creative Skills. The editor and executor share the workflow definition and continue to use the Community Edition's DeepSeek Harness Bridge. Added the v135 system workflow release while preserving execution history and generated assets.

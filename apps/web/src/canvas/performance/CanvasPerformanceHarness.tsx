@@ -18,14 +18,14 @@ const PHASE_DURATION_MS = 2400
 const PHASE_SETTLE_MS = 500
 
 const HARNESS_IMAGES = [
-  '/storyboard-recipes/cinematic-narrative.jpg',
-  '/storyboard-recipes/anime-op.jpg',
-  '/storyboard-recipes/product-ad.jpg',
-  '/storyboard-recipes/choreography-grid.jpg',
-  '/storyboard-recipes/character-intro.jpg',
-  '/storyboard-recipes/luxury-pitchdeck.jpg',
-  '/storyboard-recipes/editorial-8panel.jpg',
-  '/storyboard-recipes/game-ui-concept.jpg',
+  'https://file.beqlee.icu/tapcanvas-repo/apps/web/public/storyboard-recipes/cinematic-narrative.jpg',
+  'https://file.beqlee.icu/tapcanvas-repo/apps/web/public/storyboard-recipes/anime-op.jpg',
+  'https://file.beqlee.icu/tapcanvas-repo/apps/web/public/storyboard-recipes/product-ad.jpg',
+  'https://file.beqlee.icu/tapcanvas-repo/apps/web/public/storyboard-recipes/choreography-grid.jpg',
+  'https://file.beqlee.icu/tapcanvas-repo/apps/web/public/storyboard-recipes/character-intro.jpg',
+  'https://file.beqlee.icu/tapcanvas-repo/apps/web/public/storyboard-recipes/luxury-pitchdeck.jpg',
+  'https://file.beqlee.icu/tapcanvas-repo/apps/web/public/storyboard-recipes/editorial-8panel.jpg',
+  'https://file.beqlee.icu/tapcanvas-repo/apps/web/public/storyboard-recipes/game-ui-concept.jpg',
 ] as const
 
 type PerformanceNode = Node<TaskNodeData, 'taskNode'>

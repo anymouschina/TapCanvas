@@ -345,7 +345,7 @@ const PricingCardView = ({
                             size='small'
                             onClick={(e) => {
                               e.stopPropagation();
-                              setModalImageUrl('/ratio.png');
+                              setModalImageUrl('https://file.beqlee.icu/tapcanvas-repo/apps/new-api/web/public/ratio.png');
                               setIsModalOpenurl(true);
                             }}
                           />
