@@ -25,7 +25,9 @@ bash deploy.sh info       # 显示访问地址与默认账号
 bash deploy.sh update     # 更新源码并重新拉取镜像
 ```
 
-镜像由维护者通过 `scripts/release-images.sh` 发布：脚本从 `git archive` 导出的已跟踪文件构建 amd64 + arm64 镜像，未跟踪的 `.env`、`secrets/`、`cert/` 等本地文件不会进入公开镜像。
+镜像由 GitHub Actions（`.github/workflows/docker-images.yml`）构建并推送：`main` 上相关源码变化时自动触发，也可以在 Actions 页面手动运行，并指定只构建部分服务。amd64 与 arm64 分别在原生 runner 上构建，再合并为多架构镜像，标签为 `latest` 和提交短哈希（12 位）。仓库需要配置 Secrets `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`（Docker Hub 读写权限的 Access Token），可选 Variable `DOCKERHUB_NAMESPACE`（默认 `beqlee`）。
+
+CI 不可用时，也可以在本地用 `scripts/release-images.sh` 发布：脚本从 `git archive` 导出的已跟踪文件构建 amd64 + arm64 镜像，未跟踪的 `.env`、`secrets/`、`cert/` 等本地文件不会进入公开镜像。
 
 ```bash
 docker login

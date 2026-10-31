@@ -1,0 +1,199 @@
+name: Docker Images
+
+# Builds the prebuilt images that ./deploy.sh pulls:
+#   docker.io/<namespace>/tapcanvas-{new-api,agents-bridge,api,web,media-worker}
+# Each architecture builds on a native runner (no qemu), then the per-arch
+# digests are merged into one multi-arch manifest tagged :latest and :<sha12>.
+#
+# Required repository secrets:
+#   DOCKERHUB_USERNAME  Docker Hub user that can push to the namespace
+#   DOCKERHUB_TOKEN     Docker Hub access token with Read & Write scope
+# Optional repository variable:
+#   DOCKERHUB_NAMESPACE (default: beqlee)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "apps/hono-api/**"
+      - "apps/web/**"
+      - "apps/director-desk/**"
+      - "apps/new-api/**"
+      - "apps/media-worker/**"
+      - "packages/**"
+      - "tsconfig.base.json"
+      - ".github/workflows/docker-images.yml"
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "Comma-separated services to build (empty = all)"
+        required: false
+        default: ""
+
+concurrency:
+  group: docker-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || 'beqlee' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.plan.outputs.services }}
+    steps:
+      - id: plan
+        env:
+          INPUT: ${{ github.event.inputs.services }}
+        run: |
+          all='["new-api","agents-bridge","api","web","media-worker"]'
+          if [ -z "${INPUT// /}" ]; then
+            echo "services=$all" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          json='['
+          for s in $(echo "$INPUT" | tr ',' ' '); do
+            case "$s" in
+              new-api|agents-bridge|api|web|media-worker) json="$json\"$s\"," ;;
+              *) echo "::error::unknown service: $s"; exit 1 ;;
+            esac
+          done
+          echo "services=${json%,}]" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.plan.outputs.services) }}
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Dockerfiles default to mainland-China mirrors for local builds.
+      # GitHub runners use the upstream sources instead.
+      - id: cfg
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          args="DOCKERHUB_REGISTRY=docker.io
+          BUILDKIT_SYNTAX=docker.io/docker/dockerfile:1.7
+          HTTP_PROXY=
+          HTTPS_PROXY=
+          NO_PROXY="
+          case "$SERVICE" in
+            new-api)
+              context=apps/new-api; file=apps/new-api/Dockerfile
+              args="$args
+          BUN_IMAGE=docker.io/oven/bun:1.3.11
+          NODE_IMAGE=docker.io/library/node:22.19.0-bookworm-slim
+          GO_IMAGE=docker.io/library/golang:1.26.1-alpine
+          RUNTIME_IMAGE=docker.io/library/debian:bookworm-slim
+          NPM_REGISTRY=https://registry.npmjs.org
+          GO_PROXY=https://proxy.golang.org,direct
+          APT_MIRROR=deb.debian.org" ;;
+            agents-bridge)
+              context=apps/hono-api; file=apps/hono-api/Dockerfile.agents-bridge
+              args="$args
+          NPM_REGISTRY=https://registry.npmjs.org" ;;
+            api)
+              context=apps/hono-api; file=apps/hono-api/Dockerfile
+              args="$args
+          NPM_REGISTRY=https://registry.npmjs.org
+          APT_MIRROR=deb.debian.org
+          PIP_INDEX_URL=https://pypi.org/simple
+          PREINSTALL_APP_DEPS=0
+          SKIP_HYPERFRAMES=1" ;;
+            web)
+              context=.; file=apps/web/Dockerfile
+              args="$args
+          NPM_REGISTRY=https://registry.npmjs.org
+          VITE_API_BASE=/api" ;;
+            media-worker)
+              context=apps/media-worker; file=apps/media-worker/Dockerfile
+              args="$args
+          GO_IMAGE=docker.io/library/golang:1.24.4-alpine
+          RUNTIME_IMAGE=docker.io/library/alpine:3.20
+          GO_PROXY=https://proxy.golang.org,direct
+          APK_MIRROR=dl-cdn.alpinelinux.org" ;;
+          esac
+          {
+            echo "context=$context"
+            echo "file=$file"
+            echo 'args<<EOF'
+            echo "$args"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.cfg.outputs.context }}
+          file: ${{ steps.cfg.outputs.file }}
+          platforms: linux/${{ matrix.arch }}
+          build-args: ${{ steps.cfg.outputs.args }}
+          provenance: false
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          outputs: type=image,name=docker.io/${{ env.NAMESPACE }}/tapcanvas-${{ matrix.service }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ matrix.arch }}
+
+      - run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.service }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  merge:
+    needs: [plan, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.plan.outputs.services) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.service }}-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests
+        env:
+          IMAGE: docker.io/${{ env.NAMESPACE }}/tapcanvas-${{ matrix.service }}
+        run: |
+          tags=(-t "$IMAGE:${GITHUB_SHA::12}")
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then tags+=(-t "$IMAGE:latest"); fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then tags+=(-t "$IMAGE:$GITHUB_REF_NAME"); fi
+          docker buildx imagetools create "${tags[@]}" $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:${GITHUB_SHA::12}"

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Build and push the prebuilt multi-arch images that ./deploy.sh pulls.
+# The primary path is .github/workflows/docker-images.yml (native amd64 + arm64
+# runners); this script is the local fallback and emulates the foreign arch.
 #
 # Images are built from `git archive <ref>` (tracked files only), so untracked
 # local state such as .env, secrets/, cert/ or project-data never reaches a
