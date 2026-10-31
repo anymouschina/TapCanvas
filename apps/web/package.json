@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "scripts": {
     "build:director-desk": "node ./scripts/build-director-desk.mjs",
-    "predev": "node ./scripts/build-director-desk.mjs",
+    "predev": "node ./scripts/copy-ffmpeg-core.mjs && node ./scripts/build-director-desk.mjs",
     "dev": "vite",
-    "prebuild": "node ./scripts/build-director-desk.mjs",
+    "prebuild": "node ./scripts/copy-ffmpeg-core.mjs && node ./scripts/build-director-desk.mjs",
     "build": "vite build --mode production",
     "preview": "vite preview",
     "smoke:project-chapter-ui": "node ./scripts/project-chapter-ui-smoke.mjs",
@@ -63,6 +63,7 @@
     "zustand": "^4.5.4"
   },
   "devDependencies": {
+    "@ffmpeg/core": "0.12.10",
     "@playwright/test": "^1.58.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

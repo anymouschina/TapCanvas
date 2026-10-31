@@ -53,3 +53,7 @@ cert
 /apps/director-desk/test-assets/
 /apps/director-desk/.audit/
 /apps/web/public/director-desk/
+
+# @ffmpeg/core 由 apps/web/scripts/copy-ffmpeg-core.mjs 在 predev / prebuild 时从 npm 包复制
+/apps/web/public/ffmpeg/ffmpeg-core.js
+/apps/web/public/ffmpeg/ffmpeg-core.wasm
