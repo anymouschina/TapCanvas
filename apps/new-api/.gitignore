@@ -8,9 +8,9 @@ upload
 build
 *.db-journal
 logs
-web/dist
 !web/dist/
-!web/dist/**
+web/dist/*
+!web/dist/index.html
 .env
 .env.local
 one-api

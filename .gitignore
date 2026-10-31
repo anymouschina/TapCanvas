@@ -5,8 +5,6 @@ dist/
 .graphify-venv
 .graphify-venv311
 tmp
-!apps/web/dist/
-!apps/web/dist/**
 .turbo/
 dist-local
 graphify-out
