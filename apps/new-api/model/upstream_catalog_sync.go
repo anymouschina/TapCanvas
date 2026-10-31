@@ -128,6 +128,13 @@ func loadUpstreamCatalog(ctx context.Context, client *http.Client, base string) 
 		if price.QuotaType != 0 && price.QuotaType != 1 {
 			return result, fmt.Errorf("unsupported quota type for %s", entry.ModelName)
 		}
+		// An upstream model served only over a wire protocol this gateway cannot
+		// relay (for example audio-speech) is not executable here. Leave it out of
+		// the catalog instead of letting one new upstream model block startup.
+		if _, err := upstreamCatalogProtocol(price.SupportedEndpointTypes); err != nil {
+			common.SysLog(fmt.Sprintf("upstream catalog: skipping %s, endpoints %v have no supported wire protocol", entry.ModelName, price.SupportedEndpointTypes))
+			continue
+		}
 		if entry.ParamsDef != "" {
 			var params []json.RawMessage
 			if err := common.Unmarshal([]byte(entry.ParamsDef), &params); err != nil {

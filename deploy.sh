@@ -497,7 +497,8 @@ ${c_bold}================ TapCanvas 已部署 ================${c_reset}
     账号 $(env_or_default NEW_API_ROOT_USERNAME admin)   密码 $(env_or_default NEW_API_ROOT_PASSWORD 123456)
   API            http://localhost:${api_port}
 
-  下一步：登录鲁班 API 管理台，在「渠道」中填写模型供应商的 API Key 并启用。
+  已内置并启用鲁班渠道（lluban-recommended），登录 Web 即可使用；需要其他模型时，
+  在鲁班 API 管理台「渠道」中添加自己的 Key。
   账号只在首次初始化数据库时创建；之后若在页面中改过密码，以修改后的为准。
   配置文件：${ENV_FILE}（请勿提交或分享）
   常用命令：bash deploy.sh status | logs | stop | update | info

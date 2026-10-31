@@ -180,7 +180,7 @@ When it finishes, the script prints the URLs and accounts and opens the browser:
 | Web canvas | <http://localhost:5175> | `admin` / random password generated on first deploy |
 | Lluban API console | <http://localhost:4455> | `admin` / random password generated on first deploy |
 
-Run `bash deploy.sh info` (Windows: `.\deploy.ps1 info`) to show them again. To choose the password on first deploy, set e.g. `TAPCANVAS_ADMIN_PASSWORD=your-pass bash deploy.sh`. Busy ports are shifted automatically and the real ports are printed. Add your model provider API keys under Channels in the Lluban API console to start creating.
+Run `bash deploy.sh info` (Windows: `.\deploy.ps1 info`) to show them again. To choose the password on first deploy, set e.g. `TAPCANVAS_ADMIN_PASSWORD=your-pass bash deploy.sh`. Busy ports are shifted automatically and the real ports are printed. The Lluban channel (`lluban-recommended`) is built in and enabled, so you can start creating right after logging in; add your own keys under Channels in the Lluban API console for other models.
 
 ```bash
 bash deploy.sh status    # service status

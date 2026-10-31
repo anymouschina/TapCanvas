@@ -216,7 +216,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager
 | Web 画布 | <http://localhost:5175> | `admin` / 首次部署随机生成的密码 |
 | 鲁班 API 管理台 | <http://localhost:4455> | `admin` / 首次部署随机生成的密码 |
 
-忘记密码时运行 `bash deploy.sh info`（Windows：`.\deploy.ps1 info`）重新显示。想在首次部署时指定密码，可以设置环境变量，例如 `TAPCANVAS_ADMIN_PASSWORD=your-pass bash deploy.sh`。端口被占用时脚本会自动顺延并在输出中显示实际端口。登录鲁班 API 管理台，在「渠道」中填写模型供应商的 API Key 并启用后即可开始创作。
+忘记密码时运行 `bash deploy.sh info`（Windows：`.\deploy.ps1 info`）重新显示。想在首次部署时指定密码，可以设置环境变量，例如 `TAPCANVAS_ADMIN_PASSWORD=your-pass bash deploy.sh`。端口被占用时脚本会自动顺延并在输出中显示实际端口。鲁班渠道（`lluban-recommended`）已内置并默认启用，登录 Web 即可开始创作；需要其他模型时，在鲁班 API 管理台「渠道」中添加自己的 Key。
 
 ```bash
 bash deploy.sh status    # 查看服务状态

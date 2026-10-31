@@ -461,7 +461,8 @@ function Show-Info {
   Write-Host "    账号 $(Get-EnvValueOr 'NEW_API_ROOT_USERNAME' 'admin')   密码 $(Get-EnvValueOr 'NEW_API_ROOT_PASSWORD' '123456')"
   Write-Host "  API            http://localhost:$api"
   Write-Host ''
-  Write-Host '  下一步：登录鲁班 API 管理台，在「渠道」中填写模型供应商的 API Key 并启用。'
+  Write-Host '  已内置并启用鲁班渠道（lluban-recommended），登录 Web 即可使用；需要其他模型时，'
+  Write-Host '  在鲁班 API 管理台「渠道」中添加自己的 Key。'
   Write-Host '  账号只在首次初始化数据库时创建；之后若在页面中改过密码，以修改后的为准。'
   Write-Host "  配置文件：$($script:EnvFileFull)（请勿提交或分享）"
   Write-Host '  常用命令：.\deploy.ps1 status | logs | stop | update | info'

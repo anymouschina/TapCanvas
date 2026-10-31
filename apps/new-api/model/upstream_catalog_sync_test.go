@@ -30,6 +30,23 @@ func TestLoadUpstreamCatalogUsesLivePriceAndRejectsIncompleteSnapshot(t *testing
 	require.Error(t, err)
 }
 
+func TestLoadUpstreamCatalogSkipsModelsWithoutRelayableProtocol(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/models/list" {
+			_, _ = w.Write([]byte(`{"success":true,"data":[{"model_name":"live-chat","status":1,"kind":"chat"},{"model_name":"live-speech","status":1,"kind":"audio"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true,"pricing_version":"live-v2","data":[` +
+			`{"model_name":"live-chat","quota_type":0,"model_ratio":1,"completion_ratio":5,"supported_endpoint_types":["openai"]},` +
+			`{"model_name":"live-speech","quota_type":0,"model_ratio":7.5,"completion_ratio":1,"supported_endpoint_types":["audio-speech"]}]}`))
+	}))
+	defer server.Close()
+	plan, err := loadUpstreamCatalog(context.Background(), server.Client(), server.URL)
+	require.NoError(t, err)
+	require.Len(t, plan.Models, 1)
+	require.Equal(t, "live-chat", plan.Models[0].ModelName)
+}
+
 func TestApplyUpstreamCatalogAtomicIdempotentAndPreservesOtherChannels(t *testing.T) {
 	db := useInternalRelayTestDB(t)
 	require.NoError(t, db.AutoMigrate(&Model{}, &Channel{}, &Ability{}, &Option{}))
