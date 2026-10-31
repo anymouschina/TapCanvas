@@ -32,6 +32,16 @@ Thanks to [Infistar.cc](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source
 
 👉 [Register via the referral link and try it](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)
 
+**TapCanvas × 即刻AI (Jike AI) — official-channel video models from 50% of the official price**
+
+Thanks to [即刻AI](https://magic666.top/register?aff=rgj2) for sponsoring TapCanvas!
+
+- 🎬 **Focused on official-channel video**: per the platform, video generation models are reached through official channels.
+- 💰 **As low as 50% of the official price**: exact discounts, available models and billing rules are defined on the [即刻AI](https://magic666.top/register?aff=rgj2) site.
+- 🧩 **How to connect**: register at 即刻AI, get a key, then add a channel in the Luban API gateway (`apps/new-api`) admin console with your own key and the video models you need. The repository ships no private credentials.
+
+👉 [Register 即刻AI via the referral link](https://magic666.top/register?aff=rgj2)
+
 > Sponsors have no say in code or roadmap decisions. The links above are referral links; registration and usage are governed by the platform's own terms.
 
 ## Demo: From Novel Chapters to Video
@@ -263,6 +273,7 @@ Open-source projects built on top of TapCanvas:
 Thanks to the following platform and open-source projects — TapCanvas' hosting, promotion and implementation are built on them.
 
 - **[Infistar.cc](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)** — sponsor of TapCanvas, providing a one-stop global LLM API service; see [Sponsors & Support](#sponsors--support).
+- **[即刻AI](https://magic666.top/register?aff=rgj2)** — sponsor of TapCanvas, focused on official-channel video models; see [Sponsors & Support](#sponsors--support).
 - **[AtomGit](https://atomgit.com/gcw_PzejWSbY/TapCanvas) / GitCode** — code hosting, open-source community promotion and badge data; the link above is this project's AtomGit entry.
 
 Upstream open-source projects:

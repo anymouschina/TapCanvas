@@ -43,6 +43,16 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 
 👉 [通过专属链接注册并立即体验](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)
 
+**TapCanvas × 即刻AI｜官渠视频模型，最低可达官价 5 折**
+
+感谢 [即刻AI](https://magic666.top/register?aff=rgj2) 对 TapCanvas 的赞助支持！
+
+- 🎬 **主打官渠视频**：按平台说明，视频生成模型通过官方渠道接入。
+- 💰 **最低可达官价 5 折**：具体折扣、可用模型与计费规则以 [即刻AI 官网](https://magic666.top/register?aff=rgj2) 页面为准。
+- 🧩 **接入方式**：在 [即刻AI](https://magic666.top/register?aff=rgj2) 注册并获取 Key 后，在鲁班 API（`apps/new-api`）管理台新增渠道并填入自己的 Key 与所需视频模型即可使用；仓库不预置任何私人凭据。
+
+👉 [通过专属链接注册即刻AI](https://magic666.top/register?aff=rgj2)
+
 > 赞助方不参与项目的代码与路线图决策；上述链接为推广链接，注册与消费行为以对应平台条款为准。
 
 ## 演示视频：长篇小说，一键成片
@@ -280,6 +290,7 @@ TapCanvas 根项目及未另行声明的代码按 [MIT License](./LICENSE) 发�
 感谢以下平台与开源项目，TapCanvas 的托管、推广与实现都建立在它们之上。
 
 - **[Infistar.cc 无限星河](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)**：赞助 TapCanvas，并提供一站式全球大模型 API 服务，详见[赞助与支持](#赞助与支持)。
+- **[即刻AI](https://magic666.top/register?aff=rgj2)**：赞助 TapCanvas，主打官渠视频模型，详见[赞助与支持](#赞助与支持)。
 - **[AtomGit](https://atomgit.com/gcw_PzejWSbY/TapCanvas) / GitCode**：提供代码托管、开源社区推广与 Badge 数据服务，上述链接即本项目在 AtomGit 的项目入口。
 
 上游开源项目：
