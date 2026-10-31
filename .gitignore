@@ -57,3 +57,9 @@ cert
 # @ffmpeg/core 由 apps/web/scripts/copy-ffmpeg-core.mjs 在 predev / prebuild 时从 npm 包复制
 /apps/web/public/ffmpeg/ffmpeg-core.js
 /apps/web/public/ffmpeg/ffmpeg-core.wasm
+
+# 构建产物与运行时数据（由构建脚本 / API 运行时生成，不进 git）
+*.tsbuildinfo
+/assets/public/
+/apps/director-desk/src/automation/builtin-skill.json
+/apps/director-desk/skills/director-desk/scripts/project-tool.mjs

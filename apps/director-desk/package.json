@@ -12,6 +12,7 @@
     "build": "tsc --noEmit && vite build",
     "postbuild": "node scripts/build-offline-skill.mjs && node scripts/check-release-privacy.mjs",
     "check:privacy": "node scripts/check-release-privacy.mjs",
+    "pretest": "node scripts/build-offline-skill.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.ts"
   },
   "dependencies": {
