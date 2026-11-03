@@ -1,6 +1,6 @@
 {
   "contractId": "tapcanvas/video-prompt-authoring",
-  "version": "4.1.0",
+  "version": "4.1.2",
   "purpose": "Shared authoring responsibilities for faithful audiovisual storytelling. Preserve complete plot and frozen speech; choose methods freely. The current artifact schema alone owns fields, references and timing; dimension field lists apply only when that schema declares them.",
   "runtimePolicy": {
     "semanticAuthoringOwner": "tapcanvas-video-prompt-writer",
@@ -170,7 +170,8 @@
       ],
       "reviewerChecks": [
         "Examples are optional; only successfully read bodies are attributed, with their exact source receipts.",
-        "Retrieval failure is diagnostic; author from current facts without copying example identities, plot or specifications."
+        "Retrieval failure is diagnostic; author from current facts without copying example identities, plot or specifications.",
+        "When a method is adopted, its applicable mechanism is expressed in the actual authored performance, camera, sound or handoff; a title, search hit or claimed review does not prove body reading or application. No method or body count is required."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -212,7 +213,8 @@
       ],
       "reviewerChecks": [
         "Opaque machine identities do not supply story meaning; preserve frozen participants, plot order, important states and results.",
-        "Add execution details within granted creative scope, without disguising new plot facts as source facts."
+        "Add execution details within granted creative scope, without disguising new plot facts as source facts.",
+        "Preserve source certainty, conditions, ability scope and viewpoint; subjective visualization or author execution detail does not create new objective story facts or physical results."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -260,7 +262,8 @@
       ],
       "reviewerChecks": [
         "The executable sound and image express all frozen plot events with their causal relations and important results.",
-        "Source facts remain distinct from summaries and author choices; event references do not prove missing story content."
+        "Source facts remain distinct from summaries and author choices; event references do not prove missing story content.",
+        "The chapter author determines necessary source facts, motives, relationships and causal dependencies from the complete authorized source and expresses them in actual picture or complete speech; the Clip writer preserves the frozen projection and reports upstream gaps through the granted repair path."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -286,7 +289,8 @@
       ],
       "reviewerChecks": [
         "The audience can understand the current plot, identity, necessary motive, causal change and consequence.",
-        "Choose visual action, dialogue, narration, inner voice or combinations freely; preserve the distinction between fact, belief and intended audience experience."
+        "Choose visual action, dialogue, narration, inner voice or combinations freely; preserve the distinction between fact, belief and intended audience experience.",
+        "Questions, proposals, concessions and responses retain the antecedents needed to understand them; a completed act is not reduced to an unspecified attitude or gesture."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -350,7 +354,8 @@
       ],
       "reviewerChecks": [
         "Characters respond according to current stimulus and source facts; stable listening and stillness can be valid performance.",
-        "No per-character reaction chain, per-line gesture, emotional curve or per-shot change requirement."
+        "No per-character reaction chain, per-line gesture, emotional curve or per-shot change requirement.",
+        "Translate current stimuli and authorized intent into performable behavior where needed, including purposeful sustained behavior; emotion labels or plot summaries alone do not replace the performance needed to understand this scene."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -402,7 +407,8 @@
       ],
       "reviewerChecks": [
         "Shots carry the current story through action, performance, observation or sound; multiple related events may share a shot.",
-        "Cuts and holds are author choices; no mandatory single-change, constant-motion, fast-cut or shot-count rule."
+        "Cuts and holds are author choices; no mandatory single-change, constant-motion, fast-cut or shot-count rule.",
+        "Pacing follows the current experience of discovery, action, listening and consequence; holds and omissions have scene-specific purpose without a fixed change rate or a technique quota."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -469,7 +475,8 @@
       ],
       "reviewerChecks": [
         "Choose framing and movement appropriate to the current scene; stable cameras and diverse shot structures remain available.",
-        "Use only fields the current schema declares; optional details need not become equipment lists or repeated instructions."
+        "Use only fields the current schema declares; optional details need not become equipment lists or repeated instructions.",
+        "Framing, viewpoint, visibility and any movement let the audience perceive the story-relevant evidence and relationships; generic visual-quality labels do not substitute for a needed camera decision."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -519,7 +526,8 @@
       },
       "reviewerChecks": [
         "Preserve frozen speech text, speaker, voice, order and clip ownership; reference each event at its actual starting shot.",
-        "Speech may continue across shots without repetition or invented word-rate and first-shot-capacity rules."
+        "Speech may continue across shots without repetition or invented word-rate and first-shot-capacity rules.",
+        "Missing necessary speech cannot be repaired by silently changing a speaking beat into a gesture; chapter-level speech repair and Clip-level frozen speech projection remain distinct responsibilities."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -537,7 +545,8 @@
       ],
       "reviewerChecks": [
         "Sound supports plot comprehension; narration, inner voice, music, silence and text are selected from the current story and user intent.",
-        "Separate frozen speech from sound design; factual on-set sounds and expressive sound design remain distinguishable."
+        "Separate frozen speech from sound design; factual on-set sounds and expressive sound design remain distinguishable.",
+        "When relevant, source, perspective, interruption and relation to visible action make sound serve this scene; purposeful silence and inherited ambience remain valid, and repeated sound decoration does not prove pacing."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -559,7 +568,9 @@
         "shots[].notes"
       ],
       "reviewerChecks": [
-        "Start from the frozen entry and express the plot leading to its exit or handoff; do not replay prior completed events or anticipate later results."
+        "Start from the frozen entry and express the plot leading to its exit or handoff; do not replay prior completed events or anticipate later results.",
+        "Use each Clip's own frozen entry and exit inside a scene; inherit prior completed results and continue unfinished processes. Similar actions or repeated words can remain separate events when source identity, purpose or new evidence distinguishes them.",
+        "Actual final and opening shots carry the relevant subject, action phase, direction, held-object and sound relationship, or an authorized transition; a boundary label alone does not establish that handoff."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -581,7 +592,8 @@
       ],
       "reviewerChecks": [
         "The current Clip serves the complete story and respects declared cross-clip facts, scope and handoffs.",
-        "No independently imposed local arc, ending, pacing formula or fixed whole-film replay procedure."
+        "No independently imposed local arc, ending, pacing formula or fixed whole-film replay procedure.",
+        "Scene-wide entry and exit do not replace an intermediate Clip's own boundary; adjacent handoffs preserve physical identity and story progress without inventing a local arc."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     },
@@ -615,7 +627,8 @@
       ],
       "reviewerChecks": [
         "Author checks and corrections may follow actual needs; no independent reviewer, required replay procedure, fixed draft count or score.",
-        "When review evidence is requested, record only actual findings and changes; it cannot gate production, discard assets or prove an unobserved video result."
+        "When review evidence is requested, record only actual findings and changes; it cannot gate production, discard assets or prove an unobserved video result.",
+        "Before delivery, correct concrete author-introduced expression or continuity gaps in downstream-consumed fields within the same authoring chain; select checks from actual needs, without a mandatory reviewer, review order, score or new production gate."
       ],
       "extensionPolicy": "Optional methods support the current plot and user intent; they do not add fields, fixed processes, quotas or production gates."
     }

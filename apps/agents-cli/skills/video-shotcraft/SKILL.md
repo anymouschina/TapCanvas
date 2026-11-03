@@ -1,6 +1,6 @@
 ---
 name: video-shotcraft
-description: 产品/SaaS 宣传片镜头配方卡（蒸馏自 video-shotcraft 开源 skill 的 104 张卡 · 原版基于 Remotion 代码渲染，本版全部改绑 TapCanvas 现有能力）。提供三层落地判定——生成层（运镜意图写进 clipPrompt 交 AI 视频模型）、合成层（转场交 media-worker xfade）、不可行层（DOM/CSS 帧级精确动效，明确拒绝而非降级硬凑）。两种用法：①给叙事片补产品级运镜/节奏词汇；②走产品宣传片新路径（真实页面截图当关键帧素材）。当用户要求做产品片/宣传片/功能演示片、点名镜头卡名字（如 crash-zoom-punch / spotlight-hero-card）、或问「这个动效能不能做」时使用。
+description: 产品/SaaS 宣传片镜头配方卡（钻研自 video-shotcraft 开源 skill 的 104 张卡 · 原版基于 Remotion 代码渲染，本版全部改绑 TapCanvas 现有能力）。提供三层落地判定——生成层（运镜意图写进 clipPrompt 交 AI 视频模型）、合成层（转场交 media-worker xfade）、不可行层（DOM/CSS 帧级精确动效，明确拒绝而非降级硬凑）。两种用法：①给叙事片补产品级运镜/节奏词汇；②走产品宣传片新路径（真实页面截图当关键帧素材）。当用户要求做产品片/宣传片/功能演示片、点名镜头卡名字（如 crash-zoom-punch / spotlight-hero-card）、或问「这个动效能不能做」时使用。
 disable-model-invocation: false
 knowledge-role: director
 knowledge-domains:

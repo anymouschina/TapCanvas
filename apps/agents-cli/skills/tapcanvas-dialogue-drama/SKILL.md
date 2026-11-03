@@ -10,7 +10,7 @@ knowledge-domains:
   - 音乐声音设计
 metadata:
   contracts:
-    - tapcanvas/video-prompt-authoring@4.1.0
+    - tapcanvas/video-prompt-authoring@4.1.1
   extensionOf:
     - tapcanvas-video-prompt-writer
 ---

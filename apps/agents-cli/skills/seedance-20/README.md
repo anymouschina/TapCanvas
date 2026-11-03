@@ -287,7 +287,7 @@ Concept art for the system, generated and curated. Every image is paired with se
 | [`dense-storyboard-mode.md`](references/dense-storyboard-mode.md) | Dense multishot, phased single-take, and 2D storyboard contracts. |
 | [`allocation-model.md`](references/allocation-model.md) | Where one generation spends its fidelity budget: identity vs motion vs scene density. |
 | [`multishot-grammar.md`](references/multishot-grammar.md) | Shot labels, the shots-times-seconds budget, and cut grammar inside one generation. |
-| [`2d-anime-grammar.md`](references/2d-anime-grammar.md) | Cel/anime medium grammar: layers, burst-vs-held motion, the no-lens rule. |
+| [`2d-anime-grammar.md`](references/2d-anime-grammar.md) | Cel/anime medium grammar: layers, impact graphics, optional timing treatments and project-specific hybrid styles. |
 | [`pro-filmmaking-standards.md`](references/pro-filmmaking-standards.md) | Professional production spine and source boundaries for film, commercial, post, localization, and delivery work. |
 | [`cinematography-shot-language.md`](references/cinematography-shot-language.md) | Shot contracts, shot size, lens feel, camera support, movement, blocking, and coverage language. |
 | [`shot-list-continuity.md`](references/shot-list-continuity.md) | Treatment-to-shot-list workflow, continuity ledger, and professional handoff fields. |

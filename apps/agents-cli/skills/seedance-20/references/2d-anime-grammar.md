@@ -1,10 +1,10 @@
-# 2D / Anime Grammar — direct the medium, not a camera rig
+# 2D / Anime Grammar — medium, motion and graphic emphasis
 
-*Seedance 2.0 renders stylized 2D and anime motion well, but live-action grammar degrades it: lens, depth-of-field, and sensor vocabulary pulls outputs toward photorealism or a fake tilt-shift look. Direct 2D work in animation-production language instead. Labels: [field] = practitioner-reported · [heuristic] = default to test. Craft guidance compiled 2026-06-11; contains no platform-availability claims.*
+*Optional animation craft guidance. Labels: [field] = practitioner-reported · [heuristic] = a method to consider, not a provider guarantee. Medium and timing follow the current user intent and project; precision and available controls come from the active generation contract and observed results.*
 
 ## Core rule [field]
 
-Name the medium first and keep every sentence inside the animation process: "hand-drawn 2D animation, cel-shaded characters over a painted background." Never use lens, bokeh, depth-of-field, focal-length, or camera-body vocabulary in a 2D prompt — it summons photoreal rendering.
+Name the intended medium and layers, such as "hand-drawn 2D animation, cel-shaded characters over a painted background." Animation-production language makes line, shading and motion choices concrete. Camera, lens, depth-of-field and shake language may also serve a requested simulated-camera or hybrid style; do not infer style drift or a ban from vocabulary alone. Evaluate contradictions against the actual project and output.
 
 ## Layer grammar [field]
 
@@ -16,15 +16,15 @@ Name the medium first and keep every sentence inside the animation process: "han
 
 ## Motion grammar [field]
 
-- **Burst animation (sakuga) vs held frames:** alternate high-effort fully animated bursts with held poses: "a burst of fluid full animation as she turns, then a held frame on her expression."
-- **Timing:** "animated on twos" for classic cel cadence; "on ones" only for the showcase move. [heuristic]
-- **Impact frames:** "a single high-contrast impact frame on the hit."
+- **Burst animation (sakuga) and held frames:** fluid bursts, limited animation and held poses are separate choices. A held pose may serve a deliberate reaction; continuous fast action need not alternate with stillness.
+- **Timing:** "on twos" or "on ones" can express desired cadence when useful; neither is a default quota or a guarantee of exact generated timing. [heuristic]
+- **Impact graphics:** briefly expose a high-contrast silhouette, inverted contour or radial burst at contact, then reconnect to the same position, force direction and following action. An impact graphic does not imply hit-stop, a held pose or slow motion; choose time treatment separately from the user's timing intent.
 - **Speed lines and smears:** "speed lines streak the background during the dash," "her arm smears across the swing."
 - **Follow-through:** hair, cloth, and coat tails keep settling after the body stops.
 
 ## Camera in 2D [field]
 
-The "camera" is a rostrum over artwork: pan across the painted background, slow push-in on a held face, vertical tilt down the tower artwork. One motivated move per shot still applies. Avoid dolly, handheld shake, and lens-breathing realism wording.
+A rostrum over artwork, multiplane parallax, a virtual 3D camera or a hybrid approach can all fit animation. Describe the visual movement: pan across the painted background, track a moving contact point, or orbit through the scene while preserving cel shading. Choose motion and framing from this scene rather than enforcing one move per shot or forbidding simulated-camera treatment.
 
 ## Light and color [field]
 
@@ -32,7 +32,7 @@ Light is drawn, not rendered: "hard two-tone cel shadow," "rim light as a clean 
 
 ## Sound for 2D [heuristic]
 
-Stylized sound reads better than realistic foley: a whoosh on the smear, a sharp sting on the impact frame, room tone dropping out on the held frame.
+Stylized sound and realistic foley are both available: a whoosh may follow a swing and a sharp transient may meet visible contact. Silence or room-tone changes are optional author choices, not required companions to impact graphics or held poses. Preserve frozen speech and the requested sound scope.
 
 ## Style safety [field]
 
@@ -42,11 +42,11 @@ Describe technique, era, and palette — never a studio, franchise, or living ar
 
 | Symptom | Fix |
 |---|---|
-| Output drifts photoreal or 3D-CG | remove lens and depth-of-field words; lead with "hand-drawn 2D cel animation"; name the painted background |
-| Motion feels floaty or rotoscoped | ask for snappy bursts "on twos," held frames between beats, smears on fast arcs |
-| Faces melt during fast action | put the speed into lines, smears, and background scroll instead of facial detail; cut to a held impact frame |
-| Style flickers between shots | repeat the exact medium line in every shot of a multi-shot prompt; keep one palette phrase constant |
+| Output drifts from the intended medium | compare the actual output to line, shading, background and image-formation intent; clarify conflicting requests rather than blaming any single camera term |
+| Motion feels floaty or rotoscoped | clarify support, acceleration, contact and recoil; consider snappier cadence or smears without imposing held poses |
+| Faces melt during fast action | put speed into readable arcs, silhouettes, smears or background scroll; restore clarity at contact and consequence without defaulting to a time stop |
+| Style flickers between shots | preserve character design, line weight, layer roles and palette relationships; exact repeated sentences are not a quality requirement |
 
 ## Sequence Boundary [heuristic]
 
-For connected 2D clips, preserve character sheets, palette, line weight, layer roles, screen direction, and open motion. Use observed final layout from the accepted clip as the next opening layout. Do not switch to photographic lens or sensor language when writing continuation prompts.
+For connected 2D clips, preserve character sheets, palette, line weight, layer roles, screen direction, and open motion. Use observed final layout from the accepted clip as the next opening layout. A temporary graphic accent returns to the established medium and continuing action; a requested hybrid camera treatment does not by itself authorize changing character appearance or story facts. These methods never determine production eligibility.

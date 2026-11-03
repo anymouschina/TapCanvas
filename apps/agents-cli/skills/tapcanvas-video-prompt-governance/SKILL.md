@@ -3,7 +3,7 @@ name: tapcanvas-video-prompt-governance
 description: 治理 TapCanvas 视频提示词权威合同及其 writer、reviewer、领域 Skill 与知识输入的一致性。新增或更新视频提示词 Skill、导演方法、Seedance 方法、提示词知识卡、审核标准、结构字段或 provider 规则时必须使用；把新知识拆成合同升级、领域扩展、动态供应商事实或非阻塞经验，生成可审查 diff、reviewer 映射、eval 方案并运行结构一致性审计。
 metadata:
   contracts:
-    - tapcanvas/video-prompt-authoring@4.0.0
+    - tapcanvas/video-prompt-authoring@4.1.2
 ---
 
 # TapCanvas 视频提示词合同治理
@@ -58,7 +58,7 @@ metadata:
 
 ```json
 {
-  "baseContract": "tapcanvas/video-prompt-authoring@4.0.0",
+  "baseContract": "tapcanvas/video-prompt-authoring@4.1.2",
   "claims": [],
   "mappings": [
     {

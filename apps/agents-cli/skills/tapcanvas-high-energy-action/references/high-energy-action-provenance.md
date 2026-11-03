@@ -5,6 +5,7 @@
 | sourceId | 来源 | 可迁移方法 | 禁止迁移 |
 |---|---|---|---|
 | `muapi-storyboard-driven-action` | [Generative Media Skills · ai-fight-scene](https://github.com/samuraigpt/generative-media-skills/blob/main/library/motion/ai-fight-scene/SKILL.md) | 角色/环境锚定、先做动作预演再进入图生视频、用连续状态检查动作接力 | 固定 4×4 镜头配额、第三方角色、固定供应商参数 |
+| `lucianaigc-combat-skill-v1` | 用户提供的 LucianAIGC-打斗skill-V1（本地文件，2026-11-02） | 角色战斗档案（兵器/打法/力量来源）、按打法对位与破绽设计攻守、招式“起势→发力→接触→收招”、特效从触发到消散的完整一生、破坏留在场景并改变后续走位、每个参战者正面亮相 | 5000 字分栏输出格式、不固定左右站位、计数连击招（“连刺九次”“百拳连打”）、现成作品招式名、“史诗/毁天灭地”类形容词堆叠、技术术语（Flow Map、Niagara）直写进提示词 |
 | `seedance-action-director-density` | [Higgsfield Seedance Fight Scenes](https://github.com/beshuaxian/higgsfield-seedance2-jineng/blob/main/skills/05-fight-scenes/SKILL.md) | 目标—动作—反作用编舞、摄影机与节奏同步、声音作为接触反馈 | 固定招式清单、品牌/作品复刻、把节奏词当硬闸 |
 
 ## 合同映射

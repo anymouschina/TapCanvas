@@ -1,6 +1,6 @@
 ---
 name: seedance-25
-description: Create, revise, compress, translate, diagnose, and production-plan prompts for Dreamina/Seedance 2.5. Use when the user mentions Seedance 2.5, Dreamina 2.5, text/image/video/audio-to-video, multimodal references, videos up to 30 seconds, multi-clip long-form production, timestamps, first/last frames, multiple keyframes, video editing, forward/backward extension, one-click video, seamless transitions, storyboard grids, blockout or clay rendering, dialogue/audio control, character consistency, or a failed Seedance 2.5 generation. Do not apply Seedance 2.0 numeric limits to 2.5 or claim current API, price, region, quota, or surface availability without live verification.
+description: Create, revise, compress, translate, diagnose, and production-plan prompts for Dreamina/Seedance 2.5. Use whenever the user mentions Seedance 2.5, Dreamina 2.5, text/image/video/audio-to-video, multimodal references, reference identity locks, fixed-canon timelines, action loops, storyboard grids, dialogue beats, UGC realism, product commercials, genre lenses, videos up to 30 seconds, multi-clip long-form production, timestamps, first/last frames, multiple keyframes, video editing, forward/backward extension, one-click video, seamless transitions, blockout or clay rendering, dialogue/audio control, character consistency, or a failed Seedance 2.5 generation. Do not apply Seedance 2.0 numeric limits to 2.5 or claim current API, price, region, quota, or surface availability without live verification.
 ---
 
 # Seedance 2.5 Director
@@ -46,7 +46,7 @@ Extract the following fields from information already supplied. Ask one short qu
 | Bridge two clips | Seamless transition | Define trigger, motion continuity, arrival state, and audio transition |
 | Failed or partly correct output | Diagnose and retry | Identify the root cause, then change one variable |
 
-Read only the matching section of [task-patterns.md](references/task-patterns.md). Do not load or output every template.
+Read only the matching section of [task-patterns.md](references/task-patterns.md). Then read only the matching subsection of [community-pattern-synthesis.md](references/community-pattern-synthesis.md) when the task benefits from a cross-cutting reference lock, causal action loop, dialogue beat, storyboard carrier, look mode, or genre lens. Do not load or output every template or case.
 
 ### 3. Build the Reference Role Map
 
@@ -77,6 +77,19 @@ Apply these rules:
 - Keep duration, aspect ratio, and resolution outside prompt prose when they are generation-page settings. Include time only when it controls event pacing or task boundaries.
 - Prefer stages for ordinary narrative. Use exact seconds only for a critical handoff, entrance, exit, transition, or beat. Keep time ranges consecutive and non-overlapping.
 - Recommend prepared reference material and post-production when subtitles, formulas, logos, specifications, or frame-accurate timing must be exact.
+
+### Community Pattern Adapter
+
+The external community catalogue is evidence for reusable authoring patterns, not a second contract. Use its patterns only after the active surface, frozen user facts, and TapCanvas authoring contract are known. Prefer one matching pattern over an average of several examples, and transfer its reason for working rather than its prose or fixed numbers.
+
+- Keep stable identity, product, space, and audio facts in a fixed canon; put only changing events and their visible end states on the timeline.
+- Give every reference a role, inherit list, and do-not-inherit list. One asset owns each important dimension; do not invent 2.5 reference tokens from examples.
+- Write interactions as trigger → path/contact → response/material consequence → end state. Camera and VFX clarify that chain; they never replace it.
+- Bind dialogue to language, speaker, timing, causal reaction, and end state. Treat word-count advice and negative lists as repair heuristics, never as gates.
+- Let storyboard or blockout references control only the dimensions they are assigned. Preserve order and anchor states, but do not force catalogue panel counts or copy placeholder content.
+- Select one capture logic—UGC, commercial, documentary, or stylized—unless the user explicitly requests a hybrid, then describe the observable bridge between them.
+
+For the detailed adoption/rejection rules and genre-specific lenses, read [community-pattern-synthesis.md](references/community-pattern-synthesis.md). These rules do not replace `tapcanvas/video-prompt-authoring@4.0.1`, do not change the writer JSON, and do not create a runtime quality gate.
 
 ### 5. Apply Mode-Specific Protections
 
@@ -136,4 +149,5 @@ For diagnostics, return: `Verdict → Evidence → One changed variable → Repa
 
 - Counts, durations, resolutions, modes, locked parameters, or known limitations: read [capabilities-and-limits.md](references/capabilities-and-limits.md).
 - Multimodal work, 30-second or multi-clip long-form video, edits, extensions, first/last frames, keyframes, storyboards, blockouts, one-click video, transitions, audio syntax, multi-stage performance, or professional camera terminology: read the matching section of [task-patterns.md](references/task-patterns.md).
+- Cross-cutting reference roles, fixed-canon timelines, action-loop repair, dialogue beats, storyboard carriers, UGC/commercial look selection, or optional genre lenses: read the matching subsection of [community-pattern-synthesis.md](references/community-pattern-synthesis.md).
 - Failed output, partial success, identity drift, camera jumps, audio-video issues, or retry budgets: read [quality-and-repair.md](references/quality-and-repair.md).

@@ -27,7 +27,7 @@ The exact model identity and live duration/reference options are execution facts
 | Physics [official claim] | physical verbs & consequences, not pose adjectives |
 | Slow motion [official 2.0; tier is surface-specific] | Use it on one key action. Select a named Standard/Fast tier only when the active surface contract exposes that tier; do not inherit a 2.0 provider tier name into 2.5. |
 | Transformation [field] | endpoint states + the persisting carrier; hard cases → FLF decomposition |
-| 2D/anime [field] | medium grammar: cel over painted bg, sakuga vs held frames, impact frames/speed lines/smears; no lens/DOF talk — full grammar in `[ref:2d-anime-grammar]` |
+| 2D/anime [field; craft guidance] | Describe cel layers, line, shading, action arcs and optional impact graphics/smears. Held poses and hit-stop are separate timing choices; camera/DOF language may fit requested hybrids. No frame-accuracy guarantee — see `[ref:2d-anime-grammar]`. |
 | Aspect and automatic duration [official 2.0; surface-specific] | Use only ratios and automatic-duration controls exposed by the active surface. Neither `21:9` nor `auto` is a family-wide 2.5 request default. |
 | Multilingual [official/field] | zh anchors for texture/mood; keep reference tags exact |
 

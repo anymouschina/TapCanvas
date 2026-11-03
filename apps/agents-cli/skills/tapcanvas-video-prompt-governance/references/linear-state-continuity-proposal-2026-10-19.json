@@ -1,0 +1,111 @@
+{
+  "baseContract": "tapcanvas/video-prompt-authoring@4.1.1",
+  "scope": "Existing state-continuity methods and current artifact projection; no new authoring dimensions, runtime quality gate or media generation.",
+  "claims": [
+    {
+      "claimId": "identity_is_not_current_state",
+      "source": "/tmp/tapcanvas-remake-runs-96c51267.json: chapter-assets-agent obj-02; clip-production-pipeline scene referenceFacts",
+      "evidence": "Shared scene identityInvariant permanently states missing corner, although later ordered repair events fill and polish that same corner; shared initial state remains in later provider references.",
+      "appliesTo": "Same physical character, scene or prop across ordered events",
+      "proposal": "Keep stable identity distinct from first-use and current mutable states; project only applicable reference facts for each Clip."
+    },
+    {
+      "claimId": "linear_state_survives_absence",
+      "source": "User: 状态链，线性的; existing chapter-sequence/chapter-assets/clip-design methods",
+      "evidence": "Existing boundary guidance emphasizes adjacent Clip handoffs; an object can be absent from the immediately preceding Clip and still retain its last established state.",
+      "appliesTo": "Same physical identity within each declared story timeline",
+      "proposal": "Derive current state from the latest relevant established state plus intervening fact-backed changes; leaving frame, changing shots or Clips never resets it."
+    },
+    {
+      "claimId": "change_is_causal_not_monotonic_damage",
+      "source": "wardrobe-continuity-director/SKILL.md: state progress and cross-chapter continuation",
+      "evidence": "Existing method says stateIn must be copied verbatim, states only accumulate damage, and latest saved state supplies chapter baseline; those rules mis-handle repair, treatment, cleaning, flashback and story-time selection.",
+      "appliesTo": "Continuity methods across genres and timelines",
+      "proposal": "Carry unchanged facts while applying actual repair, injury, transfer, cleaning, aging or time transitions; select by story position, never upload recency."
+    },
+    {
+      "claimId": "compare_provider_facing_facts",
+      "source": "Existing clip-design-and-packet referenceUsage and renderer readback responsibilities",
+      "evidence": "A correct scene/shots body can still conflict with a shared reference invariant; an event ID or same asset ID does not resolve that conflict.",
+      "appliesTo": "Current dynamic artifact schema and renderer output",
+      "proposal": "Check selected image facts and referenceUsage against current entry, ordered actions and exit; repair author-owned projection or report upstream difference through authorized path."
+    }
+  ],
+  "mappings": [
+    {
+      "claimId": "identity_is_not_current_state",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "asset_roles_and_identity",
+        "character_visible_state"
+      ],
+      "reason": "Existing dimensions already own identity, causal state, temporal context and reference projection; clarify consumer methods without a second schema or version change."
+    },
+    {
+      "claimId": "linear_state_survives_absence",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "intra_clip_state_chain",
+        "continuity_and_exit_state",
+        "sequence_control_execution"
+      ],
+      "reason": "Existing dimensions already own identity, causal state, temporal context and reference projection; clarify consumer methods without a second schema or version change."
+    },
+    {
+      "claimId": "change_is_causal_not_monotonic_damage",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "temporal_context",
+        "character_visible_state",
+        "action_causality_physics"
+      ],
+      "reason": "Existing dimensions already own identity, causal state, temporal context and reference projection; clarify consumer methods without a second schema or version change."
+    },
+    {
+      "claimId": "compare_provider_facing_facts",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "asset_roles_and_identity",
+        "immutable_clip_fact_projection",
+        "embedded_review_evidence"
+      ],
+      "reason": "Existing dimensions already own identity, causal state, temporal context and reference projection; clarify consumer methods without a second schema or version change."
+    }
+  ],
+  "contractChanges": [],
+  "writerChanges": [
+    "chapter-sequence.md: causal state handoffs including re-entry",
+    "chapter-assets.md: stable identity, initial state and variants",
+    "clip-design-and-packet.md: explicit applicable referenceFacts and stateChain provenance",
+    "video-prompt-writer: concise operating guidance, optional boundary method",
+    "wardrobe-continuity-director: replace forced snapshots, monotonic damage and latest-upload selection",
+    "chapter-assets.md: generalized projectStateCatalog and character/scene/prop state source responsibilities"
+  ],
+  "reviewerChanges": [
+    "Map existing asset/state/temporal/continuity dimensions to actual provider-facing reference and shot evidence."
+  ],
+  "conflicts": [
+    "Do not impose per-shot tables, fixed state/asset counts, verbatim inheritance, new production gates or unconditional monotonic damage.",
+    "Do not treat planned exit snapshots as observations of generated media."
+  ],
+  "evalCases": [
+    "shared-scene-initial-state-vs-repaired-state",
+    "offscreen-object-reentry-after-repair",
+    "supported-treatment-and-cleaning",
+    "flashback-and-return-preserve-present-state"
+  ],
+  "validation": {
+    "baselinePath": "/tmp/tapcanvas-linear-state-governance-20261019/baseline",
+    "semantic": "Run baseline and candidate on the same suite; compare anonymized outputs with same-model independent judge using existing reviewerChecks. Offline evidence only.",
+    "deterministic": [
+      "audit-contract-consistency.mjs",
+      "audit-skills.mjs",
+      "JSON parsing and git diff --check"
+    ],
+    "candidatePath": "/tmp/tapcanvas-linear-state-governance-20261019/candidate",
+    "inputSuitePath": "/tmp/tapcanvas-linear-state-governance-20261019/author-input-suite.json",
+    "contextManifestPath": "/tmp/tapcanvas-linear-state-governance-20261019/evaluation-context-manifest.json",
+    "suiteCaseCount": 76,
+    "semanticStatus": "prepared_not_executed"
+  }
+}

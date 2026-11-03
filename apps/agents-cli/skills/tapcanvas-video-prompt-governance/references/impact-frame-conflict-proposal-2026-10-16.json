@@ -1,0 +1,198 @@
+{
+  "baseContract": "tapcanvas/video-prompt-authoring@4.1.1",
+  "claims": [
+    {
+      "claimId": "impact_graphic_not_time_stop",
+      "source": "impact-hit-feel.md; vfx-motion-emphasis.md; 2d-animation-grammar.md",
+      "evidence": "必叠层、冻帧灵魂、held impact frame 将图形与时间绑定",
+      "appliesTo": "cross-medium authoring methods; provider precision remains dynamic",
+      "proposal": "Separate instantaneous graphic treatment from hit-stop, slow motion and held poses; preserve user timing intent."
+    },
+    {
+      "claimId": "causal_emphasis_not_effect_quota",
+      "source": "impact-hit-feel.md; conflict-intensity-visual-parity.md",
+      "evidence": "固定帧数、10+重复、单调递增和物理三层被写成普适要求",
+      "appliesTo": "cross-medium authoring methods; provider precision remains dynamic",
+      "proposal": "Choose emphasis from contact, reaction and story consequence; retain directional effects without layer/count quotas."
+    },
+    {
+      "claimId": "medium_is_project_choice",
+      "source": "2d-animation-grammar.md; 2d-anime-grammar.md; cinematic-gear-keywords.md",
+      "evidence": "2D/三渲二/写实被绝对禁令隔开",
+      "appliesTo": "cross-medium authoring methods; provider precision remains dynamic",
+      "proposal": "Respect established or requested medium/hybrid style; camera and graphic vocabulary serve that intent."
+    },
+    {
+      "claimId": "execution_follows_real_contract",
+      "source": "vfx-motion-emphasis.md; impact-hit-feel.md; grid-storyboard-contact-sheet.md",
+      "evidence": "纯后期、AI做不了、逐帧执行保证缺少当前能力证据",
+      "appliesTo": "cross-medium authoring methods; provider precision remains dynamic",
+      "proposal": "Generation or editing is chosen from active tool/provider contracts and observed results, without precision guarantees or silent substitution."
+    },
+    {
+      "claimId": "domain_reference_not_gate",
+      "source": "tapcanvas-high-energy-action/SKILL.md",
+      "evidence": "旧七账本、过期3.7.0与不存在标题引用",
+      "appliesTo": "cross-medium authoring methods; provider precision remains dynamic",
+      "proposal": "Use actual 4.1.1 dimensions and discretionary domain methods; remove fixed ledger/reading/shot quotas."
+    },
+    {
+      "claimId": "time_treatment_follows_intent_and_dynamic_capability",
+      "source": "apps/agents-cli/knowledge/视听语言演出/time-speed-freeze-pacing.md; apps/agents-cli/knowledge/视听语言演出/time-slow-motion.md",
+      "evidence": "Direct time-method consumers claimed generation could not handle timing, post-production was the sole source, S4 must provide frame instructions, and unsupported bullet time should default to hit freeze. Current user clarifies the failure was unwanted slow motion or long held poses interrupting fast action.",
+      "appliesTo": "time-treatment domain guidance across media; actual controls remain provider/tool facts",
+      "proposal": "Keep speed ramps, slow motion and holds optional; continuous-fast intent does not auto-trigger them. Use the active artifact schema and dynamic capabilities; no blanket inability claims, mandatory post path or silent freeze substitution."
+    }
+  ],
+  "mappings": [
+    {
+      "claimId": "impact_graphic_not_time_stop",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "shot_information_task",
+        "intra_clip_state_chain",
+        "action_causality_physics"
+      ],
+      "targetFiles": [
+        "impact-hit-feel.md",
+        "vfx-motion-emphasis.md",
+        "2d-animation-grammar.md"
+      ],
+      "reason": "Current contract already preserves user intent, source facts, optional methods and dynamic provider boundaries; no new fields or core version needed."
+    },
+    {
+      "claimId": "causal_emphasis_not_effect_quota",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "action_causality_physics",
+        "sound_and_narrative_legibility",
+        "continuity_and_exit_state"
+      ],
+      "targetFiles": [
+        "impact-hit-feel.md",
+        "conflict-intensity-visual-parity.md"
+      ],
+      "reason": "Current contract already preserves user intent, source facts, optional methods and dynamic provider boundaries; no new fields or core version needed."
+    },
+    {
+      "claimId": "medium_is_project_choice",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "lighting_material_and_atmosphere",
+        "camera_composition_and_lens"
+      ],
+      "targetFiles": [
+        "2d-animation-grammar.md",
+        "2d-anime-grammar.md",
+        "cinematic-gear-keywords.md"
+      ],
+      "reason": "Current contract already preserves user intent, source facts, optional methods and dynamic provider boundaries; no new fields or core version needed."
+    },
+    {
+      "claimId": "execution_follows_real_contract",
+      "classification": "conflict_or_reject",
+      "dimensionIds": [
+        "delivery_scope_and_duration",
+        "asset_roles_and_identity"
+      ],
+      "targetFiles": [
+        "vfx-motion-emphasis.md",
+        "impact-hit-feel.md",
+        "grid-storyboard-contact-sheet.md"
+      ],
+      "reason": "Current contract already preserves user intent, source facts, optional methods and dynamic provider boundaries; no new fields or core version needed."
+    },
+    {
+      "claimId": "domain_reference_not_gate",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "action_causality_physics",
+        "embedded_review_evidence"
+      ],
+      "targetFiles": [
+        "tapcanvas-high-energy-action/SKILL.md"
+      ],
+      "reason": "Current contract already preserves user intent, source facts, optional methods and dynamic provider boundaries; no new fields or core version needed."
+    },
+    {
+      "claimId": "time_treatment_follows_intent_and_dynamic_capability",
+      "classification": "domain_extension",
+      "dimensionIds": [
+        "shot_information_task",
+        "intra_clip_state_chain",
+        "delivery_scope_and_duration",
+        "camera_composition_and_lens"
+      ],
+      "targetFiles": [
+        "apps/agents-cli/knowledge/视听语言演出/time-speed-freeze-pacing.md",
+        "apps/agents-cli/knowledge/视听语言演出/time-slow-motion.md"
+      ],
+      "reason": "Existing 4.1.1 dimensions already assign shot rhythm, state continuity, provider duration and framing; two direct consumers need correction, not new schema, version or author workflow."
+    }
+  ],
+  "contractChanges": [],
+  "writerChanges": [],
+  "reviewerChanges": [],
+  "conflicts": [
+    {
+      "claimId": "impact_graphic_not_time_stop",
+      "resolution": "Separate instantaneous graphic treatment from hit-stop, slow motion and held poses; preserve user timing intent."
+    },
+    {
+      "claimId": "causal_emphasis_not_effect_quota",
+      "resolution": "Choose emphasis from contact, reaction and story consequence; retain directional effects without layer/count quotas."
+    },
+    {
+      "claimId": "medium_is_project_choice",
+      "resolution": "Respect established or requested medium/hybrid style; camera and graphic vocabulary serve that intent."
+    },
+    {
+      "claimId": "execution_follows_real_contract",
+      "resolution": "Generation or editing is chosen from active tool/provider contracts and observed results, without precision guarantees or silent substitution."
+    },
+    {
+      "claimId": "domain_reference_not_gate",
+      "resolution": "Use actual 4.1.1 dimensions and discretionary domain methods; remove fixed ledger/reading/shot quotas."
+    },
+    {
+      "claimId": "time_treatment_follows_intent_and_dynamic_capability",
+      "resolution": "Remove unconditional generation limitations, retired S4 timing ownership and forced freeze substitution. Preserve user-selected slow motion and exact editing only when the active tool contract supports it."
+    }
+  ],
+  "evalCases": [
+    {
+      "id": "continuous-fast-impact",
+      "input": "3D国风连续追击，禁止慢放、冻帧和停顿；允许命中瞬间负片冲击图形。",
+      "check": "Keep action trajectory, contact and reaction continuous; use graphic contrast optionally without inserting time stop, mandatory shake or layer quotas."
+    },
+    {
+      "id": "requested-hit-stop",
+      "input": "二维角色拳击：用户明确要命中时hit-stop，随后身体回弹接下一拳。",
+      "check": "Honor the requested hit-stop without banning it; retain contact, rebound and following action; do not invent fixed frame counts."
+    },
+    {
+      "id": "hybrid-medium",
+      "input": "写实人物与3D场景，用户要求瞬时水墨冲击图形与快速推镜，动作仍连续。",
+      "check": "Assign graphic accent and camera treatment coherently; do not reject hybrid style or claim guaranteed frame precision."
+    }
+  ],
+  "validation": {
+    "deterministic": [
+      "authoring contract dimension IDs and references",
+      "audit-contract-consistency.mjs",
+      "audit-skills.mjs",
+      "diff whitespace"
+    ],
+    "semantic": "Root coordinates current/candidate blind authoring comparison; offline diagnostic only, no runtime gate."
+  },
+  "boundary": "No historical workspace/snapshot edits, user asset mutations, media submissions, core schema or contract version changes.",
+  "directConsumers": [
+    "apps/agents-cli/skills/seedance-20/skills/seedance-style/SKILL.md",
+    "apps/agents-cli/skills/seedance-20/references/capability-map.md",
+    "apps/agents-cli/skills/seedance-20/references/directing-engine-genre-library.md",
+    "apps/agents-cli/knowledge/AI视频提示词/cinematic-gear-keywords.md",
+    "apps/agents-cli/knowledge/AI视频提示词/grid-storyboard-contact-sheet.md",
+    "apps/agents-cli/knowledge/视听语言演出/time-speed-freeze-pacing.md",
+    "apps/agents-cli/knowledge/视听语言演出/time-slow-motion.md"
+  ]
+}

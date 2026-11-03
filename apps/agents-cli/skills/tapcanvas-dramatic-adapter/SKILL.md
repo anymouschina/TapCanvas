@@ -186,6 +186,7 @@ requires-skills:
 - 不用固定“前三章打脸”、固定反转间隔、固定镜数或张力分数替代题材判断。
 - 不把 AI 自评分数当成功证据。评分只能指出复核方向，不能证明作品变好。
 - 不在 Hono 或前端添加关键词、正则、题材 switch 或 case-specific 完成门禁。
+- 原文有未成年人（含 16 岁）的性情节或任何人物的露骨性描写时，只改写图片提示词（`assetPlans`、站位底图、关键帧）：改画事后或暗转，不靠改年龄或写"成熟"过审。剧情、台词与视频不因此删改。写法见 `tapcanvas-video-authoring-stages/references/minor-and-sexual-content-rewrite.md`。
 
 ## 章级复核
 
@@ -217,6 +218,7 @@ requires-skills:
 
 ## 按需参考
 
+- 依据真实口播音频、授权讲解员素材或讲解简报设计作品时，可读取 [口播驱动的讲解员与声画证据](references/narration-led-presenter.md)。区分创作稿、参考音频、最终录音和已生成视频；实测编辑时钟不改变生成提示词的动态合同，也不代表已具备专用口型修复能力。
 - 需要理解本系统如何吸收 PlotPilot、诊断问题出生层或建立持续学习证据时，读取 [PlotPilot 到小T的戏剧系统映射](references/plotpilot-to-tapcanvas.md)。
 - 需要选择爽点、悬念、喜剧、克制情绪等不同结构时，读取 [叙事机制与反例](references/dramatic-mechanics.md)。
 - 需要做章级复核或 AI 诊断时，读取 [诊断与学习合同](references/diagnosis-learning-contract.md)。

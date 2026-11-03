@@ -14,7 +14,7 @@
 
 ## tapcanvas.chapter-beat-plan/v3
 
-仅适用于独立 source-ledger 输入路径，不把本节“不提交对白字段”用于 chapter-sequence/v4。full_video 从 canonical 原文建立来源账本；first_video 可以显式接 expanded-source 作为非权威参考，不替代冻结来源。
+仅适用于独立 source-ledger 输入路径，不把本节“不提交对白字段”用于 chapter-sequence/v5。full_video 从 canonical 原文建立来源账本；first_video 可以显式接 expanded-source 作为非权威参考，不替代冻结来源。
 
 先理解完整来源与用户目标，建立故事时间线再投影技术窗口。sourceUnitRefs:[{unitId}] 是来源归属，不是一单位一事件或一 Clip。长 narration 可沿自然分句跨窗，以 text 内 UTF-16 的 endOffset 结束；startOffset 由宿主从前次结束派生，作者不提交。每个单位按原序完整追溯一次，不丢字、重复或切代理对。无新来源的反应、停顿或过渡可以 sourceUnitRefs=[]，安排依据完整故事。
 

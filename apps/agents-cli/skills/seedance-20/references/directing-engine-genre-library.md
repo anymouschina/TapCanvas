@@ -38,9 +38,9 @@ Each example runs the same procedure: read, intention, voice, coherent setup, pe
 - **Idea:** "an original anime hero gathers resolve before a fight."
 - **Read.** Function: the surge of resolve. Turn: doubt to resolve. POV: the hero's. Power: rising. Subtext: he will not lose.
 - **Intention:** make the audience feel the charge of resolve. **Voice:** expressive stylist in 2D grammar.
-- **Setup:** no photographic lens language; a held tense frame then a burst of radiating motion lines and one impact frame on the power-up; flat but dramatic cel light with a hard rim; saturated key color; one held beat, then a hard snap. Load `[ref:2d-anime-grammar]`.
-- **Performance:** the body holds coiled, then a single explosive stance change on the burst frame.
-- **Prompt:** `Original 2D cel-animated hero, hand-drawn line, saturated key color, hard rim light; hold a tense coiled frame, then burst into a single explosive stance change with radiating motion lines and one impact frame as energy flares; flat dramatic cel lighting, no photographic lens language; held beat then a hard snap; keep the character design and silhouette consistent.`
+- **Setup:** in this resolve-before-a-fight example, a coiled hold may precede a stance change. Cel light, radiating lines and a brief high-contrast graphic are optional choices. A continuous-action request keeps moving through the graphic; camera vocabulary follows the intended medium or hybrid. Consult `[ref:2d-anime-grammar]` if useful.
+- **Performance:** carry weight from the coiled posture into the planted step and rising torso; choose a hold only when this scene calls for one.
+- **Prompt:** `Original 2D cel-animated hero, hand-drawn line and hard-edged cel shadow; he drives out of a coiled posture into a planted forward step as energy expands from his shoulders. A brief high-contrast radial graphic accents the release, then returns to the same silhouette and continuing motion; saturated project palette and character design remain consistent.` This example does not prescribe a graphic count, a time stop or exact generated frames.
 
 ### Action / pursuit
 

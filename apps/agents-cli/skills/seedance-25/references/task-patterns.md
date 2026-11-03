@@ -405,6 +405,8 @@ Use natural language by default. When explicit category separation helps, use th
 | Dialogue | `{}` | `{Welcome back.}` |
 | Subtitle | `【】` | `【Chapter One: Departure】` |
 
+> TapCanvas 一键成片流水线：作者只写结构化镜头（action/camera/sound）与台词编号，供应商提示词由宿主按用户验证过的格式渲染（场景标题单独一行写 `第N场：…`、台词写 `某某低声说：“台词”`；2026-11-02 起不用 `【】`（官方表示字幕）和 `（）`（官方表示配乐））。作者不要自己在镜头文字里写 `{}`、`【】`、`（）`、`<>` 等符号。
+
 For non-English dialogue, state language, regional variety or accent, delivery, speaker, and then the line:
 
 ```text

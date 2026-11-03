@@ -1,6 +1,6 @@
 ---
 name: seamless-transition-director
-description: 无缝转场/变装爆款导演方法论（短视频达人套路层·蒸馏抖音/快手/小红书爆款转场与变装套路）：治 AI 套路片两大死法——①转场硬切跳帧（两个镜头生怼，没有衔接设计，毫无丝滑感）②变装变脸（换完装连人都换了，身份漂移）。解法=四类无缝转场（遮挡擦除/运动匹配/同构图匹配 match cut/光效过渡）+ 首尾帧钉转场（上镜尾帧=下镜首帧的同构图同动作位，靠首尾帧把两镜缝死）+ 变装身份锁（脸/发型基底/体型是硬 DNA，只换服装造型不换人）+ 爆款节奏（钩子前置 3s/卡点变装/反差爆点）。**模型/时长决策一律下沉主编排**（按镜实际转场·运镜·一致性需求选，不预设某个模型）。配合 tapcanvas-video-workflow S1/S4/S6/S8 使用；只产套路方法论，不改编排/护栏。与 cinematic-feel-director（氛围光影）平行。
+description: 无缝转场/变装爆款导演方法论（短视频达人套路层·钻研抖音/快手/小红书爆款转场与变装套路）：治 AI 套路片两大死法——①转场硬切跳帧（两个镜头生怼，没有衔接设计，毫无丝滑感）②变装变脸（换完装连人都换了，身份漂移）。解法=四类无缝转场（遮挡擦除/运动匹配/同构图匹配 match cut/光效过渡）+ 首尾帧钉转场（上镜尾帧=下镜首帧的同构图同动作位，靠首尾帧把两镜缝死）+ 变装身份锁（脸/发型基底/体型是硬 DNA，只换服装造型不换人）+ 爆款节奏（钩子前置 3s/卡点变装/反差爆点）。**模型/时长决策一律下沉主编排**（按镜实际转场·运镜·一致性需求选，不预设某个模型）。配合 tapcanvas-video-workflow S1/S4/S6/S8 使用；只产套路方法论，不改编排/护栏。与 cinematic-feel-director（氛围光影）平行。
 disable-model-invocation: false
 knowledge-role: editor
 knowledge-domains:
@@ -19,7 +19,7 @@ knowledge-domains:
   - 配音口播
   - 视觉特效VFX
 metadata:
-  performance-preload:
+  performance-discovery:
     flashback:
       - SKILL.md
 ---
