@@ -14,9 +14,11 @@ import (
 //   /minimaxi/v1/*path   → kapon-speech channel   (MiniMax native speech:
 //                          t2a_v2 / t2a_async_v2 / query / files; falls back
 //                          to the minimax-official channel)
-//   /proxy/remove-bg/*path → remove-bg channel    (remove.bg pixel-level cutout:
-//                          X-Api-Key auth + multipart, binary PNG response;
-//                          falls back to REMOVE_BG_API_KEY env)
+//   /proxy/remove-bg/*path → leonardo-remove-bg channel (pixel-level cutout:
+//                          remove.bg style request in, binary PNG out; the
+//                          remove.bg API moved to Leonardo.Ai, so it is
+//                          translated to Leonardo's sync remove-bg endpoint;
+//                          falls back to LEONARDO_API_KEY env)
 func SetSpecialProxyRouter(router *gin.Engine) {
 	musicGroup := router.Group("/v1")
 	musicGroup.Use(middleware.RouteTag("relay"), middleware.TokenAuth())
