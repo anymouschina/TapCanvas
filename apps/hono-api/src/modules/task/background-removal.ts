@@ -1,7 +1,8 @@
 // 像素级抠图引擎。
 //
 // 与 LLM/Gemini 的「生成式重绘抠图」不同，这里走真正的像素级分割：
-//   remove.bg —— 经 new-api `/proxy/remove-bg/v1.0/removebg` 代理转发到三方 remove.bg。
+//   remove.bg —— 经 new-api `/proxy/remove-bg/v1.0/removebg` 代理。remove.bg API 自 2026-12-01 起迁到
+//   Leonardo.Ai，new-api 会把请求转成 Leonardo 的 remove-bg 同步接口，这里的请求/响应格式不变。
 //
 // 产出带 alpha 通道的透明 PNG（Uint8Array）。remove.bg 不可用（未配渠道/未配 key/出网失败）
 // 时直接报错——本地 ONNX 兜底已下线（产品决策：抠图只走 remove.bg）。
