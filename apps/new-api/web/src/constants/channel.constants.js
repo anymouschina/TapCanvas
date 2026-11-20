@@ -19,9 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const LLUBAN_CHANNEL_TYPE = 75;
 export const LLUBAN_PROVIDER_URL = 'https://tt-api.lluban.com/';
+export const BACH_CHANNEL_TYPE = 78;
+export const BACH_BASE_URL = 'https://api-gen-na.bach.art/api/vdr';
+export const BACH_PROVIDER_URL = 'https://link.bach.art/4iThiO3';
 
 export const CHANNEL_OPTIONS = [
   { value: LLUBAN_CHANNEL_TYPE, color: 'blue', label: '鲁班 API（推荐）' },
+  { value: BACH_CHANNEL_TYPE, color: 'purple', label: 'Bach Video（推荐）' },
   { value: 1, color: 'green', label: 'OpenAI' },
   {
     value: 2,

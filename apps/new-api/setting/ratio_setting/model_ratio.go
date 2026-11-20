@@ -341,6 +341,10 @@ var defaultModelPrice = map[string]float64{
 	"veo-3.1-fast-generate-preview":  0.15,
 	// MiniMax H3 default UI/request spec: 2K, 5 seconds at CNY 0.40/s.
 	"MiniMax-H3": 2.0,
+	// Bach 1.0 Pro / Ads default request spec: 1080p, 5 seconds at official CNY list price
+	// ($0.12/s × 7.3 × 5s = ¥4.38); requests re-price per spec and channel price_ratio.
+	"Bach-1.0-Pro":     4.38,
+	"Bach-1.0-Pro-Ads": 4.38,
 	// 阿里云百炼 Qwen-Image 系列（按张计费，单位为人民币元/张：国内北京区成本价 × 2.5 实现 60% 毛利）
 	// 注意：本 fork 的图像 ModelPrice 走 CNY 约定（与 fixedImageBasePriceCNY 同），
 	// hono /api/pricing 快照按 CNY × creditsPerCny(当前为 100) 折算终端积分，切勿写成美元。

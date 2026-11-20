@@ -6,6 +6,7 @@
 - `2026-09-02/003-add-heyroute-image-channel.sql`
 - `2026-09-11/004-expand-heyroute-channels.sql`
 - `2026-10-11/005-bootstrap-droid-factory-channel.sql`
+- `2026-11-20/006-bootstrap-bach-video-channel.sql`
 
 鲁班初始化 patch 面向空的 new-api PostgreSQL 数据库，一次建立以下完整运行事实：
 
@@ -60,6 +61,12 @@ OpenAI 图片响应层同步支持 HeyRoute 返回的 SSE 完成事件，将真�
 [`2026-10-11/005-bootstrap-droid-factory-channel.sql`](2026-10-11/005-bootstrap-droid-factory-channel.sql) 在没有 Droid 渠道时创建 `droid-factory`（类型 `77`），基址为 `https://api.factory.ai`。初始 Key 与模型列表为空、渠道手动停用，多 Key 号池开启并使用轮询，账号数为零。部署后可在账号会话管理中添加自己的 Factory Key，再配置模型协议与价格并启用渠道。
 
 已有任意 Droid 渠道时不创建额外号池，重复执行保留所有已有渠道与账号配置；同名被其他渠道类型占用时显式失败。补丁不创建模型、价格或 abilities，不导入 Pro 凭据。它仅适用于现有 PostgreSQL 部署数据初始化，不改变数据库结构。账号管理与协议说明见 [Droid 文档](../docs/channel/droid.md)。
+
+## Bach 1.0 Pro 预置视频渠道
+
+[`2026-11-20/006-bootstrap-bach-video-channel.sql`](2026-11-20/006-bootstrap-bach-video-channel.sql) 同步自 TapCanvas-pro 的 Bach 1.0 Pro 视频适配器，初始化 `Bach` 供应商、`Bach-1.0-Pro` 与 `Bach-1.0-Pro-Ads` 模型目录，以及 `bach-video` 渠道（类型 `78`，协议 `task.bach-video`，基地址 `https://api-gen-na.bach.art/api/vdr`）。
+
+渠道首次创建时 `key = ''`、`status = 2`，abilities 同步禁用。新用户在渠道列表或编辑窗口点击「申请 API Key」/「申请密钥」，默认打开 [Bach 官网推广链接](https://link.bach.art/4iThiO3)，获取 `AccessKey|SecretKey` 后填写并启用渠道。重复执行保留已有 Key、启停状态与自定义价格。
 
 ## 启动时同步上游目录
 

@@ -173,6 +173,10 @@ Seven built-in HeyRoute channels provide 31 models: 15 chat models (Claude, GPT,
 
 Factory / Droid management is built in, with key import and deduplication, per-account controls and tests, usage refresh, subscription details and key expiry. The deployment patch creates a disabled, empty pool. Add your own Factory keys in the gateway console, select models from the dynamic catalog, and configure explicit Droid protocol bindings and pricing before enabling the channel. Reapplying the patch preserves existing accounts and configuration. See [Droid setup](apps/new-api/docs/channel/droid.md).
 
+## Bach 1.0 Pro video channel
+
+TapCanvas includes the native Bach video task protocol (`task.bach-video`) for **Bach 1.0 Pro** (`Bach-1.0-Pro`) and **Bach 1.0 Pro Ads** (`Bach-1.0-Pro-Ads`), supporting text-to-video, first/last frame, multimodal references (image/video/audio), and video editing (5–16s, 1080P/4K). New users can open the [Bach official site via our referral link](https://link.bach.art/4iThiO3) (also wired as the default **Apply for API Key** link in the new-api channel list and editor), enter `AccessKey|SecretKey`, and enable the `bach-video` channel. See [`006-bootstrap-bach-video-channel.sql`](apps/new-api/patches/2026-11-20/006-bootstrap-bach-video-channel.sql).
+
 ## Quick Start
 
 ### One-click deploy (recommended)

@@ -3347,6 +3347,18 @@ async function runImageRemoveBgTask(
 	});
 }
 
+function isBachVideoModel(model: string): boolean {
+	return /^bach[-_.]?1\.0[-_.]?pro(?:[-_.]|$)/i.test(model);
+}
+
+function isReferenceVideoDurationBilledModel(model: string): boolean {
+	return /seedance[-_.]?2(?:[-_.]|$)/i.test(model) || isBachVideoModel(model);
+}
+
+function usesManifestReferenceContentModel(model: string): boolean {
+	return /seedance/i.test(model) || isBachVideoModel(model);
+}
+
 async function runTaskViaNewApi(
 	c: AppContext,
 	userId: string,
@@ -3417,7 +3429,7 @@ async function runTaskViaNewApi(
 			? requestExtras.upstreamVideoUrl.trim()
 			: "";
 	const isSeedance2VideoReference =
-		billingUpstreamVideoUrl.length > 0 && /seedance[-_.]?2(?:[-_.]|$)/i.test(model);
+		billingUpstreamVideoUrl.length > 0 && isReferenceVideoDurationBilledModel(model);
 	const outputDurationSeconds =
 		typeof requestExtras.durationSeconds === "number" && Number.isFinite(requestExtras.durationSeconds)
 			? requestExtras.durationSeconds
@@ -3944,7 +3956,7 @@ async function runTaskViaNewApi(
 						edit_selections: Array.isArray(extras.editSelections) ? extras.editSelections : [],
 					}
 				: {}),
-			...(/seedance/i.test(model) && typeof extras.generateAudio === "boolean"
+			...(usesManifestReferenceContentModel(model) && typeof extras.generateAudio === "boolean"
 				? { generate_audio: extras.generateAudio }
 				: {}),
 			...(typeof req.negativePrompt === "string" && req.negativePrompt.trim()
@@ -4150,7 +4162,7 @@ async function runTaskViaNewApi(
 					...(klingReferType ? { refer_type: klingReferType } : {}),
 					...(klingKeepSound ? { keep_original_sound: klingKeepSound } : {}),
 				},
-				...(/seedance/i.test(model)
+				...(usesManifestReferenceContentModel(model)
 					? seedanceReferenceContentItems
 					: [
 							...refs.map((u) => ({ type: "image_url", image_url: { url: u } })),
@@ -4189,7 +4201,7 @@ async function runTaskViaNewApi(
 				body: JSON.stringify(body),
 			};
 			requestPayload = body;
-		} else if ((refs.length > 0 || referenceAudios.length > 0) && /seedance/i.test(model)) {
+		} else if ((refs.length > 0 || referenceAudios.length > 0) && usesManifestReferenceContentModel(model)) {
 			// Seedance 的单图、多图与参考音频统一走 content[]。条目顺序和 role 完全来自已校验的
 			// referenceMediaManifest，首帧/尾帧保持 first_frame/last_frame，不降格成普通 reference_image。
 			const contentItems: unknown[] = seedanceReferenceContentItems;

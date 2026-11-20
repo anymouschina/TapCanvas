@@ -38,6 +38,9 @@ import {
   DROID_FACTORY_BASE_URL,
   LLUBAN_CHANNEL_TYPE,
   LLUBAN_PROVIDER_URL,
+  BACH_CHANNEL_TYPE,
+  BACH_BASE_URL,
+  BACH_PROVIDER_URL,
 } from '../../../../constants';
 import {
   SideSheet,
@@ -83,6 +86,7 @@ import StatusCodeRiskGuardModal from './StatusCodeRiskGuardModal';
 import ChannelKeyDisplay from '../../../common/ui/ChannelKeyDisplay';
 import ChannelProtocolEditor from '../components/ChannelProtocolEditor';
 import HeyRouteApiKeyLink from '../components/HeyRouteApiKeyLink';
+import { isBachChannel } from '../components/BachApiKeyLink';
 import VertexEgressSettings from '../components/VertexEgressSettings';
 import { useSecureVerification } from '../../../../hooks/common/useSecureVerification';
 import { parseChannelConnectionString } from '../../../../helpers/token';
@@ -226,6 +230,8 @@ function type2secretPrompt(type) {
       return '请输入 aistudio-to-api Runtime 的 OpenAI 兼容 API Key；Google storageState 请在渠道保存后通过账号池导入';
     case DROID_CHANNEL_TYPE:
       return '请输入 Factory API Key，每行一条；API Key 不需要 OAuth 刷新';
+    case BACH_CHANNEL_TYPE:
+      return '按照如下格式输入：AccessKey|SecretKey';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -764,6 +770,20 @@ const EditChannelModal = (props) => {
           ...prev,
           default_protocol: 'openai',
           default_protocol_options: {},
+        }));
+      }
+      if (!isEdit && value === BACH_CHANNEL_TYPE) {
+        const defaults = {
+          base_url: BACH_BASE_URL,
+          default_protocol: 'task.bach-video',
+          default_protocol_options: {},
+        };
+        Object.entries(defaults).forEach(([field, fieldValue]) =>
+          formApiRef.current?.setValue(field, fieldValue),
+        );
+        setInputs((prev) => ({
+          ...prev,
+          ...defaults,
         }));
       }
     }
@@ -4093,6 +4113,27 @@ const EditChannelModal = (props) => {
                                       onClick={() =>
                                         window.open(
                                           LLUBAN_PROVIDER_URL,
+                                          '_blank',
+                                          'noopener,noreferrer',
+                                        )
+                                      }
+                                    >
+                                      {t('申请密钥')}
+                                    </Button>
+                                  )}
+                                  {isBachChannel(
+                                    inputs.type,
+                                    inputs.base_url,
+                                  ) && (
+                                    <Button
+                                      className='bach-channel-apply-key-button'
+                                      size='small'
+                                      type='primary'
+                                      theme='outline'
+                                      icon={<IconGlobe />}
+                                      onClick={() =>
+                                        window.open(
+                                          BACH_PROVIDER_URL,
                                           '_blank',
                                           'noopener,noreferrer',
                                         )

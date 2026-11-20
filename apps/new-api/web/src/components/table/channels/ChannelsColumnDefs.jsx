@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import HeyRouteApiKeyLink from './components/HeyRouteApiKeyLink';
+import BachApiKeyLink from './components/BachApiKeyLink';
 import {
   Button,
   Dropdown,
@@ -863,6 +864,11 @@ export const getChannelsColumns = ({
 
               <HeyRouteApiKeyLink
                 className='heyroute-channel-list-key-link'
+                baseUrl={record.base_url}
+              />
+              <BachApiKeyLink
+                className='bach-channel-list-key-link'
+                channelType={record.type}
                 baseUrl={record.base_url}
               />
 

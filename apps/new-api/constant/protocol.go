@@ -73,6 +73,7 @@ const (
 	ProtocolTaskMagic666  = "task.magic666"
 	ProtocolTaskMediaKit  = "task.volc-mediakit"
 	ProtocolTaskAgnes     = "task.agnes"
+	ProtocolTaskBach      = "task.bach-video"
 	ProtocolNativeMJ      = "native.midjourney"
 )
 
@@ -337,6 +338,7 @@ var protocolDefinitions = []ProtocolDefinition{
 	taskProtocol(ProtocolTaskMagic666, "Magic666 Task", "Magic666", "Magic666 asynchronous media protocol.", TaskPlatformMagic666, ChannelTypeMagic666),
 	taskProtocol(ProtocolTaskMediaKit, "Volcengine MediaKit Task", "ByteDance", "Volcengine MediaKit enhancement protocol.", TaskPlatformMediaKit, ChannelTypeVolcMediaKit),
 	taskProtocol(ProtocolTaskAgnes, "Agnes OpenAI Video Task", "OpenAI", "Agnes asynchronous video generation exposed through the standard OpenAI Videos contract.", TaskPlatformAgnes, ChannelTypeAgnes),
+	taskProtocol(ProtocolTaskBach, "Bach Video", "Bach", "Bach 1.0 Pro native video tasks (/video/v2) with HS256 JWT auth and reference plus output duration billing.", TaskPlatform(ProtocolTaskBach), ChannelTypeBach, ChannelTypeOpenAI),
 	nativeProtocol(ProtocolNativeMJ, "Midjourney Native", "Midjourney", "Midjourney proxy routes handled by the native relay.", ChannelTypeMidjourney, ChannelTypeMidjourneyPlus),
 }
 

@@ -195,6 +195,10 @@ https://github.com/user-attachments/assets/152df957-dcf1-4984-bc8e-ebf7b5392987
 
 社区版内置 Factory / Droid 渠道和账号会话管理，支持 Key 追加与去重、账号启停、单号测试、额度刷新、订阅与有效期展示。部署补丁自动创建空号池，默认停用；在鲁班 API 管理台添加自己的 Factory Key，从动态模型目录选择模型、配置明确的 Droid 协议绑定与价格后启用。补丁重复执行保留已有账号和配置，不预置未经确认的模型授权或价格。配置步骤和协议说明见 [Droid 接入说明](apps/new-api/docs/channel/droid.md)。
 
+## Bach 1.0 Pro 视频渠道
+
+社区版内置 Bach 1.0 Pro（`Bach-1.0-Pro`）与 Bach 1.0 Pro Ads（`Bach-1.0-Pro-Ads`）原生视频协议（`task.bach-video`），支持文生视频、首尾帧、多模态参考（图片/视频/音频）与视频编辑（5–16 秒，1080P/4K）。新用户可通过 [Bach 官网推广链接](https://link.bach.art/4iThiO3) 注册并申请密钥，在鲁班 API（new-api）管理台的渠道列表或编辑窗口点击 **申请 API Key** / **申请密钥** 也会默认跳转到该推广链接；填入 `AccessKey|SecretKey` 并启用 `bach-video` 渠道即可使用。初始化配置见 [`006-bootstrap-bach-video-channel.sql`](apps/new-api/patches/2026-11-20/006-bootstrap-bach-video-channel.sql)。
+
 ## 当前架构
 
 <p align="center">

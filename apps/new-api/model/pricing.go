@@ -203,6 +203,17 @@ var linearVideoPricingRules = map[string][]linearVideoPricingRule{
 		{resolution: "2160p", cnyPerSecond: 0.0600},
 		{resolution: "4k", cnyPerSecond: 0.0600},
 	},
+	// Bach 1.0 Pro / Bach 1.0 Pro Ads: official USD list prices × 7.3 (USD → CNY).
+	// https://www.bach.art/api/docs/pricing ($0.12/s for 1080p, $0.24/s for 4K;
+	// reference video + generated video billed by output resolution).
+	"Bach-1.0-Pro": {
+		{resolution: "1080p", cnyPerSecond: 0.8760},
+		{resolution: "4k", cnyPerSecond: 1.7520},
+	},
+	"Bach-1.0-Pro-Ads": {
+		{resolution: "1080p", cnyPerSecond: 0.8760},
+		{resolution: "4k", cnyPerSecond: 1.7520},
+	},
 	// --- Evolink (api.evolink.ai) video models -------------------------------
 	// Pricing aligned to APIMart's equivalents (user directive 2026-06-22):
 	//   kling-o3-*  → APIMart kling-v3 rates
