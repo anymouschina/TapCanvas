@@ -53,6 +53,26 @@ TapCanvas 把创意、脚本、角色与场景资产、分镜、图像、视频�
 
 👉 [通过专属链接注册即刻AI](https://magic666.top/register?aff=rgj2)
 
+<p align="center">
+  <a href="https://link.bach.art/4iThiO3" target="_blank" rel="noopener noreferrer">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="./assets/sponsors/logo-white-video-rebirth.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="./assets/sponsors/logo-black-video-rebirth.svg" />
+      <img src="./assets/sponsors/logo-black-video-rebirth.svg" width="320" alt="Video Rebirth · BACH 1.0 Pro AI 视频生成平台" />
+    </picture>
+  </a>
+</p>
+
+**TapCanvas × Video Rebirth (BACH)｜面向影视预演、内容创作与品牌广告的 AI 视频生成平台**
+
+感谢 [Video Rebirth (BACH)](https://link.bach.art/4iThiO3) 对 TapCanvas 的赞助支持！
+
+- 🎬 **面向专业创作的 Bach 1.0 Pro**：提供通用创作模型 `Bach-1.0-Pro` 与广告电商模型 `Bach-1.0-Pro-Ads`，专注画面构图与时长控制，契合影视预演、故事内容生产与品牌视觉制作。
+- 🧩 **三大核心生成模式**：支持文生视频（`t2v`）、首尾帧自然过渡（`i2v`），以及融合图像、视频与音频的多模态参考（`r2v`），可保持主体一致性、运镜节奏与声音协同，并支持基于参考视频进行编辑（`task_mode=edit`）。
+- 🔌 **标准化 API 接入**：提供完整的 REST API 文档与 Bearer Token 鉴权体系，详见 [Bach 1.0 Pro API 文档](https://www.bach.art/api/docs/bach_1_0_pro)。
+
+👉 [通过专属邀请链接体验 Video Rebirth (BACH)](https://link.bach.art/4iThiO3)
+
 > 赞助方不参与项目的代码与路线图决策；上述链接为推广链接，注册与消费行为以对应平台条款为准。
 
 ## 演示视频：长篇小说，一键成片
@@ -330,6 +350,7 @@ TapCanvas 根项目及未另行声明的代码按 [MIT License](./LICENSE) 发�
 
 - **[Infistar.cc 无限星河](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)**：赞助 TapCanvas，并提供一站式全球大模型 API 服务，详见[赞助与支持](#赞助与支持)。
 - **[即刻AI](https://magic666.top/register?aff=rgj2)**：赞助 TapCanvas，主打官渠视频模型，详见[赞助与支持](#赞助与支持)。
+- **[Video Rebirth (BACH)](https://link.bach.art/4iThiO3)**：赞助 TapCanvas，提供面向内容创作、影视预演与品牌广告的 AI 视频生成平台（Bach 1.0 Pro），详见[赞助与支持](#赞助与支持)。
 - **[AtomGit](https://atomgit.com/gcw_PzejWSbY/TapCanvas) / GitCode**：提供代码托管、开源社区推广与 Badge 数据服务，上述链接即本项目在 AtomGit 的项目入口。
 
 上游开源项目：
