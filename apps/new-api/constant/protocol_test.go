@@ -69,22 +69,6 @@ func TestAgnesProtocolsRegistration(t *testing.T) {
 	}
 }
 
-func TestBachChannelAndProtocolRegistration(t *testing.T) {
-	if got := ChannelBaseURLs[ChannelTypeBach]; got != "https://api-gen-na.bach.art/api/vdr" {
-		t.Fatalf("unexpected Bach base URL %q", got)
-	}
-	if got := GetChannelTypeName(ChannelTypeBach); got != "Bach" {
-		t.Fatalf("unexpected Bach channel type name %q", got)
-	}
-	definition, ok := GetProtocolDefinition(ProtocolTaskBach)
-	if !ok || definition.TaskPlatform != TaskPlatform(ProtocolTaskBach) || definition.Transport != ProtocolTransportTask {
-		t.Fatalf("unexpected Bach video protocol: %+v, %v", definition, ok)
-	}
-	if !slices.Contains(definition.RecommendedChannelTypes, ChannelTypeBach) {
-		t.Fatal("Bach video protocol must recommend ChannelTypeBach")
-	}
-}
-
 func TestProtocolRegistryReturnsDefensiveCopies(t *testing.T) {
 	first, ok := GetProtocolDefinition(ProtocolOpenAI)
 	if !ok {

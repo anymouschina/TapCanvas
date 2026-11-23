@@ -44,7 +44,6 @@ import (
 	taskagnes "github.com/QuantumNous/new-api/relay/channel/task/agnes"
 	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
 	taskapimart "github.com/QuantumNous/new-api/relay/channel/task/apimart"
-	taskbach "github.com/QuantumNous/new-api/relay/channel/task/bach"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	taskevolink "github.com/QuantumNous/new-api/relay/channel/task/evolink"
 	taskfunai "github.com/QuantumNous/new-api/relay/channel/task/funai"
@@ -228,8 +227,6 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 		return &taskvolcmediakit.TaskAdaptor{}
 	case constant.TaskPlatformAgnes:
 		return &taskagnes.TaskAdaptor{}
-	case constant.TaskPlatform(constant.ProtocolTaskBach):
-		return &taskbach.TaskAdaptor{}
 	}
 	return nil
 }

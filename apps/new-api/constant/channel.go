@@ -80,7 +80,6 @@ const (
 	ChannelTypeLluban         = 75 // Recommended lluban new-api upstream (OpenAI-compatible)
 	ChannelTypeAgnes          = 76 // Agnes AI image generation and asynchronous video tasks
 	ChannelTypeDroid          = 77 // Factory API key with explicit per-binding wire protocols
-	ChannelTypeBach           = 78 // Bach 1.0 Pro / Ads native video tasks (/video/v2)
 
 )
 
@@ -163,7 +162,6 @@ var ChannelBaseURLs = []string{
 	"https://tt-api.lluban.com",                     //75 lluban new-api upstream
 	"https://api.agnes-ai.cn",                       //76 Agnes AI
 	"https://api.factory.ai",                        //77 Droid / Factory
-	"https://api-gen-na.bach.art/api/vdr",           //78 Bach Video
 }
 
 var ChannelTypeNames = map[int]string{
@@ -240,7 +238,6 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeLluban:         "Lluban API",
 	ChannelTypeAgnes:          "Agnes AI",
 	ChannelTypeDroid:          "Droid",
-	ChannelTypeBach:           "Bach",
 }
 
 func GetChannelTypeName(channelType int) string {

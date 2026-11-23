@@ -35,7 +35,6 @@ var defaultVendorRules = map[string]string{
 	"kling":    "快手",
 	"jimeng":   "即梦",
 	"vidu":     "Vidu",
-	"bach":     "Bach",
 }
 
 // 供应商默认图标映射

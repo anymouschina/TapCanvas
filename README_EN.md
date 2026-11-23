@@ -42,26 +42,6 @@ Thanks to [即刻AI](https://magic666.top/register?aff=rgj2) for sponsoring TapC
 
 👉 [Register 即刻AI via the referral link](https://magic666.top/register?aff=rgj2)
 
-<p align="center">
-  <a href="https://link.bach.art/4iThiO3" target="_blank" rel="noopener noreferrer">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="./assets/sponsors/logo-white-video-rebirth.svg" />
-      <source media="(prefers-color-scheme: light)" srcset="./assets/sponsors/logo-black-video-rebirth.svg" />
-      <img src="./assets/sponsors/logo-black-video-rebirth.svg" width="320" alt="Video Rebirth · BACH 1.0 Pro AI video generation platform" />
-    </picture>
-  </a>
-</p>
-
-**TapCanvas × Video Rebirth (BACH) — AI video generation for content creation, film previs, and brand campaigns**
-
-Thanks to [Video Rebirth (BACH)](https://link.bach.art/4iThiO3) for sponsoring TapCanvas!
-
-- 🎬 **Bach 1.0 Pro for production workflows**: offers `Bach-1.0-Pro` for general content creation and `Bach-1.0-Pro-Ads` for advertising and e-commerce product shots, built for projects that need control over framing and duration.
-- 🧩 **Three generation modes**: supports text-to-video (`t2v`), first/last-frame transitions (`i2v`), and multimodal reference (`r2v`) combining image, video, and audio references to preserve subject identity, camera rhythm, and sound—plus reference video editing (`task_mode=edit`).
-- 🔌 **Developer-ready API**: standard REST API with Bearer Token authentication; see the [Bach 1.0 Pro API Docs](https://www.bach.art/api/docs/bach_1_0_pro).
-
-👉 [Try Video Rebirth (BACH) via the invite link](https://link.bach.art/4iThiO3)
-
 > Sponsors have no say in code or roadmap decisions. The links above are referral links; registration and usage are governed by the platform's own terms.
 
 ## Demo: From Novel Chapters to Video
@@ -172,10 +152,6 @@ Seven built-in HeyRoute channels provide 31 models: 15 chat models (Claude, GPT,
 ## Factory / Droid account pools
 
 Factory / Droid management is built in, with key import and deduplication, per-account controls and tests, usage refresh, subscription details and key expiry. The deployment patch creates a disabled, empty pool. Add your own Factory keys in the gateway console, select models from the dynamic catalog, and configure explicit Droid protocol bindings and pricing before enabling the channel. Reapplying the patch preserves existing accounts and configuration. See [Droid setup](apps/new-api/docs/channel/droid.md).
-
-## Bach 1.0 Pro video channel
-
-TapCanvas includes the native Bach video task protocol (`task.bach-video`) for **Bach 1.0 Pro** (`Bach-1.0-Pro`) and **Bach 1.0 Pro Ads** (`Bach-1.0-Pro-Ads`), supporting text-to-video, first/last frame, multimodal references (image/video/audio), and video editing (5–16s, 1080P/4K). New users can open the [Bach official site via our referral link](https://link.bach.art/4iThiO3) (also wired as the default **Apply for API Key** link in the new-api channel list and editor), enter `AccessKey|SecretKey`, and enable the `bach-video` channel. See [`006-bootstrap-bach-video-channel.sql`](apps/new-api/patches/2026-11-20/006-bootstrap-bach-video-channel.sql).
 
 ## Quick Start
 
@@ -316,7 +292,6 @@ Thanks to the following platform and open-source projects — TapCanvas' hosting
 
 - **[Infistar.cc](https://www.infistar.cc/register?aff=NQY9SD7Y&ref_source=link)** — sponsor of TapCanvas, providing a one-stop global LLM API service; see [Sponsors & Support](#sponsors--support).
 - **[即刻AI](https://magic666.top/register?aff=rgj2)** — sponsor of TapCanvas, focused on official-channel video models; see [Sponsors & Support](#sponsors--support).
-- **[Video Rebirth (BACH)](https://link.bach.art/4iThiO3)** — sponsor of TapCanvas, providing the Bach 1.0 Pro AI video generation platform for content creation, film previs and brand campaigns; see [Sponsors & Support](#sponsors--support).
 - **[AtomGit](https://atomgit.com/gcw_PzejWSbY/TapCanvas) / GitCode** — code hosting, open-source community promotion and badge data; the link above is this project's AtomGit entry.
 
 Upstream open-source projects:
